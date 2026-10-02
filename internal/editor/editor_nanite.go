@@ -101,7 +101,8 @@ func editorSceneryNanite(s *world.Scenery) {
 	if s.NaniteGPU {
 		path = "GPU cluster cull"
 	}
-	editorTextMutedWrapped(fmt.Sprintf("%d triangles, %d clusters, drawn by the %s", m.TriangleCount(), len(m.Clusters), path))
+	editorTextMutedWrapped(fmt.Sprintf("%d triangles, %d clusters over %d levels of detail, drawn by the %s",
+		m.TriangleCount(), len(m.Clusters), m.Levels, path))
 	if m.Source != "" {
 		fresh, err := nanitecook.UpToDate(fileutil.ResolveAssetPath(m.Source), fileutil.ResolveAssetPath(s.Model))
 		switch {

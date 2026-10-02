@@ -10,9 +10,11 @@
 //   COMPACT_SCAN    one workgroup per group: an exclusive prefix sum over its
 //                   tiles' survivor counts (the cull wrote them), giving each
 //                   tile its place in the group, and the group's count.
-//   COMPACT_SCATTER one workgroup per tile: a prefix sum over its own slots,
-//                   writing each survivor at the group's start + the tile's
-//                   place + its own.
+//   COMPACT_SCATTER one workgroup per cluster tile: a prefix sum over its own
+//                   slots, writing each survivor at the group's start + the
+//                   tile's place + its own.
+//   COMPACT_SCATTER_RANGE  one thread per range tile, the same for its few
+//                   slots.
 //
 // The order survives the packing — a cluster that drew after another still
 // does — so a capture stays the same from run to run and a coplanar tie
@@ -48,8 +50,15 @@ layout(std430, binding = 9) readonly buffer TileCounts {
 layout(std430, binding = 10) buffer TileOffsets {
     uint tileOffsets[];
 };
+// The tiles of each kind, by number (render/nanite_cull.go): the cluster
+// scatter is dispatched over the cluster tiles, the range scatter over the
+// range tiles.
+layout(std430, binding = 13) readonly buffer KindTiles {
+    uint kindTiles[];
+};
 
 uniform uint workBase;
+uniform uint kindTileCount;
 
 shared uint scan[64];
 
@@ -83,13 +92,36 @@ void main() {
     if (lid == 0u) {
         counts[workBase + gl_WorkGroupID.x] = total;
     }
-#else
-    uint ti = workBase + gl_WorkGroupID.x;
+#elif defined(COMPACT_SCATTER_RANGE)
+    // A thread a range tile: its RANGE_SLOTS_COMPACT slots, in order.
+    uint n = workBase + gl_GlobalInvocationID.x;
+    if (n >= kindTileCount) {
+        return;
+    }
+    uint ti = kindTiles[n];
     Tile t = tiles[ti];
     uint written = tileOffsets[ti];
-    for (uint base = 0u; base < t.a.y; base += 64u) {
+    for (uint r = 0u; r < RANGE_SLOTS_COMPACT; r++) {
+        uint src = (t.a.w + r) * 5u;
+        if (cmds[src + 1u] == 0u) {
+            continue;
+        }
+        uint dst = (t.b.y + written) * 5u;
+        outCmds[dst] = cmds[src];
+        outCmds[dst + 1u] = cmds[src + 1u];
+        outCmds[dst + 2u] = cmds[src + 2u];
+        outCmds[dst + 3u] = cmds[src + 3u];
+        outCmds[dst + 4u] = cmds[src + 4u];
+        written++;
+    }
+#else
+    uint ti = kindTiles[workBase + gl_WorkGroupID.x];
+    Tile t = tiles[ti];
+    uint written = tileOffsets[ti];
+    uint slots = t.a.y;
+    for (uint base = 0u; base < slots; base += 64u) {
         uint i = base + lid;
-        bool live = i < t.a.y && cmds[(t.a.w + i) * 5u + 1u] != 0u;
+        bool live = i < slots && cmds[(t.a.w + i) * 5u + 1u] != 0u;
         scan[lid] = live ? 1u : 0u;
         barrier();
         scanStep(lid);

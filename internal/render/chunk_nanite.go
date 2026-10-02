@@ -278,6 +278,10 @@ func (g *chunkGPU) drawCamera(ch *world.Chunk, cb *ChunkBatch, frustum Frustum, 
 }
 
 func (g *chunkGPU) drawMain(cb *ChunkBatch, model mgl32.Mat4) int {
+	if naniteDebugActive() {
+		g.main.drawDebug(len(g.mainGroups), func(i int) uint32 { return cb.groups[g.mainGroups[i]].batch.Vao }, false)
+		return len(g.mainGroups)
+	}
 	prepassBatch(&g.main, len(g.mainGroups),
 		func(i int) *gfx.Material { return &cb.groups[g.mainGroups[i]].batch.Material },
 		func(int) mgl32.Mat4 { return model },

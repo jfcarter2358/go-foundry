@@ -120,7 +120,12 @@ const CompiledExt = ".fbsp"
 // the GPU-driven cull (docs/nanite/PHASE_1.md). A version-7 file would still
 // draw — the renderer cuts any group it has no cut for at load — but would pay
 // for the cut on every load, so it is asked to recompile like any other.
-const CompiledVersion = 8
+//
+// 9: a large opaque draw group carries a cluster DAG instead of a flat cut
+// (StaticClusterGroup.DAG; docs/nanite/PHASE_2.md), so a compiled level draws
+// its far surfaces simplified. A version-8 file would draw every surface at
+// full detail at any distance.
+const CompiledVersion = 9
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure

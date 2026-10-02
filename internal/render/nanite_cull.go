@@ -17,22 +17,32 @@ package render
 // placement's matrix and the sphere its mesh fits in — a compiled level is one
 // instance, the identity, marked always-visible), a list of TILES (a run of one
 // instance's clusters, and the command slots it writes), and the GROUPS those
-// slots fall into, one per material. The cull is two compute stages:
+// slots fall into, one per material. The cull is three compute stages:
 //
 //  1. nanite_instance_cull_comp.glsl — a thread per instance: its sphere
 //     against the frustum and, in the occlusion pass, the Hi-Z pyramid.
-//  2. nanite_cluster_cull_comp.glsl — a workgroup per tile, a thread per
-//     cluster: the instance's verdict, the cluster's sphere against the
-//     frustum, its normal cone, and the Hi-Z pyramid. Every slot is written,
-//     a culled cluster as a zero count, so the command list is never cleared
-//     — and since the slots are fixed, the draw order is the same every
-//     frame, which is what keeps a capture deterministic.
+//  2. nanite_lod_traverse_comp.glsl — for instances of a mesh with a cluster
+//     DAG (a cooked Nanite mesh; Phase 2), a workgroup per instance walks the
+//     tree over its cluster groups (cluster.BuildLODTree) breadth first and
+//     marks the leaves that may hold a cluster of this pass's cut — see
+//     "Level of detail" below.
+//  3. the cluster stage, the tests themselves (nanite_cluster_common.glsl):
+//     the instance's verdict, the cluster's LOD test (its leaf's mark, then
+//     the exact test), its sphere against the frustum, its normal cone, and
+//     the Hi-Z pyramid. For a CLUSTER tile (nanite_cluster_cull_comp.glsl) a
+//     workgroup per tile and a slot per cluster; for a RANGE tile — a window
+//     of a DAG's leaves (tileRange) — a thread per tile and rangeSlots slots
+//     for its survivors' runs (nanite_range_cull_comp.glsl). Every slot is
+//     written, a culled one as a zero count, so the command list is never
+//     cleared — and since the slots are fixed, the draw order is the same
+//     every frame, which is what keeps a capture deterministic.
 //
-// Then a merge pass joins each run of neighbouring survivors into one command
-// (nanite_merge_comp.glsl) and, where the driver has the indirect-count draw
-// and the pass expects mostly empty slots, a packing pass moves the survivors
-// to the front of each group (compactCommands); then one indirect multi-draw
-// per group. Nothing is read back (outside FOUNDRY_NANITE_STATS).
+// Then a merge pass joins each cluster tile's runs of neighbouring survivors
+// into one command (nanite_merge_comp.glsl) and, where the driver has the
+// indirect-count draw and the pass expects mostly empty slots, a packing pass
+// moves the survivors to the front of each group (compactCommands); then one
+// indirect multi-draw per group. Nothing is read back (outside
+// FOUNDRY_NANITE_STATS).
 //
 // # Two-pass occlusion
 //
@@ -55,10 +65,43 @@ package render
 // is read off the light's own frustum (frustumEye) — the light's position for
 // a point light's face, the direction its rays run for a sun cascade.
 //
+// # Level of detail
+//
+// A cooked mesh's clusters are every level of its DAG (internal/cluster's
+// dag.go), and so are a compiled level's large opaque groups' (the compiler
+// builds those: world/static_clusters.go), each cluster with its own error
+// and LOD sphere and its parent's. A pass
+// draws a cluster when its error, projected from the CAMERA, is within
+// gfx.NaniteLODError pixels and its parent's is not — the per-cluster test
+// that yields a complete, crack-free cut with no traversal at all. The tree
+// walk only saves work: whole subtrees whose every cluster the test would
+// reject are skipped, and a leaf it does not reach writes zero commands
+// without reading its clusters' bounds. Leaf marks carry the pass's stamp
+// (passStamp), so nothing is ever cleared.
+//
+// Every pass — the camera's two and every shadow view — chooses the cut from
+// the camera, never from the light. A shadow drawn from a coarser cut than
+// the surface the camera sees would shadow that surface by its own
+// difference: acne where the coarse caster pokes through, light leaking where
+// it falls short. From the camera, caster and receiver are the same
+// triangles; and a distant mesh — most of a sun cascade — is coarse in both.
+// The camera's parameters are taken once at the top of DrawWorld
+// (beginNaniteLODFrame) so every pass of a frame agrees.
+//
+// FOUNDRY_NANITE_LOD=0 draws level 0 only, the full detail, as Phase 1 did.
+//
+// A DAG's tiles are range tiles: its clusters are twice its full detail's,
+// and a command slot costs the draw whether it draws or not, so a slot per
+// cluster made the rock field slower than without LOD at all
+// (docs/nanite/PHASE_2.md).
+//
 // # Switches
 //
 // Every piece can be turned off, and the old path stays as the fallback:
 //
+//	FOUNDRY_NANITE_LOD=0        full detail always (no LOD selection)
+//	FOUNDRY_NANITE_LOD_STATIC=0 the compiler gives no group a DAG (read by
+//	                            the compiler: world.StaticLOD)
 //	FOUNDRY_NANITE_CLUSTERS=0   compiled surfaces culled on the CPU, as before
 //	FOUNDRY_NANITE_OCCLUSION=0  one pass, frustum and cone only
 //	FOUNDRY_NANITE_OCCLUSION_BRUSHES=1  two passes for compiled surfaces and
@@ -142,19 +185,65 @@ const naniteHiZUnit = foliageHiZUnit
 const naniteTileClusters = 256
 
 // gpuCluster is a cluster as nanite_cluster_cull_comp.glsl reads it (std430,
-// 64 bytes).
+// 112 bytes).
 type gpuCluster struct {
 	Sphere [4]float32 // local centre, radius
 	Apex   [4]float32
 	Cone   [4]float32 // axis, cutoff (>= 1: none)
-	Draw   [4]uint32  // firstIndex, indexCount, baseVertex, unused
+	Draw   [4]uint32  // firstIndex, indexCount, baseVertex, leaf (in its mesh's tree)
+	// LOD is the sphere its own error is projected from, Parent its parent
+	// group's; Errs: own error, parent error (< 0: a root), level.
+	LOD    [4]float32
+	Parent [4]float32
+	Errs   [4]float32
+}
+
+// gpuNode is a node of a mesh's LOD tree (cluster.LODNode) as
+// nanite_lod_traverse_comp.glsl reads it (std430, 80 bytes).
+type gpuNode struct {
+	Sphere [4]float32 // the cull sphere
+	Parent [4]float32 // a sphere round every parent sphere under it
+	Own    [4]float32 // a sphere round every own LOD sphere under it
+	Errs   [4]float32 // the largest parent error, the smallest own error
+	// Link: first child (a global node index), child count (0: a leaf),
+	// first leaf, leaf count — a leaf's own number is its first leaf.
+	Link [4]uint32
 }
 
 // gpuTile is a run of one instance's clusters (std430, 32 bytes): a = first
-// cluster, count, instance, first command slot; b.x = first history entry.
+// cluster, count, instance, first command slot; b.x = first history entry,
+// b.y the first slot of its group (setTiles), b.z its mode (tileClusters or
+// tileRange).
 type gpuTile struct {
 	A, B [4]uint32
 }
+
+// A tile's modes. A CLUSTERS tile gives every cluster its own command slot,
+// and the merge pass joins runs of survivors. A RANGE tile is a window of a
+// DAG's clusters — at most rangeMaxClusters of them and rangeMaxLeaves whole
+// leaves of its LOD tree (cluster.LeafRanges), each of which the LOD test
+// takes or leaves whole — with rangeSlots command slots: its survivors' runs,
+// joined wherever what lies between them is in the cut (dropped only by the
+// frustum, the cone or the occlusion, which draw harmlessly), never across a
+// cluster outside it (nanite_range_cull_comp.glsl). What it saves is slots
+// and commands: a cooked mesh's DAG holds twice the clusters of its full
+// detail, and a slot costs the draw whether or not it draws, a command
+// whenever it does (measured: docs/nanite/PHASE_2.md).
+const (
+	tileClusters = 0
+	tileRange    = 1
+)
+
+// rangeSlots is a range tile's command slots (the shaders' RANGE_SLOTS);
+// rangeMaxLeaves the most leaves a window takes, so that the runs no join
+// can bridge — separated by whole leaves outside the cut — never outnumber
+// the slots: ceil(rangeMaxLeaves/2) <= rangeSlots. rangeMaxClusters is the
+// most clusters, a 32-bit mask's worth.
+const (
+	rangeSlots       = 2
+	rangeMaxLeaves   = 3
+	rangeMaxClusters = 32
+)
 
 // gpuInstance is an instance (std430, 96 bytes). Its first 64 bytes are also
 // the per-instance model matrix the vertex stage reads at locations 7-10, so
@@ -171,6 +260,9 @@ const (
 	// instShadowCone: the instance's mesh is closed, so a shadow pass may
 	// cone-test its clusters (coneClosed).
 	instShadowCone = 1 << 2
+	// instLOD: the instance's mesh has a cluster DAG; Flags[1] is its tree's
+	// root node and Flags[2] the first of its leaf marks.
+	instLOD = 1 << 3
 )
 
 // gpuInstanceStride is gpuInstance's size, the vertex attribute stride of its
@@ -213,13 +305,46 @@ func coneSafe(m mgl32.Mat4) bool {
 }
 
 // toGPUCluster is a cluster as the shader reads it, its draw range offset by
-// firstIndex (indices) and baseVertex.
+// firstIndex (indices) and baseVertex: a cluster with no DAG over it — level
+// 0, no error, a root — which every LOD test passes.
 func toGPUCluster(c *cluster.Cluster, firstIndex uint32, baseVertex int32) gpuCluster {
 	g := gpuCluster{
 		Sphere: [4]float32{c.Center[0], c.Center[1], c.Center[2], c.Radius},
 		Apex:   [4]float32{c.ConeApex[0], c.ConeApex[1], c.ConeApex[2], 0},
 		Cone:   [4]float32{c.ConeAxis[0], c.ConeAxis[1], c.ConeAxis[2], c.ConeCutoff},
 		Draw:   [4]uint32{firstIndex + 3*c.TriFirst, 3 * c.TriCount, uint32(baseVertex), 0},
+		LOD:    [4]float32{c.Center[0], c.Center[1], c.Center[2], c.Radius},
+		Errs:   [4]float32{0, -1, 0, 0},
+	}
+	return g
+}
+
+// toGPULODCluster is a DAG cluster as the shader reads it, in leaf leaf of
+// its mesh's tree.
+func toGPULODCluster(c *cluster.LODCluster, leaf int32, firstIndex uint32, baseVertex int32) gpuCluster {
+	g := toGPUCluster(&c.Cluster, firstIndex, baseVertex)
+	g.Draw[3] = uint32(leaf)
+	g.LOD = [4]float32{c.LODCenter[0], c.LODCenter[1], c.LODCenter[2], c.LODRadius}
+	g.Parent = [4]float32{c.ParentCenter[0], c.ParentCenter[1], c.ParentCenter[2], c.ParentRadius}
+	g.Errs = [4]float32{c.Error, c.ParentError, float32(c.Level), 0}
+	if c.ParentError < 0 {
+		g.Errs[1] = -1
+	}
+	return g
+}
+
+// toGPUNode is a tree node as the shader reads it, its children offset by
+// nodeBase (the mesh's root's place in the pool).
+func toGPUNode(n *cluster.LODNode, nodeBase uint32) gpuNode {
+	g := gpuNode{
+		Sphere: [4]float32{n.Center[0], n.Center[1], n.Center[2], n.Radius},
+		Parent: [4]float32{n.ParentCenter[0], n.ParentCenter[1], n.ParentCenter[2], n.ParentRadius},
+		Own:    [4]float32{n.OwnCenter[0], n.OwnCenter[1], n.OwnCenter[2], n.OwnRadius},
+		Errs:   [4]float32{n.MaxParentError, n.MinError, 0, 0},
+		Link:   [4]uint32{0, uint32(n.ChildCount), uint32(n.LeafFirst), uint32(n.LeafCount)},
+	}
+	if n.ChildCount > 0 {
+		g.Link[0] = nodeBase + uint32(n.FirstChild)
 	}
 	return g
 }
@@ -259,6 +384,29 @@ type cullBatch struct {
 	// scan writes.
 	tileCountBuf, tileOffBuf uint32
 
+	// nodes is the SSBO of LOD tree nodes the instances' Flags[1] index (the
+	// Nanite mesh pool's); leaves is how many leaf marks the instances need
+	// in all, leafBuf where they are kept. Zero leaves: no instance has a
+	// DAG, and the traversal is not run.
+	nodes   uint32
+	leaves  int
+	leafBuf uint32
+	leafCap int
+
+	// kindBuf lists the tiles by kind — the cluster tiles' numbers, then
+	// the range tiles' — which each stage is dispatched over.
+	kindBuf                 uint32
+	clusterTiles, rangeTile int
+
+	// slotBuf is the debug views' per-slot table (nanite_debug.go), remade
+	// when the tiles change.
+	slotBuf    uint32
+	slotsDirty bool
+
+	// tileSpheres is a sphere round each tile's clusters, in the space
+	// their spheres are in (markLive), remade when the tiles change.
+	tileSpheres [][4]float32
+
 	// live, when set, is per group whether the CPU found any of its
 	// candidates in the frustum this frame (markLive): a group with none
 	// is not bound or drawn at all. Its clusters are still culled on the GPU
@@ -273,25 +421,50 @@ func (b *cullBatch) groupLive(gi int) bool { return b.live == nil || (gi < len(b
 
 // markLive sets live from the clusters' spheres: a group is live when any
 // cluster in its tiles, carried by model, touches the frustum. spheres is
-// indexed as the tiles' clusters are.
+// indexed as the tiles' clusters are. Each tile's own sphere, round its
+// clusters', is tested first (tileSpheres), so a group wholly out of view
+// costs a test a tile rather than a cluster — which matters since a DAG
+// holds every level's clusters.
 func (b *cullBatch) markLive(spheres [][4]float32, model mgl32.Mat4, frustum *Frustum) {
 	if len(b.live) != len(b.groups) {
 		b.live = make([]bool, len(b.groups))
 	}
+	if len(b.tileSpheres) != len(b.tiles) {
+		b.tileSpheres = make([][4]float32, len(b.tiles))
+		for ti := range b.tiles {
+			t := &b.tiles[ti]
+			var lo, hi mgl32.Vec3
+			for k := uint32(0); k < t.A[1]; k++ {
+				sp := spheres[t.A[0]+k]
+				r := mgl32.Vec3{sp[3], sp[3], sp[3]}
+				c := mgl32.Vec3{sp[0], sp[1], sp[2]}
+				if k == 0 {
+					lo, hi = c.Sub(r), c.Add(r)
+					continue
+				}
+				lo = mgl32.Vec3{min(lo[0], c[0]-r[0]), min(lo[1], c[1]-r[1]), min(lo[2], c[2]-r[2])}
+				hi = mgl32.Vec3{max(hi[0], c[0]+r[0]), max(hi[1], c[1]+r[1]), max(hi[2], c[2]+r[2])}
+			}
+			c := lo.Add(hi).Mul(0.5)
+			b.tileSpheres[ti] = [4]float32{c[0], c[1], c[2], hi.Sub(lo).Len()/2*1.001 + 1e-6}
+		}
+	}
 	scale := float32(math.Sqrt(float64(max(model.Col(0).Vec3().LenSqr(), model.Col(1).Vec3().LenSqr(), model.Col(2).Vec3().LenSqr()))))
+	touches := func(sp [4]float32) bool {
+		c := model.Mul4x1(mgl32.Vec4{sp[0], sp[1], sp[2], 1}).Vec3()
+		return frustum == nil || sphereInFrustum(*frustum, c, sp[3]*scale)
+	}
 	ti := 0
 	for gi, g := range b.groups {
 		b.live[gi] = false
 		end := g.first + g.count
 		for ; ti < len(b.tiles) && int32(b.tiles[ti].A[3]) < end; ti++ {
-			if b.live[gi] {
+			if b.live[gi] || !touches(b.tileSpheres[ti]) {
 				continue
 			}
 			t := &b.tiles[ti]
 			for k := uint32(0); k < t.A[1]; k++ {
-				sp := spheres[t.A[0]+k]
-				c := model.Mul4x1(mgl32.Vec4{sp[0], sp[1], sp[2], 1}).Vec3()
-				if frustum == nil || sphereInFrustum(*frustum, c, sp[3]*scale) {
+				if touches(spheres[t.A[0]+k]) {
 					b.live[gi] = true
 					break
 				}
@@ -322,6 +495,8 @@ type cullView struct {
 	mode int32
 	// camera is the camera's view (not a shadow's), for the stats.
 	camera bool
+	// lod is the camera's LOD parameters, whatever view this is.
+	lod naniteLODView
 	// compact packs the pass's commands (where the driver can): the camera
 	// always, a shadow pass when its caller expects most commands empty.
 	compact bool
@@ -329,7 +504,8 @@ type cullView struct {
 
 // cameraCullView is the camera's view for a pass in mode.
 func cameraCullView(frustum Frustum, projView mgl32.Mat4, eye mgl32.Vec3, mode int32) cullView {
-	v := cullView{planes: frustum.Planes, projView: projView, eye: eye.Vec4(1), mode: mode, camera: true, compact: true}
+	v := cullView{planes: frustum.Planes, projView: projView, eye: eye.Vec4(1), mode: mode, camera: true, compact: true,
+		lod: currentNaniteLOD()}
 	if NaniteCone {
 		v.cone = coneAll
 	}
@@ -340,7 +516,7 @@ func cameraCullView(frustum Frustum, projView mgl32.Mat4, eye mgl32.Vec3, mode i
 // for a pass that culls nothing) and no occlusion. The cone is tested on
 // closed meshes only, from the eye the frustum itself says the light is at.
 func shadowCullView(cull *Frustum) cullView {
-	v := cullView{mode: cullPlain}
+	v := cullView{mode: cullPlain, lod: currentNaniteLOD()}
 	if cull != nil {
 		v.planes = cull.Planes
 		if eye, ok := frustumEye(*cull); ok && NaniteCone && NaniteShadowCone {
@@ -423,11 +599,18 @@ type naniteCuller struct {
 	tried, ok bool
 	inst      progUniforms
 	clus      progUniforms
+	// rng is the cluster stage for range tiles (nanite_range_cull_comp.glsl).
+	rng progUniforms
+	// lod walks the LOD trees (nanite_lod_traverse_comp.glsl).
+	lod progUniforms
+	// stamp numbers the passes, for the leaf marks.
+	stamp uint32
 	// compact is the packing pass (nanite_compact_comp.glsl), built when the
 	// driver has the indirect-count draw.
-	compactScan    progUniforms
-	compactScatter progUniforms
-	canCompact     bool
+	compactScan         progUniforms
+	compactScatter      progUniforms
+	compactScatterRange progUniforms
+	canCompact          bool
 	// merge joins runs of surviving neighbours into one command
 	// (nanite_merge_comp.glsl); every pass runs it.
 	merge progUniforms
@@ -452,8 +635,8 @@ func (n *naniteCuller) ready() bool {
 		return false
 	}
 	n.ok = true
-	log.Printf("nanite: GPU cluster cull on (occlusion %v, cone %v, shadows %v, prepass %v, indirect count %v)",
-		NaniteOcclusion, NaniteCone, NaniteShadows, NanitePrepass, n.compactable())
+	log.Printf("nanite: GPU cluster cull on (LOD %v, occlusion %v, cone %v, shadows %v, prepass %v, indirect count %v)",
+		NaniteLOD, NaniteOcclusion, NaniteCone, NaniteShadows, NanitePrepass, n.compactable())
 	return true
 }
 
@@ -464,14 +647,22 @@ func (n *naniteCuller) build() (err error) {
 		}
 	}()
 	common := mustReadShader(biomeShaderPath("nanite_cull_common.glsl"))
+	clusterCommon := mustReadShader(biomeShaderPath("nanite_cluster_common.glsl"))
 	for _, s := range []struct {
-		file string
-		out  *progUniforms
+		file     string
+		out      *progUniforms
+		clusters bool
 	}{
-		{"nanite_instance_cull_comp.glsl", &n.inst},
-		{"nanite_cluster_cull_comp.glsl", &n.clus},
+		{"nanite_instance_cull_comp.glsl", &n.inst, false},
+		{"nanite_lod_traverse_comp.glsl", &n.lod, false},
+		{"nanite_cluster_cull_comp.glsl", &n.clus, true},
+		{"nanite_range_cull_comp.glsl", &n.rng, true},
 	} {
-		src := "#version 430\n" + common + "\n" + mustReadShader(biomeShaderPath(s.file))
+		src := fmt.Sprintf("#version 430\n#define RANGE_SLOTS %du\n", rangeSlots) + common + "\n"
+		if s.clusters {
+			src += clusterCommon + "\n"
+		}
+		src += mustReadShader(biomeShaderPath(s.file))
 		cs, cerr := gfx.CompileShader(src, gl.COMPUTE_SHADER)
 		if cerr != nil {
 			return fmt.Errorf("%s: %v", s.file, cerr)
@@ -504,12 +695,13 @@ func (n *naniteCuller) build() (err error) {
 		for _, v := range []struct {
 			define string
 			out    *progUniforms
-		}{{"COMPACT_SCAN", &n.compactScan}, {"COMPACT_SCATTER", &n.compactScatter}} {
+		}{{"COMPACT_SCAN", &n.compactScan}, {"COMPACT_SCATTER", &n.compactScatter},
+			{"COMPACT_SCATTER_RANGE", &n.compactScatterRange}} {
 			if cerr != nil {
 				break
 			}
 			var cs uint32
-			cs, cerr = gfx.CompileShader("#version 430\n#define "+v.define+"\n"+src, gl.COMPUTE_SHADER)
+			cs, cerr = gfx.CompileShader(fmt.Sprintf("#version 430\n#define RANGE_SLOTS_COMPACT %du\n#define %s\n", rangeSlots, v.define)+src, gl.COMPUTE_SHADER)
 			if cerr != nil {
 				break
 			}
@@ -545,8 +737,10 @@ func (n *naniteCuller) buildHiZ() bool {
 // setTiles replaces the batch's tiles and groups.
 func (b *cullBatch) setTiles(tiles []gpuTile, groups []cullGroup, slots int) {
 	b.tiles, b.groups, b.slots = tiles, groups, slots
+	b.tileSpheres = b.tileSpheres[:0]
 	b.tilesDirty = true
 	b.groupsDirty = true
+	b.slotsDirty = true
 	// Each tile names its group's first slot, where the packing writes from.
 	gi := 0
 	for ti := range tiles {
@@ -609,11 +803,38 @@ func (b *cullBatch) upload() {
 		if b.tileCountBuf == 0 {
 			gl.GenBuffers(1, &b.tileCountBuf)
 			gl.GenBuffers(1, &b.tileOffBuf)
+			gl.GenBuffers(1, &b.kindBuf)
 		}
+		kinds := make([]uint32, 0, len(b.tiles))
+		for ti := range b.tiles {
+			if b.tiles[ti].B[2] != tileRange {
+				kinds = append(kinds, uint32(ti))
+			}
+		}
+		b.clusterTiles = len(kinds)
+		for ti := range b.tiles {
+			if b.tiles[ti].B[2] == tileRange {
+				kinds = append(kinds, uint32(ti))
+			}
+		}
+		b.rangeTile = len(kinds) - b.clusterTiles
+		kinds = append(kinds, 0)
+		gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.kindBuf)
+		gl.BufferData(gl.SHADER_STORAGE_BUFFER, len(kinds)*4, gl.Ptr(kinds), gl.STATIC_DRAW)
 		gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.tileCountBuf)
 		gl.BufferData(gl.SHADER_STORAGE_BUFFER, max(len(b.tiles), 1)*4, nil, gl.DYNAMIC_COPY)
 		gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.tileOffBuf)
 		gl.BufferData(gl.SHADER_STORAGE_BUFFER, max(len(b.tiles), 1)*4, nil, gl.DYNAMIC_COPY)
+	}
+	if b.leaves > b.leafCap || (b.leaves > 0 && b.leafBuf == 0) {
+		// The marks start at zero, which no pass's stamp is.
+		if b.leafBuf == 0 {
+			gl.GenBuffers(1, &b.leafBuf)
+		}
+		b.leafCap = b.leaves
+		zero := make([]uint32, b.leafCap)
+		gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.leafBuf)
+		gl.BufferData(gl.SHADER_STORAGE_BUFFER, b.leafCap*4, gl.Ptr(zero), gl.DYNAMIC_COPY)
 	}
 	if b.instDirty {
 		b.instDirty = false
@@ -662,6 +883,19 @@ func (b *cullBatch) cull(v cullView) bool {
 		gl.BindTexture(gl.TEXTURE_2D, n.hiz.tex)
 		gl.ActiveTexture(gl.TEXTURE0)
 	}
+	lodOn := NaniteLOD && b.leaves > 0
+	walk := lodOn && naniteLODWalk
+	// A debug view's colour pass: a command a cluster, its slot its base
+	// instance (nanite_debug.go).
+	debug := v.camera && naniteDebugActive()
+	n.stamp++
+	if n.stamp == 0 {
+		n.stamp = 1
+	}
+	if b.leafBuf != 0 {
+		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, b.nodes)
+		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 12, b.leafBuf)
+	}
 	setCommon := func(p *progUniforms) {
 		gl.UseProgram(p.prog)
 		gl.Uniform1i(p.U("mode"), v.mode)
@@ -673,24 +907,58 @@ func (b *cullBatch) cull(v cullView) bool {
 		gl.Uniform1i(p.U("hiz"), naniteHiZUnit)
 		gl.Uniform2i(p.U("hizSize"), n.hiz.size[0], n.hiz.size[1])
 		gl.Uniform1i(p.U("hizLevels"), n.hiz.levels)
+		gl.Uniform1i(p.U("lodMode"), boolToInt32(lodOn))
+		gl.Uniform1i(p.U("lodWalk"), boolToInt32(walk))
+		gl.Uniform3f(p.U("lodEye"), v.lod.eye[0], v.lod.eye[1], v.lod.eye[2])
+		gl.Uniform1f(p.U("lodK"), v.lod.k)
+		gl.Uniform1ui(p.U("passStamp"), n.stamp)
+		gl.Uniform1ui(p.U("instanceCount"), uint32(len(b.insts)))
+		gl.Uniform1i(p.U("debugSlots"), boolToInt32(debug))
 	}
 	setCommon(&n.inst)
-	gl.Uniform1ui(n.inst.U("instanceCount"), uint32(len(b.insts)))
 	gl.DispatchCompute(uint32((len(b.insts)+63)/64), 1, 1)
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
 
-	setCommon(&n.clus)
-	for done := 0; done < len(b.tiles); done += 65535 {
-		cnt := min(len(b.tiles)-done, 65535)
-		gl.Uniform1ui(n.clus.U("tileBase"), uint32(done))
-		gl.DispatchCompute(uint32(cnt), 1, 1)
+	if walk {
+		// The LOD trees, a workgroup an instance.
+		ProfileBegin("nanite: lod")
+		setCommon(&n.lod)
+		for done := 0; done < len(b.insts); done += 65535 {
+			gl.Uniform1ui(n.lod.U("workBase"), uint32(done))
+			gl.DispatchCompute(uint32(min(len(b.insts)-done, 65535)), 1, 1)
+		}
+		gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
+		ProfileEnd()
+	}
+
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 13, b.kindBuf)
+	if b.clusterTiles > 0 {
+		setCommon(&n.clus)
+		for done := 0; done < b.clusterTiles; done += 65535 {
+			cnt := min(b.clusterTiles-done, 65535)
+			gl.Uniform1ui(n.clus.U("tileBase"), uint32(done))
+			gl.DispatchCompute(uint32(cnt), 1, 1)
+		}
+	}
+	if b.rangeTile > 0 {
+		setCommon(&n.rng)
+		total := b.clusterTiles + b.rangeTile
+		gl.Uniform1ui(n.rng.U("kindTileCount"), uint32(total))
+		groups := (b.rangeTile + 63) / 64
+		for done := 0; done < groups; done += 65535 {
+			gl.Uniform1ui(n.rng.U("tileBase"), uint32(b.clusterTiles+done*64))
+			gl.DispatchCompute(uint32(min(groups-done, 65535)), 1, 1)
+		}
 	}
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
-	// Runs of surviving neighbours into one command each.
-	gl.UseProgram(n.merge.prog)
-	for done := 0; done < len(b.tiles); done += 65535 {
-		gl.Uniform1ui(n.merge.U("workBase"), uint32(done))
-		gl.DispatchCompute(uint32(min(len(b.tiles)-done, 65535)), 1, 1)
+	// Runs of surviving neighbours into one command each — except in a
+	// debug view, which needs every cluster its own.
+	if !debug && b.clusterTiles > 0 {
+		gl.UseProgram(n.merge.prog)
+		for done := 0; done < b.clusterTiles; done += 65535 {
+			gl.Uniform1ui(n.merge.U("workBase"), uint32(done))
+			gl.DispatchCompute(uint32(min(b.clusterTiles-done, 65535)), 1, 1)
+		}
 	}
 	gl.MemoryBarrier(gl.COMMAND_BARRIER_BIT | gl.SHADER_STORAGE_BARRIER_BIT)
 	if NaniteStats && v.camera {
@@ -702,8 +970,22 @@ func (b *cullBatch) cull(v cullView) bool {
 	b.compacted = false
 	if n.compactable() && v.compact && len(b.groups) > 0 {
 		b.compactCommands()
+		if NaniteStats && v.camera && os.Getenv("FOUNDRY_NANITE_STATS_LOG") == "1" {
+			counts := make([]uint32, len(b.groups))
+			gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.countBuf)
+			glext.GetBufferSubData(gl.SHADER_STORAGE_BUFFER, 0, len(counts)*4, gl.Ptr(&counts[0]))
+			gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
+			total, live := 0, 0
+			for gi, c := range counts {
+				total += int(c)
+				if b.groupLive(gi) {
+					live += int(c)
+				}
+			}
+			log.Printf("nanite stats: packed %d commands in %d groups (%d in live groups)", total, len(counts), live)
+		}
 	}
-	for i := uint32(0); i < 11; i++ {
+	for i := uint32(0); i < 14; i++ {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, i, 0)
 	}
 	return true
@@ -740,11 +1022,16 @@ func (b *cullBatch) countDrawn() {
 	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.cmdBuf)
 	glext.GetBufferSubData(gl.SHADER_STORAGE_BUFFER, 0, len(cmds)*4, gl.Ptr(&cmds[0]))
 	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
+	live := 0
 	for i := 0; i+1 < len(cmds); i += 5 {
 		DebugStats.NaniteTriangles += int(cmds[i]*cmds[i+1]) / 3
+		if cmds[i+1] != 0 {
+			live++
+		}
 	}
 	if os.Getenv("FOUNDRY_NANITE_STATS_LOG") == "1" {
-		log.Printf("nanite stats: %d slots, %d triangles drawn so far this frame", b.slots, DebugStats.NaniteTriangles)
+		log.Printf("nanite stats: %d slots (%d tiles: %d cluster, %d range), %d commands drawing, %d triangles drawn so far this frame",
+			b.slots, len(b.tiles), b.clusterTiles, b.rangeTile, live, DebugStats.NaniteTriangles)
 	}
 }
 
@@ -814,27 +1101,95 @@ func (b *cullBatch) compactCommands() {
 	}
 	dispatch(&n.compactScan, len(b.groups))
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
-	dispatch(&n.compactScatter, len(b.tiles))
+	if b.clusterTiles > 0 {
+		dispatch(&n.compactScatter, b.clusterTiles)
+	}
+	if b.rangeTile > 0 {
+		p := &n.compactScatterRange
+		gl.UseProgram(p.prog)
+		gl.Uniform1ui(p.U("kindTileCount"), uint32(b.clusterTiles+b.rangeTile))
+		groups := (b.rangeTile + 63) / 64
+		for done := 0; done < groups; done += 65535 {
+			gl.Uniform1ui(p.U("workBase"), uint32(b.clusterTiles+done*64))
+			gl.DispatchCompute(uint32(min(groups-done, 65535)), 1, 1)
+		}
+	}
 	gl.MemoryBarrier(gl.COMMAND_BARRIER_BIT | gl.SHADER_STORAGE_BARRIER_BIT)
 	b.compacted = true
 }
 
 func (b *cullBatch) release() {
 	for _, buf := range []*uint32{&b.tileBuf, &b.instBuf, &b.visBuf, &b.histBuf, &b.cmdBuf,
-		&b.packedBuf, &b.countBuf, &b.groupBuf, &b.tileCountBuf, &b.tileOffBuf} {
+		&b.packedBuf, &b.countBuf, &b.groupBuf, &b.tileCountBuf, &b.tileOffBuf, &b.leafBuf, &b.slotBuf, &b.kindBuf} {
 		if *buf != 0 {
 			gl.DeleteBuffers(1, buf)
 			*buf = 0
 		}
 	}
-	b.histLen = 0
+	b.histLen, b.leafCap = 0, 0
 	b.cmdSize, b.packedSize, b.countSize = 0, 0, 0
 	b.tilesDirty, b.instDirty = len(b.tiles) > 0, len(b.insts) > 0
 }
 
+// appendRangeTile is a range tile (see tileRange) over count clusters from
+// first (history entry hist) of instance inst: rangeSlots command slots from
+// *slot.
+func appendRangeTile(tiles []gpuTile, first, count, inst, hist uint32, slot *int) []gpuTile {
+	tiles = append(tiles, gpuTile{
+		A: [4]uint32{first, count, inst, uint32(*slot)},
+		B: [4]uint32{hist, 0, tileRange, 0},
+	})
+	*slot += rangeSlots
+	return tiles
+}
+
+// appendLeafTiles tiles a run of a DAG's clusters [first, first+count) of
+// instance inst (history from hist), whose leaves are leaves (the mesh's
+// cluster.LeafRanges, offset by base into the batch's cluster list): range
+// tiles of whole consecutive leaves (rangeWindows), or — in a debug view,
+// which needs every cluster its own command — cluster tiles.
+func appendLeafTiles(tiles []gpuTile, leaves [][2]int32, base, first, count, inst, hist uint32, slot *int) []gpuTile {
+	if naniteDebugActive() {
+		return appendTiles(tiles, first, count, inst, hist, slot)
+	}
+	var in [][2]int32
+	for _, l := range leaves {
+		if lf := base + uint32(l[0]); lf >= first && lf < first+count {
+			in = append(in, [2]int32{int32(lf), l[1]})
+		}
+	}
+	for _, w := range rangeWindows(in) {
+		tiles = appendRangeTile(tiles, uint32(w[0]), uint32(w[1]), inst, hist+(uint32(w[0])-first), slot)
+	}
+	return tiles
+}
+
+// rangeWindows packs consecutive leaves, {first, count} in cluster order,
+// into range tiles' windows: runs of up to rangeMaxLeaves whole leaves and
+// rangeMaxClusters clusters, never across a break in the clusters. A leaf is
+// never longer than cluster.MaxLeafClusters, which is rangeMaxClusters.
+func rangeWindows(leaves [][2]int32) [][2]int32 {
+	var out [][2]int32
+	for i := 0; i < len(leaves); {
+		w := leaves[i]
+		n := 1
+		for i+n < len(leaves) && n < rangeMaxLeaves {
+			next := leaves[i+n]
+			if next[0] != w[0]+w[1] || w[1]+next[1] > rangeMaxClusters {
+				break
+			}
+			w[1] += next[1]
+			n++
+		}
+		out = append(out, w)
+		i += n
+	}
+	return out
+}
+
 // appendTiles cuts a run of count clusters starting at cluster first (and
-// history entry hist) of instance inst into tiles, assigning them command
-// slots from *slot on.
+// history entry hist) of instance inst into cluster tiles, assigning them
+// command slots from *slot on.
 func appendTiles(tiles []gpuTile, first, count, inst, hist uint32, slot *int) []gpuTile {
 	for off := uint32(0); off < count; off += naniteTileClusters {
 		n := min(count-off, naniteTileClusters)
@@ -847,6 +1202,20 @@ func appendTiles(tiles []gpuTile, first, count, inst, hist uint32, slot *int) []
 	return tiles
 }
 
+// uploadNodes fills (making if need be) an SSBO with LOD tree nodes.
+func uploadNodes(buf *uint32, nodes []gpuNode) {
+	if *buf == 0 {
+		gl.GenBuffers(1, buf)
+	}
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, *buf)
+	if len(nodes) > 0 {
+		gl.BufferData(gl.SHADER_STORAGE_BUFFER, len(nodes)*int(unsafe.Sizeof(gpuNode{})), gl.Ptr(nodes), gl.STATIC_DRAW)
+	} else {
+		gl.BufferData(gl.SHADER_STORAGE_BUFFER, 80, nil, gl.STATIC_DRAW)
+	}
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
+}
+
 // uploadClusters fills (making if need be) an SSBO with clusters.
 func uploadClusters(buf *uint32, clusters []gpuCluster) {
 	if *buf == 0 {
@@ -856,7 +1225,7 @@ func uploadClusters(buf *uint32, clusters []gpuCluster) {
 	if len(clusters) > 0 {
 		gl.BufferData(gl.SHADER_STORAGE_BUFFER, len(clusters)*int(unsafe.Sizeof(gpuCluster{})), gl.Ptr(clusters), gl.STATIC_DRAW)
 	} else {
-		gl.BufferData(gl.SHADER_STORAGE_BUFFER, 64, nil, gl.STATIC_DRAW)
+		gl.BufferData(gl.SHADER_STORAGE_BUFFER, int(unsafe.Sizeof(gpuCluster{})), nil, gl.STATIC_DRAW)
 	}
 	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
 }

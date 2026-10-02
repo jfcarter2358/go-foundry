@@ -95,19 +95,31 @@ and each frame a compute pass culls the meshes' clusters of about 128 triangles
 against the view, against what faces away, and against what is hidden behind
 geometry already drawn. Only the clusters that survive are drawn, one draw call
 per material. So a field of rocks behind a hill costs almost nothing, and a
-rock half out of view costs about half. A rock that is in view still draws
-every one of its triangles, though, near or far: there is no level of detail
-yet, so a distant hundred-thousand-triangle rock costs what a close one does.
-Keep that in mind when scattering dense meshes.
+rock half out of view costs about half.
+
+Each rock is also drawn at the **level of detail** its size on screen needs.
+The cook stores every level, from the full detail down to a few hundred
+triangles, and for every cluster the GPU checks how far its simplified surface
+strays from the full detail, seen from the camera: the coarsest version that
+strays by no more than a pixel is drawn. Near parts of one rock can be full
+detail while its far side is coarse, and the levels meet without cracks. So a
+dense rock costs by how big it is on screen: on the 244-rock bench a frame got
+about a quarter cheaper. How many pixels it may stray is the player's
+`@level.prop.nanite_lod_error` (1 by default, 0.25 to 8; see
+[UI screens](17-ui-screens.md#a-settings-screen)): 2 or 4 trades a little
+shimmer at silhouettes for fewer triangles. The debug views `clusters`, `lod`
+and `overdraw` (`foundry play -view`, a play script's `view`) colour what is
+drawn by cluster, by level, and by how much is drawn over itself.
 
 Shadows are culled cluster by cluster too, against each shadow's own view
-rather than the camera's (a rock you cannot see still casts). On a mesh that is
-a closed solid, the clusters facing wholly away from the light are skipped as
-well, which never changes the shadow. The mesh's baked distance field makes it
-block and bounce light for live GI.
+rather than the camera's (a rock you cannot see still casts), and draw the
+level of detail the camera chose, so a surface is shadowed by exactly its own
+shape. On a mesh that is a closed solid, the clusters facing wholly away from
+the light are skipped as well, which never changes the shadow. The mesh's baked
+distance field makes it block and bounce light for live GI.
 
 The **Model** pickers list cooked meshes beside the models. A placed cooked
-prop has a **Nanite** group in its panel: its triangle and cluster counts, and
+prop has a **Nanite** group in its panel: its triangle, cluster and level counts, and
 one texture picker per material slot. A slot's picker overrides that slot's
 texture on this prop only — the same rock in moss or in snow without a second
 cook. In the level file the overrides are `materials: {stone: granite}`.
@@ -116,4 +128,5 @@ Collision is the mesh's bounding box, as for any prop. A cooked mesh draws
 opaque: a slot whose texture has soft alpha is not sorted the way a classic
 model's translucent parts are.
 
-`FOUNDRY_NANITE_MESHES=0` draws cooked props the classic way, for comparison.
+`FOUNDRY_NANITE_MESHES=0` draws cooked props the classic way, for comparison;
+`FOUNDRY_NANITE_LOD=0` keeps the GPU path but draws every prop at full detail.

@@ -124,6 +124,10 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	naniteChunksActive = !o.Editor
 	beginFrameTarget(o.Target)
 	defer endFrameTarget()
+	// The camera's LOD parameters, fixed for every pass of the frame, the
+	// shadows' included (nanite_lod.go).
+	beginNaniteLODFrame()
+	defer endNaniteLODFrame()
 
 	// Per-frame water shader inputs: animation clock and the view position
 	// the fresnel/specular terms are measured against.

@@ -32,6 +32,11 @@ layout(std430, binding = 5) buffer Commands {
 layout(std430, binding = 9) writeonly buffer TileCounts {
     uint tileCounts[];
 };
+// The cluster tiles, by number: what this pass is dispatched over (a range
+// tile's slots are runs already, which its own stage counted).
+layout(std430, binding = 13) readonly buffer KindTiles {
+    uint kindTiles[];
+};
 
 uniform uint workBase;
 
@@ -42,7 +47,7 @@ shared uint heads;
 
 void main() {
     uint lid = gl_LocalInvocationID.x;
-    uint ti = workBase + gl_WorkGroupID.x;
+    uint ti = kindTiles[workBase + gl_WorkGroupID.x];
     Tile t = tiles[ti];
     uint n = min(t.a.y, 256u);
     if (lid == 0u) {

@@ -153,7 +153,9 @@ func claudeEditorTools() []claude.Tool {
 				"one picture in a debug view and then puts the author's view back: `lighting` is " +
 				"the light alone on white surfaces (where a room is dark, where a shadow falls, " +
 				"what a light reaches, with the textures out of the way), `probes` and `field` " +
-				"are live GI's probes and distance field, `wireframe` the geometry as lines.",
+				"are live GI's probes and distance field, `wireframe` the geometry as lines; `clusters`, " +
+				"`lod` and `overdraw` colour what the Nanite cull draws by cluster, by LOD level, and by how many " +
+				"fragments pile up.",
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

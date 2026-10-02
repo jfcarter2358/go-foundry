@@ -80,7 +80,13 @@ A `.fbsp` from before live GI is refused at load with a message to recompile:
 the lighting data in it changed shape. So is one from before the GPU cluster
 cull (version 8): a compile now also cuts each batch of surfaces into clusters
 of about 128 triangles, which the GPU culls one by one, and stores the cut in
-the file so a load never has to make it.
+the file so a load never has to make it. And so is one from before levels of
+detail (version 9): each large opaque batch now also carries every coarser
+version of itself, down to a few triangles, and the GPU picks per cluster the
+coarsest one that stays within a pixel of the full detail from where the
+camera is. The bake's grid makes a floor hundreds of faces; where its baked
+light is even, a distant floor is drawn as a handful, while a shadow's edge
+keeps its triangles until it is far enough off not to show.
 
 ## What actually uses it
 

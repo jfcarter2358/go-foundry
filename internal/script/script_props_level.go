@@ -546,6 +546,22 @@ func levelProps() map[string]propAccess {
 			},
 			Doc: "how far painted terrain foliage is drawn, as a multiple of its natural distances, 0.25 to 2 (1 by default); lower is faster; saved for every level and session",
 		},
+		// The player's Nanite LOD threshold (gfx.NaniteLODError), saved to
+		// graphics.yaml like smooth_lighting.
+		"nanite_lod_error": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.NaniteLODError)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("nanite_lod_error", "float", v)
+				}
+				gfx.SetNaniteLODError(float32(f))
+				return nil
+			},
+			Doc: "how many pixels a cooked Nanite mesh's simplified detail may stray from the full detail before finer clusters are drawn, 0.25 to 8 (1 by default); higher is faster and coarser; saved for every level and session",
+		},
 		// The player's live GI tier (gfx.GIQuality), saved to graphics.yaml
 		// like smooth_lighting.
 		"gi_quality": {

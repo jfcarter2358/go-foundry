@@ -141,7 +141,7 @@ func playFlagSet(name, root string, out io.Writer) *playFlags {
 	p.seconds = fs.Float64("seconds", 0, "let the level run this long before the script starts — time for a level's own opening to play out")
 	p.gi = fs.String("gi", "", "live GI tier for the pictures: off, low, medium or high (default: picked by GPU, as a new player's is)")
 	p.view = fs.String("view", "normal", "the debug view pictures are drawn in: normal, lighting (the light alone, on white surfaces), "+
-		"probes, field or wireframe. A script's `view` command changes it mid-run")
+		"probes, field, wireframe, or the Nanite cull's clusters, lod or overdraw. A script's `view` command changes it mid-run")
 	return p
 }
 

@@ -3,8 +3,11 @@
 // is — its vertices welded into a pool, its triangles cut into clusters
 // (internal/cluster) and laid out cluster by cluster, its bounds, and a signed
 // distance grid GI traces it by (internal/meshsdf). Phase 1 of the Nanite plan
-// (docs/nanite/PHASE_1.md); later phases add the cluster DAG, collision data
-// and paging to the same file, behind its version number.
+// (docs/nanite/PHASE_1.md); Phase 2 (docs/nanite/PHASE_2.md) made the clusters
+// a DAG — every level of detail down to a root, the tree over it the GPU's
+// LOD selection walks, and a fixed coarse cut (the FALLBACK mesh) for the
+// CPU's uses. Later phases add collision data and paging to the same file,
+// behind its version number.
 //
 // A scenery placement whose model is a .fnm is drawn by the GPU-driven
 // cluster cull (render/nanite_scenery.go): every placement of every cooked
@@ -56,13 +59,13 @@ import (
 const Ext = ".fnm"
 
 // FileVersion is the cooked format's version, in every file's header. A file
-// of another version is refused and must be re-cooked.
-const FileVersion = 1
+// of another version is refused and must be re-cooked. 2: the cluster DAG.
+const FileVersion = 2
 
 // CookVersion is folded into every source hash, so a change to how a cook is
 // made — not just to what is stored — re-cooks every mesh. Bump it whenever
 // the same source would now cook differently.
-const CookVersion = 1
+const CookVersion = 3
 
 const magic = "FNM\x00"
 
@@ -84,14 +87,20 @@ type Slot struct {
 	// because the engine draws models without back-face culling.
 	DoubleSided bool
 	BaseColor   [4]float32
-	// First and Count are the slot's clusters in Mesh.Clusters: a slot's
-	// clusters are contiguous, so a draw group is one run of them.
+	// First and Count are the slot's clusters in Mesh.Clusters, every level
+	// of them: a slot's clusters are contiguous, so a draw group is one run.
+	// The first BaseCount of them are level 0, the full detail.
 	First, Count int32
+	BaseCount    int32
+	// FallbackFirst and FallbackCount are the slot's triangles in
+	// Mesh.Fallback.
+	FallbackFirst, FallbackCount uint32
 }
 
-// Cluster is a cluster of the mesh: internal/cluster's, with its triangles
-// in Mesh.Indices (TriFirst counts triangles from the start of the whole list).
-type Cluster = cluster.Cluster
+// Cluster is a cluster of the mesh's DAG: internal/cluster's, with its
+// triangles in Mesh.Indices (TriFirst counts triangles from the start of the
+// whole list).
+type Cluster = cluster.LODCluster
 
 // Mesh is a cooked Nanite mesh.
 type Mesh struct {
@@ -111,9 +120,26 @@ type Mesh struct {
 	// layout — and Normals 3 a vertex.
 	Vertices []float32
 	Normals  []float32
-	// Indices is the triangle list in cluster order.
+	// Indices is the triangle list in cluster order: every level of every
+	// slot, so a cluster of any level is one run of it over the same pool.
 	Indices  []uint32
 	Clusters []Cluster
+	// Levels is how many levels the DAG has (1: no simplification).
+	Levels int32
+	// Nodes is the tree over the clusters (cluster.BuildLODTree), root
+	// first; ClusterLeaf is each cluster's leaf number, and Leaves how many
+	// leaves there are.
+	Nodes       []cluster.LODNode
+	ClusterLeaf []int32
+	Leaves      int32
+
+	// Fallback is the FALLBACK mesh: one fixed cut of the DAG at
+	// FallbackError, a mid level, as a triangle list over the same pool
+	// (each slot's run at its FallbackFirst). It is what the CPU uses the
+	// mesh for — the editor's picking, the GI distance field's bake — where
+	// the full detail would cost without showing.
+	Fallback      []uint32
+	FallbackError float32
 
 	// SDF is the mesh's signed distance grid, for GI. Nil for a mesh too thin
 	// to have one.
@@ -126,8 +152,19 @@ type Mesh struct {
 // VertexCount is the vertices in the pool.
 func (m *Mesh) VertexCount() int { return len(m.Vertices) / 5 }
 
-// TriangleCount is the triangles drawn.
-func (m *Mesh) TriangleCount() int { return len(m.Indices) / 3 }
+// TriangleCount is the triangles of the full detail (level 0).
+func (m *Mesh) TriangleCount() int {
+	n := 0
+	for i := range m.Clusters {
+		if m.Clusters[i].Level == 0 {
+			n += int(m.Clusters[i].TriCount)
+		}
+	}
+	return n
+}
+
+// StoredTriangles is the triangles of every level together.
+func (m *Mesh) StoredTriangles() int { return len(m.Indices) / 3 }
 
 // Validate checks the mesh is internally consistent: what Read does before
 // handing a file to anything that would index with it.
@@ -152,18 +189,59 @@ func (m *Mesh) Validate() error {
 		}
 		next += c.TriCount
 	}
-	if int(next) != m.TriangleCount() {
-		return fmt.Errorf("clusters cover %d of %d triangles", next, m.TriangleCount())
+	if int(next) != m.StoredTriangles() {
+		return fmt.Errorf("clusters cover %d of %d triangles", next, m.StoredTriangles())
 	}
 	at := int32(0)
+	fb := uint32(0)
 	for si, s := range m.Slots {
-		if s.First != at || s.Count < 0 {
+		if s.First != at || s.Count < 0 || s.BaseCount < 0 || s.BaseCount > s.Count {
 			return fmt.Errorf("slot %d's clusters do not follow on", si)
 		}
+		for ci := s.First; ci < s.First+s.Count; ci++ {
+			if (ci < s.First+s.BaseCount) != (m.Clusters[ci].Level == 0) {
+				return fmt.Errorf("slot %d's level-0 clusters are not its first %d", si, s.BaseCount)
+			}
+		}
+		if s.FallbackFirst != fb {
+			return fmt.Errorf("slot %d's fallback triangles do not follow on", si)
+		}
+		fb += s.FallbackCount
 		at += s.Count
 	}
 	if int(at) != len(m.Clusters) {
 		return fmt.Errorf("slots cover %d of %d clusters", at, len(m.Clusters))
+	}
+	if int(fb)*3 != len(m.Fallback) {
+		return fmt.Errorf("slots cover %d of %d fallback triangles", fb, len(m.Fallback)/3)
+	}
+	for i, ix := range m.Fallback {
+		if int(ix) >= nv {
+			return fmt.Errorf("fallback index %d is %d, past the %d-vertex pool", i, ix, nv)
+		}
+	}
+	if len(m.ClusterLeaf) != len(m.Clusters) {
+		return fmt.Errorf("%d cluster leaves for %d clusters", len(m.ClusterLeaf), len(m.Clusters))
+	}
+	for ci, l := range m.ClusterLeaf {
+		if l < 0 || l >= m.Leaves {
+			return fmt.Errorf("cluster %d is in leaf %d of %d", ci, l, m.Leaves)
+		}
+	}
+	for ni := range m.Nodes {
+		n := &m.Nodes[ni]
+		if n.ChildCount > 0 && (n.FirstChild <= int32(ni) || int(n.FirstChild+n.ChildCount) > len(m.Nodes)) {
+			return fmt.Errorf("node %d's children %d+%d are out of order", ni, n.FirstChild, n.ChildCount)
+		}
+		if n.IsLeaf() && (n.ClusterFirst < 0 || int(n.ClusterFirst+n.ClusterCount) > len(m.Clusters) || n.Leaf >= m.Leaves) {
+			return fmt.Errorf("leaf node %d is out of range", ni)
+		}
+		if n.LeafFirst < 0 || n.LeafFirst+n.LeafCount > m.Leaves {
+			return fmt.Errorf("node %d's leaves are out of range", ni)
+		}
+	}
+	if len(m.Clusters) > 0 && len(m.Nodes) == 0 {
+		return fmt.Errorf("clusters but no tree over them")
 	}
 	if g := m.SDF; g != nil && len(g.Data) != g.N*g.N*g.N {
 		return fmt.Errorf("SDF holds %d of %d voxels", len(g.Data), g.N*g.N*g.N)
@@ -181,15 +259,37 @@ func (m *Mesh) SlotIndex(name string) int {
 	return -1
 }
 
-// SlotTriangles is slot si's triangle range in Indices.
+// SlotTriangles is slot si's full-detail (level 0) triangle range in
+// Indices: what a placement draws when the GPU's LOD selection is not
+// drawing it.
 func (m *Mesh) SlotTriangles(si int) (first, count uint32) {
 	s := &m.Slots[si]
-	if s.Count == 0 {
+	if s.BaseCount == 0 {
 		return 0, 0
 	}
 	a := &m.Clusters[s.First]
-	b := &m.Clusters[s.First+s.Count-1]
+	b := &m.Clusters[s.First+s.BaseCount-1]
 	return a.TriFirst, b.TriFirst + b.TriCount - a.TriFirst
+}
+
+// BaseIndices is the full detail, every slot's level 0 one after another
+// (the whole of Indices for a mesh with no slots yet).
+func (m *Mesh) BaseIndices() []uint32 {
+	if len(m.Slots) == 0 {
+		return m.Indices
+	}
+	var out []uint32
+	for si := range m.Slots {
+		first, count := m.SlotTriangles(si)
+		out = append(out, m.Indices[3*first:3*(first+count)]...)
+	}
+	return out
+}
+
+// SlotFallback is slot si's triangles in the fallback mesh.
+func (m *Mesh) SlotFallback(si int) []uint32 {
+	s := &m.Slots[si]
+	return m.Fallback[3*s.FallbackFirst : 3*(s.FallbackFirst+s.FallbackCount)]
 }
 
 // ---------- the file ----------

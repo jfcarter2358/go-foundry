@@ -273,7 +273,7 @@ The commands are one per line or separated by `;`, and a comment is `//` (not
 | `use`, `click <widget>` | interact, and a button on a screen that is up |
 | `cursor <x,y>\|center\|off`, `tap [button]`, `drag <x,y> [s] [button]` | free the pointer at a window pixel, click the world there, drag it somewhere |
 | `wait <s>`, `say <text>`, `read <path>`, `shot [name.png]` | the run itself |
-| `view normal\|lighting\|probes\|field\|wireframe` | the debug view the shots after it are drawn in |
+| `view normal\|lighting\|probes\|field\|wireframe\|clusters\|lod\|overdraw` | the debug view the shots after it are drawn in |
 | `teleport`, `enable`, `wake #tag`, `kill #tag` | skipping the parts a short run cannot reach |
 
 Every one of them goes through the engine's own front door — the same
@@ -363,6 +363,9 @@ foundry play run -level level1 -script 'look 90 -10; shot lit; view lighting; sh
 | `lighting` | the light alone, every surface white: where it is dark, where a shadow lands, what a light reaches. Works with GI off too |
 | `probes`, `field` | live GI's probes and its distance field — nothing while GI is off, so pair them with `-gi medium` |
 | `wireframe` | the geometry as lines, the filled passes (scatter, sky, decals, volumetrics, sprites) left out |
+| `clusters` | what the Nanite cull draws (cooked meshes, compiled surfaces, chunk brushes), each ~128-triangle cluster its own colour; everything else as normal |
+| `lod` | the same, coloured by the level of detail each cluster comes from: white is the full detail, then blue, cyan, green, yellow, orange, red, magenta for each coarser level |
+| `overdraw` | every fragment those draws rasterise, added up with no depth test: dark where a pixel is covered once, bright where clusters pile up |
 
 ### From a test
 

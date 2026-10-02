@@ -83,7 +83,7 @@ var verbs = map[string]verb{
 	"read":        {1, 1, "read <path>", "report one value: player.position, <id>.attr.health, hud:ammo.text …"},
 	"say":         {1, -1, "say <text>", "put a note in the log, to mark what a run was testing"},
 	"shot":        {0, 1, "shot [name.png]", "take a screenshot"},
-	"view":        {1, 1, "view <normal|lighting|probes|field|wireframe>", "draw the shots that follow in a debug view: lighting is the light alone on white surfaces"},
+	"view":        {1, 1, "view <normal|lighting|probes|field|wireframe|clusters|lod|overdraw>", "draw the shots that follow in a debug view: lighting is the light alone on white surfaces; clusters, lod and overdraw show what the Nanite cull draws"},
 }
 
 // Usage is the command list, for a tool's help and for an error message.

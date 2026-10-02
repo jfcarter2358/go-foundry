@@ -102,6 +102,10 @@ func pinNaniteFlags(t *testing.T) {
 		{&NaniteCone, true}, {&NaniteShadowCone, true}, {&NaniteShadows, true},
 		{&NaniteCompact, true}, {&NaniteStats, false}, {&NanitePrepass, true},
 		{&NanitePrepassMeshes, false}, {&NaniteChunks, true}, {&world.NaniteMeshes, true},
+		// LOD selection off: the Phase 1 tests compare the cull against the
+		// full-detail classic path exactly. The LOD tests
+		// (nanite_lod_gl_test.go) switch it on.
+		{&NaniteLOD, false}, {&naniteLODWalk, true},
 	}
 	saved := make([]bool, len(flags))
 	for i, f := range flags {

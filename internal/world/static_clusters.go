@@ -19,6 +19,23 @@ package world
 // a signature over its member surfaces and their triangle counts, and a group
 // whose signature does not match (a .fbsp written by an older build, or a
 // grouping the Smooth Lighting setting changed) is simply cut again at load.
+//
+// # Levels of detail
+//
+// Since Phase 2 (docs/nanite/PHASE_2.md) the compiler gives each large opaque
+// group a cluster DAG (internal/cluster/dag.go) instead of a flat cut: every
+// level of detail of the group, down to a root, which the GPU cull chooses
+// from per cluster. A compiled surface is cut on a world grid for the light
+// bake (compile.SubdivideFaces), so a floor is a dense grid of faces whose
+// baked light varies smoothly over most of it and sharply at a shadow's edge:
+// the simplification weighs the seven-float light record (gfx.LightStride)
+// with the normals and UVs, so the even stretches collapse to a few
+// triangles and the shadow edges stay (StaticLODWeights). The group's corner
+// stream is a soup — every face its own corners — so corners identical in
+// every float (position, UV, normal, light) are welded first, and the DAG
+// indexes the first of each such set: coarse triangles draw from the same
+// buffer as the full detail. A DAG is built only by the compiler; a group
+// cut again at load gets the flat cut, as in Phase 1.
 
 import (
 	"encoding/binary"
@@ -168,10 +185,48 @@ type StaticClusterGroup struct {
 	Sig uint64
 	// Order and Clusters are the cut (cluster.Result) over the group's
 	// triangle stream: its surfaces' triangles, surface by surface in buffer
-	// order, each surface's in its own vertex order.
+	// order, each surface's in its own vertex order. Empty when DAG is set.
 	Order    []uint32
 	Clusters []cluster.Cluster
+	// DAG is the group's cluster DAG, when the compiler built one.
+	DAG *StaticGroupDAG
 }
+
+// StaticGroupDAG is a group's cluster DAG (see the file comment).
+type StaticGroupDAG struct {
+	// Indices are every level's triangles, cluster by cluster, as corner
+	// numbers in the group's corner stream (its surfaces' corners, surface
+	// by surface in buffer order).
+	Indices  []uint32
+	Clusters []cluster.LODCluster
+	// BaseOrder is, per level-0 triangle as laid out, the triangle of the
+	// stream it is: how the PVS's visible surfaces find their clusters.
+	BaseOrder []uint32
+	Levels    int32
+	// The tree over it (cluster.BuildLODTree).
+	Nodes       []cluster.LODNode
+	ClusterLeaf []int32
+	Leaves      int32
+}
+
+// Triangles is how many triangles the stream has (level 0's).
+func (d *StaticGroupDAG) Triangles() int { return len(d.BaseOrder) }
+
+// StaticDAGMin is the fewest triangles a group needs to be given a DAG: below
+// it there is too little to simplify for a level to be worth its clusters.
+const StaticDAGMin = 256
+
+// StaticLODWeights weigh a compiled surface's attributes in the DAG's
+// simplification, in metres per unit of the attribute: a corner whose baked
+// light is off by 0.05 costs as much as a surface moved 5 cm, so a shadow
+// edge on a floor keeps its triangles until it is a few hundred metres off,
+// while an evenly lit stretch, or one lit by a smooth gradient, costs nothing
+// to collapse.
+var StaticLODWeights = struct{ UV, Normal, Light float32 }{UV: 0.25, Normal: 0.25, Light: 1}
+
+// StaticLOD switches the compiler's DAGs (FOUNDRY_NANITE_LOD_STATIC=0: the
+// flat cut of Phase 1 for every group).
+var StaticLOD = gfx.EnvFlag("FOUNDRY_NANITE_LOD_STATIC", true)
 
 // StaticClusterOptions are the limits a compiled level is cut with. The
 // vertex limit binds first on a corner soup, which is what a compiled
@@ -206,7 +261,7 @@ func StaticGroupPositions(s *StaticGeometry, g *StaticGroup) []float32 {
 	return out
 }
 
-// CutStaticGroup cuts one group into clusters.
+// CutStaticGroup cuts one group into clusters: a flat cut, as at load.
 func CutStaticGroup(s *StaticGeometry, g *StaticGroup) StaticClusterGroup {
 	pos := StaticGroupPositions(s, g)
 	cut := cluster.Build
@@ -219,14 +274,122 @@ func CutStaticGroup(s *StaticGeometry, g *StaticGroup) StaticClusterGroup {
 	return StaticClusterGroup{Key: g.Key.ID(), Sig: StaticGroupSignature(s, g), Order: r.Order, Clusters: r.Clusters}
 }
 
-// BuildStaticClusters cuts every group of s — what the compiler stores.
+// BuildStaticGroupDAG builds one group's cluster DAG, or nil when it gets the
+// flat cut: a double-sided group (whose coplanar copies settle their depth
+// tie by draw order, which only the flat in-order cut keeps), one not opaque
+// (drawn sorted, not culled), or one too small to simplify.
+//
+// seams, when set, are the positions another group also has (StaticSeams):
+// they are locked, so where this group meets a neighbour — another chunk's
+// floor, another material's wall — every level keeps the corners the
+// neighbour draws there, and no cut of either can open a crack between them.
+func BuildStaticGroupDAG(s *StaticGeometry, g *StaticGroup, seams map[[3]uint32]bool) *StaticGroupDAG {
+	if !StaticLOD || g.Key.DoubleSided || g.Key.Mat.Alpha < 1 || triangleCount(s, g) < StaticDAGMin {
+		return nil
+	}
+	// The corner stream, a corner a row of 15 floats: position, UV, normal,
+	// baked light — zeros for what the group does not carry.
+	const stride = 3 + 2 + 3 + gfx.LightStride
+	var rows []float32
+	for _, si := range g.Surfaces {
+		geo := &s.Surfaces[si].Geometry
+		light := geo.BakedLightData()
+		n := len(geo.Vertices) / 5
+		for c := 0; c < n; c++ {
+			rows = append(rows, geo.Vertices[5*c:5*c+5]...)
+			if len(geo.Normals) >= 3*(c+1) {
+				rows = append(rows, geo.Normals[3*c:3*c+3]...)
+			} else {
+				rows = append(rows, 0, 0, 0)
+			}
+			if len(light) >= gfx.LightStride*(c+1) {
+				rows = append(rows, light[gfx.LightStride*c:gfx.LightStride*(c+1)]...)
+			} else {
+				rows = append(rows, make([]float32, gfx.LightStride)...)
+			}
+		}
+	}
+	corners := len(rows) / stride
+	// Corners equal in every float are one vertex: the first of them.
+	first := make(map[[stride]uint32]uint32, corners)
+	idx := make([]uint32, corners)
+	for c := 0; c < corners; c++ {
+		var k [stride]uint32
+		for f := 0; f < stride; f++ {
+			k[f] = math.Float32bits(rows[c*stride+f])
+		}
+		v, ok := first[k]
+		if !ok {
+			v = uint32(c)
+			first[k] = v
+		}
+		idx[c] = v
+	}
+	w := StaticLODWeights
+	weights := []float32{w.UV, w.UV, w.Normal, w.Normal, w.Normal}
+	for i := 0; i < gfx.LightStride; i++ {
+		weights = append(weights, w.Light)
+	}
+	var locked func(uint32) bool
+	if len(seams) > 0 {
+		locked = func(v uint32) bool {
+			o := int(v) * stride
+			return seams[[3]uint32{math.Float32bits(rows[o]), math.Float32bits(rows[o+1]), math.Float32bits(rows[o+2])}]
+		}
+	}
+	d := cluster.BuildDAG(cluster.Mesh{Positions: rows, Stride: stride, Indices: idx},
+		cluster.DAGOptions{Cluster: StaticClusterOptions, AttrWeights: weights, Locked: locked})
+	if d.Levels < 2 {
+		return nil
+	}
+	nodes, leafOf := cluster.BuildLODTree(d.Clusters, [][2]int32{{0, int32(len(d.Clusters))}})
+	out := &StaticGroupDAG{Indices: d.Indices, Clusters: d.Clusters, BaseOrder: d.BaseOrder, Levels: int32(d.Levels),
+		Nodes: nodes, ClusterLeaf: leafOf}
+	for _, n := range nodes {
+		out.Leaves = max(out.Leaves, n.Leaf+1)
+	}
+	return out
+}
+
+// StaticSeams is the positions, bit for bit, that more than one of groups
+// has a corner at: where a group meets a neighbour it is drawn beside but
+// simplified apart from. Every group counts — a small, double-sided or
+// see-through one is drawn at full detail, so a neighbour must keep its
+// corners for it too.
+func StaticSeams(s *StaticGeometry, groups []StaticGroup) map[[3]uint32]bool {
+	owner := map[[3]uint32]int32{}
+	seams := map[[3]uint32]bool{}
+	for gi := range groups {
+		for _, si := range groups[gi].Surfaces {
+			v := s.Surfaces[si].Geometry.Vertices
+			for c := 0; c+5 <= len(v); c += 5 {
+				k := [3]uint32{math.Float32bits(v[c]), math.Float32bits(v[c+1]), math.Float32bits(v[c+2])}
+				if o, ok := owner[k]; !ok {
+					owner[k] = int32(gi)
+				} else if o != int32(gi) {
+					seams[k] = true
+				}
+			}
+		}
+	}
+	return seams
+}
+
+// BuildStaticClusters cuts every group of s — what the compiler stores: a
+// DAG for each group that takes one (BuildStaticGroupDAG), the flat cut for
+// the rest.
 func BuildStaticClusters(s *StaticGeometry) []StaticClusterGroup {
 	if s == nil {
 		return nil
 	}
 	groups, _ := StaticGroups(s)
+	seams := StaticSeams(s, groups)
 	out := make([]StaticClusterGroup, len(groups))
 	for gi := range groups {
+		if d := BuildStaticGroupDAG(s, &groups[gi], seams); d != nil {
+			out[gi] = StaticClusterGroup{Key: groups[gi].Key.ID(), Sig: StaticGroupSignature(s, &groups[gi]), DAG: d}
+			continue
+		}
 		out[gi] = CutStaticGroup(s, &groups[gi])
 	}
 	return out
@@ -244,7 +407,12 @@ func (s *StaticGeometry) StaticClustersFor(g *StaticGroup) (c StaticClusterGroup
 		}
 	}
 	if i, ok := s.clusterIndex[id]; ok {
-		if cg := s.Clusters[i]; cg.Sig == StaticGroupSignature(s, g) && len(cg.Order) == triangleCount(s, g) {
+		cg := s.Clusters[i]
+		n := len(cg.Order)
+		if cg.DAG != nil {
+			n = cg.DAG.Triangles()
+		}
+		if cg.Sig == StaticGroupSignature(s, g) && n == triangleCount(s, g) {
 			return cg, true
 		}
 	}

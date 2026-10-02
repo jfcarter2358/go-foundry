@@ -17,11 +17,17 @@ package nanitecook
 //     cooked .fmdl draws the picture its uncooked self does.
 //  2. Weld (gfx.WeldCorners): corners whose whole record — position, UV,
 //     normal — is bit-for-bit the same become one vertex of the pool.
-//  3. Group the triangles by slot and cut each slot into clusters
-//     (cluster.Build), laying the index list out cluster by cluster. A
-//     double-sided slot's clusters lose their normal cone.
-//  4. Bound it, and bake its distance grid for GI at a resolution sized to
-//     the mesh (sdfResolution).
+//  3. Group the triangles by slot and build each slot's cluster DAG
+//     (cluster.BuildDAG: cut, then group, simplify and re-cut a level at a
+//     time down to a root), laying the index list out cluster by cluster,
+//     every level of it. Where two slots meet is locked, so neither slot's
+//     simplification opens a crack against the other. The simplification
+//     weighs the normals and UVs (NormalWeight, UVWeight). A double-sided
+//     slot's clusters lose their normal cone.
+//  4. Build the tree the GPU's LOD selection walks (cluster.BuildLODTree),
+//     and the fallback mesh: one cut of the DAG at a middle level's error.
+//  5. Bound it, and bake its distance grid for GI from the fallback mesh at
+//     a resolution sized to the mesh (sdfResolution).
 
 import (
 	"crypto/sha256"
@@ -51,7 +57,27 @@ type Options struct {
 	// SDFCell is the distance grid's target cell size in metres; 0 takes
 	// DefaultSDFCell.
 	SDFCell float32
+	// NormalWeight and UVWeight weigh the normals and UVs in the DAG's
+	// simplification, as a fraction of the mesh's radius per unit of the
+	// attribute: with 0.2, a normal turned by 0.1 (about 6°) costs as much
+	// as moving the surface a fiftieth of the radius. 0 takes the defaults;
+	// < 0 ignores the attribute.
+	NormalWeight, UVWeight float32
+	// GroupSize is the DAG's clusters per group; 0 takes the default.
+	GroupSize int
 }
+
+// The default attribute weights (Options.NormalWeight, UVWeight). Chosen
+// on the bumpy sample rock drawn in its normal colours, which shows a turned
+// normal more plainly than any lit texture: at 0.2 a cut at the default 1 px
+// threshold is within 24/255 of the full detail over 98% of the picture
+// (render/nanite_lod_gl_test.go); at 0.1 the first simplification of a
+// metre-sized rock cost half as much error, and visibly shifted the shading
+// where the cut changed. docs/nanite/PHASE_2.md has the numbers.
+const (
+	DefaultNormalWeight = 0.2
+	DefaultUVWeight     = 0.1
+)
 
 // DefaultSDFCell is the distance grid's target cell: a little coarser than
 // GI's finest clipmap level, which is all a trace can resolve anyway.
@@ -255,7 +281,36 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 	}
 	sort.SliceStable(order, func(a, b int) bool { return src.triSlot[order[a]] < src.triSlot[order[b]] })
 
-	m.Indices = make([]uint32, 0, nt*3)
+	// The simplifier's view of the pool: position, UV and normal per vertex.
+	nv := pool.VertexCount()
+	attrs := make([]float32, 0, nv*8)
+	for v := 0; v < nv; v++ {
+		attrs = append(attrs, pool.Vertices[5*v:5*v+5]...)
+		attrs = append(attrs, pool.Normals[3*v:3*v+3]...)
+	}
+	weights := attrWeights(pool, opt)
+
+	// A position two slots share is locked: each slot simplifies alone, and
+	// they must still meet.
+	slotAt := map[[3]uint32]int32{}
+	sharedPos := map[[3]uint32]bool{}
+	key := func(v uint32) [3]uint32 {
+		return [3]uint32{math.Float32bits(pool.Vertices[5*v]), math.Float32bits(pool.Vertices[5*v+1]), math.Float32bits(pool.Vertices[5*v+2])}
+	}
+	for t := 0; t < nt; t++ {
+		for k := 0; k < 3; k++ {
+			p := key(pool.Indices[3*t+k])
+			if s, ok := slotAt[p]; !ok {
+				slotAt[p] = src.triSlot[t]
+			} else if s != src.triSlot[t] {
+				sharedPos[p] = true
+			}
+		}
+	}
+	locked := func(v uint32) bool { return sharedPos[key(v)] }
+
+	m.Indices = make([]uint32, 0, nt*3*2)
+	var ranges [][2]int32
 	for si := range src.slots {
 		slot := src.slots[si]
 		var idx []uint32
@@ -266,27 +321,58 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 		}
 		slot.First = int32(len(m.Clusters))
 		if len(idx) > 0 {
-			r := cluster.Build(cluster.Mesh{Positions: pool.Vertices, Stride: 5, Indices: idx}, opt.Cluster)
+			d := cluster.BuildDAG(cluster.Mesh{Positions: attrs, Stride: 8, Indices: idx}, cluster.DAGOptions{
+				Cluster: opt.Cluster, GroupSize: opt.GroupSize, AttrWeights: weights, Locked: locked})
 			base := uint32(len(m.Indices) / 3)
-			m.Indices = append(m.Indices, r.Reorder(idx)...)
-			for _, c := range r.Clusters {
+			m.Indices = append(m.Indices, d.Indices...)
+			for _, c := range d.Clusters {
 				c.TriFirst += base
 				if slot.DoubleSided {
 					c.ConeCutoff = cluster.NoCone
 				}
+				// Group numbers are the slot's own; they only name runs.
+				if c.Level == 0 {
+					slot.BaseCount++
+				}
 				m.Clusters = append(m.Clusters, c)
 			}
+			m.Levels = max(m.Levels, int32(d.Levels))
 		}
 		slot.Count = int32(len(m.Clusters)) - slot.First
+		ranges = append(ranges, [2]int32{slot.First, slot.Count})
 		m.Slots = append(m.Slots, slot)
 	}
+	m.Nodes, m.ClusterLeaf = cluster.BuildLODTree(m.Clusters, ranges)
+	for _, n := range m.Nodes {
+		m.Leaves = max(m.Leaves, n.Leaf+1)
+	}
 
-	// Bounds over what is drawn.
+	// The fallback: every slot cut at the error of the middle level.
+	if m.Levels > 1 {
+		mid := (m.Levels - 1) / 2
+		for i := range m.Clusters {
+			if m.Clusters[i].Level == mid {
+				m.FallbackError = max(m.FallbackError, m.Clusters[i].Error)
+			}
+		}
+	}
+	for si := range m.Slots {
+		s := &m.Slots[si]
+		s.FallbackFirst = uint32(len(m.Fallback) / 3)
+		for ci := s.First; ci < s.First+s.Count; ci++ {
+			c := &m.Clusters[ci]
+			if c.Selected(m.FallbackError) {
+				m.Fallback = append(m.Fallback, m.Indices[3*c.TriFirst:3*(c.TriFirst+c.TriCount)]...)
+			}
+		}
+		s.FallbackCount = uint32(len(m.Fallback)/3) - s.FallbackFirst
+	}
+
+	// Bounds over the full detail (every level's corners are some of its
+	// corners, so they bound the rest too).
 	first := true
-	var tris []mgl32.Vec3
-	for _, ix := range m.Indices {
+	for _, ix := range m.BaseIndices() {
 		p := mgl32.Vec3{pool.Vertices[5*ix], pool.Vertices[5*ix+1], pool.Vertices[5*ix+2]}
-		tris = append(tris, p)
 		if first {
 			m.Lo, m.Hi, first = p, p, false
 			continue
@@ -295,14 +381,48 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 		m.Hi = mgl32.Vec3{max(m.Hi[0], p[0]), max(m.Hi[1], p[1]), max(m.Hi[2], p[2])}
 	}
 	m.Center = m.Lo.Add(m.Hi).Mul(0.5)
-	for _, p := range tris {
+	for _, ix := range m.BaseIndices() {
+		p := mgl32.Vec3{pool.Vertices[5*ix], pool.Vertices[5*ix+1], pool.Vertices[5*ix+2]}
 		m.Radius = max(m.Radius, p.Sub(m.Center).Len())
 	}
 	m.Radius = m.Radius*1.0001 + 1e-6
 
+	// The distance grid, from the fallback: GI's clipmap resolves nothing
+	// finer than a few centimetres, and the fallback is within its error of
+	// the full detail.
+	var tris []mgl32.Vec3
+	for _, ix := range m.Fallback {
+		tris = append(tris, mgl32.Vec3{pool.Vertices[5*ix], pool.Vertices[5*ix+1], pool.Vertices[5*ix+2]})
+	}
 	ext := m.Hi.Sub(m.Lo)
 	m.SDF = meshsdf.Bake(tris, sdfResolution(max(ext[0], ext[1], ext[2]), opt.SDFCell))
 	return m, m.Validate()
+}
+
+// attrWeights is the simplification's weights for the pool's U, V and the
+// normal's three floats, from opt and the mesh's size.
+func attrWeights(pool *gfx.IndexedMesh, opt Options) []float32 {
+	nw, uw := opt.NormalWeight, opt.UVWeight
+	if nw == 0 {
+		nw = DefaultNormalWeight
+	}
+	if uw == 0 {
+		uw = DefaultUVWeight
+	}
+	nw, uw = max(nw, 0), max(uw, 0)
+	// The radius, roughly: half the box's diagonal.
+	var lo, hi mgl32.Vec3
+	for v := 0; v < pool.VertexCount(); v++ {
+		p := mgl32.Vec3{pool.Vertices[5*v], pool.Vertices[5*v+1], pool.Vertices[5*v+2]}
+		if v == 0 {
+			lo, hi = p, p
+			continue
+		}
+		lo = mgl32.Vec3{min(lo[0], p[0]), min(lo[1], p[1]), min(lo[2], p[2])}
+		hi = mgl32.Vec3{max(hi[0], p[0]), max(hi[1], p[1]), max(hi[2], p[2])}
+	}
+	r := hi.Sub(lo).Len() / 2
+	return []float32{uw * r, uw * r, nw * r, nw * r, nw * r}
 }
 
 // CookedPath is where a source's cooked mesh goes by default: beside it,

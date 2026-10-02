@@ -290,6 +290,15 @@ func (s *Scenery) loadNanite() error {
 			log.Printf("scenery %s: texture %q: %v", s.ID, tex, err)
 		}
 		idx := m.Indices[3*first : 3*(first+count)]
+		if s.NaniteGPU {
+			// The GPU's LOD selection draws it; what the CPU keeps is for
+			// picking and the point-shadow signature, and the fallback
+			// mesh — the DAG cut at a middle level — serves those for a
+			// fraction of the triangles (docs/nanite/PHASE_2.md).
+			if fb := m.SlotFallback(si); len(fb) > 0 {
+				idx = fb
+			}
+		}
 		g := gfx.Geometry{Smooth: m.Slots[si].Smooth, AutoSmooth: true, Indexed: true}
 		if s.NaniteGPU {
 			// The pool as it is, indexed by the slot's run: nothing to upload,

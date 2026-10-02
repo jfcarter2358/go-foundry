@@ -99,8 +99,9 @@ exactly the questions worth answering from inside the engine rather than by
 guessing from the files.
 
 The viewport tool shows what is on screen, and can draw that one picture in a
-debug view — `lighting` (the light alone on white surfaces), `probes`, `field`
-or `wireframe` — putting your view back afterwards. So "is this corridor too
+debug view — `lighting` (the light alone on white surfaces), `probes`, `field`,
+`wireframe`, or the Nanite cull's `clusters`, `lod` and `overdraw` — putting
+your view back afterwards. So "is this corridor too
 dark?" gets a lighting-only look with the textures out of the way. A **play**
 script's `view` command does the same for its shots, and `play_stop` restores
 the view you had. Point the camera at the thing you

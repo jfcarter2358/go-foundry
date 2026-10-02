@@ -147,8 +147,8 @@ func Describe(m *nanite.Mesh) string {
 		sdf = fmt.Sprintf("SDF %d³", m.SDF.N)
 	}
 	size := m.Hi.Sub(m.Lo)
-	return fmt.Sprintf("%d triangles, %d vertices, %d clusters, %s, size %.2f x %.2f x %.2f, slots [%s]",
-		m.TriangleCount(), m.VertexCount(), len(m.Clusters), sdf, size[0], size[1], size[2], strings.Join(slots, " "))
+	return fmt.Sprintf("%d triangles, %d vertices, %d clusters over %d LOD levels, fallback %d triangles, %s, size %.2f x %.2f x %.2f, slots [%s]",
+		m.TriangleCount(), m.VertexCount(), len(m.Clusters), m.Levels, len(m.Fallback)/3, sdf, size[0], size[1], size[2], strings.Join(slots, " "))
 }
 
 func inspectMain(root string, args []string, out io.Writer) int {
@@ -179,11 +179,26 @@ func inspectMain(root string, args []string, out io.Writer) int {
 	}
 	if len(m.Clusters) > 0 {
 		fmt.Fprintf(out, "clusters: %d to %d triangles, mean %.1f; %d with a normal cone\n",
-			minT, maxT, float64(m.TriangleCount())/float64(len(m.Clusters)), cones)
+			minT, maxT, float64(m.StoredTriangles())/float64(len(m.Clusters)), cones)
 	}
+	// The DAG, a level a line: what each level holds and how far it strays.
+	for l := int32(0); l < m.Levels; l++ {
+		n, tris := 0, 0
+		var maxErr float32
+		for i := range m.Clusters {
+			if c := &m.Clusters[i]; c.Level == l {
+				n++
+				tris += int(c.TriCount)
+				maxErr = max(maxErr, c.Error)
+			}
+		}
+		fmt.Fprintf(out, "level %d: %d clusters, %d triangles, error up to %.4g\n", l, n, tris, maxErr)
+	}
+	fmt.Fprintf(out, "LOD tree: %d nodes, %d leaves; fallback cut at error %.4g: %d triangles\n",
+		len(m.Nodes), m.Leaves, m.FallbackError, len(m.Fallback)/3)
 	for si, s := range m.Slots {
-		fmt.Fprintf(out, "slot %d %q: texture %q, clusters %d..%d, double-sided %v\n",
-			si, s.Name, s.Texture, s.First, s.First+s.Count, s.DoubleSided)
+		fmt.Fprintf(out, "slot %d %q: texture %q, clusters %d..%d (%d at full detail), double-sided %v\n",
+			si, s.Name, s.Texture, s.First, s.First+s.Count, s.BaseCount, s.DoubleSided)
 	}
 	if fresh, err := UpToDate(fileutil.ResolveAssetPath(m.Source), path); err == nil {
 		fmt.Fprintf(out, "up to date with its source: %v\n", fresh)

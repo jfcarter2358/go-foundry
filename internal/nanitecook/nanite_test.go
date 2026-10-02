@@ -293,3 +293,55 @@ func TestACookedClosedRockStaysClosed(t *testing.T) {
 		t.Fatal("the rock with a triangle removed still reads as closed")
 	}
 }
+
+// A cook builds each slot's cluster DAG and the fallback: every level's
+// clusters after level 0's in the slot's run, a tree over them, and a fallback
+// cut that is closed, far smaller than the full detail, and the source of the
+// distance grid. Cuts of both slots together at any threshold stay closed —
+// where the stone meets the moss is locked.
+func TestCookBuildsTheDAGAndTheFallback(t *testing.T) {
+	m, err := Cook(writeSampleGLB(t, t.TempDir(), 5), Options{}) // 20,480 triangles
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Levels < 4 || len(m.Nodes) == 0 || m.Leaves == 0 {
+		t.Fatalf("%d levels, %d nodes, %d leaves", m.Levels, len(m.Nodes), m.Leaves)
+	}
+	if m.TriangleCount() != 20480 || m.StoredTriangles() <= m.TriangleCount() {
+		t.Fatalf("level 0 holds %d, all levels %d", m.TriangleCount(), m.StoredTriangles())
+	}
+	closed := func(idx []uint32) bool {
+		return (&nanite.Mesh{Vertices: m.Vertices, Indices: idx}).Closed()
+	}
+	if !closed(m.BaseIndices()) {
+		t.Fatal("the full detail is not closed")
+	}
+	var maxErr float32
+	for i := range m.Clusters {
+		maxErr = max(maxErr, m.Clusters[i].Error)
+	}
+	for _, f := range []float32{0.01, 0.1, 0.5, 1} {
+		var idx []uint32
+		for i := range m.Clusters {
+			if c := &m.Clusters[i]; c.Selected(f * maxErr) {
+				idx = append(idx, m.Indices[3*c.TriFirst:3*(c.TriFirst+c.TriCount)]...)
+			}
+		}
+		if !closed(idx) {
+			t.Fatalf("the cut at %g of the largest error is open", f)
+		}
+	}
+	fb := len(m.Fallback) / 3
+	if m.FallbackError <= 0 || fb == 0 || fb*4 > m.TriangleCount() {
+		t.Fatalf("fallback: %d triangles at error %g", fb, m.FallbackError)
+	}
+	if !closed(m.Fallback) {
+		t.Fatal("the fallback mesh is open")
+	}
+	for si := range m.Slots {
+		if len(m.SlotFallback(si)) == 0 {
+			t.Fatalf("slot %d has no fallback triangles", si)
+		}
+	}
+	t.Logf("%d levels, %d clusters, fallback %d triangles at error %.4g", m.Levels, len(m.Clusters), fb, m.FallbackError)
+}

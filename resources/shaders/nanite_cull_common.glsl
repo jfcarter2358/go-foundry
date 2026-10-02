@@ -40,12 +40,32 @@ uniform sampler2D hiz;
 uniform ivec2 hizSize;
 uniform int hizLevels;
 uniform int useHiz;
+uniform uint instanceCount;
+
+// Level of detail (render/nanite_lod.go). lodMode 0: level 0 only, the full
+// detail; 1: the cut the camera chooses. lodEye is the camera, whatever view
+// the pass draws; lodK folds the frame's height, field of view and the error
+// threshold in pixels into one factor (an error e at distance d is fine when
+// e·lodK <= d). passStamp marks the leaves the tree walk reached this pass.
+uniform int lodMode;
+// lodWalk: the tree walk ran this pass, so the leaf marks are current.
+uniform int lodWalk;
+uniform vec3 lodEye;
+uniform float lodK;
+uniform uint passStamp;
+
+// The nearest the eye is taken to be to an LOD sphere (cluster.LODNearClamp).
+#define LOD_NEAR 1e-3
+
+// RANGE_SLOTS, a range tile's command slots, is defined by the Go side
+// (render/nanite_cull.go, rangeSlots).
 
 // flags.x: bit 0 — always visible (a batch's identity instance: a compiled
 // level's surfaces, which are in world space and culled cluster by cluster);
 // bit 1 — no cone test (a mirroring or unevenly scaled placement, whose back
 // faces are not where the cone says); bit 2 — its mesh is closed, so a shadow
-// pass may cone-test it too (CONE_CLOSED).
+// pass may cone-test it too (CONE_CLOSED); bit 3 — its mesh has a cluster
+// DAG: flags.y is its LOD tree's root node, flags.z its first leaf mark.
 struct Instance {
     mat4 model;
     vec4 sphere; // local centre, radius
@@ -58,6 +78,18 @@ layout(std430, binding = 0) readonly buffer Instances {
 layout(std430, binding = 1) buffer InstanceVisible {
     uint instVis[];
 };
+
+// Leaf marks: per instance with a DAG, per leaf of its tree, the stamp of the
+// last pass whose tree walk reached it (nanite_lod_traverse_comp.glsl).
+layout(std430, binding = 12) buffer LeafMarks {
+    uint leafVis[];
+};
+
+// An error of e (world units) over the sphere (c, r) is fine enough to draw
+// from the camera: cluster.LODWithin.
+bool lodWithin(vec3 c, float r, float e) {
+    return e * lodK <= max(distance(c, lodEye) - r, LOD_NEAR);
+}
 
 bool inFrustum(vec3 c, float r) {
     for (int i = 0; i < 6; i++) {

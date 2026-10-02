@@ -10,8 +10,6 @@
 
 layout(local_size_x = 64) in;
 
-uniform uint instanceCount;
-
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= instanceCount) {

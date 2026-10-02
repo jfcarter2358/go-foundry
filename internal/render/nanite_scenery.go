@@ -15,6 +15,14 @@ package render
 // override a slot's texture), so two hundred rocks in three looks are three
 // indirect multi-draws whatever the camera sees.
 //
+// Each mesh brings its whole cluster DAG (Phase 2): every level's clusters
+// into the cluster list, every level's triangles into the index buffer (over
+// the same vertices — a coarser level only indexes fewer of them), and its
+// LOD tree into the node list, each placement getting its own run of leaf
+// marks. Every level of a slot is in the slot's tiles — range tiles over its
+// leaves (appendLeafTiles) — so the cull chooses the cut each pass
+// (nanite_cull.go, "Level of detail").
+//
 // The pool and the tiles are rebuilt only when the set of placements, the
 // meshes they use or their overrides change; a placement that moves (the
 // editor's gizmo) only re-sends the instance records.
@@ -30,6 +38,7 @@ import (
 	"sort"
 	"unsafe"
 
+	"foundry/internal/cluster"
 	"foundry/internal/gfx"
 	"foundry/internal/nanite"
 	"foundry/internal/world"
@@ -51,6 +60,7 @@ type naniteSceneryRenderer struct {
 	vbo, nbo uint32
 	ebo      uint32
 	clusters uint32
+	nodes    uint32
 
 	// members are the level's placements drawn here, by index; sig what the
 	// groups and tiles were built from.
@@ -64,6 +74,8 @@ type naniteSceneryRenderer struct {
 	// spheres are the placements' world spheres, for the CPU's look ahead of
 	// a pass (inView).
 	spheres []mgl32.Vec4
+	// leafBase is each placement's first leaf mark.
+	leafBase []uint32
 
 	pass2     bool
 	pass2View cullView
@@ -74,6 +86,12 @@ type naniteMeshSlot struct {
 	baseVertex  int32
 	firstIndex  uint32
 	clusterBase uint32
+	// nodeBase is its tree's root in the node list, leaves how many leaves
+	// the tree has (0: no tree), and leafRanges their runs of clusters —
+	// the range tiles.
+	nodeBase   uint32
+	leaves     uint32
+	leafRanges [][2]int32
 	// closed: the mesh bounds a solid (nanite.Mesh.Closed), so its
 	// placements are flagged for the shadow passes' cone test.
 	closed bool
@@ -124,6 +142,10 @@ func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
 			h.Write([]byte{0})
 		}
 	}
+	// A debug view tiles a cluster a command (appendLeafTiles).
+	if naniteDebugActive() {
+		h.Write([]byte{1})
+	}
 	return h.Sum64()
 }
 
@@ -159,6 +181,7 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 		group, inst  int
 		first, count uint32
 		hist         uint32
+		mesh         *naniteMeshSlot
 	}
 	var runs []run
 	hist := uint32(0)
@@ -178,10 +201,19 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 				r.groups = append(r.groups, gfx.Material{Texture: kk.tex, Alpha: 1, Normals: true, Smooth: kk.smooth})
 			}
 			runs = append(runs, run{group: g, inst: k, first: pm.clusterBase + uint32(slot.First), count: uint32(slot.Count),
-				hist: hist + uint32(slot.First)})
+				hist: hist + uint32(slot.First), mesh: pm})
 		}
 		hist += uint32(len(m.Clusters))
 	}
+	// Each placement's leaf marks.
+	r.leafBase = r.leafBase[:0]
+	leaves := uint32(0)
+	for _, i := range r.members {
+		r.leafBase = append(r.leafBase, leaves)
+		leaves += r.meshes[lvl.Scenery[i].Nanite].leaves
+	}
+	r.batch.leaves = int(leaves)
+	r.batch.nodes = r.nodes
 	sort.SliceStable(runs, func(a, b int) bool { return runs[a].group < runs[b].group })
 	var tiles []gpuTile
 	groups := make([]cullGroup, len(r.groups))
@@ -189,7 +221,13 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 	for gi := range r.groups {
 		groups[gi].first = int32(slot)
 		for _, rn := range runs {
-			if rn.group == gi {
+			if rn.group != gi {
+				continue
+			}
+			if len(rn.mesh.leafRanges) > 0 {
+				// A tile a leaf of the DAG, drawn as one range.
+				tiles = appendLeafTiles(tiles, rn.mesh.leafRanges, rn.mesh.clusterBase, rn.first, rn.count, uint32(rn.inst), rn.hist, &slot)
+			} else {
 				tiles = appendTiles(tiles, rn.first, rn.count, uint32(rn.inst), rn.hist, &slot)
 			}
 		}
@@ -208,15 +246,19 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 	var verts, normals []float32
 	var indices []uint32
 	var clusters []gpuCluster
+	var nodes []gpuNode
 	for _, m := range list {
 		pm := &naniteMeshSlot{baseVertex: int32(len(verts) / 5), firstIndex: uint32(len(indices)), clusterBase: uint32(len(clusters)),
-			closed: m.Closed()}
+			nodeBase: uint32(len(nodes)), leaves: uint32(m.Leaves), leafRanges: cluster.LeafRanges(m.Nodes), closed: m.Closed()}
 		r.meshes[m] = pm
 		verts = append(verts, m.Vertices...)
 		normals = append(normals, m.Normals...)
 		indices = append(indices, m.Indices...)
 		for ci := range m.Clusters {
-			clusters = append(clusters, toGPUCluster(&m.Clusters[ci], pm.firstIndex, pm.baseVertex))
+			clusters = append(clusters, toGPULODCluster(&m.Clusters[ci], m.ClusterLeaf[ci], pm.firstIndex, pm.baseVertex))
+		}
+		for ni := range m.Nodes {
+			nodes = append(nodes, toGPUNode(&m.Nodes[ni], pm.nodeBase))
 		}
 	}
 	if r.vao == 0 {
@@ -238,6 +280,7 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	uploadClusters(&r.clusters, clusters)
+	uploadNodes(&r.nodes, nodes)
 }
 
 // updateInstances re-sends the instance records if any placement moved.
@@ -250,8 +293,14 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 	for k, i := range r.members {
 		s := &lvl.Scenery[i]
 		in := placedInstance(s.ModelMatrix(), s.Nanite.Center, s.Nanite.Radius)
-		if pm := r.meshes[s.Nanite]; pm != nil && pm.closed {
-			in.Flags[0] |= instShadowCone
+		if pm := r.meshes[s.Nanite]; pm != nil {
+			if pm.closed {
+				in.Flags[0] |= instShadowCone
+			}
+			if pm.leaves > 0 {
+				in.Flags[0] |= instLOD
+				in.Flags[1], in.Flags[2] = pm.nodeBase, r.leafBase[k]
+			}
 		}
 		if in != r.insts[k] {
 			r.insts[k] = in
@@ -297,7 +346,8 @@ func RenderNaniteScenery(lvl *world.Level, frustum Frustum, projView mgl32.Mat4)
 	}
 	DebugStats.NaniteInstances = len(r.members)
 	DebugStats.NaniteClusters += r.batch.slots
-	if r.inView(&frustum) == 0 {
+	in := r.inView(&frustum)
+	if in == 0 {
 		// Every placement behind the camera: nothing to cull, and nothing
 		// for the occlusion pass to finish. Their history goes stale, which
 		// costs one frame of drawing them in the second pass when they come
@@ -306,12 +356,20 @@ func RenderNaniteScenery(lvl *world.Level, frustum Frustum, projView mgl32.Mat4)
 	}
 	eye := gfx.Cam.Position
 	mode := int32(cullPlain)
+	// Packed by the shadows' rule (renderNaniteSceneryShadow): only with most
+	// placements out of view. The cooked meshes' DAGs are range tiles, whose
+	// list is short already, and on the rock field the packing cost the
+	// camera's two passes a millisecond (docs/nanite/PHASE_2.md).
+	compact := in*2 < len(r.spheres)
 	if naniteTwoPass && r.batch.slots > 0 {
 		mode = cullPass1
 		r.pass2 = true
 		r.pass2View = cameraCullView(frustum, projView, eye, cullPass2)
+		r.pass2View.compact = compact
 	}
-	if r.batch.cull(cameraCullView(frustum, projView, eye, mode)) {
+	v := cameraCullView(frustum, projView, eye, mode)
+	v.compact = compact
+	if r.batch.cull(v) {
 		r.drawColour()
 	}
 	gl.UseProgram(gfx.Program)
@@ -330,6 +388,10 @@ func (r *naniteSceneryRenderer) drawOcclusion() {
 }
 
 func (r *naniteSceneryRenderer) drawColour() {
+	if naniteDebugActive() {
+		r.batch.drawDebug(len(r.groups), func(int) uint32 { return r.vao }, true)
+		return
+	}
 	identity := mgl32.Ident4()
 	prepassBatch(&r.batch, len(r.groups),
 		func(i int) *gfx.Material { return &r.groups[i] },
@@ -361,7 +423,11 @@ func renderNaniteSceneryShadow(lvl *world.Level, prog uint32, cull *Frustum) {
 	v := shadowCullView(cull)
 	// Packed when most placements are out of the frustum, where the fixed
 	// list would be mostly empty commands; drawn as it stands when most are
-	// in, where the packing is all cost.
+	// in, where the packing is all cost. That holds with LOD selection too:
+	// a DAG's leaves are range tiles of rangeSlots commands each, so the
+	// list is no longer than the full detail's cluster list was, and on the
+	// rock field packing it cost 2 ms a frame more than it saved
+	// (docs/nanite/PHASE_2.md).
 	v.compact = in*2 < len(r.spheres)
 	ok := r.batch.cull(v)
 	gl.UseProgram(prog)

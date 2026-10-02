@@ -71,3 +71,39 @@ func TestGIQualityRoundTripsOnlyOnceChosen(t *testing.T) {
 		t.Error("the GPU pick overrode a saved choice")
 	}
 }
+
+// The Nanite LOD threshold survives the file, clamped on the way in; a file
+// without it keeps the default.
+func TestNaniteLODErrorRoundTripsThroughGraphicsFile(t *testing.T) {
+	prev := gfx.NaniteLODError
+	t.Cleanup(func() { gfx.NaniteLODError, gfx.GraphicsSettingsChanged = prev, false })
+
+	gfx.SetNaniteLODError(3)
+	if !gfx.GraphicsSettingsChanged {
+		t.Error("changing the LOD threshold did not mark the settings for saving")
+	}
+	data, err := marshalGraphicsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gfx.NaniteLODError = 1
+	if err := applyGraphicsSettings(data); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.NaniteLODError != 3 {
+		t.Errorf("came back as %g from:\n%s", gfx.NaniteLODError, data)
+	}
+	if err := applyGraphicsSettings([]byte("nanite_lod_error: 100\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.NaniteLODError != gfx.NaniteLODErrorMax {
+		t.Errorf("an out-of-range threshold came in as %g", gfx.NaniteLODError)
+	}
+	gfx.NaniteLODError = 1
+	if err := applyGraphicsSettings([]byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.NaniteLODError != 1 {
+		t.Error("a file without nanite_lod_error changed it")
+	}
+}

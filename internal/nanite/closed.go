@@ -22,14 +22,15 @@ package nanite
 
 import "math"
 
-// Closed reports whether the mesh's triangles, all slots together, bound a
+// Closed reports whether the mesh's full detail, all slots together, bounds a
 // solid: every edge is shared by exactly two triangles that run along it in
 // opposite directions. Vertices are matched by position, bit for bit — the
 // pool splits a vertex at every UV seam and crease, and those copies still
 // sit at the same point. Degenerate triangles (two corners at one point) are
 // ignored, as they bound nothing. A mesh with no triangles is not closed.
 func (m *Mesh) Closed() bool {
-	nt := len(m.Indices) / 3
+	idx := m.BaseIndices()
+	nt := len(idx) / 3
 	if nt == 0 || len(m.Vertices) < 5 {
 		return false
 	}
@@ -59,7 +60,7 @@ func (m *Mesh) Closed() bool {
 	}
 	edges := make(map[uint64]edge, nt*3/2)
 	for t := 0; t < nt; t++ {
-		a, b, c := posID[m.Indices[3*t]], posID[m.Indices[3*t+1]], posID[m.Indices[3*t+2]]
+		a, b, c := posID[idx[3*t]], posID[idx[3*t+1]], posID[idx[3*t+2]]
 		if a == b || b == c || a == c {
 			continue
 		}
