@@ -15,6 +15,7 @@ package render
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/gltest"
 	"foundry/internal/particle"
 	"foundry/internal/world"
@@ -102,7 +103,7 @@ func volDraw(t *testing.T, targets *VolumeTargets, lvl *world.Level, projView mg
 	gl.ClearDepth(1)
 	RenderVolumetrics(lvl, projView, mgl32.Vec3{}, nil, targets)
 	var px [4]uint8
-	gl.ReadPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return px
 }
 
@@ -385,7 +386,7 @@ func TestVolumetricDrawsIntoAMultisampledFrame(t *testing.T) {
 		gl.BlitFramebuffer(0, 0, volTestSize, volTestSize, 0, 0, volTestSize, volTestSize, gl.COLOR_BUFFER_BIT, gl.NEAREST)
 		gl.BindFramebuffer(gl.FRAMEBUFFER, resolve)
 		var px [4]uint8
-		gl.ReadPixels(volTestSize/2, volTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+		glext.ReadPixels(volTestSize/2, volTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 		return px
 	}
 
@@ -480,7 +481,7 @@ func TestCloudShadowDarkensOnlyWhatIsUnderTheCloud(t *testing.T) {
 		gl.DrawArrays(gl.TRIANGLES, 0, 3)
 		gl.BindVertexArray(0)
 		var px [4]uint8
-		gl.ReadPixels(volTestSize/2, volTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+		glext.ReadPixels(volTestSize/2, volTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 		return float32(px[0]) / 255
 	}
 

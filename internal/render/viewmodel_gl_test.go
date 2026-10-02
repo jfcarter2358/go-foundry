@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/platform"
 	"foundry/internal/world"
 
@@ -92,7 +93,7 @@ func (p *viewmodelProbe) draw(offset mgl32.Vec3) (px [4]uint8, widthPx int) {
 	RenderViewmodel()
 
 	row := make([]uint8, 4*skyTestSize)
-	gl.ReadPixels(0, skyTestSize/2, skyTestSize, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&row[0]))
+	glext.ReadPixels(0, skyTestSize/2, skyTestSize, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&row[0]))
 	for i := 0; i < skyTestSize; i++ {
 		// Anything that is not the clear colour is the quad.
 		if !(row[4*i] == 0 && row[4*i+1] == 255 && row[4*i+2] == 0) {
@@ -125,7 +126,7 @@ func TestViewmodelDrawsInsideTheWorldsNearPlane(t *testing.T) {
 	gfx.UploadProjection(gfx.Projection)
 	p.quad.DrawWithTransform(gfx.Cam.Matrix.Inv().Mul4(mgl32.Translate3D(0, 0, -0.05)))
 	var px [4]uint8
-	gl.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	if drawn(px) {
 		t.Errorf("the world's own projection drew a quad 5cm from the eye (%v), so this "+
 			"test is no longer measuring the viewmodel's near plane", px)

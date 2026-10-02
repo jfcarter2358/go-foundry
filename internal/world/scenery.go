@@ -30,6 +30,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/nanite"
 	"log"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -43,8 +44,14 @@ type Scenery struct {
 	ID string
 	// Model is the mesh file, stored relative to resources/ (see
 	// fileutil.RelAssetPath). Both .fmdl and .obj are accepted, exactly as an
-	// entity attachment's path is.
+	// entity attachment's path is — and a cooked Nanite mesh (.fnm, see
+	// internal/nanite), which draws through the GPU-driven cluster cull.
 	Model string
+
+	// Materials overrides a cooked mesh's material slots, slot name to
+	// texture: the same rock in moss or in snow without a second cook. A slot
+	// it does not name keeps the cooked texture. Ignored for any other model.
+	Materials map[string]string
 
 	Position mgl32.Vec3
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
@@ -64,7 +71,30 @@ type Scenery struct {
 	// they are the whole of this thing's collision volume and re-reading the
 	// file to find them is not an option. Equal when nothing is loaded.
 	LocalMin, LocalMax mgl32.Vec3
+
+	// Nanite is the cooked mesh, when Model is one (shared with every other
+	// placement of it: never modified). NaniteGPU says the GPU-driven cull
+	// draws it (render/nanite_scenery.go): its Submeshes are then CPU-only —
+	// for picking, raycasts and the like — and every classic draw path skips
+	// it. Off, the Submeshes are uploaded and drawn as any model's are.
+	Nanite    *nanite.Mesh
+	NaniteGPU bool
+	// NoNanite keeps a cooked mesh on the classic path even when the GPU cull
+	// could draw it: for a placement that is not in the level's list, such as
+	// the editor's placement ghost, which nothing would otherwise draw.
+	NoNanite bool
 }
+
+// NaniteMeshes is whether cooked meshes draw through the GPU-driven cull. On
+// by default; FOUNDRY_NANITE_MESHES=0 puts them on the classic per-model path
+// (their cooked pool uploaded as an ordinary indexed mesh), which is the A/B
+// switch. Read when a placement loads.
+var NaniteMeshes = gfx.EnvFlag("FOUNDRY_NANITE_MESHES", true)
+
+// NaniteGPUAvailable reports whether the renderer can draw a cooked mesh
+// through the GPU cull. Set by internal/render, which owns the answer (it
+// builds the compute programs); nil — a headless tool, a test — is no.
+var NaniteGPUAvailable func() bool
 
 // NewScenery returns a placement of model at pos, unrotated, unscaled and
 // solid — what the brush stamps before the author touches anything.
@@ -211,6 +241,9 @@ func (s *Scenery) Load() error {
 	if s.Model == "" {
 		return nil
 	}
+	if nanite.IsCookedPath(s.Model) {
+		return s.loadNanite()
+	}
 	doc, err := loadModelDocument(fileutil.ResolveAssetPath(s.Model))
 	if err != nil {
 		return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
@@ -224,7 +257,9 @@ func (s *Scenery) Load() error {
 		if err := gfx.EnsureTextureLoaded(sub.Texture); err != nil {
 			log.Printf("scenery %s: texture %q: %v", s.ID, sub.Texture, err)
 		}
-		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle, AutoSmooth: true}
+		// Indexed: a model loads as a shared vertex pool and an index list
+		// (gfx.IndexedModels; docs/nanite/PHASE_0.md).
+		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle, AutoSmooth: true, Indexed: true}
 		// The mesh is model-space and the draw carries ModelMatrix, so the
 		// geometry's own origin — the transparent pass's sort key — is zero.
 		if err := g.Load(sub.Vertices, sub.Indices, sub.Texture, mgl32.Vec3{}); err != nil {
@@ -235,6 +270,69 @@ func (s *Scenery) Load() error {
 	return nil
 }
 
+// loadNanite is Load for a cooked mesh: one submesh per material slot over
+// the cooked vertex pool, CPU-only when the GPU cull draws it.
+func (s *Scenery) loadNanite() error {
+	m, err := nanite.Load(fileutil.ResolveAssetPath(s.Model))
+	if err != nil {
+		return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
+	}
+	s.Nanite = m
+	s.LocalMin, s.LocalMax = m.Lo, m.Hi
+	s.NaniteGPU = NaniteMeshes && !s.NoNanite && GeometryUploadsOn() && NaniteGPUAvailable != nil && NaniteGPUAvailable()
+	for si := range m.Slots {
+		first, count := m.SlotTriangles(si)
+		if count == 0 {
+			continue
+		}
+		tex := s.SlotTexture(si)
+		if err := gfx.EnsureTextureLoaded(tex); err != nil {
+			log.Printf("scenery %s: texture %q: %v", s.ID, tex, err)
+		}
+		idx := m.Indices[3*first : 3*(first+count)]
+		g := gfx.Geometry{Smooth: m.Slots[si].Smooth, AutoSmooth: true, Indexed: true}
+		if s.NaniteGPU {
+			// The pool as it is, indexed by the slot's run: nothing to upload,
+			// the cull's shared pool draws it.
+			g.CPUOnly = true
+			g.Vertices, g.Normals, g.Indices = m.Vertices, m.Normals, idx
+			g.Texture, g.Alpha = tex, 1
+			g.Model = mgl32.Ident4()
+		} else {
+			rows := make([][]float32, 0, len(idx))
+			normals := make([][]float32, 0, len(idx))
+			order := make([]int, len(idx))
+			for k, v := range idx {
+				rows = append(rows, m.Vertices[5*v:5*v+5])
+				normals = append(normals, m.Normals[3*v:3*v+3])
+				order[k] = k
+			}
+			g.VertexNormals = normals
+			if err := g.Load(rows, order, tex, mgl32.Vec3{}); err != nil {
+				return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
+			}
+		}
+		s.Submeshes = append(s.Submeshes, g)
+	}
+	return nil
+}
+
+// SlotTexture is the texture slot si of the cooked mesh draws with: the
+// placement's override, or the cooked one.
+func (s *Scenery) SlotTexture(si int) string {
+	if s.Nanite == nil || si < 0 || si >= len(s.Nanite.Slots) {
+		return ""
+	}
+	if t, ok := s.Materials[s.Nanite.Slots[si].Name]; ok {
+		return t
+	}
+	return s.Nanite.Slots[si].Texture
+}
+
+// GeometryUploadsOn is gfx.GeometryUploadsEnabled, readable as a function so
+// a cooked placement loaded headlessly never asks for the GPU path.
+func GeometryUploadsOn() bool { return gfx.GeometryUploadsEnabled }
+
 // Delete releases the GPU buffers. Reloading without it would leak the previous
 // upload's VAO/VBO.
 func (s *Scenery) Delete() {
@@ -243,6 +341,7 @@ func (s *Scenery) Delete() {
 	}
 	s.Submeshes = nil
 	s.LocalMin, s.LocalMax = mgl32.Vec3{}, mgl32.Vec3{}
+	s.Nanite, s.NaniteGPU = nil, false
 }
 
 // HasGeometry reports whether there is anything uploaded to draw.
@@ -305,13 +404,25 @@ func DeleteScenery(lvl *Level) {
 // file is a model and a position.
 func SceneryFromRaw(r RawScenery) Scenery {
 	return Scenery{
-		ID:       r.ID,
-		Model:    r.Model,
-		Position: mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z},
-		Rotation: mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z},
-		Scale:    vec3FromRawPtr(r.Scale, mgl32.Vec3{1, 1, 1}),
-		Solid:    BoolDefault(r.Solid, true),
+		ID:        r.ID,
+		Model:     r.Model,
+		Position:  mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z},
+		Rotation:  mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z},
+		Scale:     vec3FromRawPtr(r.Scale, mgl32.Vec3{1, 1, 1}),
+		Solid:     BoolDefault(r.Solid, true),
+		Materials: copyStringMap(r.Materials),
 	}
+}
+
+func copyStringMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // SceneryToRaw is the inverse. Defaults are written as absent, so a prop that
@@ -324,6 +435,8 @@ func SceneryToRaw(s *Scenery) RawScenery {
 		Position: RawVec3{X: s.Position.X(), Y: s.Position.Y(), Z: s.Position.Z()},
 		Rotation: RawVec3{X: s.Rotation.X(), Y: s.Rotation.Y(), Z: s.Rotation.Z()},
 		Solid:    BoolPtrIfFalse(s.Solid),
+
+		Materials: copyStringMap(s.Materials),
 	}
 	if sc := s.EffectiveScale(); sc != (mgl32.Vec3{1, 1, 1}) {
 		r.Scale = &RawVec3{X: sc.X(), Y: sc.Y(), Z: sc.Z()}

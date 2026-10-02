@@ -304,7 +304,7 @@ func entityDrawGeometry(g *gfx.Geometry, model mgl32.Mat4, tint mgl32.Vec3) {
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[g.Texture])
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+	g.DrawTriangles()
 }
 
 // ---------- overlays ----------

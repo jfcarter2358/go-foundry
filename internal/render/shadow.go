@@ -799,7 +799,7 @@ func renderSceneShadowLayers(level *world.Level, prog uint32, skin *gfx.SkinUnif
 	// unseen.
 	if layers&shadowCompiledLayer != 0 {
 		ProfileBegin("compiled")
-		shadowStaticSurfaces(level, cull)
+		shadowStaticSurfaces(level, prog, cull)
 		ProfileEnd()
 	}
 
@@ -834,7 +834,7 @@ func renderSceneShadowLayers(level *world.Level, prog uint32, skin *gfx.SkinUnif
 		// Out of the chunk's batches, one call per material for the unmoved
 		// brushes that survive the cull. The drawn mesh casts the shadow, so a
 		// wall's detail casts the shadow its bumps and reveals actually make.
-		shadowChunkBrushes(level, chunk, chunk.ModelMatrix(), cull, modelUniform, &current)
+		shadowChunkBrushes(level, chunk, chunk.ModelMatrix(), cull, prog, modelUniform, &current)
 	}
 	ProfileEnd()
 
@@ -859,6 +859,11 @@ func renderSceneShadowLayers(level *world.Level, prog uint32, skin *gfx.SkinUnif
 	ProfileBegin("scenery")
 	RenderSceneryShadow(level, prog, skin, modelUniform, cull)
 	ProfileEnd()
+	// Cooked Nanite placements, culled cluster by cluster against the
+	// light's frustum (nanite_scenery.go). Restores prog.
+	ProfileBegin("nanite: scenery")
+	renderNaniteSceneryShadow(level, prog, cull)
+	ProfileEnd()
 }
 
 func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
@@ -869,7 +874,7 @@ func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 	// animated entity's silhouette tracks its mesh.
 	gfx.ApplySkinUniforms(skin, prog, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+	g.DrawTriangles()
 }
 
 // ---------- Uniform upload ----------

@@ -10,6 +10,7 @@ package glctx
 
 import (
 	"fmt"
+	"foundry/internal/glext"
 	"image"
 	"image/png"
 	"os"
@@ -69,7 +70,7 @@ func (t *Target) Image() *image.NRGBA {
 	gl.BindFramebuffer(gl.FRAMEBUFFER, t.FBO)
 	gl.PixelStorei(gl.PACK_ALIGNMENT, 1)
 	buf := make([]byte, int(t.Width)*int(t.Height)*4)
-	gl.ReadPixels(0, 0, t.Width, t.Height, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(buf))
+	glext.ReadPixels(0, 0, t.Width, t.Height, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(buf))
 
 	img := image.NewNRGBA(image.Rect(0, 0, int(t.Width), int(t.Height)))
 	stride := int(t.Width) * 4

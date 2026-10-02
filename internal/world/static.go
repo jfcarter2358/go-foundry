@@ -70,6 +70,13 @@ type StaticGeometry struct {
 	Tree *bsp.Tree
 	Vis  *bsp.PVS
 
+	// Clusters is the compiler's cut of the surfaces' draw groups into
+	// clusters (static_clusters.go), for the GPU-driven cull. Nil for a level
+	// compiled before clusters existed; the renderer then cuts at load.
+	// Install through SetClusters.
+	Clusters     []StaticClusterGroup
+	clusterIndex map[string]int
+
 	// HiddenChunks names the compiled chunks currently switched off. See
 	// Hidden, which is why this exists at all. Write it through SetChunkHidden,
 	// which keeps the per-surface answer below in step.
@@ -96,6 +103,11 @@ type StaticGeometry struct {
 	visibleCount   int
 	visibleValid   bool
 	visible        []int
+	// visibleSerial changes whenever VisibleSurfaces answers with a different
+	// list than last time, so a cache built from the list (the GPU cull's
+	// candidate clusters) can tell without comparing it. See VisibleSerial.
+	visibleSerial uint64
+	lastAnswer    visibleAnswer
 
 	// seen is the dedup scratch VisibleSurfaces fills, kept here so the frame
 	// loop allocates nothing. A surface bounds more than one cell whenever a
@@ -190,22 +202,60 @@ func (s *StaticGeometry) SetChunkHidden(chunkID string, hidden bool) {
 // VisibleSurfaces returns the surface indices to draw from a point, appending
 // into out (which the caller reuses across frames).
 func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
+	if s == nil {
+		return out[:0]
+	}
+	out, answer := s.visibleSurfaces(eye, out)
+	key := visibleAnswer{answer: answer, hidden: s.hiddenVersion, count: len(s.HiddenChunks), surfaces: len(s.Surfaces)}
+	if key != s.lastAnswer || s.visibleSerial == 0 {
+		s.lastAnswer = key
+		s.visibleSerial++
+	}
+	return out
+}
+
+// VisibleSerial changes whenever VisibleSurfaces' answer has: a new cell, a
+// chunk shown or hidden, a fall back to everything. Two calls with the same
+// serial returned the same list.
+func (s *StaticGeometry) VisibleSerial() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.visibleSerial
+}
+
+// What visibleSurfaces answered with, when it was not a leaf's row.
+const (
+	answerEverything = -1
+	answerNothing    = -2
+)
+
+// visibleAnswer identifies one answer of VisibleSurfaces.
+type visibleAnswer struct {
+	answer          int
+	hidden          uint64
+	count, surfaces int
+}
+
+// visibleSurfaces is VisibleSurfaces, also saying which answer it gave: the
+// camera's leaf, or answerEverything / answerNothing.
+func (s *StaticGeometry) visibleSurfaces(eye mgl32.Vec3, out []int) ([]int, int) {
 	out = out[:0]
-	if s == nil || len(s.Surfaces) == 0 {
-		return out
+	if len(s.Surfaces) == 0 {
+		return out, answerNothing
 	}
 	if s.Tree == nil || s.Vis == nil {
-		return append(out, s.everything()...)
+		return append(out, s.everything()...), answerEverything
 	}
 	leaf := s.Tree.FindLeaf(eye)
 	if !s.Tree.Interior(leaf) {
 		// The camera is in material or in the void. Nothing was computed for
 		// there, so draw the level rather than a hole in it.
-		return append(out, s.everything()...)
+		return append(out, s.everything()...), answerEverything
 	}
 	if s.visibleValid && s.visibleLeaf == leaf && s.visibleVersion == s.hiddenVersion &&
 		s.visibleCount == len(s.HiddenChunks) {
-		return append(out, s.visible...)
+		return append(out, s.visible...), leaf
 	}
 
 	if len(s.seen) != len(s.Surfaces) {
@@ -239,7 +289,7 @@ func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
 	}
 	s.visible = append(s.visible[:0], out...)
 	s.visibleLeaf, s.visibleVersion, s.visibleCount, s.visibleValid = leaf, s.hiddenVersion, len(s.HiddenChunks), true
-	return out
+	return out, leaf
 }
 
 // everything is every surface index that is not hidden, for the fallbacks

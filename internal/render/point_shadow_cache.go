@@ -123,6 +123,12 @@ func (h *sigHash) geometry(g *gfx.Geometry) {
 	if len(g.Vertices) > 0 {
 		h.u64(uint64(uintptr(unsafe.Pointer(&g.Vertices[0]))))
 	}
+	// An indexed model draws its index list, so that is part of "which
+	// vertices" too.
+	h.u64(uint64(len(g.Indices)))
+	if len(g.Indices) > 0 {
+		h.u64(uint64(uintptr(unsafe.Pointer(&g.Indices[0]))))
+	}
 	h.f32(g.Alpha)
 	h.u64(uint64(len(g.BonePalette)))
 	for _, m := range g.BonePalette {

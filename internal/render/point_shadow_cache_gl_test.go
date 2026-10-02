@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -30,7 +31,7 @@ func readCube(t *testing.T, cube uint32) []float32 {
 	var out []float32
 	gl.BindTexture(gl.TEXTURE_CUBE_MAP, cube)
 	for face := 0; face < 6; face++ {
-		gl.GetTexImage(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+face), 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(full))
+		glext.GetTexImage(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+face), 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(full))
 		for y := 0; y < PointShadowMapSize; y += 16 {
 			for x := 0; x < PointShadowMapSize; x += 16 {
 				out = append(out, full[y*PointShadowMapSize+x])

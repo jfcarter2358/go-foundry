@@ -15,11 +15,18 @@ package render
 // once for the StaticGeometry they came from and rebuilt only when the level
 // is handed a different one — a level load, or the editor's compiled preview
 // going up or down.
+//
+// Since Phase 1 of the Nanite plan each group's buffer also carries an index
+// list in CLUSTER order (world/static_clusters.go — the compiler's cut), and
+// the opaque groups are culled and drawn by the GPU-driven cull
+// (nanite_cull.go, static_nanite.go): the PVS still picks the candidate
+// clusters on the CPU, and a compute pass does the frustum, the normal cone
+// and the two-pass Hi-Z occlusion. The CPU path below stays, for transparent
+// groups (which must be sorted) and as the fallback when the cull is switched
+// off (FOUNDRY_NANITE_CLUSTERS=0) or cannot run.
 
 import (
 	stdbits "math/bits"
-	"sort"
-	"strings"
 
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -29,14 +36,18 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// staticKey is world.StaticGroupKey under the names this file has always
+// used; the grouping itself is written in world/static_clusters.go, so the
+// compiler that cuts a group into clusters and this file that draws it agree.
 type staticKey struct {
-	chunk string
-	// cover is the surface's CoveredBy, joined: a cover surface shows and
-	// hides on other chunks than its own, so it cannot share a batch the
-	// shadow pass skips or keeps whole by chunk.
+	chunk       string
 	cover       string
 	mat         gfx.Material
 	doubleSided bool
+}
+
+func staticKeyOf(k world.StaticGroupKey) staticKey {
+	return staticKey{chunk: k.Chunk, cover: k.Cover, mat: k.Mat, doubleSided: k.DoubleSided}
 }
 
 type staticGroup struct {
@@ -45,7 +56,7 @@ type staticGroup struct {
 	batch     gfx.Batch
 	// surfaces lists the group's surface indexes in buffer order; firsts and
 	// counts are their ranges, parallel to it. The order is spatial (see
-	// sortSurfacesSpatially), which is what lets clusters below be both
+	// world.SortSurfacesSpatially), which is what lets clusters below be both
 	// compact boxes and contiguous runs of the buffer.
 	surfaces       []int32
 	firsts, counts []int32
@@ -59,6 +70,9 @@ type staticGroup struct {
 	// order, for the ones found visible — read back in order to make ranges
 	// without walking every surface of the level.
 	visBits []uint64
+	// clusterFirst/clusterCount are the group's clusters in the level-wide
+	// GPU cluster list (static_nanite.go); zero count without one.
+	clusterFirst, clusterCount int32
 }
 
 // staticCluster is a run of a group's surfaces, [start, end) in the group's
@@ -98,6 +112,15 @@ type staticBatches struct {
 	// surface's baked light was picked by it (Geometry.BakedLightData), so a
 	// change of setting means a rebuild.
 	smoothLighting bool
+	// transparent is each group's IsTransparent, as noteTransparency last
+	// found it; transparentSig hashes it, so the GPU path can tell when a
+	// texture edit moved a group between the passes.
+	transparent    []bool
+	transparentSig uint64
+	anyTransparent bool
+	// gpu is the GPU-driven cull's half (static_nanite.go), nil while it is
+	// off or cannot run.
+	gpu *staticGPU
 }
 
 var staticCache = map[*world.Level]*staticBatches{}
@@ -127,40 +150,19 @@ func staticBatchesFor(lvl *world.Level) *staticBatches {
 }
 
 func buildStaticBatches(s *world.StaticGeometry) *staticBatches {
-	sb := &staticBatches{static: s, count: len(s.Surfaces), groupOf: make([]int32, len(s.Surfaces)),
-		smoothLighting: gfx.SmoothLighting}
-	index := map[staticKey]int{}
-	for i := range s.Surfaces {
-		surf := &s.Surfaces[i]
-		g := &surf.Geometry
-		if len(g.Vertices) == 0 {
-			sb.groupOf[i] = -1
-			continue
-		}
-		light := g.BakedLightData()
-		key := staticKey{
-			chunk: surf.Chunk,
-			cover: strings.Join(surf.CoveredBy, "\x00"),
-			mat: gfx.Material{Texture: g.Texture, MaterialName: g.MaterialName,
-				BlendTexture: g.BlendTexture, BlendMask: g.BlendMask,
-				Alpha: g.Alpha, Normals: len(g.Normals) > 0, Smooth: g.Smooth, Baked: len(light) > 0},
-			doubleSided: surf.DoubleSided,
-		}
-		gi, ok := index[key]
-		if !ok {
-			gi = len(sb.groups)
-			index[key] = gi
-			grp := &staticGroup{key: key, coveredBy: surf.CoveredBy}
-			grp.batch.Material = key.mat
-			sb.groups = append(sb.groups, grp)
-		}
-		sb.groupOf[i] = int32(gi)
-		sb.groups[gi].surfaces = append(sb.groups[gi].surfaces, int32(i))
+	sb := &staticBatches{static: s, count: len(s.Surfaces), smoothLighting: gfx.SmoothLighting}
+	planned, groupOf := world.StaticGroups(s)
+	sb.groupOf = groupOf
+	for gi := range planned {
+		key := staticKeyOf(planned[gi].Key)
+		grp := &staticGroup{key: key, surfaces: planned[gi].Surfaces,
+			coveredBy: s.Surfaces[planned[gi].Surfaces[0]].CoveredBy}
+		grp.batch.Material = key.mat
+		sb.groups = append(sb.groups, grp)
 	}
 	sb.posInGroup = make([]int32, len(s.Surfaces))
 	sb.clusterOf = make([]int32, len(s.Surfaces))
 	for _, grp := range sb.groups {
-		sortSurfacesSpatially(s, grp.surfaces)
 		grp.buildClusters(s)
 		grp.visBits = make([]uint64, (len(grp.surfaces)+63)/64)
 		for ci := range grp.clusters {
@@ -187,45 +189,31 @@ func buildStaticBatches(s *world.StaticGeometry) *staticBatches {
 		}
 		grp.batch.Upload(verts, normals, light)
 	}
+	if NaniteClusters && gfx.GeometryUploadsEnabled {
+		sb.gpu = buildStaticGPU(s, sb, planned)
+	}
 	return sb
 }
 
-// sortSurfacesSpatially orders a group's surfaces along a Morton (Z-order)
-// curve through their centres, so that surfaces next to each other in the list
-// are next to each other in space and any run of them has a tight box.
-func sortSurfacesSpatially(s *world.StaticGeometry, surfaces []int32) {
-	if len(surfaces) <= staticClusterSize {
-		return
+// noteTransparency records each group's IsTransparent for this frame.
+// Decided per frame rather than at the build for the reason Material says:
+// the texture editor can give a texture alpha while the game runs.
+func (sb *staticBatches) noteTransparency() {
+	if len(sb.transparent) != len(sb.groups) {
+		sb.transparent = make([]bool, len(sb.groups))
 	}
-	lo, hi := s.Surfaces[surfaces[0]].Lo, s.Surfaces[surfaces[0]].Hi
-	for _, si := range surfaces {
-		lo, hi = geom.VecMin(lo, s.Surfaces[si].Lo), geom.VecMax(hi, s.Surfaces[si].Hi)
-	}
-	ext := hi.Sub(lo)
-	codes := make(map[int32]uint64, len(surfaces))
-	for _, si := range surfaces {
-		c := s.Surfaces[si].Lo.Add(s.Surfaces[si].Hi).Mul(0.5)
-		var q [3]uint32
-		for a := 0; a < 3; a++ {
-			if ext[a] > 0 {
-				q[a] = uint32((c[a] - lo[a]) / ext[a] * 2097151) // 21 bits
-			}
+	h := uint64(14695981039346656037)
+	sb.anyTransparent = false
+	for gi, grp := range sb.groups {
+		t := grp.batch.IsTransparent()
+		sb.transparent[gi] = t
+		if t {
+			h ^= uint64(gi) + 1
+			h *= 1099511628211
+			sb.anyTransparent = true
 		}
-		codes[si] = spreadBits21(q[0]) | spreadBits21(q[1])<<1 | spreadBits21(q[2])<<2
 	}
-	sort.SliceStable(surfaces, func(a, b int) bool { return codes[surfaces[a]] < codes[surfaces[b]] })
-}
-
-// spreadBits21 puts the low 21 bits of v two zero bits apart, for a 63-bit
-// Morton code.
-func spreadBits21(v uint32) uint64 {
-	x := uint64(v) & 0x1fffff
-	x = (x | x<<32) & 0x1f00000000ffff
-	x = (x | x<<16) & 0x1f0000ff0000ff
-	x = (x | x<<8) & 0x100f00f00f00f00f
-	x = (x | x<<4) & 0x10c30c30c30c30c3
-	x = (x | x<<2) & 0x1249249249249249
-	return x
+	sb.transparentSig = h
 }
 
 // buildClusters cuts the group's (spatially sorted) surfaces into runs and
@@ -253,6 +241,10 @@ func (sb *staticBatches) release() {
 		g.batch.Delete()
 	}
 	sb.groups = nil
+	if sb.gpu != nil {
+		sb.gpu.release()
+		sb.gpu = nil
+	}
 }
 
 // addVisible is batchGroup.addVisible for a static group.
@@ -306,6 +298,13 @@ func DrawStaticSurfaces(lvl *world.Level, visible []int, frustum Frustum, camPos
 	if sb == nil {
 		return 0, 0
 	}
+	if sb.gpu != nil && naniteCull.ready() {
+		// The GPU-driven cull draws the opaque groups (static_nanite.go);
+		// only the transparent ones are gathered here, for the sorted pass.
+		drawn = sb.gatherVisibleMode(lvl.Static, visible, frustum, camPos, queue, true)
+		n, c := sb.gpu.drawCamera(lvl.Static, sb, visible, frustum, camPos)
+		return drawn + n, c
+	}
 	drawn = sb.gatherVisible(lvl.Static, visible, frustum, camPos, queue)
 	identity := mgl32.Ident4()
 	for _, grp := range sb.groups {
@@ -323,6 +322,22 @@ func DrawStaticSurfaces(lvl *world.Level, visible []int, frustum Frustum, camPos
 // transparent surfaces to queue.
 func (sb *staticBatches) gatherVisible(s *world.StaticGeometry, visible []int, frustum Frustum, camPos mgl32.Vec3,
 	queue func(d BatchDraw, distance float32)) (drawn int) {
+	return sb.gatherVisibleMode(s, visible, frustum, camPos, queue, false)
+}
+
+// gatherVisibleMode is gatherVisible, leaving out the opaque groups when
+// transparentOnly — which the GPU-driven cull draws instead.
+func (sb *staticBatches) gatherVisibleMode(s *world.StaticGeometry, visible []int, frustum Frustum, camPos mgl32.Vec3,
+	queue func(d BatchDraw, distance float32), transparentOnly bool) (drawn int) {
+	if transparentOnly {
+		sb.noteTransparency()
+		if !sb.anyTransparent {
+			// Nothing for this walk to find: the opaque surfaces are the GPU
+			// cull's, and a level of tens of thousands of visible surfaces
+			// is not walked to learn that.
+			return 0
+		}
+	}
 	if len(sb.clusterAt) != len(sb.clusters) {
 		sb.clusterAt = make([]uint64, len(sb.clusters))
 		sb.clusterIs = make([]FrustumClass, len(sb.clusters))
@@ -330,6 +345,9 @@ func (sb *staticBatches) gatherVisible(s *world.StaticGeometry, visible []int, f
 	sb.passNumber++
 	for _, si := range visible {
 		if si < 0 || si >= len(sb.groupOf) || sb.groupOf[si] < 0 {
+			continue
+		}
+		if transparentOnly && !sb.transparent[sb.groupOf[si]] {
 			continue
 		}
 		// The surface's cluster is judged once a pass, and only a surface in
@@ -381,9 +399,13 @@ func (sb *staticBatches) gatherVisible(s *world.StaticGeometry, visible []int, f
 // passes cull, one call per batch, under the identity model the caller has
 // bound. Deliberately not the visibility set: a wall the camera cannot see still
 // casts the shadow that falls where it can.
-func shadowStaticSurfaces(lvl *world.Level, cull *Frustum) {
+func shadowStaticSurfaces(lvl *world.Level, prog uint32, cull *Frustum) {
 	sb := staticBatchesFor(lvl)
 	if sb == nil {
+		return
+	}
+	if sb.gpu != nil && NaniteShadows && naniteCull.ready() {
+		sb.gpu.drawShadow(lvl.Static, sb, prog, cull)
 		return
 	}
 	s := lvl.Static

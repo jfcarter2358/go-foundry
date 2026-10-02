@@ -45,6 +45,15 @@ var DebugStats struct {
 	// space or is not sealed.
 	StaticSurfaces int
 	StaticDrawn    int
+	// NaniteInstances is the cooked-mesh placements the GPU cull was handed
+	// (nanite_scenery.go); how many of their clusters it drew is not read back.
+	NaniteInstances int
+	// NaniteClusters is the clusters the camera's GPU cull was handed this
+	// frame — compiled surfaces' PVS candidates plus every cooked placement's.
+	NaniteClusters int
+	// NaniteTriangles is the triangles the camera's GPU cull drew, counted
+	// only while FOUNDRY_NANITE_STATS=1 (it reads the commands back).
+	NaniteTriangles int
 	// The sprite pass. Particles is how many quads the emitters put up this
 	// frame and SpriteDraws how many draw calls that took — the two numbers an
 	// author needs together, because one large batch and a thousand tiny ones
@@ -185,6 +194,12 @@ func DebugOverlayLines() []DebugLine {
 	line("Sprites:      %d quads / %d particles / %d draws",
 		DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws)
 	line("Scenery:      %d drawn", DebugStats.Scenery)
+	if DebugStats.NaniteClusters > 0 || DebugStats.NaniteInstances > 0 {
+		line("Nanite:       %d placements, %d clusters to the GPU cull", DebugStats.NaniteInstances, DebugStats.NaniteClusters)
+		if NaniteStats {
+			line("Nanite drew:  %d triangles", DebugStats.NaniteTriangles)
+		}
+	}
 	if DebugStats.Decals > 0 {
 		// Only when there are any: a level with no decals should not carry a
 		// permanently-zero line in an overlay that is already dense.

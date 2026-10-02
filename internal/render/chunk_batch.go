@@ -81,6 +81,9 @@ type ChunkBatch struct {
 	// can only be as stale as the batches themselves. An empty box (lo > hi)
 	// for a brush with nothing drawn.
 	boxes [][2]mgl32.Vec3
+	// gpu is the GPU-driven cull's half (chunk_nanite.go), built the first
+	// time the chunk is drawn that way.
+	gpu *chunkGPU
 }
 
 // levelBatches is every chunk batch of one level.
@@ -339,6 +342,10 @@ func (cb *ChunkBatch) release() {
 		g.keep = nil
 	}
 	cb.groups, cb.byBrush = nil, nil
+	if cb.gpu != nil {
+		cb.gpu.release()
+		cb.gpu = nil
+	}
 }
 
 // BatchDraw is a deferred draw of some ranges of one chunk batch — what the
@@ -376,6 +383,10 @@ func DrawChunkBrushes(lvl *world.Level, ch *world.Chunk, frustum Frustum, chunkM
 	// The frustum is carried into the chunk once, rather than every brush's
 	// box out of it.
 	local := frustum.InSpaceOf(chunkModel)
+	// The GPU-driven cull (chunk_nanite.go) takes the opaque brushes at rest;
+	// the walk below still counts them, and does the moved and the
+	// transparent ones itself.
+	gpu := chunkGPUFor(cb)
 	for bi := range ch.Brushes {
 		if bi >= len(cb.byBrush) || len(cb.byBrush[bi]) == 0 {
 			continue
@@ -408,8 +419,15 @@ func DrawChunkBrushes(lvl *world.Level, ch *world.Chunk, frustum Frustum, chunkM
 				st.DrawCalls++
 				continue
 			}
+			if gpu != nil {
+				continue
+			}
 			g.addVisible(first[0], count[0])
 		}
+	}
+	if gpu != nil {
+		st.DrawCalls += gpu.drawCamera(ch, cb, frustum, chunkModel)
+		return st
 	}
 	for _, g := range cb.groups {
 		if len(g.visFirst) == 0 {
@@ -439,10 +457,16 @@ func (g *batchGroup) addVisible(first, count int32) {
 // nothing, as a single surface's shadow never has. *current tracks the model
 // matrix bound to modelUniform, so an unmoved chunk uploads none.
 func shadowChunkBrushes(lvl *world.Level, ch *world.Chunk, chunkModel mgl32.Mat4, cull *Frustum,
-	modelUniform int32, current *mgl32.Mat4) {
+	prog uint32, modelUniform int32, current *mgl32.Mat4) {
 	cb := chunkBatchFor(lvl, ch)
 	if cb == nil {
 		return
+	}
+	// The unmoved brushes per cluster on the GPU (chunk_nanite.go) when it
+	// can; the walk below then casts only the moved ones.
+	var gpu *chunkGPU
+	if NaniteShadows {
+		gpu = chunkGPUFor(cb)
 	}
 	setModel := func(m mgl32.Mat4) {
 		if m != *current {
@@ -478,8 +502,15 @@ func shadowChunkBrushes(lvl *world.Level, ch *world.Chunk, chunkModel mgl32.Mat4
 				g.batch.DrawRanges(g.firsts[ref.index:ref.index+1], g.counts[ref.index:ref.index+1])
 				continue
 			}
+			if gpu != nil {
+				continue
+			}
 			g.addVisible(g.firsts[ref.index], g.counts[ref.index])
 		}
+	}
+	if gpu != nil {
+		gpu.drawShadow(ch, cb, chunkModel, cull, prog, modelUniform, current)
+		return
 	}
 	for _, g := range cb.groups {
 		if len(g.visFirst) == 0 {

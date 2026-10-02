@@ -16,6 +16,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -127,7 +128,7 @@ func TestABatchedChunkDrawsExactlyWhatPerFaceDrawingDid(t *testing.T) {
 		gl.DepthMask(true)
 		gl.Disable(gl.BLEND)
 		px := make([]uint8, skyTestSize*skyTestSize*4)
-		gl.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+		glext.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 		return px
 	}
 
@@ -234,7 +235,7 @@ func TestABatchedCompiledLevelDrawsExactlyWhatPerSurfaceDrawingDid(t *testing.T)
 		gl.DepthMask(true)
 		gl.Disable(gl.BLEND)
 		px := make([]uint8, skyTestSize*skyTestSize*4)
-		gl.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+		glext.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 		return px
 	}
 

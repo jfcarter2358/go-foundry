@@ -57,6 +57,13 @@ layout(location = 5) in vec4 vertLight;
 // adding its own. Read from the same buffer as vertLight, under the same gate.
 layout(location = 6) in vec3 vertLightIndirect;
 
+// Invariant: the GPU-driven cull's depth prepass (render/nanite_prepass.go)
+// links this same stage into a program of its own, and the colour pass after
+// it tests at LEQUAL against the depth it wrote — which only works if both
+// programs compute exactly the same position. Without the qualifier GLSL lets
+// two programs compiled from one source differ in the last bit.
+invariant gl_Position;
+
 out vec2 fragTexCoord;
 out vec3 fragWorldPos;
 out vec3 fragNormal;

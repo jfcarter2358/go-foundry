@@ -16,6 +16,7 @@ package editor
 // ctrl+click selects all of them at once.
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/world"
 	"math"
@@ -142,6 +143,33 @@ func pickModelT(origin, dir mgl32.Vec3, verts []float32, model mgl32.Mat4) float
 	)
 }
 
+// pickModelGeometryT is pickModelT for a whole Geometry, which reads either
+// shape it may hold: a de-indexed soup goes straight to pickModelT, an indexed
+// model (gfx.IndexedModels) is walked triangle by triangle through its index
+// list rather than copied out into a soup on every pick.
+func pickModelGeometryT(origin, dir mgl32.Vec3, g *gfx.Geometry, model mgl32.Mat4) float32 {
+	if !g.IsIndexed() {
+		return pickModelT(origin, dir, g.Vertices, model)
+	}
+	inv := model.Inv()
+	if inv == (mgl32.Mat4{}) {
+		return float32(math.MaxFloat32)
+	}
+	o4 := inv.Mul4x1(mgl32.Vec4{origin.X(), origin.Y(), origin.Z(), 1})
+	d4 := inv.Mul4x1(mgl32.Vec4{dir.X(), dir.Y(), dir.Z(), 0})
+	o, d := mgl32.Vec3{o4.X(), o4.Y(), o4.Z()}, mgl32.Vec3{d4.X(), d4.Y(), d4.Z()}
+	best := float32(math.MaxFloat32)
+	g.ForEachTriangle(func(v0, v1, v2 mgl32.Vec3) bool {
+		if h, t, front := rayTriangleIntersect(o, d, v0, v1, v2); h {
+			if eff := effectivePickT(t, front); eff < best {
+				best = eff
+			}
+		}
+		return true
+	})
+	return best
+}
+
 // pickEntityT returns the closest hit on an entity: its attachments' triangles
 // when it has any uploaded, its bounding volume otherwise.
 //
@@ -159,7 +187,7 @@ func pickEntityT(origin, dir mgl32.Vec3, e *world.Entity) float32 {
 		}
 		model := world.Mul4(e.AttachmentMatrix(m))
 		for si := range m.Submeshes {
-			if t := pickModelT(origin, dir, m.Submeshes[si].Vertices, model); t < best {
+			if t := pickModelGeometryT(origin, dir, &m.Submeshes[si], model); t < best {
 				best = t
 			}
 		}

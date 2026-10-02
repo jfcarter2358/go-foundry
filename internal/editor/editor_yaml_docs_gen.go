@@ -151,6 +151,7 @@ var yamlFieldDocs = map[string]string{
 	"world.RawPrefabInstance.frame":           "Frame is the vehicle the instance rides, absent for the world.",
 	"world.RawPrefabInstance.rotation":        "radians about Y",
 	"world.RawPrefabInstance.scale":           "0 = 1",
+	"world.RawScenery.materials":              "Materials overrides a cooked Nanite mesh's (.fnm) material slots, slot name to texture: `materials: {stone: granite, moss: snow}`.",
 	"world.RawScenery.model":                  "Model is the mesh file, install-relative: \"models/barrel.fmdl\".",
 	"world.RawScenery.scale":                  "Scale is a pointer so an unwritten key means {1,1,1} rather than collapsing the model to nothing.",
 	"world.RawScenery.solid":                  "Solid defaults to true when absent — scenery exists mostly to be walked around, so the flag is written only to switch collision off.",

@@ -9,6 +9,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/gltest"
 	"foundry/internal/world"
 
@@ -65,6 +66,13 @@ func newTerrainProbe(t *testing.T, tr *world.Terrain) *terrainProbe {
 func (p *terrainProbe) frame() []uint8 {
 	p.t.Helper()
 	SyncTerrainMeshes(p.lvl)
+	// Mesa's D3D12 driver (WSLg) deadlocks this frame's draws behind the
+	// sync's uploads when a terrain probe has already been made and released
+	// earlier in the process — TestAPaintedBiomeGrowsFoliage after any other
+	// terrain test sat in glReadPixels until go test's timeout, with or
+	// without a finish in front of the readback (glext/readback.go). Waiting
+	// for the uploads here avoids it; llvmpipe never needed it.
+	gl.Finish()
 	gl.Disable(gl.CULL_FACE)
 	gl.ClearColor(1, 0, 1, 1) // magenta: nothing drawn
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -79,7 +87,7 @@ func (p *terrainProbe) frame() []uint8 {
 		p.t.Fatalf("GL error 0x%x drawing foliage", e)
 	}
 	px := make([]uint8, skyTestSize*skyTestSize*4)
-	gl.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return px
 }
 
@@ -310,7 +318,7 @@ func TestFoliageImpostorsAreBaked(t *testing.T) {
 	side := impGrid * impCell
 	px := make([]uint8, side*side*4*im.layers)
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, im.tex[0])
-	gl.GetTexImage(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.GetTexImage(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, 0)
 	for l := 0; l < im.layers; l++ {
 		covered := 0

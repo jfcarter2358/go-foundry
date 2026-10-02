@@ -124,6 +124,22 @@ type Geometry struct {
 	// CPU half is untouched, so everything that reads Vertices — raycasts,
 	// picking, the scatter ground — sees no difference.
 	CPUOnly bool
+
+	// Indexed, set before Load, makes Load weld the mesh's corners back into
+	// a shared vertex pool and draw it with an index buffer (indexed_mesh.go)
+	// — as long as the IndexedModels switch is on. Set by the model loaders
+	// (Scenery, entity attachments, the model editor); everything else stays
+	// on the de-indexed soup the batches concatenate.
+	//
+	// While Indices is non-nil, Vertices, Normals and the skin and light
+	// records are the POOL, one record per shared vertex, not one per corner:
+	// anything that walks Vertices as a triangle list must go through
+	// ForEachTriangle or TriangleVertices instead, which read both shapes.
+	Indexed bool
+	// Indices is the uint32 triangle list into Vertices, or nil for the
+	// de-indexed soup. Uploaded to Ebo, which the VAO holds.
+	Indices []uint32
+	Ebo     uint32
 }
 
 // SmoothLighting is the player's Smooth Lighting setting: while it is on,
@@ -295,6 +311,7 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 
 	// Phase 0 fix: assign verts before using it in BufferData
 	g.Vertices = verts
+	g.Indices = nil
 	g.Texture = texture
 	g.Position = position
 	if g.Alpha == 0 {
@@ -309,6 +326,13 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 		g.Normals = deindexVec3(g.VertexNormals, indices)
 	} else if g.Smooth || g.AutoSmooth {
 		g.Normals = geom.ComputeSmoothNormals(vertices, indices, g.SmoothAngle)
+	}
+
+	// A model welds its corners back into a shared pool here, now that every
+	// per-corner attribute — normals included, which is what keeps a crease
+	// split — is laid out. See indexed_mesh.go for why this is invisible.
+	if g.Indexed && IndexedModels && len(g.Vertices) > 0 {
+		g.weld()
 	}
 
 	// Reloading in place is the normal case — an editor drag, a script
@@ -353,6 +377,14 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	gl.BindBuffer(gl.ARRAY_BUFFER, g.Vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, len(g.Vertices)*4, gl.Ptr(g.Vertices), gl.STATIC_DRAW)
 	BindVertexLayout()
+
+	// The index buffer is VAO state: bound here, with the VAO bound, it is
+	// what every later DrawElements on this VAO reads.
+	if len(g.Indices) > 0 {
+		gl.GenBuffers(1, &g.Ebo)
+		gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, g.Ebo)
+		gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(g.Indices)*4, gl.Ptr(g.Indices), gl.STATIC_DRAW)
+	}
 
 	// Smooth surfaces get a second buffer in the same VAO. The previous one was
 	// released above, with the rest of the old upload.
@@ -554,6 +586,10 @@ func (g *Geometry) Delete() {
 		gl.DeleteBuffers(1, &g.Nbo)
 		g.Nbo = 0
 	}
+	if g.Ebo != 0 {
+		gl.DeleteBuffers(1, &g.Ebo)
+		g.Ebo = 0
+	}
 	g.deleteSkinBuffers()
 	g.deleteBakedLightBuffer()
 }
@@ -569,6 +605,7 @@ func (g *Geometry) Delete() {
 func (g *Geometry) Unload() {
 	g.Delete()
 	g.Vertices = nil
+	g.Indices = nil
 	g.Normals = nil
 	g.SkinIdx, g.SkinWt = nil, nil
 	g.VertexLight, g.vertexLight = nil, nil
@@ -618,7 +655,7 @@ func (g Geometry) Draw() {
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+	g.DrawTriangles()
 }
 
 // DrawWithTransform renders the geometry using a caller-supplied model matrix.
@@ -635,7 +672,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+	g.DrawTriangles()
 }
 
 // AttribInstanceModel is the first of the four locations (7..10) an instanced
@@ -681,7 +718,7 @@ func (g Geometry) DrawInstanced(first, count int) {
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
-	gl.DrawArraysInstancedBaseInstance(gl.TRIANGLES, 0, int32(len(g.Vertices)/5), int32(count), uint32(first))
+	g.DrawTrianglesInstanced(first, count)
 	gl.Uniform1i(InstancedUniform, 0)
 }
 

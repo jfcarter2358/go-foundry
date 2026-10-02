@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/gltest"
 	"foundry/internal/render"
 	"foundry/internal/uidraw"
@@ -110,7 +111,7 @@ func brightPixelInRow(t *testing.T, w, h, y, x0, x1 int32) bool {
 		x1 = w
 	}
 	row := make([]uint8, 4*(x1-x0))
-	gl.ReadPixels(x0, h-1-y, x1-x0, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&row[0]))
+	glext.ReadPixels(x0, h-1-y, x1-x0, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&row[0]))
 	for i := 0; i < len(row); i += 4 {
 		if row[i] > 150 {
 			return true
@@ -146,6 +147,6 @@ func painted(t *testing.T, w, h, x, y int32) bool {
 	t.Helper()
 	var px [4]uint8
 	// GL reads from the bottom left; the layout above measures from the top.
-	gl.ReadPixels(x, h-1-y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(x, h-1-y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return px[0] != 0 || px[1] != 0 || px[2] != 0
 }

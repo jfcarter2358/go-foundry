@@ -305,6 +305,9 @@ func editorBrushSyncGhost() {
 	brushGhost.Delete()
 	brushGhost.ID = "brush"
 	brushGhost.Model = Editor.BrushModel
+	// The ghost is in no level's scenery list, so the GPU-driven cull would
+	// never see it: a cooked mesh's ghost draws the classic way.
+	brushGhost.NoNanite = true
 	if brushGhost.Model == "" {
 		return
 	}
@@ -484,7 +487,7 @@ func pickSceneryRayT(origin, dir mgl32.Vec3, s *world.Scenery) float32 {
 	best := float32(math.MaxFloat32)
 	model := s.ModelMatrix()
 	for i := range s.Submeshes {
-		if t := pickModelT(origin, dir, s.Submeshes[i].Vertices, model); t < best {
+		if t := pickModelGeometryT(origin, dir, &s.Submeshes[i], model); t < best {
 			best = t
 		}
 	}

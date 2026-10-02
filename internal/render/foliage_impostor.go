@@ -32,6 +32,7 @@ import (
 	"math"
 
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -252,7 +253,7 @@ func bakeFoliageImpostors() foliageImpostors {
 		}
 		for a := 0; a < 2; a++ {
 			gl.ReadBuffer(gl.COLOR_ATTACHMENT0 + uint32(a))
-			gl.ReadPixels(0, 0, big, big, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&pix[a][0]))
+			glext.ReadPixels(0, 0, big, big, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&pix[a][0]))
 		}
 		views := impostorResolve(pix, int(big))
 		for l, lv := range views {

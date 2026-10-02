@@ -17,6 +17,7 @@ package render
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/gltest"
 	"foundry/internal/world"
 	"testing"
@@ -80,7 +81,7 @@ func drawSkyLooking(t *testing.T, lvl *world.Level, dir, up mgl32.Vec3) [4]uint8
 	RenderSky(lvl)
 
 	var px [4]uint8
-	gl.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return px
 }
 

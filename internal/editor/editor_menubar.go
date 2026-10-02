@@ -183,6 +183,11 @@ func editorWindowMenu() {
 	}
 	editorMenuTooltip("List the files in resources/ that nothing in the game uses,\nand delete the ones you pick.")
 
+	if imgui.MenuItem("Cook Nanite Meshes##nanitecook") {
+		editorCookAllNanite()
+	}
+	editorMenuTooltip("Cook every glTF (.gltf, .glb) under resources/ that has changed\ninto a Nanite mesh (.fnm) beside it, ready to place as scenery.")
+
 	imgui.Separator()
 	// The editors again, by name, for anyone who reaches for a menu before
 	// they read the strip.

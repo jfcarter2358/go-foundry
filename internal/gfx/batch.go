@@ -66,6 +66,12 @@ type Batch struct {
 	Vao, Vbo, Nbo, Lbo uint32
 	// Verts is how many vertices the buffer holds.
 	Verts int32
+	// Ebo, when the batch has one, is an index list over the vertex buffer —
+	// the GPU-driven cull's cluster order (render/nanite_cull.go). VAO state,
+	// like Geometry's. The ranges DrawRanges takes still address the vertex
+	// buffer directly and ignore it.
+	Ebo     uint32
+	Indices int32
 }
 
 // Upload replaces the batch's contents. verts is the 5-float record, normals
@@ -139,7 +145,37 @@ func (b *Batch) Delete() {
 		gl.DeleteBuffers(1, &b.Lbo)
 		b.Lbo = 0
 	}
-	b.Verts = 0
+	if b.Ebo != 0 {
+		gl.DeleteBuffers(1, &b.Ebo)
+		b.Ebo = 0
+	}
+	b.Verts, b.Indices = 0, 0
+}
+
+// UploadIndices gives the batch an index list over its vertex buffer (nil
+// drops it). Upload must have made the VAO first.
+func (b *Batch) UploadIndices(indices []uint32) {
+	b.Indices = int32(len(indices))
+	if !GeometryUploadsEnabled || b.Vao == 0 {
+		return
+	}
+	if len(indices) == 0 {
+		if b.Ebo != 0 {
+			gl.BindVertexArray(b.Vao)
+			gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0)
+			gl.BindVertexArray(0)
+			gl.DeleteBuffers(1, &b.Ebo)
+			b.Ebo = 0
+		}
+		return
+	}
+	gl.BindVertexArray(b.Vao)
+	if b.Ebo == 0 {
+		gl.GenBuffers(1, &b.Ebo)
+	}
+	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.Ebo)
+	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*4, gl.Ptr(indices), gl.STATIC_DRAW)
+	gl.BindVertexArray(0)
 }
 
 // Draw renders the given ranges through the world program under model,
@@ -149,23 +185,44 @@ func (b *Batch) Draw(model mgl32.Mat4, firsts, counts []int32) {
 	if len(firsts) == 0 || b.Vao == 0 {
 		return
 	}
-	// A chunk or static batch is lit and still unless its material says
-	// otherwise — unlit, water and scroll all used to be a model attachment's
-	// business alone, and a .fmat is how a wall gets at them.
-	st := b.SurfaceState()
-	gl.UseProgram(Program)
-	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
+	b.Bind(model)
+	b.DrawRanges(firsts, counts)
+}
+
+// Bind readies the world program to draw the batch under model — every
+// uniform Draw sets, the texture and the VAO — and draws nothing. For a caller
+// issuing its own draws against the batch: the GPU-driven cull's indirect
+// draws over Ebo.
+func (b *Batch) Bind(model mgl32.Mat4) {
 	baked := int32(0)
 	if b.Baked && b.Lbo != 0 {
 		baked = 1
 	}
+	b.Material.BindWorld(model, baked, false)
+	gl.BindVertexArray(b.Vao)
+}
+
+// BindWorld sets the world program up for a draw in this material: the model
+// matrix (ignored by an instanced draw, which reads its own per instance),
+// the baked-light flag, every uniform the surface state sets, no skin, and the
+// texture. The VAO is the caller's. A chunk or static batch is lit and still
+// unless its material says otherwise — unlit, water and scroll all used to be
+// a model attachment's business alone, and a .fmat is how a wall gets at them.
+func (m *Material) BindWorld(model mgl32.Mat4, baked int32, instanced bool) {
+	st := m.SurfaceState()
+	gl.UseProgram(Program)
+	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
 	gl.Uniform1i(BakedLightUniform, baked)
+	// Only ever switched ON here: every instanced draw puts it back to 0
+	// after itself (DrawInstanced, the Nanite scenery), so a batch's draw
+	// leaves it alone exactly as it always has.
+	if instanced {
+		gl.Uniform1i(InstancedUniform, 1)
+	}
 	st.Apply()
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)
-	gl.BindVertexArray(b.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
-	b.DrawRanges(firsts, counts)
 }
 
 // DrawRanges issues the draw for the given ranges against whatever program

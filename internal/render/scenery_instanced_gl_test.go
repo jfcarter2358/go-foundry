@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -61,7 +62,7 @@ func drawSceneryFrame(t *testing.T, lvl *world.Level, instanced bool) []uint8 {
 		t.Errorf("instanced=%v counted %d placements drawn, want %d", instanced, DebugStats.Scenery, len(lvl.Scenery))
 	}
 	px := make([]uint8, skyTestSize*skyTestSize*4)
-	gl.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return px
 }
 
@@ -126,7 +127,7 @@ func TestSceneryInstancedShadowsMatchOneByOne(t *testing.T) {
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 		RenderSceneryShadow(lvl, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, nil)
 		out := make([]float32, skyTestSize*skyTestSize)
-		gl.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(&out[0]))
+		glext.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(&out[0]))
 		return out
 	}
 	one, inst := depth(false), depth(true)

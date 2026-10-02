@@ -111,6 +111,9 @@ func modelEditorRebuild() {
 			SmoothAngle: modelDoc.SmoothAngle,
 			AutoSmooth:  true,
 			Alpha:       1,
+			// Drawn indexed, as the level draws the same model: see
+			// gfx.IndexedModels.
+			Indexed: true,
 		}
 		if err := g.Load(sub.Vertices, sub.Indices, sub.Texture, mgl32.Vec3{}); err != nil {
 			log.Printf("model editor: upload %q: %v", sub.Texture, err)
@@ -167,7 +170,7 @@ func drawModelMesh(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 		gl.BindVertexArray(g.Vao)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[g.Texture])
-		gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+		g.DrawTriangles()
 	}
 
 	gl.Disable(gl.POLYGON_OFFSET_FILL)

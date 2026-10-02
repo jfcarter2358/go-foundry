@@ -20,6 +20,7 @@ package render
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/gltest"
 	"foundry/internal/world"
 	"math"
@@ -109,7 +110,7 @@ func (p *fogProbe) shadeThrough(f *world.Fog, vols []world.Volume, pos mgl32.Vec
 	gl.BindVertexArray(0)
 
 	var px [4]uint8
-	gl.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return float32(px[0]) / 255
 }
 

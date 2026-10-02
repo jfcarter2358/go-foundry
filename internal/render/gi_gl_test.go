@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/gltest"
 	"foundry/internal/world"
 
@@ -77,7 +78,7 @@ func giFieldAt(t *testing.T, l int, p mgl32.Vec3) float32 {
 	lv := &gi.field.levels[l]
 	data := make([]float32, giSdfRes*giSdfRes*giSdfRes)
 	gl.BindTexture(gl.TEXTURE_3D, lv.sdf)
-	gl.GetTexImage(gl.TEXTURE_3D, 0, gl.RED, gl.FLOAT, gl.Ptr(&data[0]))
+	glext.GetTexImage(gl.TEXTURE_3D, 0, gl.RED, gl.FLOAT, gl.Ptr(&data[0]))
 	gl.BindTexture(gl.TEXTURE_3D, 0)
 	var v [3]int
 	for k := 0; k < 3; k++ {
@@ -111,7 +112,7 @@ func giIrradianceAt(t *testing.T, wi [3]int, dir mgl32.Vec3) mgl32.Vec3 {
 	w, h := giDimX*giDimZ*giIrrTile, giDimY*GIMaxCascades*giIrrTile
 	data := make([]float32, w*h*3)
 	gl.BindTexture(gl.TEXTURE_2D, gi.irr)
-	gl.GetTexImage(gl.TEXTURE_2D, 0, gl.RGB, gl.FLOAT, gl.Ptr(&data[0]))
+	glext.GetTexImage(gl.TEXTURE_2D, 0, gl.RGB, gl.FLOAT, gl.Ptr(&data[0]))
 	gl.BindTexture(gl.TEXTURE_2D, 0)
 	dims := [3]int{giDimX, giDimY, giDimZ}
 	var slot [3]int
@@ -259,7 +260,7 @@ func giSurfaceAt(t *testing.T, wi [3]int) mgl32.Vec4 {
 	w, h := giDimX*giDimZ, giDimY*GIMaxCascades
 	data := make([]float32, w*h*4)
 	gl.BindTexture(gl.TEXTURE_2D, gi.surf)
-	gl.GetTexImage(gl.TEXTURE_2D, 0, gl.RGBA, gl.FLOAT, gl.Ptr(&data[0]))
+	glext.GetTexImage(gl.TEXTURE_2D, 0, gl.RGBA, gl.FLOAT, gl.Ptr(&data[0]))
 	gl.BindTexture(gl.TEXTURE_2D, 0)
 	dims := [3]int{giDimX, giDimY, giDimZ}
 	var slot [3]int

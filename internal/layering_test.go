@@ -87,6 +87,21 @@ var upward = map[string][]string{
 	"savegame":  {"editor", "app", "uiwin"},
 	"uiwin":     {"editor", "app"},
 	"textureui": {"editor", "app"},
+	// The Nanite mesh: cluster cuts a triangle list, meshsdf bakes a distance
+	// grid, nanite is the cooked .fnm file. All three are pure CPU and sit
+	// below gfx and model — pack reads a cooked mesh's slots to follow its
+	// textures, and must not link OpenGL to do it. The cook, which imports
+	// through model and welds through gfx, is nanitecook, above them — and
+	// below the world and everything that draws one, which only ever read
+	// the cooked file.
+	"cluster":    {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
+	"meshsdf":    {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
+	"nanite":     {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin"},
+	"nanitecook": {"world", "levelio", "render", "editor", "app", "uiwin"},
+	// glext is GL extension detection and the readback wrappers that work
+	// round a driver (glext/readback.go): above the GL binding, below
+	// everything that draws.
+	"glext": {"gfx", "world", "render", "editor", "app", "uiwin"},
 	// pack stages an install tree and archives it: a tree of files and the
 	// manifest, and nothing about how the engine loads either. Below gfx and
 	// levelio, so cmd/foundrypack packs without linking OpenGL.

@@ -77,7 +77,10 @@ The choice is saved in the level file (`compile: {bake: none}`), so
   [Shadow cost](07-lighting.md#shadow-cost).
 
 A `.fbsp` from before live GI is refused at load with a message to recompile:
-the lighting data in it changed shape.
+the lighting data in it changed shape. So is one from before the GPU cluster
+cull (version 8): a compile now also cuts each batch of surfaces into clusters
+of about 128 triangles, which the GPU culls one by one, and stores the cut in
+the file so a load never has to make it.
 
 ## What actually uses it
 

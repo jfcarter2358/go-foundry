@@ -380,5 +380,5 @@ func (g *Geometry) DrawThroughProgram(prog uint32, model mgl32.Mat4) {
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 	gl.Uniform1i(UniformLoc(prog, "tex\x00"), 0)
-	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+	g.DrawTriangles()
 }

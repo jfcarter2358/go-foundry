@@ -25,6 +25,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/harness"
 	"foundry/internal/imguibackend"
+	"foundry/internal/nanitecook"
 	"foundry/internal/pack"
 	"foundry/internal/preview"
 	"foundry/internal/project"
@@ -80,6 +81,9 @@ func devWireframe() bool {
 //   - `render` draws a model, a screen or the player's arms to a .png.
 //   - `model inspect` measures a .fmdl through the engine's own pose maths.
 //   - `profile-load` times a level load, stage by stage.
+//   - `nanite cook/inspect/sample` cooks a dense mesh (glTF, OBJ, .fmdl) into
+//     a Nanite mesh (.fnm, internal/nanite; the cook is internal/nanitecook)
+//     and reports on one.
 //   - `bench` is not a command at all: it fills FOUNDRY_BENCH and lets the
 //     engine boot, because the benchmark measures the real frame in the real
 //     window and there is nothing headless about it.
@@ -112,6 +116,8 @@ func devRunCommand(args []string) (exitCode int, ran bool) {
 		return harness.ProfileLoadMain(commandProject(), args[1:], os.Stdout), true
 	case preview.ModelCommand:
 		return preview.ModelMain(commandProject(), args[1:], os.Stdout), true
+	case nanitecook.Command:
+		return nanitecook.Main(commandProject(), args[1:], os.Stdout), true
 	case "bench":
 		// Not handled here: FOUNDRY_BENCH is read during boot (bench.go), so
 		// this sets it and reports "no command ran", which lets the engine start

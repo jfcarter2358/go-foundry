@@ -252,6 +252,9 @@ type RawScenery struct {
 	// Solid defaults to true when absent — scenery exists mostly to be walked
 	// around, so the flag is written only to switch collision off.
 	Solid *bool `yaml:"solid,omitempty"`
+	// Materials overrides a cooked Nanite mesh's (.fnm) material slots, slot
+	// name to texture: `materials: {stone: granite, moss: snow}`.
+	Materials map[string]string `yaml:"materials,omitempty"`
 }
 
 // RawDecal is the YAML representation of a projected decal (decal.go) — a

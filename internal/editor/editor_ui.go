@@ -334,6 +334,11 @@ func modelFileNames() []string {
 // per frame for the few frames a menu is down, and it means the list is always
 // what is on disk rather than what was on disk when the panel first drew.
 func modelFileCombo(label string, path *string) bool {
+	return modelFileComboOf(label, path, modelFileNames)
+}
+
+// modelFileComboOf is modelFileCombo over the files names lists.
+func modelFileComboOf(label string, path *string, names func() []string) bool {
 	preview := modelDisplayName(*path)
 	if preview == "" {
 		preview = "(none)"
@@ -349,7 +354,7 @@ func modelFileCombo(label string, path *string) bool {
 		changed = true
 	}
 	known := false
-	for _, n := range modelFileNames() {
+	for _, n := range names() {
 		if n == *path {
 			known = true
 		}

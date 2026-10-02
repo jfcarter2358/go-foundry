@@ -18,6 +18,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/gltest"
 	"foundry/internal/world"
 
@@ -127,7 +128,7 @@ func (p *normalProbe) shadeQuadWith(g gfx.Geometry, texture string, model mgl32.
 	g.DrawWithTransform(model)
 
 	var px [4]uint8
-	gl.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return px
 }
 

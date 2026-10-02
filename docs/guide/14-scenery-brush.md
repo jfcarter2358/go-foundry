@@ -85,3 +85,35 @@ draw one by one, because blending has to be sorted back to front.
 
 Setting `FOUNDRY_SCENERY_INSTANCING=0` before starting the engine draws every
 placement on its own again, for comparing the two.
+
+## Nanite meshes
+
+A prop whose model is a cooked Nanite mesh (`.fnm` — see
+[Models](09-models.md#dense-meshes-gltf-and-nanite-cooking)) is drawn by the
+GPU instead: every placement of every cooked mesh shares one set of buffers,
+and each frame a compute pass culls the meshes' clusters of about 128 triangles
+against the view, against what faces away, and against what is hidden behind
+geometry already drawn. Only the clusters that survive are drawn, one draw call
+per material. So a field of rocks behind a hill costs almost nothing, and a
+rock half out of view costs about half. A rock that is in view still draws
+every one of its triangles, though, near or far: there is no level of detail
+yet, so a distant hundred-thousand-triangle rock costs what a close one does.
+Keep that in mind when scattering dense meshes.
+
+Shadows are culled cluster by cluster too, against each shadow's own view
+rather than the camera's (a rock you cannot see still casts). On a mesh that is
+a closed solid, the clusters facing wholly away from the light are skipped as
+well, which never changes the shadow. The mesh's baked distance field makes it
+block and bounce light for live GI.
+
+The **Model** pickers list cooked meshes beside the models. A placed cooked
+prop has a **Nanite** group in its panel: its triangle and cluster counts, and
+one texture picker per material slot. A slot's picker overrides that slot's
+texture on this prop only — the same rock in moss or in snow without a second
+cook. In the level file the overrides are `materials: {stone: granite}`.
+
+Collision is the mesh's bounding box, as for any prop. A cooked mesh draws
+opaque: a slot whose texture has soft alpha is not sorted the way a classic
+model's translucent parts are.
+
+`FOUNDRY_NANITE_MESHES=0` draws cooked props the classic way, for comparison.

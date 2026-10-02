@@ -311,7 +311,9 @@ func (m *EntityModel) Load(ownerID string) error {
 		if err := gfx.EnsureTextureLoaded(sub.Texture); err != nil {
 			log.Printf("entity %s: model %s: texture %q: %v", ownerID, m.Name, sub.Texture, err)
 		}
-		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle, AutoSmooth: true}
+		// Indexed: a model loads as a shared vertex pool and an index list
+		// (gfx.IndexedModels; docs/nanite/PHASE_0.md).
+		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle, AutoSmooth: true, Indexed: true}
 		if m.Anim != nil {
 			// Set before Load, which de-indexes these alongside the positions.
 			g.SkinIdx, g.SkinWt = sub.SkinIdx, sub.SkinWt

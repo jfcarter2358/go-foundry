@@ -13,9 +13,11 @@ package render
 //   - a chunk's block terrain, as its block grid; the shader searches a few
 //     blocks out for the nearest one of the other kind.
 //   - an entity's model, as a baked grid of distances (gi_meshsdf.go) placed
-//     by the entity's matrix. Skinned models are left out: a bind-pose grid
-//     would be traced in a pose the character is not in, and a person blocks
-//     too little light for a few capsules to be worth tracking per frame.
+//     by the entity's matrix; and a cooked Nanite mesh's placement, as the
+//     grid its cook baked (internal/nanite). Skinned models are left out: a
+//     bind-pose grid would be traced in a pose the character is not in, and
+//     a person blocks too little light for a few capsules to be worth
+//     tracking per frame.
 //
 // Sources come in GROUPS — one per brush, per terrain, per entity model — each
 // with a hash of what it holds. A frame re-derives only the groups whose inputs
@@ -82,7 +84,7 @@ type giGroup struct {
 // belongs to, and its index there. A struct rather than a formatted string so
 // that looking a group up every frame allocates nothing.
 type giKey struct {
-	kind  byte // 'b' static brush, 'd' dynamic brush, 't' terrain, 'e' entity model
+	kind  byte // 'b' static brush, 'd' dynamic brush, 't' terrain, 'e' entity model, 'n' Nanite scenery
 	owner string
 	a, b  int
 }
@@ -212,6 +214,25 @@ func (s *giSourceSet) collect(lvl *world.Level) {
 			}
 			s.putHashed(k, false, s.modelSources(m, wm, s.minModel), h)
 		}
+	}
+
+	// Cooked Nanite meshes (internal/nanite), as the distance grid their cook
+	// baked — sized to the mesh rather than a fixed 32 cells — placed by the
+	// placement's matrix. Static props, so re-derived only when one moves or
+	// is re-skinned.
+	for i := range lvl.Scenery {
+		sc := &lvl.Scenery[i]
+		if sc.Nanite == nil || sc.Nanite.SDF == nil {
+			continue
+		}
+		k := giKey{'n', sc.ID, i, 0}
+		wm := sc.ModelMatrix()
+		h := hashMatCoarse(wm) ^ hashString(sc.Model) ^ hashString(sc.SlotTexture(0))
+		if g := s.groups[k]; g != nil && g.hash == h {
+			g.seen = s.frame
+			continue
+		}
+		s.putHashed(k, false, naniteSceneryGISources(sc, wm, s.minModel), h)
 	}
 
 	for k, g := range s.groups {
@@ -426,12 +447,14 @@ func (s *giSourceSet) modelSources(m *world.EntityModel, worldM mgl32.Mat4, minS
 	}
 	sdf, ok := s.meshes[key]
 	if !ok {
+		// Walked through ForEachTriangle: a model's submeshes are indexed
+		// (gfx.IndexedModels), so Vertices is a pool, not a triangle list.
 		var tris []mgl32.Vec3
 		for si := range m.Submeshes {
-			v := m.Submeshes[si].Vertices
-			for i := 0; i+4 < len(v); i += 5 {
-				tris = append(tris, mgl32.Vec3{v[i], v[i+1], v[i+2]})
-			}
+			m.Submeshes[si].ForEachTriangle(func(a, b, c mgl32.Vec3) bool {
+				tris = append(tris, a, b, c)
+				return true
+			})
 		}
 		sdf = bakeMeshSDF(tris, giMeshRes)
 		s.meshes[key] = sdf
@@ -459,6 +482,34 @@ func (s *giSourceSet) modelSources(m *world.EntityModel, worldM mgl32.Mat4, minS
 	return []giSource{{
 		kind: giKindMesh, lo: lo, hi: hi, m: grid, mesh: sdf,
 		color: capAlbedo(textureAlbedo(tex)).Vec4(0),
+		p0:    mgl32.Vec4{0, float32(sdf.N), sdf.Cell * scale, 0},
+	}}
+}
+
+// naniteSceneryGISources is a cooked placement as a placed distance grid —
+// modelSources, with the grid its cook baked.
+func naniteSceneryGISources(sc *world.Scenery, worldM mgl32.Mat4, minSize float32) []giSource {
+	sdf := sc.Nanite.SDF
+	lo, hi := transformBox(worldM, sdf.Lo, sdf.Hi)
+	if ext := hi.Sub(lo); max(ext[0], ext[1], ext[2]) < minSize {
+		return nil
+	}
+	scale := (mgl32.Vec3{worldM[0], worldM[1], worldM[2]}.Len() +
+		mgl32.Vec3{worldM[4], worldM[5], worldM[6]}.Len() +
+		mgl32.Vec3{worldM[8], worldM[9], worldM[10]}.Len()) / 3
+	grid := mgl32.Scale3D(1/sdf.Cell, 1/sdf.Cell, 1/sdf.Cell).
+		Mul4(mgl32.Translate3D(-sdf.Lo[0], -sdf.Lo[1], -sdf.Lo[2])).
+		Mul4(worldM.Inv())
+	albedo := textureAlbedo(sc.SlotTexture(0))
+	if sc.SlotTexture(0) == "" && len(sc.Nanite.Slots) > 0 {
+		// An untextured slot draws in its normal's colour; GI takes its
+		// authored base colour, which is closer to what it is meant to be.
+		bc := sc.Nanite.Slots[0].BaseColor
+		albedo = mgl32.Vec3{bc[0], bc[1], bc[2]}
+	}
+	return []giSource{{
+		kind: giKindMesh, lo: lo, hi: hi, m: grid, mesh: sdf,
+		color: capAlbedo(albedo).Vec4(0),
 		p0:    mgl32.Vec4{0, float32(sdf.N), sdf.Cell * scale, 0},
 	}}
 }

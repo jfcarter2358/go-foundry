@@ -103,6 +103,9 @@ func sceneryGroupsSignature(lvl *world.Level) uint64 {
 	put(uint32(len(lvl.Scenery)))
 	for i := range lvl.Scenery {
 		subs := lvl.Scenery[i].Submeshes
+		if lvl.Scenery[i].NaniteGPU {
+			put(0xffffffff)
+		}
 		put(uint32(len(subs)))
 		for si := range subs {
 			put(subs[si].Vao)
@@ -126,6 +129,9 @@ func (in *sceneryInstancer) prepare(lvl *world.Level) {
 	index := map[sceneryGroupKey]int{}
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
+		if s.NaniteGPU {
+			continue // the GPU-driven cull's (nanite_scenery.go)
+		}
 		for si := range s.Submeshes {
 			g := &s.Submeshes[si]
 			if len(g.Vertices) == 0 || g.Vao == 0 {
@@ -274,7 +280,7 @@ func renderSceneryShadowInstanced(lvl *world.Level, prog uint32, skin *gfx.SkinU
 			continue
 		}
 		gl.BindVertexArray(geo.Vao)
-		gl.DrawArraysInstancedBaseInstance(gl.TRIANGLES, 0, int32(len(geo.Vertices)/5), int32(g.count), uint32(g.first))
+		geo.DrawTrianglesInstanced(g.first, g.count)
 	}
 	gl.Uniform1i(loc, 0)
 }

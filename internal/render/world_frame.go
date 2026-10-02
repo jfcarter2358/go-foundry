@@ -119,6 +119,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	if ForceWireframe {
 		o.Wireframe = true
 	}
+	// The editor's view draws chunk brushes the CPU way: a brush edit
+	// rebuilds a group every frame of a drag (chunk_nanite.go).
+	naniteChunksActive = !o.Editor
 	beginFrameTarget(o.Target)
 	defer endFrameTarget()
 
@@ -311,6 +314,12 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// A transparent one is queued with its own centre as the sort key,
 		// not a model matrix's translation: its vertices are already in
 		// world space, so every one of them would sort at the origin.
+		// Two-pass occlusion (nanite_cull.go): the GPU-driven cull's first
+		// pass, here and in the scenery, draws what was visible last frame;
+		// naniteOcclusionPass, after the rest of the opaque world, finishes.
+		naniteTwoPass = NaniteOcclusion && !o.skip("nanite: occlusion")
+		naniteChunkPending = naniteChunkPending[:0]
+		DebugStats.NaniteClusters, DebugStats.NaniteTriangles = 0, 0
 		ProfileBegin("world: compiled")
 		if lvl.Static != nil {
 			staticDrawScratch = lvl.Static.VisibleSurfaces(gfx.Cam.Position, staticDrawScratch)
@@ -399,9 +408,21 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		}
 		ProfileEnd()
 
-		// Placed scenery — the same story, one matrix simpler.
+		// Placed scenery — the same story, one matrix simpler. A cooked
+		// Nanite mesh's placements go through the GPU-driven cull instead
+		// (nanite_scenery.go).
 		ProfileBegin("scenery")
 		RenderScenery(lvl, &frustum, drawOrQueue)
+		ProfileEnd()
+		ProfileBegin("nanite: scenery")
+		RenderNaniteScenery(lvl, frustum, projView)
+		ProfileEnd()
+
+		// The GPU-driven cull's second pass: the Hi-Z pyramid from every
+		// opaque thing drawn so far, and what the first passes missed. After
+		// the entities and scenery, so they hide what is behind them too.
+		ProfileBegin("nanite: occlusion")
+		naniteOcclusionPass(lvl)
 		ProfileEnd()
 
 		// The spawn marker is an authoring aid, not level geometry: it

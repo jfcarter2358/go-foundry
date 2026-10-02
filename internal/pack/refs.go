@@ -31,6 +31,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/game"
+	"foundry/internal/nanite"
 )
 
 // assetIndex maps every name an asset can be referred to by onto its
@@ -196,6 +197,23 @@ func reachable(src string, idx assetIndex, roots []string) map[string]bool {
 			if _, err := os.Stat(filepath.Join(src, filepath.FromSlash(compiled))); err == nil {
 				keep[compiled] = true
 			}
+		}
+
+		// A cooked Nanite mesh is binary, and names the textures of its
+		// material slots inside it: read them out rather than scan for them,
+		// or every cooked rock would ship untextured.
+		if nanite.IsCookedPath(path) {
+			if m, err := nanite.Read(filepath.Join(src, filepath.FromSlash(path))); err == nil {
+				for _, sl := range m.Slots {
+					for hit := range idx[sl.Texture] {
+						if !keep[hit] {
+							keep[hit] = true
+							frontier = append(frontier, hit)
+						}
+					}
+				}
+			}
+			continue
 		}
 
 		if !textExts[strings.ToLower(filepath.Ext(path))] {

@@ -15,6 +15,7 @@ package editor
 import (
 	"fmt"
 	"foundry/internal/imguibackend"
+	"foundry/internal/nanitecook"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -32,7 +33,7 @@ import (
 func editorSceneryAddMenu() {
 	imgui.SetNextItemWidth(240)
 	path := Editor.BrushModel
-	if modelFileCombo("Model##brushmodel", &path) {
+	if sceneryModelFileCombo("Model##brushmodel", &path) {
 		editorArmBrush(path)
 	}
 	if imgui.IsItemHovered() {
@@ -75,7 +76,7 @@ func editorSceneryBrushSection() {
 // reason about the state they write without an imgui frame around them.
 func editorSceneryBrushBody() {
 	path := Editor.BrushModel
-	if modelFileCombo("Model##brushmodel2", &path) {
+	if sceneryModelFileCombo("Model##brushmodel2", &path) {
 		editorArmBrush(path)
 	}
 
@@ -151,6 +152,9 @@ func editorSceneryProperties(s *world.Scenery) {
 	editorPropGroupOpen("Identity##scidgrp", func() { editorSceneryIdentity(s) })
 	editorPropGroupOpen("Transform##sctfgrp", func() { editorSceneryTransform(s) })
 	editorPropGroupOpen("Collision##sccolgrp", func() { editorSceneryCollision(s) })
+	if s.Nanite != nil || nanitecook.IsSourcePath(s.Model) {
+		editorPropGroupOpen("Nanite##scnanite", func() { editorSceneryNanite(s) })
+	}
 	editorPropGroup("Actions##scactions", 0, func() { editorSceneryActions(s) })
 }
 
@@ -173,7 +177,7 @@ func editorSceneryIdentity(s *world.Scenery) {
 	}
 
 	path := s.Model
-	if modelFileCombo("Model##scmodel", &path) {
+	if sceneryModelFileCombo("Model##scmodel", &path) {
 		// The undo snapshot is of the state being left, so the path is put back
 		// before it is taken — the same dance editorEntitySetModelPath does.
 		next := path

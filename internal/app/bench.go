@@ -49,6 +49,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/hooks"
 	"foundry/internal/levelio"
 	"foundry/internal/platform"
@@ -386,7 +387,7 @@ func benchCaptureShot() {
 	gl.BindFramebuffer(gl.READ_FRAMEBUFFER, 0)
 	gl.ReadBuffer(gl.BACK)
 	gl.PixelStorei(gl.PACK_ALIGNMENT, 1)
-	gl.ReadPixels(0, 0, int32(w), int32(h), gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(px))
+	glext.ReadPixels(0, 0, int32(w), int32(h), gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(px))
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		// GL's rows run bottom-up.

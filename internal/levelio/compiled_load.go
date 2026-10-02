@@ -196,6 +196,11 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 		g.BlendMask = f.BlendMask
 	}
 	if to == len(c.Faces) {
+		// The compiler's cut of the surfaces into clusters, for the
+		// GPU-driven cull (world/static_clusters.go). The renderer checks
+		// each group's against the surfaces it actually built and cuts any
+		// that do not match.
+		level.Static.SetClusters(c.Clusters)
 		// A streamed chunk is baked but starts switched off, and its surfaces
 		// have to start hidden with it. SyncChunkGeometry would hide them on
 		// the first frame, which is one frame too late: the area would flash

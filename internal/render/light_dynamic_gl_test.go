@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"foundry/internal/gfx"
+	"foundry/internal/glext"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -47,7 +48,7 @@ func (p *normalProbe) bakedQuadRed(baked []float32) float32 {
 	g.DrawWithTransform(mgl32.Ident4())
 
 	var px [4]uint8
-	gl.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	glext.ReadPixels(skyTestSize/2, skyTestSize/2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return float32(px[0]) / 255
 }
 

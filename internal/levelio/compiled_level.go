@@ -115,7 +115,12 @@ const CompiledExt = ".fbsp"
 // as "the bake shadowed the sun here", and the renderer puts the sun back
 // wherever its cascades see the point lit. A version-6 file would light every
 // excluded chunk with the sun its author kept out of it.
-const CompiledVersion = 7
+//
+// 8: the surfaces' draw groups carry their cut into clusters (Clusters), for
+// the GPU-driven cull (docs/nanite/PHASE_1.md). A version-7 file would still
+// draw — the renderer cuts any group it has no cut for at load — but would pay
+// for the cut on every load, so it is asked to recompile like any other.
+const CompiledVersion = 8
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure
@@ -145,6 +150,11 @@ type CompiledLevel struct {
 	// Stats is what the compile reported, kept so a level can be asked what it
 	// cost without recompiling it.
 	Stats compile.Stats
+
+	// Clusters is each draw group of the surfaces cut into clusters
+	// (world/static_clusters.go): what the GPU-driven cull culls, made once
+	// here rather than on every load.
+	Clusters []world.StaticClusterGroup
 }
 
 // CompileLevel runs the compiler over a loaded level and returns the artefact.
@@ -161,7 +171,7 @@ func CompileLevel(lvl *world.Level, opt compile.Options) (*CompiledLevel, error)
 	raw.Chunks = nil
 	raw.Prefabs = nil
 
-	return &CompiledLevel{
+	c := &CompiledLevel{
 		Version: CompiledVersion,
 		Faces:   res.Tree.Faces,
 		Tree:    res.Tree.Tree,
@@ -169,7 +179,25 @@ func CompileLevel(lvl *world.Level, opt compile.Options) (*CompiledLevel, error)
 		Chunks:  storableChunks(lvl),
 		Raw:     raw,
 		Stats:   res.Stats,
-	}, nil
+	}
+	clusters, err := CutCompiledClusters(c)
+	if err != nil {
+		return nil, err
+	}
+	c.Clusters = clusters
+	return c, nil
+}
+
+// CutCompiledClusters cuts a compiled level's surfaces into clusters — the
+// last stage of a compile. It stands the surfaces up exactly as a load would
+// (CPU-only, so no GL context is needed) and cuts the groups the renderer will
+// draw them in.
+func CutCompiledClusters(c *CompiledLevel) ([]world.StaticClusterGroup, error) {
+	static, err := StaticGeometryFrom(c)
+	if err != nil {
+		return nil, err
+	}
+	return world.BuildStaticClusters(static), nil
 }
 
 // CompileLevelFile reads a level from disk with no GL context and compiles it.
@@ -214,13 +242,14 @@ func storableChunks(lvl *world.Level) []world.Chunk {
 // compiledFile is a CompiledLevel as it is encoded: the same fields, with the
 // authored half as YAML. See the file comment on why.
 type compiledFile struct {
-	Version int
-	Faces   []compile.Face
-	Tree    *bsp.Tree
-	PVS     *bsp.PVS
-	Chunks  []world.Chunk
-	RawYAML []byte
-	Stats   compile.Stats
+	Version  int
+	Faces    []compile.Face
+	Tree     *bsp.Tree
+	PVS      *bsp.PVS
+	Chunks   []world.Chunk
+	RawYAML  []byte
+	Stats    compile.Stats
+	Clusters []world.StaticClusterGroup
 }
 
 // SaveCompiledLevel writes a compiled level to path.
@@ -230,13 +259,14 @@ func SaveCompiledLevel(c *CompiledLevel, path string) error {
 		return fmt.Errorf("encoding compiled level's authored half: %w", err)
 	}
 	f := compiledFile{
-		Version: c.Version,
-		Faces:   c.Faces,
-		Tree:    c.Tree,
-		PVS:     c.PVS,
-		Chunks:  c.Chunks,
-		RawYAML: rawYAML,
-		Stats:   c.Stats,
+		Version:  c.Version,
+		Faces:    c.Faces,
+		Tree:     c.Tree,
+		PVS:      c.PVS,
+		Chunks:   c.Chunks,
+		RawYAML:  rawYAML,
+		Stats:    c.Stats,
+		Clusters: c.Clusters,
 	}
 	var buf bytes.Buffer
 	buf.WriteString(compiledMagic)
@@ -264,12 +294,13 @@ func ReadCompiledLevel(path string) (*CompiledLevel, error) {
 			path, f.Version, CompiledVersion)
 	}
 	c := CompiledLevel{
-		Version: f.Version,
-		Faces:   f.Faces,
-		Tree:    f.Tree,
-		PVS:     f.PVS,
-		Chunks:  f.Chunks,
-		Stats:   f.Stats,
+		Version:  f.Version,
+		Faces:    f.Faces,
+		Tree:     f.Tree,
+		PVS:      f.PVS,
+		Chunks:   f.Chunks,
+		Stats:    f.Stats,
+		Clusters: f.Clusters,
 	}
 	if err := yaml.Unmarshal(f.RawYAML, &c.Raw); err != nil {
 		return nil, fmt.Errorf("decoding compiled level's authored half: %w", err)

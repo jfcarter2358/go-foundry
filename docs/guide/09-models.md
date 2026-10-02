@@ -123,6 +123,41 @@ A model reaches the world as an **attachment** on an entity type, or as a
 after editing a model, press **Reload Models** in the entity panel, or **Reload**
 on a scenery prop, to pick the change up in the level open beside you.
 
+A model loads **indexed**: corners that agree in everything (position, UV,
+normal, bone weights) share one vertex, and the triangles index into that pool.
+Corners that differ in anything stay separate, so UV seams and hard edges look
+exactly as you made them. It is about half the vertex data of the old layout.
+`FOUNDRY_NANITE_INDEXED=0` in the environment loads models the old way, for
+comparing the two.
+
+## Dense meshes: glTF and Nanite cooking
+
+A scan, a sculpt or a rock with a hundred thousand triangles does not belong in
+the model editor. Bring it in as **glTF** (`.gltf` with its `.bin`, or a single
+`.glb`) under `resources/models/`, and **cook** it into a Nanite mesh:
+
+- **Window > Cook Nanite Meshes** cooks every glTF under `resources/` that has
+  changed since its last cook.
+- `foundry nanite cook models/rock.glb` does the same from a terminal (`-all`
+  for every glTF, `-force` to cook even an up-to-date one, `-o` to name the
+  output). `foundry nanite inspect models/rock.fnm` says what a cooked mesh holds.
+
+The cook writes `models/rock.fnm` beside the source. It keeps the file's own
+normals and its **material slots** (each glTF material is a slot; its base-colour
+texture, reduced to the bare name `rock_albedo`, is the slot's texture). It welds
+the vertices, cuts the triangles into clusters of about 128 for the GPU to cull,
+and bakes a distance field for live GI. It records a hash of the source, so a
+cook of an unchanged source is skipped and a changed one is redone.
+
+A `.fmdl` or `.obj` can be cooked too: on a scenery prop that uses one, the
+**Nanite** group's **Cook and use** button cooks it beside itself and points the
+prop at the result. A cooked mesh is static — no rig, no animation — and is
+placed as [scenery](14-scenery-brush.md#nanite-meshes).
+
+glTF import reads triangles (strips and fans included), positions, normals, the
+first UV set, node transforms and materials. Skins, morph targets, animations,
+sparse accessors and extensions are not read.
+
 ## Model editor camera
 
 | | |
