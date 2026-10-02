@@ -27,6 +27,15 @@ package render
 // meshes they use or their overrides change; a placement that moves (the
 // editor's gizmo) only re-sends the instance records.
 //
+// Since Phase 3 (docs/nanite/PHASE_3.md) the pool is a PAGE pool by default
+// (nanite_stream.go): the vertices and indices are the meshes' pages, each in
+// a fixed slot, streamed in and out within a memory budget, and a cluster's
+// record says where its page sits. The cluster list, the trees and the
+// instances are as before; a range tile never spans two pages (rangeWindows),
+// since only a page's clusters are one contiguous run of the index buffer.
+// FOUNDRY_NANITE_STREAM=0 keeps the Phase 2 pool, every mesh decoded whole
+// (nanite.Mesh.Flat) and uploaded with the level.
+//
 // What is not here yet: translucent slots (a cooked mesh draws in the opaque
 // pass, alpha-to-coverage cutouts and all — a texture with partial alpha is
 // not sorted as a classic model's is), and skinning (a cooked mesh is static).
@@ -34,6 +43,7 @@ package render
 import (
 	"encoding/binary"
 	"hash/fnv"
+	"log"
 	"math"
 	"sort"
 	"unsafe"
@@ -79,6 +89,12 @@ type naniteSceneryRenderer struct {
 
 	pass2     bool
 	pass2View cullView
+
+	// stream is the page pool, when the meshes stream (nil: the whole
+	// meshes are in vbo/nbo/ebo).
+	stream *naniteStreamer
+	// attachedVAO is the VAO the instance attributes were last pointed in.
+	attachedVAO uint32
 }
 
 // naniteMeshSlot is one mesh's place in the pool.
@@ -95,6 +111,9 @@ type naniteMeshSlot struct {
 	// closed: the mesh bounds a solid (nanite.Mesh.Closed), so its
 	// placements are flagged for the shadow passes' cone test.
 	closed bool
+	// leafPages is each leaf's page, when the pool streams: a range tile
+	// takes leaves of one page only.
+	leafPages []int32
 }
 
 var naniteScenery naniteSceneryRenderer
@@ -123,6 +142,9 @@ func (r *naniteSceneryRenderer) prepare(lvl *world.Level) bool {
 		r.rebuild(lvl)
 	}
 	r.updateInstances(lvl)
+	if r.stream != nil {
+		r.stream.update(r.clusters, r.nodes)
+	}
 	return true
 }
 
@@ -146,6 +168,10 @@ func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
 	if naniteDebugActive() {
 		h.Write([]byte{1})
 	}
+	// The pool's kind.
+	if naniteStreaming() {
+		h.Write([]byte{2})
+	}
 	return h.Sum64()
 }
 
@@ -160,7 +186,7 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 			list = append(list, m)
 		}
 	}
-	samePool := len(list) == len(r.poolList)
+	samePool := len(list) == len(r.poolList) && (r.stream != nil) == naniteStreaming()
 	for _, m := range list {
 		if r.meshes[m] == nil {
 			samePool = false
@@ -226,7 +252,7 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 			}
 			if len(rn.mesh.leafRanges) > 0 {
 				// A tile a leaf of the DAG, drawn as one range.
-				tiles = appendLeafTiles(tiles, rn.mesh.leafRanges, rn.mesh.clusterBase, rn.first, rn.count, uint32(rn.inst), rn.hist, &slot)
+				tiles = appendLeafTiles(tiles, rn.mesh.leafRanges, rn.mesh.leafPages, rn.mesh.clusterBase, rn.first, rn.count, uint32(rn.inst), rn.hist, &slot)
 			} else {
 				tiles = appendTiles(tiles, rn.first, rn.count, uint32(rn.inst), rn.hist, &slot)
 			}
@@ -239,17 +265,42 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 	r.insts = r.insts[:0]
 }
 
-// buildPool uploads list's meshes into one set of buffers.
+// naniteStreaming is whether cooked meshes go through the page pool: the
+// switch, and LOD selection on (the pool may hold less than the full
+// detail, which only the LOD test knows to step round).
+func naniteStreaming() bool { return NaniteStream && NaniteLOD }
+
+// buildPool uploads list's meshes into one set of buffers: their pages into
+// the page pool, or (FOUNDRY_NANITE_STREAM=0) the whole of each.
 func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
+	// Whatever pool there was goes; the VAO stays (its instance attributes
+	// point at the batch's instances, whichever pool it reads).
+	if r.stream != nil {
+		r.stream.release()
+		r.stream = nil
+		r.batch.stream = nil
+		r.vbo, r.nbo, r.ebo = 0, 0, 0 // the page pool's own
+	} else if r.vbo != 0 {
+		gl.DeleteBuffers(1, &r.vbo)
+		gl.DeleteBuffers(1, &r.nbo)
+		gl.DeleteBuffers(1, &r.ebo)
+		r.vbo, r.nbo, r.ebo = 0, 0, 0
+	}
 	r.meshes = map[*nanite.Mesh]*naniteMeshSlot{}
 	r.poolList = list
+	if naniteStreaming() && r.buildPagePool(list) {
+		return
+	}
 	var verts, normals []float32
 	var indices []uint32
 	var clusters []gpuCluster
 	var nodes []gpuNode
 	for _, m := range list {
+		if err := m.Flat(); err != nil {
+			log.Printf("nanite: %s: %v", m.Source, err)
+		}
 		pm := &naniteMeshSlot{baseVertex: int32(len(verts) / 5), firstIndex: uint32(len(indices)), clusterBase: uint32(len(clusters)),
-			nodeBase: uint32(len(nodes)), leaves: uint32(m.Leaves), leafRanges: cluster.LeafRanges(m.Nodes), closed: m.Closed()}
+			nodeBase: uint32(len(nodes)), leaves: uint32(m.Leaves), leafRanges: cluster.LeafRanges(m.Nodes), closed: m.ClosedSolid}
 		r.meshes[m] = pm
 		verts = append(verts, m.Vertices...)
 		normals = append(normals, m.Normals...)
@@ -263,10 +314,10 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 	}
 	if r.vao == 0 {
 		gl.GenVertexArrays(1, &r.vao)
-		gl.GenBuffers(1, &r.vbo)
-		gl.GenBuffers(1, &r.nbo)
-		gl.GenBuffers(1, &r.ebo)
 	}
+	gl.GenBuffers(1, &r.vbo)
+	gl.GenBuffers(1, &r.nbo)
+	gl.GenBuffers(1, &r.ebo)
 	gl.BindVertexArray(r.vao)
 	gl.BindBuffer(gl.ARRAY_BUFFER, r.vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
@@ -281,6 +332,61 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	uploadClusters(&r.clusters, clusters)
 	uploadNodes(&r.nodes, nodes)
+}
+
+// buildPagePool is buildPool's page pool (nanite_stream.go): false when the
+// meshes cannot stream, for the flat pool to take over.
+func (r *naniteSceneryRenderer) buildPagePool(list []*nanite.Mesh) bool {
+	clusterBase := make([]uint32, len(list))
+	nodeBase := make([]uint32, len(list))
+	nc, nn := uint32(0), uint32(0)
+	for i, m := range list {
+		clusterBase[i], nodeBase[i] = nc, nn
+		nc += uint32(len(m.Clusters))
+		nn += uint32(len(m.Nodes))
+	}
+	s := newNaniteStreamer(list, clusterBase, nodeBase)
+	if s == nil {
+		return false
+	}
+	var clusters []gpuCluster
+	var nodes []gpuNode
+	var cbuf []gpuCluster
+	var nbuf []gpuNode
+	for i, m := range list {
+		pm := &naniteMeshSlot{clusterBase: clusterBase[i], nodeBase: nodeBase[i], leaves: uint32(m.Leaves),
+			leafRanges: cluster.LeafRanges(m.Nodes), closed: m.ClosedSolid}
+		for _, l := range pm.leafRanges {
+			pm.leafPages = append(pm.leafPages, m.PageOf(l[0]))
+		}
+		r.meshes[m] = pm
+		s.meshes[i].res.Update()
+		cbuf = s.clusterRecords(i, cbuf)
+		nbuf = s.nodeRecords(i, nbuf)
+		clusters = append(clusters, cbuf...)
+		nodes = append(nodes, nbuf...)
+		s.meshes[i].gpuClusters = append([]gpuCluster(nil), cbuf...)
+		s.meshes[i].gpuNodes = append([]gpuNode(nil), nbuf...)
+		s.meshes[i].dirty = false
+	}
+	r.stream = s
+	r.batch.stream = s
+	r.vbo, r.nbo, r.ebo = s.vbo, s.nbo, s.ebo
+	if r.vao == 0 {
+		gl.GenVertexArrays(1, &r.vao)
+	}
+	gl.BindVertexArray(r.vao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.vbo)
+	gfx.BindVertexLayout()
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.nbo)
+	gl.EnableVertexAttribArray(gfx.AttribNormal)
+	gl.VertexAttribPointerWithOffset(gfx.AttribNormal, 3, gl.FLOAT, false, 3*4, 0)
+	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, r.ebo)
+	gl.BindVertexArray(0)
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	uploadClusters(&r.clusters, clusters)
+	uploadNodes(&r.nodes, nodes)
+	return true
 }
 
 // updateInstances re-sends the instance records if any placement moved.
@@ -315,7 +421,7 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 	hadBuf := r.batch.instBuf
 	r.batch.setInstances(r.insts)
 	r.batch.upload()
-	if hadBuf != r.batch.instBuf || hadBuf == 0 {
+	if hadBuf != r.batch.instBuf || hadBuf == 0 || r.attachedVAO != r.vao {
 		r.attachInstances()
 	}
 }
@@ -323,6 +429,7 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 // attachInstances points the pool VAO's instance-matrix attributes at the
 // batch's instance buffer: the first 64 bytes of each 96-byte record.
 func (r *naniteSceneryRenderer) attachInstances() {
+	r.attachedVAO = r.vao
 	gl.BindVertexArray(r.vao)
 	gl.BindBuffer(gl.ARRAY_BUFFER, r.batch.instBuf)
 	for i := uint32(0); i < 4; i++ {
@@ -333,6 +440,21 @@ func (r *naniteSceneryRenderer) attachInstances() {
 	}
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+}
+
+// SyncNaniteScenery builds the level's pool of cooked meshes now — when the
+// level is installed, behind its loading screen — rather than in its first
+// frame, and waits for the GPU to have taken it: the page pool's preload is
+// hundreds of megabytes on a big level, and left to the first frames the
+// driver's upload of it surfaced as a 30-100 ms wait in each of the first
+// several (docs/nanite/PHASE_3.md).
+func SyncNaniteScenery(lvl *world.Level) {
+	if lvl == nil || !naniteCull.ready() {
+		return
+	}
+	if naniteScenery.prepare(lvl) {
+		gl.Finish()
+	}
 }
 
 // RenderNaniteScenery draws the level's cooked placements for the camera:

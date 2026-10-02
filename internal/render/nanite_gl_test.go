@@ -106,6 +106,10 @@ func pinNaniteFlags(t *testing.T) {
 		// full-detail classic path exactly. The LOD tests
 		// (nanite_lod_gl_test.go) switch it on.
 		{&NaniteLOD, false}, {&naniteLODWalk, true},
+		// Phase 3's page pool, on with everything preloaded: what the
+		// earlier tests compare is then the same picture through the pool
+		// (nanite_stream_gl_test.go compares the two).
+		{&NaniteStream, true}, {&NaniteStreamPreload, true}, {&NanitePersistent, true},
 	}
 	saved := make([]bool, len(flags))
 	for i, f := range flags {
@@ -524,8 +528,31 @@ func TestNaniteCookedModelMatchesClassicScenery(t *testing.T) {
 	lo, hi := doc.Bounds()
 	ext := hi.Sub(lo)
 	k := 1.4 / max(ext[0], ext[1], ext[2])
-	classic := naniteSceneryLevel(t, src, false, poses, k)
+	// The classic path drawing the same cooked file is the exact reference:
+	// the cook quantises (Phase 3), so the source model's own picture is
+	// only close — every normal within a twentieth of a degree, which in the
+	// normal colours is a step or two of one channel on a few per cent of
+	// the pixels.
+	source := drawSceneryBoth(naniteSceneryLevel(t, src, false, poses, k), false)
+	classic := naniteSceneryLevel(t, cooked, false, poses, k)
 	ref := drawSceneryBoth(classic, false)
+	far, worst := 0, 0
+	for i := 0; i < len(ref); i += 4 {
+		d := 0
+		for c := 0; c < 3; c++ {
+			if x := int(ref[i+c]) - int(source[i+c]); x > d || -x > d {
+				d = max(x, -x)
+			}
+		}
+		worst = max(worst, d)
+		if d > 3 {
+			far++
+		}
+	}
+	t.Logf("cooked against its source: worst channel step %d, %d pixels off by more than 3", worst, far)
+	if far > 10 {
+		t.Errorf("the cooked dropship strays from its source: %d pixels off by more than 3/255", far)
+	}
 	for _, twoPass := range []bool{false, true} {
 		gpu := naniteSceneryLevel(t, cooked, true, poses, k)
 		for frame := 0; frame < 2; frame++ {

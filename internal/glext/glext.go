@@ -15,6 +15,13 @@
 //     buffer, so a GPU cull that compacted its survivors draws exactly those —
 //     the 4.3 alternative is a fixed list in which a culled draw is a zero
 //     count, and a driver still walks every one (render/nanite_cull.go).
+//   - glBufferStorage (core in 4.4, ARB_buffer_storage before that): an
+//     immutable buffer that can stay MAPPED while the GPU uses it
+//     (persistent, coherent), so the Nanite streamer writes pages into its
+//     staging ring and reads its feedback back without a map call a frame
+//     (render/nanite_stream.go, Phase 3). The 4.3 alternative is a plain
+//     buffer written with glBufferSubData and read with glMapBufferRange,
+//     fenced the same way.
 package glext
 
 /*
@@ -58,6 +65,12 @@ static void glextCallMDEIC(void* fn, unsigned int mode, unsigned int type, uintp
 		intptr_t drawcount, int maxdrawcount, int stride) {
 	((glextMDEICFn)fn)(mode, type, (const void*)indirect, drawcount, maxdrawcount, stride);
 }
+
+typedef void (GLEXT_APIENTRY *glextBufferStorageFn)(unsigned int target, intptr_t size, const void* data, unsigned int flags);
+
+static void glextCallBufferStorage(void* fn, unsigned int target, intptr_t size, uintptr_t data, unsigned int flags) {
+	((glextBufferStorageFn)fn)(target, size, (const void*)data, flags);
+}
 */
 import "C"
 
@@ -69,8 +82,9 @@ import (
 )
 
 var (
-	tried bool
-	mdeic unsafe.Pointer
+	tried         bool
+	mdeic         unsafe.Pointer
+	bufferStorage unsafe.Pointer
 )
 
 // Init looks the entry points up. Call with a context current; calling it
@@ -80,33 +94,40 @@ func Init() {
 		return
 	}
 	tried = true
-	if !hasIndirectCount() {
-		return
+	if has(4, 6, "GL_ARB_indirect_parameters") {
+		mdeic = lookup("glMultiDrawElementsIndirectCount", "glMultiDrawElementsIndirectCountARB")
 	}
-	for _, name := range []string{"glMultiDrawElementsIndirectCount", "glMultiDrawElementsIndirectCountARB"} {
+	if has(4, 4, "GL_ARB_buffer_storage") {
+		bufferStorage = lookup("glBufferStorage")
+	}
+}
+
+// lookup is the first of names the driver has an entry point for.
+func lookup(names ...string) unsafe.Pointer {
+	for _, name := range names {
 		cname := C.CString(name)
 		p := C.glextProc(cname)
 		C.free(unsafe.Pointer(cname))
 		if p != nil {
-			mdeic = p
-			return
+			return p
 		}
 	}
+	return nil
 }
 
-// hasIndirectCount is whether the context offers the draw: GL 4.6, or the
+// has is whether the context offers a feature: GL major.minor, or the
 // extension.
-func hasIndirectCount() bool {
-	var major, minor int32
-	gl.GetIntegerv(gl.MAJOR_VERSION, &major)
-	gl.GetIntegerv(gl.MINOR_VERSION, &minor)
-	if major > 4 || (major == 4 && minor >= 6) {
+func has(major, minor int32, ext string) bool {
+	var ma, mi int32
+	gl.GetIntegerv(gl.MAJOR_VERSION, &ma)
+	gl.GetIntegerv(gl.MINOR_VERSION, &mi)
+	if ma > major || (ma == major && mi >= minor) {
 		return true
 	}
 	var n int32
 	gl.GetIntegerv(gl.NUM_EXTENSIONS, &n)
 	for i := int32(0); i < n; i++ {
-		if strings.EqualFold(gl.GoStr(gl.GetStringi(gl.EXTENSIONS, uint32(i))), "GL_ARB_indirect_parameters") {
+		if strings.EqualFold(gl.GoStr(gl.GetStringi(gl.EXTENSIONS, uint32(i))), ext) {
 			return true
 		}
 	}
@@ -119,7 +140,38 @@ func IndirectCountAvailable() bool { return mdeic != nil }
 
 // Disable forgets the entry points, so every caller takes its 4.3 path: for
 // A/B timing and for the tests that pin the fallback.
-func Disable() { mdeic = nil }
+func Disable() { mdeic, bufferStorage = nil, nil }
+
+// Reinit looks the entry points up again, undoing Disable.
+func Reinit() {
+	tried = false
+	mdeic, bufferStorage = nil, nil
+	Init()
+}
+
+// DisableBufferStorage forgets glBufferStorage alone (the streamer's 4.3
+// path, for its tests and FOUNDRY_NANITE_PERSISTENT=0).
+func DisableBufferStorage() { bufferStorage = nil }
+
+// BufferStorageAvailable reports whether BufferStorage can be called. Init
+// must have run.
+func BufferStorageAvailable() bool { return bufferStorage != nil }
+
+// BufferStorage gives the buffer bound to target an immutable store of size
+// bytes (data may be nil) with flags (the MAP_* and storage bits below).
+func BufferStorage(target uint32, size int, data unsafe.Pointer, flags uint32) {
+	C.glextCallBufferStorage(bufferStorage, C.uint(target), C.intptr_t(size), C.uintptr_t(uintptr(data)), C.uint(flags))
+}
+
+// The glBufferStorage and glMapBufferRange bits past the 4.3 binding's
+// constants.
+const (
+	MapPersistentBit   = 0x0040
+	MapCoherentBit     = 0x0080
+	DynamicStorageBit  = 0x0100
+	ClientStorageBit   = 0x0200
+	ClientMappedBuffer = 0x00004000 // GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT
+)
 
 // MultiDrawElementsIndirectCount draws up to maxDraws commands from the bound
 // DRAW_INDIRECT_BUFFER at byte offset indirect, as many as the uint32 at byte

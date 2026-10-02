@@ -28,3 +28,28 @@ func SetNaniteLODError(v float32) {
 	NaniteLODError = v
 	GraphicsSettingsChanged = true
 }
+
+// NaniteStreamPoolMB is the most video memory, in megabytes, the Nanite page
+// pool may take (render/nanite_stream.go; Phase 3, docs/nanite/PHASE_3.md): a
+// level whose cooked meshes need less gets a pool just their size, and one
+// that needs more streams its pages in and out of a pool this big, drawing a
+// coarser version of whatever has not arrived. FOUNDRY_NANITE_STREAM_POOL_MB
+// overrides it (a test's or a benchmark's budget cap). Read when a level's
+// pool is built; clamped to [NaniteStreamPoolMBMin, NaniteStreamPoolMBMax].
+var NaniteStreamPoolMB = 256
+
+const (
+	NaniteStreamPoolMBMin = 8
+	NaniteStreamPoolMBMax = 8192
+)
+
+// SetNaniteStreamPoolMB changes NaniteStreamPoolMB; the next level load's
+// pool takes it.
+func SetNaniteStreamPoolMB(v int) {
+	v = min(max(v, NaniteStreamPoolMBMin), NaniteStreamPoolMBMax)
+	if NaniteStreamPoolMB == v {
+		return
+	}
+	NaniteStreamPoolMB = v
+	GraphicsSettingsChanged = true
+}

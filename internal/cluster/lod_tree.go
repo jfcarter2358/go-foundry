@@ -397,3 +397,79 @@ func SelectThroughTree(nodes []LODNode, clusters []LODCluster, eye mgl32.Vec3, k
 	sort.Ints(out)
 	return out
 }
+
+// RefreshErrors recomputes every node's MinError and MaxParentError from the
+// clusters' errors as own and parent give them (a parent error < 0 is a
+// root), keeping the tree's shape and spheres: what a streamed mesh does when
+// what is resident changes which of its groups may be refined
+// (internal/nanite's residency.go). The spheres stay right, since only the
+// errors move and every error a refresh hands in is no larger than the
+// cooked one.
+func RefreshErrors(nodes []LODNode, own, parent func(c int32) float32) {
+	// Breadth first: a node's children come after it, so the reverse order
+	// meets every child before its parent.
+	for i := len(nodes) - 1; i >= 0; i-- {
+		n := &nodes[i]
+		n.MinError = float32(math.MaxFloat32)
+		n.MaxParentError = 0
+		if n.IsLeaf() {
+			for c := n.ClusterFirst; c < n.ClusterFirst+n.ClusterCount; c++ {
+				n.MinError = min(n.MinError, own(c))
+				if p := parent(c); p < 0 {
+					n.MaxParentError = NoParentError
+				} else if n.MaxParentError != NoParentError {
+					n.MaxParentError = max(n.MaxParentError, p)
+				}
+			}
+			continue
+		}
+		for k := n.FirstChild; k < n.FirstChild+n.ChildCount; k++ {
+			c := &nodes[k]
+			n.MinError = min(n.MinError, c.MinError)
+			if c.MaxParentError == NoParentError {
+				n.MaxParentError = NoParentError
+			} else if n.MaxParentError != NoParentError {
+				n.MaxParentError = max(n.MaxParentError, c.MaxParentError)
+			}
+		}
+	}
+}
+
+// The renderer draws a DAG's clusters as RANGE WINDOWS: runs of up to
+// WindowMaxLeaves whole leaves and WindowMaxClusters clusters, each window a
+// few indirect commands (render/nanite_cull.go, tileRange). The rule lives
+// here because the cooked mesh's pages (internal/nanite's pages.go) are
+// packed from the same windows, so a page boundary never splits one — a
+// window that straddled two pages would have to be split into two, and on
+// the GPUs measured every window's command slots cost whether they draw or
+// not (docs/nanite/PHASE_3.md).
+const (
+	WindowMaxLeaves   = 3
+	WindowMaxClusters = MaxLeafClusters
+)
+
+// RangeWindows packs consecutive leaves, {first, count} in cluster order,
+// into windows: greedily, up to WindowMaxLeaves whole leaves and
+// WindowMaxClusters clusters, never across a break in the clusters, nor
+// across two leaves that apart says must stay apart (nil: none).
+func RangeWindows(leaves [][2]int32, apart func(a, b int) bool) [][2]int32 {
+	var out [][2]int32
+	for i := 0; i < len(leaves); {
+		w := leaves[i]
+		n := 1
+		for i+n < len(leaves) && n < WindowMaxLeaves {
+			next := leaves[i+n]
+			if next[0] != w[0]+w[1] || w[1]+next[1] > WindowMaxClusters {
+				break
+			}
+			if apart != nil && apart(i, i+n) {
+				break
+			}
+			w[1] += next[1]
+			n++
+		}
+		out = append(out, w)
+		i += n
+	}
+	return out
+}

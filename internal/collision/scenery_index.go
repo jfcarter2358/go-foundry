@@ -35,12 +35,26 @@ package collision
 // # Resident collision
 //
 // A mesh-mode placement's triangles are decoded (meshcollide.Resident) only
-// once a query reaches it — a body's box or a ray touching its placement —
-// and dropped after residentTTL ticks with no query, so the decoded form of
-// a far field of rocks is never held. Hulls need no decoding; their points
-// are read where the cooked file holds them.
+// while bodies are near it, and dropped after residentTTL ticks with no body
+// near and no query, so the decoded form of a far field of rocks is never
+// held. Hulls need no decoding; their points are read where the cooked file
+// holds them.
+//
+// Since Phase 3 (docs/nanite/PHASE_3.md) a loaded mesh's triangles are not in
+// memory at all until wanted: the cooked file keeps them apart from the
+// metadata (meshcollide's paged.go), so becoming resident means reading them
+// from disk. That is done AHEAD of the first query, by proximity: every tick
+// (prefetchNear, from EntityUpdate) each world-space body's box, grown by
+// prefetchReach and by where its speed takes it in prefetchAhead seconds, is
+// run through the index, and every mesh-mode placement it reaches that is
+// not resident starts loading on a goroutine — reading and decoding off the
+// physics thread — and is kept resident while a body stays that near. A
+// query that reaches a mesh still not resident (a ray from afar, a body that
+// teleported) waits for it, or reads it there and then; those are counted as
+// SyncLoads, so a level that stalls on them shows it in F3.
 
 import (
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -319,42 +333,109 @@ func boxTouches(b aabb, lo, hi mgl32.Vec3) bool {
 // decode it twice.
 const residentTTL = 600
 
+// prefetchReach is how far, in metres, beyond a body's own box a mesh-mode
+// placement is made resident; prefetchAhead how many seconds of the body's
+// velocity are added to it. A walker covers a few metres a second, so a
+// mesh is read well before anything could touch it.
+const (
+	prefetchReach = 16
+	prefetchAhead = 1.0
+)
+
 type residentEntry struct {
 	r    *meshcollide.Resident
 	last uint64
 }
 
-var residents struct {
-	sync.Mutex
-	m    map[*meshcollide.Data]*residentEntry
-	tick uint64
+// pendingLoad is a mesh being read on a goroutine.
+type pendingLoad struct {
+	done chan struct{}
+	r    *meshcollide.Resident
+	err  error
 }
 
-// residentFor is d decoded, decoding it if no body has been near it lately.
+var residents struct {
+	sync.Mutex
+	m       map[*meshcollide.Data]*residentEntry
+	loading map[*meshcollide.Data]*pendingLoad
+	tick    uint64
+}
+
+// decodeResident reads d's mesh part if it was paged out, and decodes it.
+func decodeResident(d *meshcollide.Data) (*meshcollide.Resident, error) {
+	full, err := d.WithMesh()
+	if err != nil {
+		return nil, err
+	}
+	return meshcollide.NewResident(full), nil
+}
+
+// residentFor is d decoded: resident already (made so by prefetchNear, as a
+// rule), or waited for, or read now.
 func residentFor(d *meshcollide.Data) *meshcollide.Resident {
 	residents.Lock()
-	defer residents.Unlock()
 	if residents.m == nil {
 		residents.m = map[*meshcollide.Data]*residentEntry{}
 	}
-	e := residents.m[d]
-	if e == nil {
-		e = &residentEntry{r: meshcollide.NewResident(d)}
-		residents.m[d] = e
-		statsMu.Lock()
-		sceneryStats.decodes++
-		statsMu.Unlock()
+	if e := residents.m[d]; e != nil {
+		e.last = residents.tick
+		residents.Unlock()
+		return e.r
 	}
-	e.last = residents.tick
-	return e.r
+	pl := residents.loading[d]
+	residents.Unlock()
+
+	// Not resident: the query has to wait for it.
+	var r *meshcollide.Resident
+	var err error
+	if pl != nil {
+		<-pl.done
+		r, err = pl.r, pl.err
+	} else {
+		r, err = decodeResident(d)
+	}
+	statsMu.Lock()
+	sceneryStats.decodes++
+	if !d.MeshResident() {
+		sceneryStats.syncLoads++
+	}
+	statsMu.Unlock()
+	if err != nil {
+		// A mesh whose triangles cannot be read collides as nothing rather
+		// than taking the game down; said once per load.
+		logResidentError(d, err)
+		r = meshcollide.NewResident(&meshcollide.Data{})
+	}
+	residents.Lock()
+	if e := residents.m[d]; e != nil {
+		r = e.r
+	} else {
+		residents.m[d] = &residentEntry{r: r, last: residents.tick}
+	}
+	residents.Unlock()
+	return r
 }
 
-// residentTick advances the residency clock and drops what has gone unused.
-// EntityUpdate calls it once a frame.
+// residentTick advances the residency clock, takes in what finished loading
+// and drops what has gone unused. EntityUpdate calls it once a frame.
 func residentTick() {
 	residents.Lock()
 	defer residents.Unlock()
 	residents.tick++
+	for d, pl := range residents.loading {
+		select {
+		case <-pl.done:
+			delete(residents.loading, d)
+			if pl.err != nil {
+				logResidentError(d, pl.err)
+				continue
+			}
+			if residents.m[d] == nil {
+				residents.m[d] = &residentEntry{r: pl.r, last: residents.tick}
+			}
+		default:
+		}
+	}
 	for d, e := range residents.m {
 		if residents.tick-e.last > residentTTL {
 			delete(residents.m, d)
@@ -363,6 +444,99 @@ func residentTick() {
 			statsMu.Unlock()
 		}
 	}
+}
+
+// prefetchNear makes every mesh-mode placement near a world-space body
+// resident ahead of its first query: loading it on a goroutine if it is not,
+// and keeping it so while the body is near (see the file comment).
+func prefetchNear(lvl *world.Level, player *world.Entity) {
+	prefetchBodies(lvl, player, true)
+}
+
+// prefetchBodies is prefetchNear for player and, with all, every entity.
+func prefetchBodies(lvl *world.Level, player *world.Entity, all bool) {
+	ix := sceneryIndexFor(lvl)
+	if ix == nil || ix.byMode[meshcollide.ModeMesh] == 0 {
+		return
+	}
+	near := func(e *world.Entity) {
+		if e == nil || e.Frame != "" {
+			return
+		}
+		half := e.BoundHalfExtents()
+		v := e.Velocity.Mul(prefetchAhead)
+		reach := mgl32.Vec3{prefetchReach, prefetchReach, prefetchReach}.Add(half)
+		lo := e.Position.Sub(reach).Add(mgl32.Vec3{min(v[0], 0), min(v[1], 0), min(v[2], 0)})
+		hi := e.Position.Add(reach).Add(mgl32.Vec3{max(v[0], 0), max(v[1], 0), max(v[2], 0)})
+		ix.overlapping(lo, hi, func(se *sceneryEntry) bool {
+			if se.mode == meshcollide.ModeMesh {
+				keepResident(se.data)
+			}
+			return true
+		})
+	}
+	near(player)
+	for i := 0; all && i < len(lvl.Entities); i++ {
+		if e := &lvl.Entities[i]; e.CollidesWithWorld() {
+			near(e)
+		}
+	}
+}
+
+// keepResident marks d wanted this tick, starting its load if it is neither
+// resident nor loading.
+func keepResident(d *meshcollide.Data) {
+	residents.Lock()
+	defer residents.Unlock()
+	if residents.m == nil {
+		residents.m = map[*meshcollide.Data]*residentEntry{}
+	}
+	if e := residents.m[d]; e != nil {
+		e.last = residents.tick
+		return
+	}
+	if residents.loading == nil {
+		residents.loading = map[*meshcollide.Data]*pendingLoad{}
+	}
+	if residents.loading[d] != nil {
+		return
+	}
+	pl := &pendingLoad{done: make(chan struct{})}
+	residents.loading[d] = pl
+	statsMu.Lock()
+	sceneryStats.prefetches++
+	statsMu.Unlock()
+	go func() {
+		pl.r, pl.err = decodeResident(d)
+		close(pl.done)
+	}()
+}
+
+var residentErrors sync.Map
+
+func logResidentError(d *meshcollide.Data, err error) {
+	if _, seen := residentErrors.LoadOrStore(d, true); !seen {
+		log.Printf("collision: a cooked mesh's collision could not be read: %v — it collides as nothing", err)
+	}
+}
+
+// WaitForCollisionLoads blocks until every collision mesh being read on a
+// goroutine has arrived, and takes them in: for tests and tools that step
+// the world headlessly and want what a real frame rate would have had.
+func WaitForCollisionLoads() {
+	residents.Lock()
+	var waits []*pendingLoad
+	for _, pl := range residents.loading {
+		waits = append(waits, pl)
+	}
+	residents.Unlock()
+	for _, pl := range waits {
+		<-pl.done
+	}
+	residents.Lock()
+	residents.tick--
+	residents.Unlock()
+	residentTick()
 }
 
 // ---------- the overlay's numbers ----------
@@ -375,10 +549,16 @@ type SceneryStats struct {
 	Resident      int
 	ResidentBytes int
 	// Since the last TakeSceneryStats: index rebuilds, decodes and
-	// evictions, and the CPU time spent in each kind of query.
+	// evictions, and the CPU time spent in each kind of query. Prefetches
+	// are meshes a body's nearness started reading ahead of any query;
+	// SyncLoads, queries that had to wait for a paged-out mesh's triangles
+	// (each one a stall of the physics tick: Phase 3).
 	Rebuilds, Decodes, Evictions int
-	BuildTime, ResolveTime       time.Duration
-	RayTime, ParticleTime        time.Duration
+	Prefetches, SyncLoads        int
+	// Loading is how many are being read right now.
+	Loading                int
+	BuildTime, ResolveTime time.Duration
+	RayTime, ParticleTime  time.Duration
 }
 
 // statsMu guards sceneryStats. Taken after residents' or sceneryState's
@@ -387,6 +567,7 @@ var statsMu sync.Mutex
 
 var sceneryStats struct {
 	rebuilds, decodes, evictions int
+	prefetches, syncLoads        int
 	buildTime                    time.Duration
 	resolveTime, rayTime         time.Duration
 	particleTime                 time.Duration
@@ -410,12 +591,15 @@ func TakeSceneryStats() SceneryStats {
 	sceneryState.Unlock()
 	residents.Lock()
 	out.Resident = len(residents.m)
+	out.Loading = len(residents.loading)
 	for _, e := range residents.m {
 		out.ResidentBytes += e.r.Bytes()
 	}
 	residents.Unlock()
 	statsMu.Lock()
 	out.Rebuilds, out.Decodes, out.Evictions = sceneryStats.rebuilds, sceneryStats.decodes, sceneryStats.evictions
+	out.Prefetches, out.SyncLoads = sceneryStats.prefetches, sceneryStats.syncLoads
+	sceneryStats.prefetches, sceneryStats.syncLoads = 0, 0
 	out.BuildTime, out.ResolveTime = sceneryStats.buildTime, sceneryStats.resolveTime
 	out.RayTime, out.ParticleTime = sceneryStats.rayTime, sceneryStats.particleTime
 	sceneryStats.rebuilds, sceneryStats.decodes, sceneryStats.evictions = 0, 0, 0

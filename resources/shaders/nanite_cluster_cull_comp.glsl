@@ -34,6 +34,9 @@ void main() {
         Cluster cl = clusters[ci];
         vis = vis && lodSelects(cl, m, s);
         bool draw = clusterDraws(cl, vis, m, s, cone, t.b.x + k);
+        if (vis) {
+            streamNote(ci, cl, m, s, draw);
+        }
         uint o = (t.a.w + k) * 5u;
         cmds[o] = draw ? cl.draw.y : 0u;
         cmds[o + 1u] = draw ? 1u : 0u;

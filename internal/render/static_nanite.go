@@ -293,7 +293,7 @@ func (g *staticGPU) rebuildMain(sb *staticBatches, visible []int) {
 					}
 				}
 			}
-			for _, w := range rangeWindows(marked) {
+			for _, w := range rangeWindows(marked, nil) {
 				tiles = appendRangeTile(tiles, uint32(w[0]), uint32(w[1]), g.groupInst[gi], uint32(w[0]), &slot)
 			}
 			lo = hi
@@ -413,7 +413,7 @@ func (g *staticGPU) drawShadow(s *world.StaticGeometry, sb *staticBatches, prog 
 			}
 			start := slot
 			if ranges := g.leafRanges[gi]; len(ranges) > 0 {
-				for _, w := range rangeWindows(ranges) {
+				for _, w := range rangeWindows(ranges, nil) {
 					tiles = appendRangeTile(tiles, uint32(w[0]), uint32(w[1]), g.groupInst[gi], 0, &slot)
 				}
 			} else {

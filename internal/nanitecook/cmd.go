@@ -54,7 +54,7 @@ func usage(out io.Writer) {
 	fmt.Fprintf(out, `foundry %[1]s cook <source.gltf|.glb|.obj|.fmdl>... [-o out.fnm] [-force]
 foundry %[1]s cook -all [-force]      cook every glTF under resources/ that is stale
 foundry %[1]s inspect <mesh.fnm>
-foundry %[1]s sample [-level N] <out.glb>
+foundry %[1]s sample [-level N] [-seed S] <out.glb>
 `, Command)
 }
 
@@ -151,8 +151,8 @@ func Describe(m *nanite.Mesh) string {
 	if c := m.Collision; c != nil {
 		coll = fmt.Sprintf("collision %d triangles / %d hulls", c.TriangleCount(), len(c.Hulls))
 	}
-	return fmt.Sprintf("%d triangles, %d vertices, %d clusters over %d LOD levels, fallback %d triangles, %s, %s, size %.2f x %.2f x %.2f, slots [%s]",
-		m.TriangleCount(), m.VertexCount(), len(m.Clusters), m.Levels, len(m.Fallback)/3, sdf, coll, size[0], size[1], size[2], strings.Join(slots, " "))
+	return fmt.Sprintf("%d triangles, %d vertices, %d clusters over %d LOD levels in %d pages, fallback %d triangles, %s, %s, size %.2f x %.2f x %.2f, slots [%s]",
+		m.TriangleCount(), m.VertexCount(), len(m.Clusters), m.Levels, len(m.Pages), len(m.Fallback)/3, sdf, coll, size[0], size[1], size[2], strings.Join(slots, " "))
 }
 
 func inspectMain(root string, args []string, out io.Writer) int {
@@ -200,10 +200,32 @@ func inspectMain(root string, args []string, out io.Writer) int {
 	}
 	fmt.Fprintf(out, "LOD tree: %d nodes, %d leaves; fallback cut at error %.4g: %d triangles\n",
 		len(m.Nodes), m.Leaves, m.FallbackError, len(m.Fallback)/3)
+	// The pages (Phase 3): how the geometry streams.
+	if len(m.Pages) > 0 {
+		var rootBytes uint64
+		maxV, maxT := int32(0), int32(0)
+		for _, p := range m.Pages {
+			if p.Root {
+				rootBytes += uint64(p.Size)
+			}
+			maxV, maxT = max(maxV, p.Vertices), max(maxT, p.Triangles)
+		}
+		raw := uint64(m.StoredTriangles())*12 + uint64(m.VertexCount())*32
+		fmt.Fprintf(out, "pages: %d (%d root, always resident: %.1f KB packed), %.1f KB packed of %.1f KB decoded (%.0f%%); fullest %d vertices / %d triangles of %d / %d\n",
+			len(m.Pages), m.RootPages(), float64(rootBytes)/1024, float64(m.PageBytes())/1024, float64(raw)/1024,
+			100*float64(m.PageBytes())/float64(max(raw, 1)), maxV, maxT, nanite.PageMaxVertices, nanite.PageMaxTriangles)
+		fmt.Fprintf(out, "quantisation: position step %.3g (%.3g mm), UV step %.3g, normals %d bits a component\n",
+			m.Quant.Step, m.Quant.Step*1000, m.Quant.UVStep, m.Quant.NormalBits)
+	}
 	if c := m.Collision; c != nil {
 		cs := c.Settings
-		fmt.Fprintf(out, "collision: cut at error %.3g: %d of %d triangles kept (%d degenerate dropped, %d corners welded), %d vertices, %d tree nodes, %d open edges, %d non-manifold; %.1f KB\n",
-			cs.Error, c.TriangleCount(), c.SourceTriangles, c.Degenerate, c.Welded, c.VertexCount(), len(c.Nodes), c.OpenEdges, c.NonManifold, float64(c.Bytes())/1024)
+		nodes, held := len(c.Nodes), "held"
+		if c.Paged {
+			// Paged out of the metadata (Phase 3): read when a body comes near.
+			nodes, held = c.MeshNodes, "held with the mesh (the cut is read when a body comes near)"
+		}
+		fmt.Fprintf(out, "collision: cut at error %.3g: %d of %d triangles kept (%d degenerate dropped, %d corners welded), %d vertices, %d tree nodes, %d open edges, %d non-manifold; %.1f KB %s\n",
+			cs.Error, c.TriangleCount(), c.SourceTriangles, c.Degenerate, c.Welded, c.VertexCount(), nodes, c.OpenEdges, c.NonManifold, float64(c.Bytes())/1024, held)
 		verts := 0
 		for i := range c.Hulls {
 			verts += len(c.Hulls[i].Pts)
@@ -225,12 +247,13 @@ func sampleMain(root string, args []string, out io.Writer) int {
 	fs := flag.NewFlagSet("nanite sample", flag.ContinueOnError)
 	fs.SetOutput(out)
 	level := fs.Int("level", 6, "subdivision level: 20*4^level triangles")
+	seed := fs.Float64("seed", 0.3, "the rock's shape: each seed is a different rock")
 	rest, err := cliflag.Parse(fs, args)
 	if err != nil || len(rest) != 1 || *level < 0 || *level > 9 {
 		usage(out)
 		return 2
 	}
-	glb, err := model.EncodeGLB(SampleRock(*level, 0.3))
+	glb, err := model.EncodeGLB(SampleRock(*level, float32(*seed)))
 	if err != nil {
 		fmt.Fprintln(out, err)
 		return 1

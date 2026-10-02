@@ -73,6 +73,9 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 	// is let go (scenery_index.go).
 	Epoch()
 	residentTick()
+	// Collision meshes near a body are read ahead of its first touch
+	// (Phase 3): a cooked cliff's triangles are on disk until one comes near.
+	prefetchNear(lvl, player)
 	viewer := gfx.Cam.Position
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]

@@ -16,7 +16,10 @@ package nanitecook
 //     triangulation, the same smoothing at the document's crease angle — so a
 //     cooked .fmdl draws the picture its uncooked self does.
 //  2. Weld (gfx.WeldCorners): corners whose whole record — position, UV,
-//     normal — is bit-for-bit the same become one vertex of the pool.
+//     normal — is bit-for-bit the same become one vertex of the pool. Then
+//     QUANTISE it (nanite.Quant, Phase 3): every position, UV and normal is
+//     snapped to the integers the pages store, so everything below is made
+//     from exactly what a load will decode.
 //  3. Group the triangles by slot and build each slot's cluster DAG
 //     (cluster.BuildDAG: cut, then group, simplify and re-cut a level at a
 //     time down to a root), laying the index list out cluster by cluster,
@@ -33,6 +36,10 @@ package nanitecook
 //     quantised and put under a tree for the mesh mode, and split into convex
 //     hulls for the hulls mode. The settings are folded into the source hash,
 //     so a project that changes them (game.yaml's nanite block) re-cooks.
+//  7. PAGE it (nanite.Mesh.BuildPages, Phase 3): the clusters packed into
+//     fixed-size pages by the group that consumes them, each cluster's
+//     vertices bit-packed on the quantisation grid. The pool the mesh keeps
+//     in memory becomes the pages decoded — what a load sees, bit for bit.
 
 import (
 	"crypto/sha256"
@@ -72,6 +79,9 @@ type Options struct {
 	NormalWeight, UVWeight float32
 	// GroupSize is the DAG's clusters per group; 0 takes the default.
 	GroupSize int
+	// PositionBits, UVBits and NormalBits are the quantisation's
+	// (nanite.NewQuant); 0 takes nanite's defaults.
+	PositionBits, UVBits, NormalBits int
 	// Collision is the collision cook's settings; zero fields take
 	// meshcollide's defaults. ProjectOptions fills them from game.yaml.
 	Collision meshcollide.Settings
@@ -305,7 +315,25 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 	if nt == 0 || len(src.triSlot) != nt {
 		return nil, fmt.Errorf("no triangles to cook")
 	}
-	m := &nanite.Mesh{Vertices: pool.Vertices, Normals: pool.Normals, Triangles: nt}
+	// Quantise the pool before anything is made from it.
+	var qlo, qhi mgl32.Vec3
+	maxUV := float32(0)
+	for v := 0; v < pool.VertexCount(); v++ {
+		p := mgl32.Vec3{pool.Vertices[5*v], pool.Vertices[5*v+1], pool.Vertices[5*v+2]}
+		if v == 0 {
+			qlo, qhi = p, p
+		}
+		qlo = mgl32.Vec3{min(qlo[0], p[0]), min(qlo[1], p[1]), min(qlo[2], p[2])}
+		qhi = mgl32.Vec3{max(qhi[0], p[0]), max(qhi[1], p[1]), max(qhi[2], p[2])}
+		maxUV = max(maxUV, float32(math.Abs(float64(pool.Vertices[5*v+3]))), float32(math.Abs(float64(pool.Vertices[5*v+4]))))
+	}
+	if len(pool.Normals) != pool.VertexCount()*3 {
+		pool.Normals = make([]float32, pool.VertexCount()*3)
+	}
+	quant := nanite.NewQuant(qlo, qhi, maxUV, opt.PositionBits, opt.UVBits, opt.NormalBits)
+	qverts := quant.Quantize(pool.Vertices, pool.Normals)
+
+	m := &nanite.Mesh{Vertices: pool.Vertices, Normals: pool.Normals, Triangles: nt, Quant: quant}
 
 	// Triangles by slot, in source order within each.
 	order := make([]int, nt)
@@ -380,7 +408,8 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 		m.Leaves = max(m.Leaves, n.Leaf+1)
 	}
 
-	// The fallback: every slot cut at the error of the middle level.
+	// The fallback: every slot cut at the error of the middle level, over a
+	// small pool of its own (so a placement has it without the pages).
 	if m.Levels > 1 {
 		mid := (m.Levels - 1) / 2
 		for i := range m.Clusters {
@@ -399,6 +428,17 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 			}
 		}
 		s.FallbackCount = uint32(len(m.Fallback)/3) - s.FallbackFirst
+	}
+	remap := map[uint32]uint32{}
+	for i, ix := range m.Fallback {
+		nix, ok := remap[ix]
+		if !ok {
+			nix = uint32(len(m.FallbackVertices) / 5)
+			remap[ix] = nix
+			m.FallbackVertices = append(m.FallbackVertices, pool.Vertices[5*ix:5*ix+5]...)
+			m.FallbackNormals = append(m.FallbackNormals, pool.Normals[3*ix:3*ix+3]...)
+		}
+		m.Fallback[i] = nix
 	}
 
 	// Bounds over the full detail (every level's corners are some of its
@@ -425,7 +465,8 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 	// the full detail.
 	var tris []mgl32.Vec3
 	for _, ix := range m.Fallback {
-		tris = append(tris, mgl32.Vec3{pool.Vertices[5*ix], pool.Vertices[5*ix+1], pool.Vertices[5*ix+2]})
+		fv := m.FallbackVertices
+		tris = append(tris, mgl32.Vec3{fv[5*ix], fv[5*ix+1], fv[5*ix+2]})
 	}
 	ext := m.Hi.Sub(m.Lo)
 	m.SDF = meshsdf.Bake(tris, sdfResolution(max(ext[0], ext[1], ext[2]), opt.SDFCell))
@@ -435,6 +476,12 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 		return nil, fmt.Errorf("collision: %w", err)
 	}
 	m.Collision = coll
+	m.ClosedSolid = m.Closed()
+
+	// Pages last: they replace the pool with its decoded self.
+	if err := m.BuildPages(qverts); err != nil {
+		return nil, err
+	}
 	return m, m.Validate()
 }
 

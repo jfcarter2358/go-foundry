@@ -366,6 +366,15 @@ func (s *Scenery) loadNanite() error {
 	s.Nanite = m
 	s.LocalMin, s.LocalMax = m.Lo, m.Hi
 	s.NaniteGPU = NaniteMeshes && !s.NoNanite && GeometryUploadsOn() && NaniteGPUAvailable != nil && NaniteGPUAvailable()
+	if !s.NaniteGPU || len(m.Fallback) == 0 {
+		// The classic path draws the full detail, and a mesh with no
+		// fallback has nothing smaller for the CPU: decode every page
+		// (docs/nanite/PHASE_3.md). The GPU path streams the pages instead
+		// and keeps none of them here.
+		if err := m.Flat(); err != nil {
+			return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
+		}
+	}
 	for si := range m.Slots {
 		first, count := m.SlotTriangles(si)
 		if count == 0 {
@@ -375,25 +384,29 @@ func (s *Scenery) loadNanite() error {
 		if err := gfx.EnsureTextureLoaded(tex); err != nil {
 			log.Printf("scenery %s: texture %q: %v", s.ID, tex, err)
 		}
-		idx := m.Indices[3*first : 3*(first+count)]
+		g := gfx.Geometry{Smooth: m.Slots[si].Smooth, AutoSmooth: true, Indexed: true}
 		if s.NaniteGPU {
 			// The GPU's LOD selection draws it; what the CPU keeps is for
 			// picking and the point-shadow signature, and the fallback
-			// mesh — the DAG cut at a middle level — serves those for a
-			// fraction of the triangles (docs/nanite/PHASE_2.md).
-			if fb := m.SlotFallback(si); len(fb) > 0 {
-				idx = fb
+			// mesh — the DAG cut at a middle level, over its own small pool
+			// — serves those for a fraction of the triangles
+			// (docs/nanite/PHASE_2.md). Nothing to upload: the cull's pool
+			// draws it.
+			verts, normals, idx := m.FallbackVertices, m.FallbackNormals, m.SlotFallback(si)
+			if len(idx) == 0 {
+				// No fallback triangles for this slot: the full pool,
+				// decoded from the pages (a no-op once done).
+				if err := m.Flat(); err != nil {
+					return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
+				}
+				verts, normals, idx = m.Vertices, m.Normals, m.Indices[3*first:3*(first+count)]
 			}
-		}
-		g := gfx.Geometry{Smooth: m.Slots[si].Smooth, AutoSmooth: true, Indexed: true}
-		if s.NaniteGPU {
-			// The pool as it is, indexed by the slot's run: nothing to upload,
-			// the cull's shared pool draws it.
 			g.CPUOnly = true
-			g.Vertices, g.Normals, g.Indices = m.Vertices, m.Normals, idx
+			g.Vertices, g.Normals, g.Indices = verts, normals, idx
 			g.Texture, g.Alpha = tex, 1
 			g.Model = mgl32.Ident4()
 		} else {
+			idx := m.Indices[3*first : 3*(first+count)]
 			rows := make([][]float32, 0, len(idx))
 			normals := make([][]float32, 0, len(idx))
 			order := make([]int, len(idx))

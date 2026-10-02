@@ -121,6 +121,67 @@ bool clusterDraws(Cluster cl, bool vis, mat4 m, float s, bool cone, uint h) {
     return vis;
 }
 
+// ---------- streaming (render/nanite_stream.go; Phase 3) ----------
+//
+// A camera pass over a streamed mesh pool tells the CPU what it used and what
+// it wants. For each cluster in the cut: its page was used this frame, and
+// is worth the error its parent would show were it gone — the parent's error
+// projected, in units of the threshold (> 1 by the cut's own test; a root's
+// is the most there is). For each one DRAWN although its own cooked error is
+// too coarse for the eye — drawn only because the finer pages are not
+// resident (the residency gave its group error 0) — the page its finer
+// version is on is asked for, as much as that cooked error projects to. The
+// four arrays, each streamPages long: used (frame), asked (frame), what the
+// use is worth, what the ask is worth. The frames are never cleared; the
+// worths are, by the CPU, after each copy (render/nanite_stream.go).
+// streamInfo: per cluster, its page, the page it asks for (0xffffffff:
+// none, level 0), its cooked own error's bits.
+
+uniform int streamOn;
+uniform uint streamFrame;
+uniform uint streamPages;
+
+layout(std430, binding = 14) readonly buffer StreamInfo {
+    uvec4 streamInfo[];
+};
+layout(std430, binding = 15) buffer StreamFeedback {
+    uint streamFeedback[];
+};
+
+// streamWorth is an error e over the sphere (c, r) projected, in units of
+// the threshold (lodWithin's test is streamWorth <= 1), as a fixed-point
+// uint for atomicMax.
+uint streamWorth(vec3 c, float r, float e) {
+    float v = e * lodK / max(distance(c, lodEye) - r, LOD_NEAR);
+    return uint(clamp(v * 64.0, 0.0, 4.0e9));
+}
+
+// streamNote records cluster ci, in this pass's cut, and drawn or not.
+void streamNote(uint ci, Cluster cl, mat4 m, float s, bool drawn) {
+    if (streamOn == 0) {
+        return;
+    }
+    uvec4 si = streamInfo[ci];
+    if (streamFeedback[si.x] != streamFrame) {
+        streamFeedback[si.x] = streamFrame;
+    }
+    uint used = 0xffffffffu;
+    if (cl.errs.y >= 0.0) {
+        used = streamWorth((m * vec4(cl.parent.xyz, 1.0)).xyz, cl.parent.w * s, cl.errs.y * s);
+    }
+    atomicMax(streamFeedback[2u * streamPages + si.x], used);
+    if (drawn && si.y != 0xffffffffu) {
+        float cooked = uintBitsToFloat(si.z);
+        if (cooked > cl.errs.x) {
+            uint ask = streamWorth((m * vec4(cl.lod.xyz, 1.0)).xyz, cl.lod.w * s, cooked * s);
+            if (ask > 64u) {
+                streamFeedback[streamPages + si.y] = streamFrame;
+                atomicMax(streamFeedback[3u * streamPages + si.y], ask);
+            }
+        }
+    }
+}
+
 // instanceCones is whether the instance's clusters are cone-tested this pass.
 bool instanceCones(uint fl) {
     return (useCone == CONE_ALL || (useCone == CONE_CLOSED && (fl & 4u) != 0u)) && (fl & 2u) == 0u;

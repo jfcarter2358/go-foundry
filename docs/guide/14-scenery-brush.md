@@ -132,6 +132,41 @@ the way a classic model's translucent parts are.
 `FOUNDRY_NANITE_MESHES=0` draws cooked props the classic way, for comparison;
 `FOUNDRY_NANITE_LOD=0` keeps the GPU path but draws every prop at full detail.
 
+### Streaming and the memory budget
+
+A cooked mesh's geometry stays in its file until it is needed. When the level
+loads, only the small part is read — the clusters' bounds, the levels' errors,
+the fallback mesh, the hulls — and the geometry goes to the GPU in **pages**,
+into a pool sized by the player's `@level.prop.nanite_stream_pool_mb` (256 MB by
+default, saved to `graphics.yaml`; see
+[UI screens](17-ui-screens.md#a-settings-screen)). A level whose cooked meshes
+fit is loaded whole and never streams. One that does not keeps the pool full
+of what the view needs most: the GPU reports every frame which pages it drew
+and which finer pages it wanted, and the engine reads the wanted ones from
+disk on background threads and swaps them in for pages the view no longer
+uses — or, when everything is in use, for pages whose loss shows least. Until
+a page arrives the coarser version above it is drawn, which never cracks; a
+frame never waits for the disk or the GPU, and at most 16 pages go up a frame.
+The coarsest version of every mesh always stays loaded.
+
+The `F3` overlay's **Nanite pages** line shows the pool: pages resident of
+slots, what came and went this frame, what is queued and loading, and what was
+**starved** — wanted, but every slot held something that mattered more. Many
+starved pages mean the budget is too small for the view. The profiler's
+`nanite: stream` row is the per-frame work.
+
+A mesh-mode prop's collision cut is paged the same way: it is read on a
+background thread when a body comes within about 16 m of the prop (or its
+speed would bring it there within a second), and let go some seconds after
+the last body leaves. A query that reaches one not yet read — a long shot at
+a far cliff — reads it there and then; the overlay's **Prop collision** line
+counts those as "waited for".
+
+`FOUNDRY_NANITE_STREAM=0` decodes every cooked mesh whole at load into one
+buffer, as before; `FOUNDRY_NANITE_STREAM_POOL_MB=n` overrides the budget (a
+test of a small one); `FOUNDRY_NANITE_STREAM_PRELOAD=0` starts every level from
+the coarsest pages alone, to watch it stream in.
+
 ## Nanite collision
 
 A cooked mesh collides as its own shape, not its box. The cook keeps a
@@ -175,5 +210,5 @@ nanite:
 Changing them re-cooks every mesh at its next cook. The `F3` profiler shows
 the props' collision as `props: resolve`, `props: rays`, `props: particles` and
 `props: index` under `entity update`, and the overlay counts props by mode and
-how many meshes have their collision decoded (only those a body or a ray has
-come near lately are).
+how many meshes have their collision in memory (only those a body or a ray has
+come near lately do; see [Streaming](#streaming-and-the-memory-budget)).

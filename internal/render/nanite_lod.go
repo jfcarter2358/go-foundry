@@ -51,6 +51,9 @@ var naniteLODFrame struct {
 func beginNaniteLODFrame() {
 	naniteLODFrame.view = liveNaniteLOD()
 	naniteLODFrame.set = true
+	// A new frame for the page pool too (nanite_stream.go): it updates once,
+	// before the frame's first cull, so every pass sees one residency.
+	naniteStreamFrame++
 }
 
 func endNaniteLODFrame() { naniteLODFrame.set = false }

@@ -165,6 +165,10 @@ func drawSelectedSceneryCollision() {
 			}
 		}
 	case meshcollide.ModeMesh:
+		d = shownCollisionMesh(d)
+		if d == nil {
+			return
+		}
 		seen := map[[2]uint32]bool{}
 		for t := 0; t < d.TriangleCount() && len(seen) < sceneryCollisionWireCap; t++ {
 			ix := d.Tris[3*t : 3*t+3]
@@ -181,4 +185,26 @@ func drawSelectedSceneryCollision() {
 			}
 		}
 	}
+}
+
+// shownCollision is the collision mesh Show collision last drew, read back
+// whole: a loaded mesh's triangles are paged out (meshcollide's paged.go,
+// Phase 3), and reading them every frame would be a disk read a frame.
+var shownCollision struct {
+	src, full *meshcollide.Data
+}
+
+// shownCollisionMesh is d with its triangles, kept while d stays selected.
+func shownCollisionMesh(d *meshcollide.Data) *meshcollide.Data {
+	if d == nil {
+		return nil
+	}
+	if shownCollision.src != d {
+		full, err := d.WithMesh()
+		if err != nil {
+			full = nil
+		}
+		shownCollision.src, shownCollision.full = d, full
+	}
+	return shownCollision.full
 }

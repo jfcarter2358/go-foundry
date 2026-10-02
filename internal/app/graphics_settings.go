@@ -5,8 +5,8 @@ package app
 // controls_settings.go's arrangement, for the graphics choices a game's
 // settings screen can offer: Smooth Lighting (gfx.SmoothLighting), the
 // foliage distance and shadows (gfx.FoliageDistance, gfx.FoliageShadows), the
-// Nanite LOD threshold (gfx.NaniteLODError) and the live GI tier
-// (gfx.GIQuality). The
+// Nanite LOD threshold (gfx.NaniteLODError), the Nanite page pool's size
+// (gfx.NaniteStreamPoolMB) and the live GI tier (gfx.GIQuality). The
 // file is graphics.yaml in the writable state directory, a missing file means
 // defaults, a malformed one is logged and ignored, and a script's change is
 // saved once it has settled (saveSettingsWhenSettled).
@@ -30,6 +30,8 @@ type rawGraphics struct {
 	FoliageShadows  *bool    `yaml:"foliage_shadows,omitempty"`
 	// NaniteLODError is gfx.NaniteLODError, pixels.
 	NaniteLODError *float32 `yaml:"nanite_lod_error,omitempty"`
+	// NaniteStreamPoolMB is gfx.NaniteStreamPoolMB, megabytes.
+	NaniteStreamPoolMB *int `yaml:"nanite_stream_pool_mb,omitempty"`
 	// GIQuality is gfx.GIQuality by name: off, low, medium, high. Absent lets
 	// the engine pick by GPU (gfx.PickDefaultGIQuality).
 	GIQuality *string `yaml:"gi_quality,omitempty"`
@@ -65,6 +67,9 @@ func applyGraphicsSettings(data []byte) error {
 	if raw.NaniteLODError != nil {
 		gfx.NaniteLODError = min(max(*raw.NaniteLODError, gfx.NaniteLODErrorMin), gfx.NaniteLODErrorMax)
 	}
+	if raw.NaniteStreamPoolMB != nil {
+		gfx.NaniteStreamPoolMB = min(max(*raw.NaniteStreamPoolMB, gfx.NaniteStreamPoolMBMin), gfx.NaniteStreamPoolMBMax)
+	}
 	if raw.GIQuality != nil {
 		if q, ok := gfx.ParseGIQuality(*raw.GIQuality); ok {
 			gfx.GIQuality, gfx.GIQualityChosen = q, true
@@ -80,7 +85,9 @@ func marshalGraphicsSettings() ([]byte, error) {
 	dist := gfx.FoliageDistance
 	shadows := gfx.FoliageShadows
 	lod := gfx.NaniteLODError
-	raw := rawGraphics{SmoothLighting: &smooth, FoliageDistance: &dist, FoliageShadows: &shadows, NaniteLODError: &lod}
+	pool := gfx.NaniteStreamPoolMB
+	raw := rawGraphics{SmoothLighting: &smooth, FoliageDistance: &dist, FoliageShadows: &shadows, NaniteLODError: &lod,
+		NaniteStreamPoolMB: &pool}
 	// Only a tier someone chose is written: one the engine picked by GPU
 	// stays a pick, and is picked again on whatever GPU runs it next.
 	if gfx.GIQualityChosen {

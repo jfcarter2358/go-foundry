@@ -241,8 +241,8 @@ const (
 // most clusters, a 32-bit mask's worth.
 const (
 	rangeSlots       = 2
-	rangeMaxLeaves   = 3
-	rangeMaxClusters = 32
+	rangeMaxLeaves   = cluster.WindowMaxLeaves
+	rangeMaxClusters = cluster.WindowMaxClusters
 )
 
 // gpuInstance is an instance (std430, 96 bytes). Its first 64 bytes are also
@@ -406,6 +406,10 @@ type cullBatch struct {
 	// tileSpheres is a sphere round each tile's clusters, in the space
 	// their spheres are in (markLive), remade when the tiles change.
 	tileSpheres [][4]float32
+
+	// stream, when set, is the page pool the clusters are streamed through
+	// (nanite_stream.go): the camera's passes write its feedback.
+	stream *naniteStreamer
 
 	// live, when set, is per group whether the CPU found any of its
 	// candidates in the frustum this frame (markLive): a group with none
@@ -896,6 +900,14 @@ func (b *cullBatch) cull(v cullView) bool {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, b.nodes)
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 12, b.leafBuf)
 	}
+	// Streaming feedback, from the camera's passes only: a shadow view's
+	// cut is the camera's, and what it alone would ask for is off screen.
+	streamOn := b.stream != nil && v.camera && b.stream.wantsFeedback()
+	var streamFrame, streamPages uint32
+	if streamOn {
+		b.stream.bind()
+		streamFrame, streamPages = b.stream.frame, uint32(len(b.stream.pages))
+	}
 	setCommon := func(p *progUniforms) {
 		gl.UseProgram(p.prog)
 		gl.Uniform1i(p.U("mode"), v.mode)
@@ -914,6 +926,9 @@ func (b *cullBatch) cull(v cullView) bool {
 		gl.Uniform1ui(p.U("passStamp"), n.stamp)
 		gl.Uniform1ui(p.U("instanceCount"), uint32(len(b.insts)))
 		gl.Uniform1i(p.U("debugSlots"), boolToInt32(debug))
+		gl.Uniform1i(p.U("streamOn"), boolToInt32(streamOn))
+		gl.Uniform1ui(p.U("streamFrame"), streamFrame)
+		gl.Uniform1ui(p.U("streamPages"), streamPages)
 	}
 	setCommon(&n.inst)
 	gl.DispatchCompute(uint32((len(b.insts)+63)/64), 1, 1)
@@ -985,7 +1000,7 @@ func (b *cullBatch) cull(v cullView) bool {
 			log.Printf("nanite stats: packed %d commands in %d groups (%d in live groups)", total, len(counts), live)
 		}
 	}
-	for i := uint32(0); i < 14; i++ {
+	for i := uint32(0); i < 16; i++ {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, i, 0)
 	}
 	return true
@@ -1147,44 +1162,39 @@ func appendRangeTile(tiles []gpuTile, first, count, inst, hist uint32, slot *int
 // instance inst (history from hist), whose leaves are leaves (the mesh's
 // cluster.LeafRanges, offset by base into the batch's cluster list): range
 // tiles of whole consecutive leaves (rangeWindows), or — in a debug view,
-// which needs every cluster its own command — cluster tiles.
-func appendLeafTiles(tiles []gpuTile, leaves [][2]int32, base, first, count, inst, hist uint32, slot *int) []gpuTile {
+// which needs every cluster its own command — cluster tiles. pages, when
+// set, is each leaf's page in a streamed pool: a window takes one page's
+// leaves only.
+func appendLeafTiles(tiles []gpuTile, leaves [][2]int32, pages []int32, base, first, count, inst, hist uint32, slot *int) []gpuTile {
 	if naniteDebugActive() {
 		return appendTiles(tiles, first, count, inst, hist, slot)
 	}
 	var in [][2]int32
-	for _, l := range leaves {
+	var inPages []int32
+	for li, l := range leaves {
 		if lf := base + uint32(l[0]); lf >= first && lf < first+count {
 			in = append(in, [2]int32{int32(lf), l[1]})
+			if pages != nil {
+				inPages = append(inPages, pages[li])
+			}
 		}
 	}
-	for _, w := range rangeWindows(in) {
+	for _, w := range rangeWindows(in, inPages) {
 		tiles = appendRangeTile(tiles, uint32(w[0]), uint32(w[1]), inst, hist+(uint32(w[0])-first), slot)
 	}
 	return tiles
 }
 
-// rangeWindows packs consecutive leaves, {first, count} in cluster order,
-// into range tiles' windows: runs of up to rangeMaxLeaves whole leaves and
-// rangeMaxClusters clusters, never across a break in the clusters. A leaf is
-// never longer than cluster.MaxLeafClusters, which is rangeMaxClusters.
-func rangeWindows(leaves [][2]int32) [][2]int32 {
-	var out [][2]int32
-	for i := 0; i < len(leaves); {
-		w := leaves[i]
-		n := 1
-		for i+n < len(leaves) && n < rangeMaxLeaves {
-			next := leaves[i+n]
-			if next[0] != w[0]+w[1] || w[1]+next[1] > rangeMaxClusters {
-				break
-			}
-			w[1] += next[1]
-			n++
-		}
-		out = append(out, w)
-		i += n
+// rangeWindows is cluster.RangeWindows — whose rule the cook's pages are
+// packed by, so that the windows never straddle a page — with, when pages is
+// set (each leaf's page in a streamed pool), a break wherever the page
+// changes: two pages need not sit side by side in the index buffer. A leaf
+// is never longer than cluster.MaxLeafClusters, which is rangeMaxClusters.
+func rangeWindows(leaves [][2]int32, pages []int32) [][2]int32 {
+	if pages == nil {
+		return cluster.RangeWindows(leaves, nil)
 	}
-	return out
+	return cluster.RangeWindows(leaves, func(a, b int) bool { return pages[a] != pages[b] })
 }
 
 // appendTiles cuts a run of count clusters starting at cluster first (and

@@ -476,4 +476,8 @@ func reportSceneryCollision() {
 	render.DebugStats.CollisionBox, render.DebugStats.CollisionHulls, render.DebugStats.CollisionMesh = st.Box, st.Hulls, st.Mesh
 	render.DebugStats.CollisionResident = st.Resident
 	render.DebugStats.CollisionResidentKB = float32(st.ResidentBytes) / 1024
+	// Paged-out meshes read ahead of a body, and the queries that had to
+	// wait for one (Phase 3): the second should stay at nothing.
+	render.DebugStats.CollisionLoading = st.Loading
+	render.DebugStats.CollisionSyncLoads += st.SyncLoads
 }

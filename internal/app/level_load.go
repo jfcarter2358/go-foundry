@@ -129,6 +129,9 @@ func installLevel(level *world.Level, built *world.Level) {
 	// the level is seen — and for the chunks that start switched off as well,
 	// so switching one on later costs no upload. See render/chunk_batch.go.
 	render.SyncChunkBatches(level)
+	// The cooked Nanite meshes' page pool too, preloaded and on the GPU before
+	// the first frame (render/nanite_stream.go).
+	render.SyncNaniteScenery(level)
 	// The raycast trees likewise, which the first sight line cast in the level
 	// would otherwise build mid-play. See collision.WarmRaycasts.
 	collision.WarmRaycasts(level)

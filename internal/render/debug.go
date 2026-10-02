@@ -60,6 +60,10 @@ var DebugStats struct {
 	CollisionBox, CollisionHulls, CollisionMesh int
 	CollisionResident                           int
 	CollisionResidentKB                         float32
+	// CollisionLoading is how many paged-out collision meshes are being
+	// read ahead of a body now, CollisionSyncLoads how many queries since
+	// the level loaded had to wait for one (Phase 3).
+	CollisionLoading, CollisionSyncLoads int
 	// The sprite pass. Particles is how many quads the emitters put up this
 	// frame and SpriteDraws how many draw calls that took — the two numbers an
 	// author needs together, because one large batch and a thousand tiny ones
@@ -201,14 +205,20 @@ func DebugOverlayLines() []DebugLine {
 		DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws)
 	line("Scenery:      %d drawn", DebugStats.Scenery)
 	if DebugStats.CollisionHulls > 0 || DebugStats.CollisionMesh > 0 {
-		line("Prop collision: %d box / %d hulls / %d mesh, %d meshes resident (%.0f KB)",
+		line("Prop collision: %d box / %d hulls / %d mesh, %d meshes resident (%.0f KB), %d loading, %d waited for",
 			DebugStats.CollisionBox, DebugStats.CollisionHulls, DebugStats.CollisionMesh,
-			DebugStats.CollisionResident, DebugStats.CollisionResidentKB)
+			DebugStats.CollisionResident, DebugStats.CollisionResidentKB, DebugStats.CollisionLoading, DebugStats.CollisionSyncLoads)
 	}
 	if DebugStats.NaniteClusters > 0 || DebugStats.NaniteInstances > 0 {
 		line("Nanite:       %d placements, %d clusters to the GPU cull", DebugStats.NaniteInstances, DebugStats.NaniteClusters)
 		if NaniteStats {
 			line("Nanite drew:  %d triangles", DebugStats.NaniteTriangles)
+		}
+		// The page pool (nanite_stream.go): what is resident, what moved
+		// this frame, and what waits — starved pages mean the view wants
+		// more than the pool holds.
+		if st := DebugNaniteStream(); st.Slots > 0 {
+			line("Nanite pages: %s", st)
 		}
 	}
 	if DebugStats.Decals > 0 {

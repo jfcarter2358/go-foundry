@@ -61,9 +61,11 @@ void main() {
         }
         if (vis) {
             inCut |= 1u << k;
-            if (clusterDraws(clusters[ci], true, m, s, cone, t.b.x + k)) {
+            bool d = clusterDraws(clusters[ci], true, m, s, cone, t.b.x + k);
+            if (d) {
                 drawn |= 1u << k;
             }
+            streamNote(ci, clusters[ci], m, s, d);
         } else if (mode == CULL_PASS2) {
             // Out of the cut or out of view: nothing to read, but pass 2
             // still records that it was not seen.

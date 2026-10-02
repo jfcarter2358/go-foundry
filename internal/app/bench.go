@@ -33,6 +33,10 @@ package app
 //	menus     answer: a modal screen that comes up is answered with its
 //	          initial_focus, as `foundry play` does, so a level that opens on
 //	          a menu is measured playing rather than paused behind it
+//	fly       1: the poses are waypoints of ONE flight — warm up at the first,
+//	          then fly through them, evenly in time, over the measured
+//	          frames — reported as one pose. What streaming (Nanite Phase 3,
+//	          docs/nanite/PHASE_3.md) is measured with: a view that moves.
 
 import (
 	"fmt"
@@ -79,6 +83,8 @@ type benchConfig struct {
 	cpuprof  string
 	shots    string
 	answer   bool
+	// path is the flight's waypoints (fly=1); poses is then the one flight.
+	path []benchPose
 }
 
 var bench struct {
@@ -133,6 +139,10 @@ func benchParse() (benchConfig, bool, error) {
 			c.shots = v
 		case "menus":
 			c.answer = v == "answer"
+		case "fly":
+			if v == "1" {
+				c.path = []benchPose{} // filled from the poses below
+			}
 		case "gi_debug":
 			m, ok := render.ParseGIDebugMode(v)
 			if !ok {
@@ -181,6 +191,19 @@ func benchParse() (benchConfig, bool, error) {
 	}
 	if len(c.poses) == 0 {
 		c.poses = []benchPose{{label: "spawn", spawn: true}}
+	}
+	if c.path != nil {
+		for _, p := range c.poses {
+			if p.spawn {
+				return c, true, fmt.Errorf("fly: a flight's waypoints are x,y,z,yaw,pitch, not spawn")
+			}
+		}
+		c.path = c.poses
+		labels := make([]string, len(c.path))
+		for i, p := range c.path {
+			labels[i] = p.label
+		}
+		c.poses = []benchPose{{label: "flight " + strings.Join(labels, " -> ")}}
 	}
 	if c.out == "" {
 		c.out = fileutil.StatePath("bench.txt")
@@ -263,6 +286,9 @@ func benchPlaceCamera() {
 		}
 	}
 	p := bench.cfg.poses[bench.pose]
+	if path := bench.cfg.path; len(path) > 0 {
+		p = benchFlightPose(path, bench.frame-bench.cfg.warm, bench.cfg.frames)
+	}
 	if p.spawn {
 		return
 	}
@@ -270,6 +296,21 @@ func benchPlaceCamera() {
 	gfx.Cam.Yaw, gfx.Cam.Pitch = p.yaw, p.pitch
 	gfx.Cam.Direction = gfx.DirectionFromAngles(p.yaw, p.pitch)
 	gfx.UpdateCamMatrix()
+}
+
+// benchFlightPose is where a flight through path is at measured frame f of
+// frames: the first waypoint through the warm-up, then evenly along the
+// segments.
+func benchFlightPose(path []benchPose, f, frames int) benchPose {
+	if f <= 0 || len(path) == 1 {
+		return path[0]
+	}
+	t := float32(f) / float32(max(frames-1, 1)) * float32(len(path)-1)
+	i := min(int(t), len(path)-2)
+	a, b := path[i], path[i+1]
+	u := min(t-float32(i), 1)
+	lerp := func(x, y float32) float32 { return x + (y-x)*u }
+	return benchPose{eye: a.eye.Add(b.eye.Sub(a.eye).Mul(u)), yaw: lerp(a.yaw, b.yaw), pitch: lerp(a.pitch, b.pitch)}
 }
 
 // benchEndFrame counts the frame just finished and moves on to the next pose,
@@ -287,6 +328,7 @@ func benchEndFrame() {
 	switch {
 	case bench.frame == cfg.warm:
 		render.ProfileResetTotals()
+		render.ResetNaniteStreamPeak()
 		bench.frameT = bench.frameT[:0]
 		bench.counts = benchCounts{}
 		if cfg.cpuprof != "" && bench.prof == nil {
@@ -355,8 +397,16 @@ func benchWritePose() {
 	pct := func(q float64) float64 { return ft[int(q*(n-1))] }
 	avg := sum / n
 	fmt.Fprintf(r, "\n=== pose %s\n", p.label)
-	fmt.Fprintf(r, "frame  avg %.2f ms (%.1f fps)  p50 %.2f  p95 %.2f  max %.2f\n",
-		avg, 1000/avg, pct(0.5), pct(0.95), ft[len(ft)-1])
+	fmt.Fprintf(r, "frame  avg %.2f ms (%.1f fps)  p50 %.2f  p95 %.2f  p99 %.2f  max %.2f\n",
+		avg, 1000/avg, pct(0.5), pct(0.95), pct(0.99), ft[len(ft)-1])
+	if st := render.DebugNaniteStream(); st.Slots > 0 {
+		// The page pool's run so far (Phase 3): its size against the level's
+		// pages, what moved, and the longest a frame's streaming took on the
+		// CPU.
+		fmt.Fprintf(r, "nanite pages  %d slots (%.0f MB) for %d pages, %d resident; %d uploaded, %d evicted, %d starved so far; longest update %.2f ms; staging %s\n",
+			st.Slots, float64(st.PoolBytes)/(1<<20), st.Pages, st.Resident, st.TotalUploaded, st.TotalEvicted, st.TotalStarved,
+			float64(st.MaxUpdateTime.Microseconds())/1000, map[bool]string{true: "persistent", false: "glBufferSubData"}[st.Persistent])
+	}
 	c := bench.counts
 	per := func(v int) float64 { return float64(v) / n }
 	fmt.Fprintf(r, "scene  static %.0f  brushes %.0f in %.0f calls  chunks %.0f  scenery %.0f  sprites %.0f (%.0f particles, %.0f draws)  volume marches %.1f\n",

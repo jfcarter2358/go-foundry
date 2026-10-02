@@ -2,6 +2,7 @@ package nanitecook
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,9 +64,11 @@ func TestCookGLBProducesAValidClusteredMesh(t *testing.T) {
 		t.Fatalf("slots %+v", m.Slots)
 	}
 	// The weld shares vertices: a closed sphere is about two triangles a
-	// vertex.
-	if m.VertexCount() > m.TriangleCount() {
-		t.Fatalf("%d vertices for %d triangles: the weld shared nothing", m.VertexCount(), m.TriangleCount())
+	// vertex. The pages give each cluster its own copy of the corners it
+	// shares with its neighbours, which costs some of that back, but nothing
+	// like a soup's three a triangle.
+	if m.VertexCount() > m.StoredTriangles() {
+		t.Fatalf("%d vertices for %d triangles: the weld shared nothing", m.VertexCount(), m.StoredTriangles())
 	}
 	// Clusters within limits, never spanning slots, cones only on the
 	// single-sided slot.
@@ -128,13 +131,30 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got.HasFlat() {
+		t.Fatal("a decoded mesh has its pool before Flat")
+	}
+	if err := got.Flat(); err != nil {
+		t.Fatal(err)
+	}
 	if got.SourceHash != m.SourceHash || len(got.Indices) != len(m.Indices) || len(got.Clusters) != len(m.Clusters) ||
-		got.SDF.N != m.SDF.N || got.Radius != m.Radius {
+		got.SDF.N != m.SDF.N || got.Radius != m.Radius || len(got.Pages) != len(m.Pages) {
 		t.Fatal("decoded mesh differs")
 	}
 	for i := range m.Indices {
 		if got.Indices[i] != m.Indices[i] {
 			t.Fatal("indices differ")
+		}
+	}
+	// The pool decodes to the cook's bit for bit.
+	for i := range m.Vertices {
+		if math.Float32bits(got.Vertices[i]) != math.Float32bits(m.Vertices[i]) {
+			t.Fatalf("vertex float %d decodes to %g, cooked %g", i, got.Vertices[i], m.Vertices[i])
+		}
+	}
+	for i := range m.Normals {
+		if math.Float32bits(got.Normals[i]) != math.Float32bits(m.Normals[i]) {
+			t.Fatalf("normal float %d decodes to %g, cooked %g", i, got.Normals[i], m.Normals[i])
 		}
 	}
 	for i := range m.Clusters {
@@ -215,7 +235,8 @@ func TestSDFResolutionFollowsSize(t *testing.T) {
 }
 
 // A cooked .fmdl must hold the very triangles a scenery placement of the
-// .fmdl draws — positions, UVs and normals bit for bit — in some order.
+// .fmdl draws — positions, UVs and normals bit for bit once quantised to the
+// cook's grid (nanite.Quant; Phase 3) — in some order.
 func TestCookedModelMatchesTheSceneryMesh(t *testing.T) {
 	path := filepath.Join(testenv.RepoRoot(t), "resources", "models", "dropship.fmdl")
 	m, err := Cook(path, Options{})
@@ -234,6 +255,8 @@ func TestCookedModelMatchesTheSceneryMesh(t *testing.T) {
 		if err := g.Load(sub.Vertices, sub.Indices, sub.Texture, mgl32.Vec3{}); err != nil {
 			t.Fatal(err)
 		}
+		// The scenery mesh, snapped as the cook snaps its pool.
+		m.Quant.Quantize(g.Vertices, g.Normals)
 		for k := 0; k+2 < len(g.Vertices)/5; k += 3 {
 			var tr tri
 			for c := 0; c < 3; c++ {
@@ -337,7 +360,7 @@ func TestCookBuildsTheDAGAndTheFallback(t *testing.T) {
 	if m.FallbackError <= 0 || fb == 0 || fb*4 > m.TriangleCount() {
 		t.Fatalf("fallback: %d triangles at error %g", fb, m.FallbackError)
 	}
-	if !closed(m.Fallback) {
+	if !(&nanite.Mesh{Vertices: m.FallbackVertices, Indices: m.Fallback}).Closed() {
 		t.Fatal("the fallback mesh is open")
 	}
 	for si := range m.Slots {
@@ -418,8 +441,28 @@ func TestCookBuildsTheCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Collision == nil || got.Collision.TriangleCount() != c.TriangleCount() || len(got.Collision.Hulls) != len(c.Hulls) ||
-		len(got.Collision.Nodes) != len(c.Nodes) || got.Collision.Settings != c.Settings {
+		got.Collision.Settings != c.Settings {
 		t.Fatal("the collision did not survive the file")
+	}
+	// Its mesh part is paged out of the metadata (Phase 3) and comes back
+	// whole when asked for.
+	if got.Collision.MeshResident() || len(got.Collision.Tris) != 0 {
+		t.Fatal("the collision's mesh part was loaded with the metadata")
+	}
+	if !c.MeshResident() || len(c.Tris) == 0 {
+		t.Fatal("encoding stripped the cook's own collision")
+	}
+	full, err := got.Collision.WithMesh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full.Nodes) != len(c.Nodes) || len(full.Tris) != len(c.Tris) || len(full.Tags) != len(c.Tags) {
+		t.Fatal("the collision's mesh part did not survive the file")
+	}
+	for i := range c.Tris {
+		if full.Tris[i] != c.Tris[i] {
+			t.Fatal("the collision's triangles differ after the file")
+		}
 	}
 
 	// The settings are in the hash: a cook with others is not up to date.

@@ -562,6 +562,23 @@ func levelProps() map[string]propAccess {
 			},
 			Doc: "how many pixels a cooked Nanite mesh's simplified detail may stray from the full detail before finer clusters are drawn, 0.25 to 8 (1 by default); higher is faster and coarser; saved for every level and session",
 		},
+		// The Nanite page pool's budget (gfx.NaniteStreamPoolMB), saved to
+		// graphics.yaml like smooth_lighting; the next level load's pool
+		// takes it.
+		"nanite_stream_pool_mb": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.IntVal(int64(gfx.NaniteStreamPoolMB)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("nanite_stream_pool_mb", "int", v)
+				}
+				gfx.SetNaniteStreamPoolMB(int(f))
+				return nil
+			},
+			Doc: "the most video memory, in megabytes, cooked Nanite meshes' geometry may take, 8 to 8192 (256 by default); a level that needs more streams its detail in and out within it; taken at the next level load; saved for every level and session",
+		},
 		// The player's live GI tier (gfx.GIQuality), saved to graphics.yaml
 		// like smooth_lighting.
 		"gi_quality": {

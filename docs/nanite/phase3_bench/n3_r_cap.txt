@@ -1,0 +1,309 @@
+bench level1_rocks (yaml) — load 2.0s, 1600x900, MSAA 8x
+
+=== pose 1.5,4,-77,3.14,0
+frame  avg 30.13 ms (33.2 fps)  p50 12.09  p95 13.72  p99 13.72  max 370.40
+nanite pages  23 slots (4 MB) for 52 pages, 23 resident; 0 uploaded, 0 evicted, 0 starved so far; longest update 1.03 ms; staging persistent
+scene  static 0  brushes 0 in 0 calls  chunks 0  scenery 0  sprites 0 (0 particles, 3 draws)  volume marches 0.0
+point shadows re-rendered 1.50 of 3 a frame
+gi  bricks built 0, still waiting 0; probes traced 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   3.02      3.65     12.10     12.80
+  update                                0.88      1.08      0.02      0.02
+    player input                        0.00      0.00      0.00      0.00
+    player & vehicles                   0.03      0.07      0.00      0.00
+    ai                                  0.03      0.04      0.00      0.00
+    entity update                       0.27      0.33      0.00      0.00
+      props: resolve                    0.00      0.00      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.00      0.00      0.00
+    emitters                            0.11      0.19      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.00      0.00      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.00
+    ui tick                             0.02      0.05      0.00      0.00
+    scripts                             0.25      0.31      0.00      0.00
+    debug stats                         0.10      0.15      0.00      0.00
+    drains                              0.01      0.15      0.00      0.00
+  shadows: sun                          0.67      0.79      6.55      7.70
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.08      0.08      0.08      0.08
+    entities                            0.03      0.03      0.00      0.00
+    scenery                             0.04      0.06      0.00      0.00
+    nanite: scenery                     0.47      0.56      6.42      7.57
+      nanite: stream                    0.15      0.22      0.03      0.15
+      nanite: cull                      0.03      0.03      0.39      0.66
+        nanite: lod                     0.01      0.01      0.10      0.37
+    sprites                             0.03      0.04      0.00      0.00
+    scatter                             0.00      0.00      0.00      0.00
+    foliage                             0.00      0.00      0.00      0.00
+      nanite: cull                      0.02      0.02      0.05      0.05
+  shadows: clouds                       0.00      0.00      0.00      0.00
+  gi                                    0.00      0.00      0.00      0.00
+  shadows: point                        1.21      1.58      0.52      1.01
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.00      0.00      0.01      0.01
+      nanite: cull                      0.00      0.00      0.00      0.00
+    entities                            0.04      0.05      0.03      0.04
+    scenery                             0.06      0.08      0.01      0.01
+    nanite: scenery                     0.75      1.07      0.01      0.01
+    sprites                             0.08      0.12      0.01      0.01
+    scatter                             0.00      0.00      0.01      0.01
+  clear                                 0.00      0.00      0.05      0.05
+  world: compiled                       0.00      0.00      0.00      0.00
+  world: chunks                         0.00      0.00      0.00      0.00
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              0.00      0.00      0.00      0.00
+  scenery                               0.01      0.01      0.00      0.00
+  nanite: scenery                       0.11      0.12      3.22      3.88
+    nanite: cull                        0.01      0.01      0.16      0.17
+      nanite: lod                       0.00      0.01      0.03      0.03
+  nanite: occlusion                     0.02      0.03      1.50      1.93
+    nanite: hi-z                        0.01      0.01      0.23      0.57
+    nanite: cull                        0.01      0.01      0.20      0.21
+      nanite: lod                       0.00      0.00      0.03      0.03
+  foliage                               0.00      0.00      0.00      0.00
+  scatter                               0.00      0.00      0.00      0.00
+  sprites: cutout                       0.01      0.01      0.00      0.00
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.01      0.01      0.04      0.04
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.00      0.00      0.00      0.00
+  sprites: blended                      0.01      0.01      0.00      0.00
+  viewmodel                             0.01      0.01      0.15      0.16
+  ui                                    0.03      0.04      0.00      0.00
+swap                                    0.04      0.14      0.13      0.14
+gpu wait                                9.15     10.19      0.02      0.02
+
+=== pose -4,4,-60,3.6,-0.1
+frame  avg 28.44 ms (35.2 fps)  p50 12.13  p95 13.89  p99 13.89  max 334.83
+nanite pages  23 slots (4 MB) for 52 pages, 23 resident; 0 uploaded, 0 evicted, 0 starved so far; longest update 1.00 ms; staging persistent
+scene  static 0  brushes 0 in 0 calls  chunks 0  scenery 0  sprites 0 (0 particles, 3 draws)  volume marches 0.0
+point shadows re-rendered 1.50 of 3 a frame
+gi  bricks built 0, still waiting 0; probes traced 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   3.18      4.37     12.19     13.27
+  update                                1.01      1.32      0.02      0.02
+    player input                        0.00      0.00      0.00      0.00
+    player & vehicles                   0.06      0.25      0.00      0.00
+    ai                                  0.04      0.10      0.00      0.00
+    entity update                       0.30      0.40      0.00      0.00
+      props: resolve                    0.00      0.00      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.01      0.00      0.00
+    emitters                            0.14      0.18      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.00      0.02      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.00
+    ui tick                             0.02      0.03      0.00      0.00
+    scripts                             0.26      0.34      0.00      0.00
+    debug stats                         0.13      0.21      0.00      0.00
+    drains                              0.00      0.01      0.00      0.00
+  shadows: sun                          0.67      1.02      6.59      7.20
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.05      0.06      0.06      0.06
+    entities                            0.03      0.04      0.00      0.00
+    scenery                             0.04      0.09      0.00      0.00
+    nanite: scenery                     0.49      0.75      6.47      7.09
+      nanite: stream                    0.16      0.33      0.03      0.03
+      nanite: cull                      0.03      0.05      0.37      0.38
+        nanite: lod                     0.01      0.02      0.09      0.09
+    sprites                             0.03      0.05      0.00      0.00
+    scatter                             0.00      0.00      0.00      0.00
+    foliage                             0.00      0.00      0.00      0.00
+      nanite: cull                      0.01      0.01      0.03      0.04
+  shadows: clouds                       0.00      0.00      0.00      0.00
+  gi                                    0.00      0.00      0.00      0.00
+  shadows: point                        1.23      1.73      0.52      1.03
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.00      0.00      0.01      0.01
+      nanite: cull                      0.00      0.00      0.00      0.00
+    entities                            0.04      0.05      0.03      0.04
+    scenery                             0.06      0.10      0.01      0.01
+    nanite: scenery                     0.76      1.08      0.01      0.01
+    sprites                             0.09      0.13      0.01      0.01
+    scatter                             0.00      0.00      0.01      0.01
+  clear                                 0.00      0.00      0.05      0.05
+  world: compiled                       0.00      0.00      0.00      0.00
+  world: chunks                         0.00      0.00      0.00      0.00
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              0.00      0.00      0.00      0.00
+  scenery                               0.01      0.01      0.00      0.00
+  nanite: scenery                       0.11      0.14      3.31      3.96
+    nanite: cull                        0.01      0.01      0.19      0.54
+      nanite: lod                       0.00      0.00      0.03      0.03
+  nanite: occlusion                     0.02      0.02      1.48      1.77
+    nanite: hi-z                        0.01      0.01      0.22      0.51
+    nanite: cull                        0.01      0.01      0.20      0.20
+      nanite: lod                       0.00      0.00      0.03      0.03
+  foliage                               0.00      0.00      0.00      0.00
+  scatter                               0.00      0.00      0.00      0.00
+  sprites: cutout                       0.01      0.01      0.00      0.00
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.01      0.01      0.02      0.02
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.00      0.00      0.00      0.00
+  sprites: blended                      0.01      0.01      0.00      0.00
+  viewmodel                             0.01      0.01      0.16      0.16
+  ui                                    0.03      0.06      0.00      0.00
+swap                                    0.04      0.05      0.16      0.50
+gpu wait                                9.06     10.38      0.02      0.02
+
+=== pose -20,6,-75,3.14,-0.3
+frame  avg 28.76 ms (34.8 fps)  p50 15.92  p95 20.61  p99 20.61  max 267.09
+nanite pages  23 slots (4 MB) for 52 pages, 23 resident; 90 uploaded, 90 evicted, 4 starved so far; longest update 1.55 ms; staging persistent
+scene  static 0  brushes 0 in 0 calls  chunks 0  scenery 0  sprites 0 (0 particles, 3 draws)  volume marches 0.0
+point shadows re-rendered 1.50 of 3 a frame
+gi  bricks built 0, still waiting 0; probes traced 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   4.90     19.64     15.79     20.89
+  update                                2.51     15.99      0.17      3.00
+    player input                        0.00      0.00      0.00      0.00
+    player & vehicles                   0.05      0.06      0.00      0.00
+    ai                                  0.03      0.04      0.00      0.00
+    entity update                       0.29      0.39      0.00      0.00
+      props: resolve                    0.00      0.00      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.00      0.00      0.00
+    emitters                            0.12      0.23      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.05      1.01      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.00
+    ui tick                             0.03      0.12      0.00      0.00
+    scripts                             0.29      0.81      0.00      0.00
+    debug stats                         0.11      0.14      0.00      0.00
+    drains                              1.51     15.07      0.15      2.98
+  shadows: sun                          0.91      1.88      7.13      9.47
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.05      0.07      0.06      0.06
+    entities                            0.03      0.04      0.00      0.00
+    scenery                             0.04      0.06      0.00      0.00
+    nanite: scenery                     0.74      1.66      7.01      9.35
+      nanite: stream                    0.39      1.32      0.18      2.01
+      nanite: cull                      0.03      0.04      0.38      0.40
+        nanite: lod                     0.01      0.01      0.09      0.09
+    sprites                             0.03      0.05      0.00      0.00
+    scatter                             0.00      0.00      0.00      0.00
+    foliage                             0.00      0.00      0.00      0.00
+      nanite: cull                      0.01      0.02      0.03      0.04
+  shadows: clouds                       0.00      0.00      0.00      0.00
+  gi                                    0.00      0.00      0.00      0.00
+  shadows: point                        1.21      1.57      0.51      0.91
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.00      0.00      0.01      0.01
+      nanite: cull                      0.00      0.00      0.00      0.00
+    entities                            0.04      0.05      0.05      0.29
+    scenery                             0.06      0.09      0.01      0.01
+    nanite: scenery                     0.75      1.04      0.01      0.01
+    sprites                             0.08      0.12      0.01      0.01
+    scatter                             0.00      0.00      0.01      0.01
+  clear                                 0.00      0.00      0.05      0.05
+  world: compiled                       0.00      0.00      0.00      0.00
+  world: chunks                         0.00      0.00      0.00      0.00
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              0.00      0.00      0.00      0.00
+  scenery                               0.01      0.01      0.00      0.00
+  nanite: scenery                       0.10      0.14      5.91      6.96
+    nanite: cull                        0.01      0.01      0.14      0.16
+      nanite: lod                       0.00      0.00      0.02      0.04
+  nanite: occlusion                     0.02      0.02      1.81      2.96
+    nanite: hi-z                        0.01      0.01      0.24      0.25
+    nanite: cull                        0.01      0.01      0.18      0.20
+      nanite: lod                       0.00      0.01      0.02      0.02
+  foliage                               0.00      0.00      0.00      0.00
+  scatter                               0.00      0.00      0.00      0.00
+  sprites: cutout                       0.01      0.01      0.00      0.00
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.01      0.01      0.01      0.01
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.00      0.00      0.00      0.00
+  sprites: blended                      0.01      0.01      0.00      0.00
+  viewmodel                             0.01      0.03      0.17      0.17
+  ui                                    0.03      0.05      0.00      0.00
+swap                                    0.04      0.14      0.16      0.17
+gpu wait                               11.22     13.65      0.02      0.02
+
+=== pose -30,3.5,-70,3.6,-0.15
+frame  avg 33.60 ms (29.8 fps)  p50 12.61  p95 14.21  p99 14.21  max 431.82
+nanite pages  23 slots (4 MB) for 52 pages, 23 resident; 263 uploaded, 263 evicted, 7 starved so far; longest update 1.00 ms; staging persistent
+scene  static 0  brushes 0 in 0 calls  chunks 0  scenery 0  sprites 0 (0 particles, 3 draws)  volume marches 0.0
+point shadows re-rendered 1.50 of 3 a frame
+gi  bricks built 0, still waiting 0; probes traced 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   3.13      3.65     12.45     13.45
+  update                                0.89      1.02      0.02      0.02
+    player input                        0.00      0.00      0.00      0.00
+    player & vehicles                   0.05      0.08      0.00      0.00
+    ai                                  0.04      0.16      0.00      0.00
+    entity update                       0.28      0.39      0.00      0.00
+      props: resolve                    0.00      0.00      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.00      0.00      0.00
+    emitters                            0.12      0.22      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.00      0.00      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.00
+    ui tick                             0.02      0.02      0.00      0.00
+    scripts                             0.25      0.37      0.00      0.00
+    debug stats                         0.10      0.12      0.00      0.00
+    drains                              0.00      0.00      0.00      0.00
+  shadows: sun                          0.76      0.88      7.03      7.58
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.05      0.07      0.06      0.06
+    entities                            0.03      0.03      0.00      0.00
+    scenery                             0.03      0.04      0.00      0.00
+    nanite: scenery                     0.60      0.70      6.91      7.47
+      nanite: stream                    0.27      0.37      0.13      0.55
+      nanite: cull                      0.03      0.03      0.43      0.76
+        nanite: lod                     0.01      0.01      0.08      0.09
+    sprites                             0.04      0.05      0.00      0.00
+    scatter                             0.00      0.00      0.00      0.00
+    foliage                             0.00      0.00      0.00      0.00
+      nanite: cull                      0.01      0.01      0.03      0.04
+  shadows: clouds                       0.00      0.00      0.00      0.00
+  gi                                    0.00      0.00      0.00      0.00
+  shadows: point                        1.21      1.59      0.52      0.97
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.00      0.00      0.01      0.01
+      nanite: cull                      0.00      0.00      0.00      0.00
+    entities                            0.04      0.05      0.03      0.04
+    scenery                             0.06      0.08      0.01      0.01
+    nanite: scenery                     0.75      1.05      0.01      0.01
+    sprites                             0.09      0.14      0.01      0.01
+    scatter                             0.00      0.01      0.01      0.01
+  clear                                 0.00      0.00      0.05      0.05
+  world: compiled                       0.00      0.00      0.00      0.00
+  world: chunks                         0.00      0.00      0.00      0.00
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              0.00      0.00      0.00      0.00
+  scenery                               0.01      0.01      0.00      0.00
+  nanite: scenery                       0.10      0.12      2.68      3.76
+    nanite: cull                        0.01      0.03      0.71      0.73
+      nanite: lod                       0.00      0.00      0.02      0.02
+  nanite: occlusion                     0.02      0.03      1.96      2.81
+    nanite: hi-z                        0.01      0.01      0.19      0.19
+    nanite: cull                        0.01      0.01      0.83      1.14
+      nanite: lod                       0.00      0.00      0.02      0.02
+  foliage                               0.00      0.00      0.00      0.00
+  scatter                               0.00      0.00      0.00      0.00
+  sprites: cutout                       0.01      0.02      0.00      0.00
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.01      0.01      0.01      0.01
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.00      0.00      0.00      0.00
+  sprites: blended                      0.01      0.01      0.00      0.00
+  viewmodel                             0.01      0.01      0.15      0.16
+  ui                                    0.03      0.03      0.00      0.00
+swap                                    0.03      0.04      0.13      0.14
+gpu wait                                9.46     10.99      0.02      0.02

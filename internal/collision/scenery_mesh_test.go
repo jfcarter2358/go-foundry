@@ -676,3 +676,91 @@ func TestTheNaniteCollisionSwitchFallsBackToTheBox(t *testing.T) {
 		t.Errorf("the chain still resolved the prop: %v", out)
 	}
 }
+
+// ---------- paged collision (Phase 3) ----------
+
+// pagedCooked is cooked() with its mesh part paged out, as a .fnm loaded from
+// disk has it (meshcollide's paged.go): the loader hands back the part and
+// counts how often it was read.
+func pagedCooked(t *testing.T, id string, mesh []mgl32.Vec3, idx []uint32, loads *int) world.Scenery {
+	t.Helper()
+	d, err := meshcollide.Build(meshcollide.Input{Positions: flatten(mesh), Stride: 3, Indices: idx, TagNames: []string{"stone"}}, meshcollide.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := d.Strip()
+	d.SetMeshLoader(func() (meshcollide.MeshPart, error) {
+		*loads++
+		return part, nil
+	})
+	s := cooked(t, id, mgl32.Vec3{}, mgl32.Vec3{}, one(), mesh, idx, meshcollide.ModeMesh)
+	s.Nanite = &nanite.Mesh{Lo: s.LocalMin, Hi: s.LocalMax, Collision: d}
+	return s
+}
+
+// A paged-out collision mesh is read when a body comes within reach of it —
+// ahead of the first query, on a goroutine — so walking onto it never waits;
+// it is let go when bodies leave; and a body that turns up on it unannounced
+// is still held up, by a read the stats count as a stall.
+func TestPagedCollisionIsReadAheadOfABody(t *testing.T) {
+	pos, idx := sheetTris(15, 10, hills)
+	loads := 0
+	lvl := meshLevel(pagedCooked(t, "ground", pos, idx, &loads))
+	d := lvl.Scenery[0].CollisionData()
+	if d.MeshResident() || d.TriangleCount() == 0 {
+		t.Fatal("the fixture is not paged out")
+	}
+	resident := func() bool {
+		residents.Lock()
+		defer residents.Unlock()
+		_, ok := residents.m[d]
+		return ok
+	}
+	TakeSceneryStats()
+	p := world.NewPlayer(mgl32.Vec3{100, 5, 100})
+	for i := 0; i < 5; i++ {
+		EntityUpdate(lvl, 1.0/60, true, p)
+	}
+	WaitForCollisionLoads()
+	if resident() || loads != 0 {
+		t.Fatalf("a body 100 m off read the mesh (%d reads)", loads)
+	}
+	// Within prefetchReach of its edge (x = 15), not on it.
+	p.Position = mgl32.Vec3{15 + prefetchReach - 2, 5, 0}
+	EntityUpdate(lvl, 1.0/60, true, p)
+	WaitForCollisionLoads()
+	if !resident() || loads != 1 {
+		t.Fatalf("a body coming near did not read the mesh ahead (resident %v, %d reads)", resident(), loads)
+	}
+	// Onto it — dropped just inside its edge, then walked in: no query
+	// waits.
+	p.Position = mgl32.Vec3{12, 4, 0}
+	for i := 0; i < 150; i++ {
+		MovePlayer(p, lvl, stepMove(mgl32.Vec3{-0.06, 0, 0}, false))
+		EntityUpdate(lvl, 1.0/60, true, p)
+	}
+	if g := groundUnder(lvl, p.Position.X(), 0); feet(p) < g-0.05 || feet(p) > g+0.1 {
+		t.Errorf("standing on the paged mesh: feet %v, ground %v", feet(p), g)
+	}
+	st := TakeSceneryStats()
+	if st.Prefetches != 1 || st.SyncLoads != 0 || loads != 1 {
+		t.Errorf("walking on: %d prefetches, %d sync loads, %d reads", st.Prefetches, st.SyncLoads, loads)
+	}
+	// Bodies gone: dropped after the TTL.
+	p.Position = mgl32.Vec3{300, 5, 300}
+	for i := 0; i < residentTTL+5; i++ {
+		EntityUpdate(lvl, 1.0/60, true, p)
+	}
+	if resident() {
+		t.Fatal("the mesh stayed resident with no body near")
+	}
+	// Unannounced: a query straight onto it reads it there and then, and
+	// still holds the body up.
+	out, floor, _ := pushOutOfScenery(lvl, mgl32.Vec3{0, hills(0, 0) + 0.85, 0}, 0.3, 0.9)
+	if !floor || out.Y() < hills(0, 0)+0.85 {
+		t.Errorf("a body dropped onto the unloaded mesh was not held up: %v (floor %v)", out, floor)
+	}
+	if st := TakeSceneryStats(); st.SyncLoads != 1 || loads != 2 {
+		t.Errorf("the unannounced query: %d sync loads, %d reads", st.SyncLoads, loads)
+	}
+}

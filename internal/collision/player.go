@@ -128,8 +128,10 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (res PlayerMov
 	// expressed in.
 	frame := lvl.Frames.FrameFor(p)
 	// The player moves before the entities do, so it starts the placement
-	// broadphase's tick too (scenery_index.go).
+	// broadphase's tick too (scenery_index.go), and reads ahead the
+	// collision meshes it is coming near.
 	Epoch()
+	prefetchBodies(lvl, p, false)
 
 	// A seated occupant is constrained, not simulated. Pinning every frame
 	// rather than once on sitting down is what keeps them in the chair while

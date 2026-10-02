@@ -293,9 +293,12 @@ key bindings, the volume (`@level.prop.master_volume`), Smooth Lighting
 one of `"off"`, `"low"`, `"medium"`, `"high"`; see
 [Lighting](07-lighting.md#live-gi)) and the foliage settings
 (`@level.prop.foliage_distance`, 0.25 to 2, and `@level.prop.foliage_shadows`,
-a toggle), and the Nanite detail threshold (`@level.prop.nanite_lod_error`,
+a toggle), the Nanite detail threshold (`@level.prop.nanite_lod_error`,
 0.25 to 8 pixels, 1 by default: how far a cooked mesh's simplified detail may
-stray before finer detail is drawn) — all saved to `graphics.yaml` — itself — see
+stray before finer detail is drawn) and the Nanite memory budget
+(`@level.prop.nanite_stream_pool_mb`, 8 to 8192 MB, 256 by default: how much
+video memory cooked meshes may take before their detail streams; taken at the
+next level load) — all saved to `graphics.yaml` — itself — see
 [Entities](11-entities.md#mouse-look-and-the-players-settings) — so the screen
 needs no Save button, and leaving with Escape keeps what was set.
 

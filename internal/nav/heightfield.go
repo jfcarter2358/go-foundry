@@ -251,6 +251,14 @@ func appendScenerySolids(out []solid, lvl *world.Level) []solid {
 			}
 			continue
 		}
+		// A loaded mesh's triangles are paged out of memory (Phase 3): read
+		// them for the rasterising — the grid is built off the main thread —
+		// and let them go after.
+		full, err := d.WithMesh()
+		if err != nil || full.TriangleCount() == 0 {
+			continue
+		}
+		d = full
 		if d.OpenEdges == 0 && d.NonManifold == 0 {
 			// Watertight: one solid, its spans by parity.
 			first := toWorld(d.Dequantize(d.Tris[0]))

@@ -145,7 +145,9 @@ the model editor. Bring it in as **glTF** (`.gltf` with its `.bin`, or a single
 The cook writes `models/rock.fnm` beside the source. It keeps the file's own
 normals and its **material slots** (each glTF material is a slot; its base-colour
 texture, reduced to the bare name `rock_albedo`, is the slot's texture). It welds
-the vertices, cuts the triangles into clusters of about 128 for the GPU to cull,
+the vertices and snaps them to a fine grid (a few micrometres on a rock; normals
+to within a twentieth of a degree — no picture changes by more than one step of
+one colour channel), cuts the triangles into clusters of about 128 for the GPU to cull,
 and builds every **level of detail** below that: groups of neighbouring clusters
 simplified to half their triangles, again and again, down to a few hundred.
 Simplifying keeps where two groups meet exactly where it was, so any mix of
@@ -154,11 +156,18 @@ shape, so a coarser level does not smear the shading. It also keeps one middle
 level, the **fallback** mesh, for the editor's picking, and bakes the distance
 field for live GI from that. It keeps the mesh's **collision** too — a cut of it
 3 cm off the drawn surface, and that cut split into convex hulls (see
-[Nanite collision](14-scenery-brush.md#nanite-collision)). It records a hash
+[Nanite collision](14-scenery-brush.md#nanite-collision)). Last, it packs the geometry into **pages** of up to 4,096 triangles, bit-packed
+to about a third of its size in floats, which a level streams in and out while
+it plays (see [Nanite meshes](14-scenery-brush.md#streaming-and-the-memory-budget)).
+It records a hash
 of the source and the collision settings, so a cook of an unchanged source is
 skipped and a changed one is redone. `foundry nanite
 inspect` lists the levels: how many triangles each holds and how far it strays
-from the full detail — and the collision cut and hulls.
+from the full detail — and the pages, the collision cut and hulls.
+
+A mesh cooked by an older build is refused with a message to re-cook it:
+`foundry nanite cook -all -force`, or **Window > Cook Nanite Meshes**. The
+streaming build's format is version 4.
 
 A `.fmdl` or `.obj` can be cooked too: on a scenery prop that uses one, the
 **Nanite** group's **Cook and use** button cooks it beside itself and points the

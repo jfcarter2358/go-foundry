@@ -107,3 +107,39 @@ func TestNaniteLODErrorRoundTripsThroughGraphicsFile(t *testing.T) {
 		t.Error("a file without nanite_lod_error changed it")
 	}
 }
+
+// The Nanite page pool's budget round-trips, is clamped, and an older file
+// without it keeps the default (Phase 3).
+func TestNaniteStreamPoolRoundTripsThroughGraphicsFile(t *testing.T) {
+	prev := gfx.NaniteStreamPoolMB
+	t.Cleanup(func() { gfx.NaniteStreamPoolMB, gfx.GraphicsSettingsChanged = prev, false })
+
+	gfx.SetNaniteStreamPoolMB(96)
+	if !gfx.GraphicsSettingsChanged {
+		t.Error("changing the pool did not mark the settings for saving")
+	}
+	data, err := marshalGraphicsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gfx.NaniteStreamPoolMB = 256
+	if err := applyGraphicsSettings(data); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.NaniteStreamPoolMB != 96 {
+		t.Errorf("came back as %d from:\n%s", gfx.NaniteStreamPoolMB, data)
+	}
+	if err := applyGraphicsSettings([]byte("nanite_stream_pool_mb: 1\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.NaniteStreamPoolMB != gfx.NaniteStreamPoolMBMin {
+		t.Errorf("an out-of-range pool came in as %d", gfx.NaniteStreamPoolMB)
+	}
+	gfx.NaniteStreamPoolMB = 256
+	if err := applyGraphicsSettings([]byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.NaniteStreamPoolMB != 256 {
+		t.Error("a file without nanite_stream_pool_mb changed it")
+	}
+}

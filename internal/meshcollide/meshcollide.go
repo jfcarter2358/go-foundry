@@ -168,6 +168,12 @@ type Data struct {
 	// Nodes is the bounding-volume hierarchy over Tris, root first.
 	Nodes []Node
 
+	// Paged says Verts, Tris, Tags and Nodes were taken out (Strip) to be
+	// read back when wanted (WithMesh, paged.go); MeshTriangles,
+	// MeshVertices and MeshNodes are then their counts.
+	Paged                                  bool
+	MeshTriangles, MeshVertices, MeshNodes int
+
 	// What the clean found: corners welded into one position, triangles
 	// dropped for having no area, edges used by one triangle only (an open
 	// border), and edges shared by more than two (non-manifold).
@@ -213,10 +219,20 @@ type Hull struct {
 }
 
 // VertexCount is the cut's vertices.
-func (d *Data) VertexCount() int { return len(d.Verts) / 3 }
+func (d *Data) VertexCount() int {
+	if d.Paged {
+		return d.MeshVertices
+	}
+	return len(d.Verts) / 3
+}
 
 // TriangleCount is the cut's triangles.
-func (d *Data) TriangleCount() int { return len(d.Tris) / 3 }
+func (d *Data) TriangleCount() int {
+	if d.Paged {
+		return d.MeshTriangles
+	}
+	return len(d.Tris) / 3
+}
 
 // Dequantize is vertex v's position.
 func (d *Data) Dequantize(v uint32) mgl32.Vec3 {
@@ -253,15 +269,19 @@ func (d *Data) Resolve(override Mode, size float32) Mode {
 			return ModeBox
 		}
 	case ModeMesh:
-		if d == nil || len(d.Tris) == 0 {
+		if d == nil || d.TriangleCount() == 0 {
 			return ModeBox
 		}
 	}
 	return m
 }
 
-// Validate checks the data is internally consistent.
+// Validate checks the data is internally consistent. A stripped mesh part is
+// checked when it is read back (WithMesh).
 func (d *Data) Validate() error {
+	if d.Paged {
+		return d.validateHulls()
+	}
 	nv := uint32(d.VertexCount())
 	if len(d.Verts)%3 != 0 || len(d.Tris)%3 != 0 {
 		return errf("collision mesh is ragged")
@@ -293,6 +313,10 @@ func (d *Data) Validate() error {
 	if nt > 0 && len(d.Nodes) == 0 {
 		return errf("collision triangles but no tree")
 	}
+	return d.validateHulls()
+}
+
+func (d *Data) validateHulls() error {
 	for hi := range d.Hulls {
 		h := &d.Hulls[hi]
 		for _, ix := range h.Tris {
@@ -307,7 +331,8 @@ func (d *Data) Validate() error {
 	return nil
 }
 
-// Bytes is roughly what the data holds in memory.
+// Bytes is roughly what the data holds in memory (a stripped mesh part
+// counts nothing).
 func (d *Data) Bytes() int {
 	n := len(d.Verts)*2 + len(d.Tris)*4 + len(d.Tags) + len(d.Nodes)*32
 	for i := range d.Hulls {
