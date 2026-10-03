@@ -124,6 +124,12 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	naniteChunksActive = !o.Editor
 	beginFrameTarget(o.Target)
 	defer endFrameTarget()
+	// A TAA frame draws into the renderer's own scene target, which stands in
+	// for the caller's from here to sceneFrameEnd (scene_target.go, taa.go).
+	sceneFrameBegin(o)
+	// The "off" anti-aliasing mode's frame: no window samples (antialias.go).
+	beginAAModeFrame(o)
+	defer endAAModeFrame()
 	// The camera's LOD parameters, fixed for every pass of the frame, the
 	// shadows' included (nanite_lod.go).
 	beginNaniteLODFrame()
@@ -230,6 +236,7 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		ProfileBegin("clear")
 		ApplyWorldClearColor(lvl)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		sceneFrameClear()
 		ProfileEnd()
 
 		// The 3D editor's wireframe shading (editor_3d_view.go). Drawing
@@ -253,11 +260,21 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		SetAlphaToCoverage(true)
 		gl.UseProgram(gfx.Program)
 		gl.Uniform1i(gfx.AlphaSharpenUniform, 1)
+		// In a TAA frame there are no samples to cover, and the cutouts
+		// dither instead (taa.go).
+		gl.Uniform1i(gfx.UniformLoc(gfx.Program, "coverageDither\x00"), coverageDither())
 		// A script zooming the camera (@level.prop.camera_fov) lands here,
 		// before the frustum and every pass below read Projection — and so
 		// does the level's own view distance, which is also the far plane.
 		gfx.FarPlane = world.LevelViewDistance(lvl)
 		gfx.SyncProjection()
+		// And sent to the world program every frame, not only when it
+		// changed: what was last sent may be another lens (the viewmodel's
+		// restore, a jittered TAA frame's) or nothing at all.
+		gfx.UploadProjection(gfx.Projection)
+		// A TAA frame's sub-pixel jitter, on everything drawn from here to
+		// sceneFrameEnd (taa.go).
+		taaBeginJitter(lvl)
 
 		// Build frustum from current projection × camera matrices
 		projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
@@ -322,6 +339,10 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// pass, here and in the scenery, draws what was visible last frame;
 		// naniteOcclusionPass, after the rest of the opaque world, finishes.
 		naniteTwoPass = NaniteOcclusion && !o.skip("nanite: occlusion")
+		// The visibility buffer, in a scene-target frame: the GPU cull's
+		// draws below write triangle IDs, shaded after its last pass
+		// (nanite_vis.go).
+		naniteVisBegin()
 		naniteChunkPending = naniteChunkPending[:0]
 		DebugStats.NaniteClusters, DebugStats.NaniteTriangles = 0, 0
 		ProfileBegin("world: compiled")
@@ -408,7 +429,16 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// of the world and draw in gameplay as well as in the editor.
 		ProfileBegin("entities")
 		if !o.skip("entities") {
-			RenderEntities(lvl, &frustum, drawOrQueue)
+			entityDraw := drawOrQueue
+			if taaRecording() {
+				// TAA's motion vectors need each moving attachment's
+				// matrix (taa.go).
+				entityDraw = func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool) {
+					taaNoteGeometry(g, model)
+					drawOrQueue(g, model, doubleSided)
+				}
+			}
+			RenderEntities(lvl, &frustum, entityDraw)
 		}
 		ProfileEnd()
 
@@ -428,6 +458,11 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		ProfileBegin("nanite: occlusion")
 		naniteOcclusionPass(lvl)
 		ProfileEnd()
+
+		// The visibility buffer's material pass: every pixel the cull's
+		// draws still own, shaded once, before anything else draws over
+		// the opaque world (nanite_vis.go).
+		naniteVisShade(lvl, shadowFrame, o.Now)
 
 		// The spawn marker is an authoring aid, not level geometry: it
 		// exists to be seen and dragged in the editor and must never show
@@ -497,6 +532,7 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		SetAlphaToCoverage(false)
 		gl.UseProgram(gfx.Program)
 		gl.Uniform1i(gfx.AlphaSharpenUniform, 0)
+		gl.Uniform1i(gfx.UniformLoc(gfx.Program, "coverageDither\x00"), 0)
 
 		// --- Decals ---
 		// Between the opaque world and the sky, and every part of that is
@@ -596,9 +632,14 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// inside a body that has hands — except while the Player panel's
 		// Viewmodel section is open, which is the one moment the editor
 		// itself needs to see this (EditorPreviewActive).
+		// A TAA frame's motion vectors, from the world's depth before the
+		// viewmodel clears it (taa.go).
+		taaMotionPass()
 		if !o.Editor || EditorPreviewActive {
 			ProfileBegin("viewmodel")
 			RenderViewmodel()
+			// The hands move with the camera: no motion under them.
+			taaViewmodelMotion()
 			ProfileEnd()
 		}
 
@@ -613,6 +654,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		if editorWire {
 			gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 		}
+
+		// A TAA frame's resolve, into the caller's target (taa.go).
+		sceneFrameEnd()
 
 		DebugStats.ChunksDrawn = chunksDrawn
 		DebugStats.BrushesDrawn = brushesDrawn

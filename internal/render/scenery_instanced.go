@@ -150,6 +150,11 @@ func (in *sceneryInstancer) prepare(lvl *world.Level) {
 				// Transparent groups too: their colour pass is per placement,
 				// but their shadow is instanced like the rest.
 				gfx.AttachInstanceMatrices(g.Vao, in.buf)
+				// And the shadow stand-in's, which the shadow passes draw
+				// instead (gfx.Geometry.ShadowLOD).
+				if c := g.ShadowCaster(); c != g {
+					gfx.AttachInstanceMatrices(c.Vao, in.buf)
+				}
 			}
 			in.groups[gi].members = append(in.groups[gi].members, int32(i))
 		}
@@ -279,8 +284,10 @@ func renderSceneryShadowInstanced(lvl *world.Level, prog uint32, skin *gfx.SkinU
 		if geo.Alpha < 0.05 {
 			continue
 		}
-		gl.BindVertexArray(geo.Vao)
-		geo.DrawTrianglesInstanced(g.first, g.count)
+		// A coarser stand-in where the mesh has one (gfx.Geometry.ShadowLOD).
+		c := geo.ShadowCaster()
+		gl.BindVertexArray(c.Vao)
+		c.DrawTrianglesInstanced(g.first, g.count)
 	}
 	gl.Uniform1i(loc, 0)
 }

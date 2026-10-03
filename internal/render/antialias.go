@@ -36,6 +36,8 @@ import (
 	"fmt"
 	"log"
 
+	"foundry/internal/gfx"
+
 	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -70,6 +72,12 @@ const AntiAliasSamples int32 = 8
 // always succeeds if a GL window can be created at all.
 var antiAliasSampleTiers = []int32{AntiAliasSamples, 4, 2, 0}
 
+// KeepWindowMSAA keeps the window multisampled whatever the anti-aliasing
+// mode: a development build's editor draws its 3D views (which take the
+// forward path) and its gizmos straight into the window. Set by the
+// development build's app before the window is made.
+var KeepWindowMSAA bool
+
 // AntiAliasRequestedSamples is the tier CreateAntiAliasedWindow actually got
 // a window out of — what was asked for, as opposed to
 // AntiAliasGrantedSamples, which is what the driver then reported giving.
@@ -97,7 +105,16 @@ var AntiAliasGrantedSamples int32
 // no-multisampling tier failed — at which point the problem isn't AA.
 func CreateAntiAliasedWindow(title string, w, h int32, flags sdl.WindowFlags) (*sdl.Window, sdl.GLContext, error) {
 	var lastErr error
-	for _, samples := range antiAliasSampleTiers {
+	tiers := antiAliasSampleTiers
+	if gfx.AntiAliasMode != gfx.AAModeMSAA && !KeepWindowMSAA {
+		// TAA draws the world into a scene target of its own (taa.go) and
+		// only its resolved picture reaches the window, so the window's own
+		// samples would be bandwidth spent on the HUD alone; "off" wants
+		// none at all. MSAA chosen later in the run then takes effect at the
+		// next start.
+		tiers = []int32{0}
+	}
+	for _, samples := range tiers {
 		requestAntiAliasSamples(samples)
 
 		win, err := sdl.CreateWindow(title, sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED, w, h, flags)
@@ -150,6 +167,12 @@ func ApplyAntiAliasGLState() {
 	gl.GetIntegerv(gl.SAMPLES, &got)
 	AntiAliasGrantedSamples = got
 	switch {
+	case got == 0 && gfx.AntiAliasMode == gfx.AAModeTAA:
+		// The window was made without samples on purpose: TAA resolves into
+		// it from a target of its own (taa.go).
+		log.Printf("anti-aliasing: TAA (window without multisampling)")
+	case got == 0 && gfx.AntiAliasMode == gfx.AAModeOff:
+		log.Printf("anti-aliasing: off")
 	case got == 0:
 		log.Printf("WARNING: multisampling unavailable (driver granted 0 of %d requested samples) — F10 will have no effect", AntiAliasRequestedSamples)
 	case got < AntiAliasSamples:
@@ -208,10 +231,39 @@ func setMultisampleGLState() {
 // "cover this many samples" — the two interpretations compound, and a
 // half-transparent surface would come out at a quarter strength.
 func SetAlphaToCoverage(on bool) {
-	alphaToCoverageOn = on && AntiAliasEnabled && AntiAliasGrantedSamples > 0
+	// Not in a scene-target frame, which has one sample a pixel whatever the
+	// window has: TAA's dither stands in for it there (taa.go).
+	alphaToCoverageOn = on && AntiAliasEnabled && AntiAliasGrantedSamples > 0 && !sceneFrameActive() && !aaOffFrame
 	if alphaToCoverageOn {
 		gl.Enable(gl.SAMPLE_ALPHA_TO_COVERAGE)
 	} else {
 		gl.Disable(gl.SAMPLE_ALPHA_TO_COVERAGE)
+	}
+}
+
+// aaOffFrame is whether the frame being drawn is a game frame in the "off"
+// anti-aliasing mode (gfx.AAModeOff): drawn into the window with its
+// multisampling off, as F10 does for the whole run. A window made in that
+// mode has no samples anyway (CreateAntiAliasedWindow); this covers one that
+// does — a development build's, which keeps them for the editor's views, or
+// a run switched to "off" from MSAA by a script or a setting.
+var aaOffFrame bool
+
+// beginAAModeFrame applies the anti-aliasing mode to the frame DrawWorld is
+// about to draw. The editor's own views keep the window's MSAA whatever the
+// mode, as they keep the forward path (sceneFrameWanted).
+func beginAAModeFrame(o WorldDraw) {
+	aaOffFrame = gfx.AntiAliasMode == gfx.AAModeOff && !o.Editor
+	if aaOffFrame && AntiAliasGrantedSamples > 0 {
+		gl.Disable(gl.MULTISAMPLE)
+	}
+}
+
+// endAAModeFrame puts the window's multisampling back as F10 has it, for
+// what draws after the world (the HUD, the editor's overlays).
+func endAAModeFrame() {
+	if aaOffFrame {
+		aaOffFrame = false
+		setMultisampleGLState()
 	}
 }

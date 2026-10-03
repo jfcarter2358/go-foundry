@@ -94,6 +94,16 @@ func StandUpWorld(w, h int32) error {
 // is invalidated by one, and gfx.ForgetUniformLocations alone only clears the
 // memo — the handles cached in gfx's own variables are still the old program's.
 func StandUpWorldUniforms() {
+	// Every gl.Uniform* below writes the program in use, and StandUpWorld
+	// reaches here after InitShadows and InitWorldPasses have each linked and
+	// bound programs of their own. Without this the projection — and every
+	// default after it — went into whichever of those was bound last, and the
+	// world program kept a zero projection until something else re-sent it:
+	// on a level with a viewmodel, that pass's restore at the end of the first
+	// frame; on one without (the Nanite bench levels), never, so every world
+	// draw collapsed to nothing and only the clear colour and the sky (own
+	// program) were ever captured (docs/nanite/PHASE_4.md).
+	gl.UseProgram(gfx.Program)
 	gfx.ProjectionUniform = gl.GetUniformLocation(gfx.Program, gl.Str("projection\x00"))
 	gfx.RebuildProjection()
 

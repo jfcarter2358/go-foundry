@@ -380,6 +380,21 @@ func (g *staticGPU) drawMain(sb *staticBatches) int {
 		return len(g.mainGroups)
 	}
 	identity := mgl32.Ident4()
+	// A visibility-buffer frame draws the groups' IDs instead, shaded later
+	// in one pass (nanite_vis.go).
+	if naniteVisActive() {
+		groups := make([]visGroup, len(g.mainGroups))
+		for i, gi := range g.mainGroups {
+			b := &sb.groups[gi].batch
+			i := i
+			groups[i] = visGroup{mat: &b.Material, vao: b.Vao, vbo: b.Vbo, nbo: b.Nbo, lbo: b.Lbo, ebo: b.Ebo,
+				baked:   b.Baked && b.Lbo != 0,
+				forward: func() { b.Bind(identity); g.main.drawGroup(i) }}
+		}
+		if naniteVis.drawBatch(&g.main, groups) {
+			return len(g.mainGroups)
+		}
+	}
 	prepassBatch(&g.main, len(g.mainGroups),
 		func(i int) *gfx.Material { return &sb.groups[g.mainGroups[i]].batch.Material },
 		func(int) mgl32.Mat4 { return identity },

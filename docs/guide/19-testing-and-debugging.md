@@ -76,7 +76,7 @@ one keypress.
 | `8` | entity-vs-world collision |
 | `9` | entity-vs-entity collision |
 | `0` | free-fly (the jump and sprint keys move the body up and down) |
-| `F10` | anti-aliasing |
+| `F10` | anti-aliasing (in TAA: the jitter and history; see [Anti-aliasing](#anti-aliasing)) |
 | `F11` | fullscreen |
 | `F12` | vsync |
 
@@ -86,6 +86,39 @@ something that should be solid is not.
 
 Shadow cost switches (`F5`–`F9`) are covered in [Scatter](06-scatter.md) and
 [Lighting](07-lighting.md).
+
+## Anti-aliasing
+
+The game draws with TAA (temporal anti-aliasing) unless the player picked
+otherwise (`anti_aliasing` in `graphics.yaml`, `@level.prop.anti_aliasing`):
+the world is drawn into a target of the renderer's own from a camera nudged a
+fraction of a pixel each frame, and each frame is blended into a history of the
+ones before it, along each pixel's motion. A still view converges on a
+supersampled picture over eight frames or so; a cutout's edge (foliage, a
+cutout sprite) is dithered frame to frame and the history averages it into a
+soft edge. `"msaa"` is the fallback, the window's own multisampling as before
+— a game started in TAA has no samples in its window, so MSAA takes effect at
+its next start — and `"off"` is neither. `taa_sharpen` (0 to 1) sharpens the
+TAA picture back up.
+
+In a TAA frame, `F10` turns the jitter and the history off and shows the frame
+as drawn, one sample a pixel; in MSAA it switches the multisampling, as it
+always has. `FOUNDRY_AA=taa|msaa|off` sets the mode for a run whatever the
+player saved. The editor's own 3D views always draw the MSAA way; **Play** draws
+the game's way.
+
+Cooked meshes and compiled levels are shaded through a **visibility buffer** in
+a TAA frame: the GPU cull draws which triangle is nearest at each pixel, and a
+material pass shades each pixel once from that, the same light model and
+shadows as everything else. The `F3` overlay then says `Nanite shade:
+visibility buffer` with how many materials it shaded; the profiler's rows are
+`nanite: vis`, `nanite: material`, `taa: motion`, `taa: resolve` and
+`taa: output`. `FOUNDRY_NANITE_VISBUFFER=0` shades them as they are drawn
+instead, and `FOUNDRY_TAA_RESOLVE=0` keeps the TAA frame's target but shows it
+unresolved — the pair the renderer's picture tests compare.
+
+A headless shot (`foundry play`'s `shot`) draws the frame sixteen times at the
+same instant before taking it, so the picture is TAA's converged one.
 
 ## Live GI
 

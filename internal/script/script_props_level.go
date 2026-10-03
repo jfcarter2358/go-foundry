@@ -579,6 +579,41 @@ func levelProps() map[string]propAccess {
 			},
 			Doc: "the most video memory, in megabytes, cooked Nanite meshes' geometry may take, 8 to 8192 (256 by default); a level that needs more streams its detail in and out within it; taken at the next level load; saved for every level and session",
 		},
+		// The player's anti-aliasing mode and TAA sharpening
+		// (gfx.AntiAliasMode, gfx.TAASharpen), saved to graphics.yaml like
+		// smooth_lighting. Phase 4 of the Nanite plan (docs/nanite/PHASE_4.md).
+		"anti_aliasing": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.StrVal(gfx.AntiAliasMode.String()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				s, ok := v.(flang.StrVal)
+				if !ok {
+					return propErr("anti_aliasing", "string", v)
+				}
+				m, ok := gfx.ParseAAMode(string(s))
+				if !ok {
+					return propErr("anti_aliasing", "taa, msaa or off", v)
+				}
+				gfx.SetAntiAliasMode(m)
+				return nil
+			},
+			Doc: "the player's anti-aliasing: \"taa\" (temporal: the default, and the mode cooked meshes and compiled levels shade once per pixel in), \"msaa\" (multisampling, the fallback; a game made without it by a TAA start takes it at the next start) or \"off\"; saved for every level and session",
+		},
+		"taa_sharpen": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.TAASharpen)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("taa_sharpen", "float", v)
+				}
+				gfx.SetTAASharpen(float32(f))
+				return nil
+			},
+			Doc: "how much temporal anti-aliasing's output is sharpened, 0 to 1 (0.25 by default); saved for every level and session",
+		},
 		// The player's live GI tier (gfx.GIQuality), saved to graphics.yaml
 		// like smooth_lighting.
 		"gi_quality": {

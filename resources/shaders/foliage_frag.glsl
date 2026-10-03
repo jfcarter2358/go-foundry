@@ -23,6 +23,15 @@ in vec3 vWorldPos;
 uniform sampler2D atlas;
 uniform int alphaToCoverage;
 
+// TAA's stand-in for alpha-to-coverage (render/taa.go; fragment.glsl has the
+// full story): 0 off, else the frame's place in the jitter sequence plus one.
+// MUST match fragment.glsl's coverageNoise.
+uniform int coverageDither;
+float coverageNoise(vec2 p, int frame) {
+    float ign = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+    return fract(ign + float(frame) * 0.125);
+}
+
 out vec4 outputColor;
 
 float bayer4(vec2 p) {
@@ -45,7 +54,13 @@ void main() {
         vec4 t = texture(atlas, vUV);
         c *= 0.35 + 0.85 * t.r;
         a = t.a;
-        if (alphaToCoverage != 0) {
+        if (coverageDither != 0) {
+            a = clamp((a - 0.5) / max(fwidth(a), 1e-4) + 0.5, 0.0, 1.0);
+            if (a <= coverageNoise(gl_FragCoord.xy, coverageDither)) {
+                discard;
+            }
+            a = 1.0;
+        } else if (alphaToCoverage != 0) {
             a = (a - 0.5) / max(fwidth(a), 1e-4) + 0.5;
             if (a <= 0.0) {
                 discard;

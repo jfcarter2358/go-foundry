@@ -296,3 +296,108 @@ func TestSceneryShadowConeDropsBackClustersWithoutChangingTheMap(t *testing.T) {
 		t.Errorf("sun, cone off: drew %d triangles, want every rock's %d", n, total)
 	}
 }
+
+// A cooked mesh drawn the classic way (no GPU cull for it) casts its
+// FALLBACK cut, not its full detail: every placement's shadow, per placement
+// and instanced, in a sun cascade and a point light's face, is exactly the
+// fallback's triangles — a bounded fraction of the full detail the colour
+// pass still draws — and with world.NaniteClassicShadowLOD off it is the full
+// detail again. The shadow it casts is the same shape: the samples it writes
+// are within a few per cent of the full detail's.
+func TestClassicCookedSceneryCastsItsFallbackCut(t *testing.T) {
+	naniteProbe(t)
+	dir := t.TempDir()
+	glb, err := model.EncodeGLB(nanitecook.SampleRock(5, 0.4)) // 20,480 triangles
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "rock.glb")
+	if err := os.WriteFile(src, glb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := nanitecook.CookFile(src, "", true, nanitecook.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var poses []mgl32.Vec3
+	for i := 0; i < 8; i++ {
+		a := float64(i) * 0.7
+		poses = append(poses, mgl32.Vec3{float32(math.Cos(a)) * 1.4, float32(math.Sin(a)) * 1.1, -float32(i) * 0.5})
+	}
+	load := func(lod bool) *world.Level {
+		prev := world.NaniteClassicShadowLOD
+		world.NaniteClassicShadowLOD = lod
+		defer func() { world.NaniteClassicShadowLOD = prev }()
+		return naniteSceneryLevel(t, res.Out, false, poses, 0.45)
+	}
+	full, cut := load(false), load(true)
+	m := cut.Scenery[0].Nanite
+	per := m.TriangleCount()
+	fallback := len(m.Fallback) / 3
+	if fallback == 0 || fallback*4 > per {
+		t.Fatalf("the sample rock's fallback is %d of %d triangles; want a cut under a quarter", fallback, per)
+	}
+	for i := range cut.Scenery {
+		if got := sceneryTriangles(&cut.Scenery[i]); got != per {
+			t.Fatalf("placement %d: the colour pass's mesh is %d triangles, want the full %d", i, got, per)
+		}
+	}
+
+	centre := mgl32.Vec3{0, 0, -1.8}
+	views := []struct {
+		name string
+		lsm  mgl32.Mat4
+	}{
+		{"sun", mgl32.Ortho(-4, 4, -4, 4, 0.1, 30).Mul4(
+			mgl32.LookAtV(centre.Add(mgl32.Vec3{3, 5, 4}.Normalize().Mul(12)), centre, mgl32.Vec3{0, 1, 0}))},
+		{"point", mgl32.Perspective(mgl32.DegToRad(90), 1, 0.1, 30).Mul4(
+			mgl32.LookAtV(centre.Add(mgl32.Vec3{0.5, 0.8, 4.5}), centre, mgl32.Vec3{0, 1, 0}))},
+	}
+	cast := func(lvl *world.Level, lsm mgl32.Mat4) ([]float32, int) {
+		identity := mgl32.Ident4()
+		scenery = sceneryInstancer{}
+		gl.UseProgram(Shadows.Program)
+		gl.UniformMatrix4fv(Shadows.LSMUniform, 1, false, &lsm[0])
+		gl.UniformMatrix4fv(Shadows.ModelUniform, 1, false, &identity[0])
+		gl.Disable(gl.CULL_FACE)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		n := primitivesDrawn(t, func() {
+			RenderSceneryShadow(lvl, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, nil)
+		})
+		return readDepth(), n
+	}
+	written := func(d []float32) int {
+		n := 0
+		for _, v := range d {
+			if v < 1 {
+				n++
+			}
+		}
+		return n
+	}
+	for _, instanced := range []bool{false, true} {
+		prev := sceneryInstancing
+		sceneryInstancing = instanced
+		for _, v := range views {
+			ref, nFull := cast(full, v.lsm)
+			got, nCut := cast(cut, v.lsm)
+			if want := per * len(poses); nFull != want {
+				t.Errorf("instanced=%v %s, switch off: drew %d triangles, want the full %d", instanced, v.name, nFull, want)
+			}
+			if want := fallback * len(poses); nCut != want {
+				t.Errorf("instanced=%v %s: drew %d triangles, want the fallback's %d (%d a placement)",
+					instanced, v.name, nCut, want, fallback)
+			}
+			a, b := written(ref), written(got)
+			if a < 1000 {
+				t.Fatalf("%s: only %d samples written; the light is not looking at the rocks", v.name, a)
+			}
+			if d := math.Abs(float64(a-b)) / float64(a); d > 0.03 {
+				t.Errorf("instanced=%v %s: the fallback wrote %d samples against the full detail's %d (%.1f%% apart)",
+					instanced, v.name, b, a, 100*d)
+			}
+			t.Logf("instanced=%v %s: %d triangles cast against %d; %d samples against %d", instanced, v.name, nCut, nFull, b, a)
+		}
+		sceneryInstancing = prev
+	}
+}

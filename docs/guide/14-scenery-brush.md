@@ -131,6 +131,14 @@ the way a classic model's translucent parts are.
 
 `FOUNDRY_NANITE_MESHES=0` draws cooked props the classic way, for comparison;
 `FOUNDRY_NANITE_LOD=0` keeps the GPU path but draws every prop at full detail.
+A cooked prop drawn the classic way still casts its shadow from the cook's
+fallback mesh, a few percent of its triangles, rather than from the full detail
+(`FOUNDRY_NANITE_CLASSIC_SHADOW_LOD=0` casts the full detail).
+
+With TAA, the default anti-aliasing, cooked props and a compiled level's
+surfaces are shaded through a visibility buffer: each pixel once, from the
+triangle the GPU cull left nearest there (see
+[Testing and debugging](19-testing-and-debugging.md#anti-aliasing)).
 
 ### Streaming and the memory budget
 

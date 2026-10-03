@@ -380,6 +380,8 @@ func DrawChunkBrushes(lvl *world.Level, ch *world.Chunk, frustum Frustum, chunkM
 	if cb == nil {
 		return st
 	}
+	// A TAA frame's motion vectors need the chunk's matrix (taa.go).
+	taaNoteChunk(ch, cb, chunkModel)
 	// The frustum is carried into the chunk once, rather than every brush's
 	// box out of it.
 	local := frustum.InSpaceOf(chunkModel)
@@ -416,6 +418,7 @@ func DrawChunkBrushes(lvl *world.Level, ch *world.Chunk, frustum Frustum, chunkM
 			}
 			if moved {
 				g.batch.Draw(model, first, count)
+				taaNoteBrush(brush, &g.batch, first[0], count[0], model)
 				st.DrawCalls++
 				continue
 			}

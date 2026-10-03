@@ -366,6 +366,8 @@ func (g *foliageGPU) colorUniforms(grp int, lvl *world.Level, projView mgl32.Mat
 	foliage.commonUniforms(p, gfx.Cam.Position)
 	gl.Uniform3f(p.U("barkColor"), 0.30, 0.24, 0.18)
 	gl.Uniform1i(p.U("alphaToCoverage"), boolToInt32(alphaToCoverage()))
+	// In a TAA frame, its dither instead (taa.go).
+	gl.Uniform1i(p.U("coverageDither"), coverageDither())
 	gl.Uniform1i(p.U("instances"), foliageInstanceUnit)
 	gl.ActiveTexture(gl.TEXTURE0 + foliageInstanceUnit)
 	gl.BindTexture(gl.TEXTURE_BUFFER, foliage.pool.tex)

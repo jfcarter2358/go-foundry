@@ -141,7 +141,11 @@ func ViewmodelProjection() mgl32.Mat4 {
 		h = 1
 	}
 	aspect := float32(platform.WinWidth) / float32(h)
-	return mgl32.Perspective(mgl32.DegToRad(clampFOV(ViewmodelFieldOfView)), aspect, viewmodelNear, DefaultFarPlane)
+	// Jittered with the world in a TAA frame (ProjectionJitter): the hands
+	// are resolved with it, and unjittered they would alias as if TAA were
+	// off.
+	return JitterProjection(mgl32.Perspective(mgl32.DegToRad(clampFOV(ViewmodelFieldOfView)), aspect, viewmodelNear, DefaultFarPlane),
+		ProjectionJitter)
 }
 
 // UploadProjection sends a projection matrix to the world program, which must

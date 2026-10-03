@@ -6,7 +6,8 @@ package app
 // settings screen can offer: Smooth Lighting (gfx.SmoothLighting), the
 // foliage distance and shadows (gfx.FoliageDistance, gfx.FoliageShadows), the
 // Nanite LOD threshold (gfx.NaniteLODError), the Nanite page pool's size
-// (gfx.NaniteStreamPoolMB) and the live GI tier (gfx.GIQuality). The
+// (gfx.NaniteStreamPoolMB), the live GI tier (gfx.GIQuality) and the
+// anti-aliasing mode and TAA sharpening (gfx.AntiAliasMode, gfx.TAASharpen). The
 // file is graphics.yaml in the writable state directory, a missing file means
 // defaults, a malformed one is logged and ignored, and a script's change is
 // saved once it has settled (saveSettingsWhenSettled).
@@ -35,6 +36,10 @@ type rawGraphics struct {
 	// GIQuality is gfx.GIQuality by name: off, low, medium, high. Absent lets
 	// the engine pick by GPU (gfx.PickDefaultGIQuality).
 	GIQuality *string `yaml:"gi_quality,omitempty"`
+	// AntiAliasing is gfx.AntiAliasMode by name: taa, msaa, off.
+	AntiAliasing *string `yaml:"anti_aliasing,omitempty"`
+	// TAASharpen is gfx.TAASharpen, 0-1.
+	TAASharpen *float32 `yaml:"taa_sharpen,omitempty"`
 }
 
 // loadGraphicsSettings reads the saved graphics settings over the defaults.
@@ -77,6 +82,17 @@ func applyGraphicsSettings(data []byte) error {
 			log.Printf("graphics: unknown gi_quality %q (want off, low, medium or high)", *raw.GIQuality)
 		}
 	}
+	// FOUNDRY_AA, when set, outranks the saved mode for the run.
+	if raw.AntiAliasing != nil && !gfx.AntiAliasModeForced {
+		if m, ok := gfx.ParseAAMode(*raw.AntiAliasing); ok {
+			gfx.AntiAliasMode, gfx.AntiAliasModeChosen = m, true
+		} else {
+			log.Printf("graphics: unknown anti_aliasing %q (want taa, msaa or off)", *raw.AntiAliasing)
+		}
+	}
+	if raw.TAASharpen != nil {
+		gfx.TAASharpen = min(max(*raw.TAASharpen, 0), 1)
+	}
 	return nil
 }
 
@@ -86,8 +102,14 @@ func marshalGraphicsSettings() ([]byte, error) {
 	shadows := gfx.FoliageShadows
 	lod := gfx.NaniteLODError
 	pool := gfx.NaniteStreamPoolMB
+	sharpen := gfx.TAASharpen
 	raw := rawGraphics{SmoothLighting: &smooth, FoliageDistance: &dist, FoliageShadows: &shadows, NaniteLODError: &lod,
-		NaniteStreamPoolMB: &pool}
+		NaniteStreamPoolMB: &pool, TAASharpen: &sharpen}
+	// The mode likewise, only once chosen.
+	if gfx.AntiAliasModeChosen {
+		aa := gfx.AntiAliasMode.String()
+		raw.AntiAliasing = &aa
+	}
 	// Only a tier someone chose is written: one the engine picked by GPU
 	// stays a pick, and is picked again on whatever GPU runs it next.
 	if gfx.GIQualityChosen {

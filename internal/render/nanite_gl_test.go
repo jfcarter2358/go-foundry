@@ -110,6 +110,11 @@ func pinNaniteFlags(t *testing.T) {
 		// earlier tests compare is then the same picture through the pool
 		// (nanite_stream_gl_test.go compares the two).
 		{&NaniteStream, true}, {&NaniteStreamPreload, true}, {&NanitePersistent, true},
+		// A cooked mesh on the classic path casts its full detail here, not
+		// its fallback cut (world.NaniteClassicShadowLOD): the shadow tests
+		// compare the classic path's map against the cull's sample for
+		// sample. scenery_shadow_count_gl_test.go switches it on.
+		{&world.NaniteClassicShadowLOD, false},
 	}
 	saved := make([]bool, len(flags))
 	for i, f := range flags {

@@ -298,7 +298,10 @@ a toggle), the Nanite detail threshold (`@level.prop.nanite_lod_error`,
 stray before finer detail is drawn) and the Nanite memory budget
 (`@level.prop.nanite_stream_pool_mb`, 8 to 8192 MB, 256 by default: how much
 video memory cooked meshes may take before their detail streams; taken at the
-next level load) — all saved to `graphics.yaml` — itself — see
+next level load), and the anti-aliasing (`@level.prop.anti_aliasing`, one of
+`"taa"`, the default, `"msaa"` or `"off"`, and `@level.prop.taa_sharpen`, 0 to
+1, 0.25 by default; see [Testing and debugging](19-testing-and-debugging.md#anti-aliasing))
+— all saved to `graphics.yaml` — itself — see
 [Entities](11-entities.md#mouse-look-and-the-players-settings) — so the screen
 needs no Save button, and leaving with Escape keeps what was set.
 

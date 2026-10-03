@@ -47,6 +47,10 @@ const devAvailable = true
 // devActive reports whether the editor owns the screen, the camera and the
 // input this frame. It is the gate on gameplay, on the runtime UI, on the
 // script tick and on drawing the authoring-only overlays.
+// The editor's 3D views draw the forward way into the window, multisampled,
+// whatever anti-aliasing the game is played in (render.KeepWindowMSAA).
+func init() { render.KeepWindowMSAA = true }
+
 func devActive() bool { return editor.Editor.Active }
 
 // devPlayInput is a play script driving the player this frame instead of the

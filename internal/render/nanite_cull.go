@@ -411,6 +411,13 @@ type cullBatch struct {
 	// (nanite_stream.go): the camera's passes write its feedback.
 	stream *naniteStreamer
 
+	// The visibility buffer's group table (nanite_vis.go): each group's
+	// slots and whether the material pass shades it, uploaded when sig
+	// changes; fits is whether its buffers fit a storage block.
+	visGroupBuf uint32
+	visGroupSig uint64
+	visFits     bool
+
 	// live, when set, is per group whether the CPU found any of its
 	// candidates in the frustum this frame (markLive): a group with none
 	// is not bound or drawn at all. Its clusters are still culled on the GPU
@@ -970,6 +977,13 @@ func (b *cullBatch) cull(v cullView) bool {
 	// debug view, which needs every cluster its own.
 	if !debug && b.clusterTiles > 0 {
 		gl.UseProgram(n.merge.prog)
+		// A camera pass of a visibility-buffer frame caps a run at what an
+		// ID's 12 bits of triangle can number (nanite_vis.go).
+		mergeMax := uint32(0)
+		if v.camera && naniteVisActive() {
+			mergeMax = naniteVisMergeClusters
+		}
+		gl.Uniform1ui(n.merge.U("mergeMax"), mergeMax)
 		for done := 0; done < b.clusterTiles; done += 65535 {
 			gl.Uniform1ui(n.merge.U("workBase"), uint32(done))
 			gl.DispatchCompute(uint32(min(b.clusterTiles-done, 65535)), 1, 1)
@@ -1135,7 +1149,8 @@ func (b *cullBatch) compactCommands() {
 
 func (b *cullBatch) release() {
 	for _, buf := range []*uint32{&b.tileBuf, &b.instBuf, &b.visBuf, &b.histBuf, &b.cmdBuf,
-		&b.packedBuf, &b.countBuf, &b.groupBuf, &b.tileCountBuf, &b.tileOffBuf, &b.leafBuf, &b.slotBuf, &b.kindBuf} {
+		&b.packedBuf, &b.countBuf, &b.groupBuf, &b.tileCountBuf, &b.tileOffBuf, &b.leafBuf, &b.slotBuf, &b.kindBuf,
+		&b.visGroupBuf} {
 		if *buf != 0 {
 			gl.DeleteBuffers(1, buf)
 			*buf = 0

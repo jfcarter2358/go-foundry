@@ -143,3 +143,53 @@ func TestNaniteStreamPoolRoundTripsThroughGraphicsFile(t *testing.T) {
 		t.Error("a file without nanite_stream_pool_mb changed it")
 	}
 }
+
+// The anti-aliasing mode survives the file once chosen (one never chosen
+// follows the engine's default), an unknown name is ignored, and the TAA
+// sharpening round-trips clamped.
+func TestAntiAliasingRoundTripsOnceChosen(t *testing.T) {
+	prevM, prevChosen, prevS := gfx.AntiAliasMode, gfx.AntiAliasModeChosen, gfx.TAASharpen
+	t.Cleanup(func() {
+		gfx.AntiAliasMode, gfx.AntiAliasModeChosen, gfx.TAASharpen, gfx.GraphicsSettingsChanged = prevM, prevChosen, prevS, false
+	})
+	if gfx.AntiAliasModeForced {
+		t.Skip("FOUNDRY_AA is set; the saved mode does not apply")
+	}
+	gfx.AntiAliasMode, gfx.AntiAliasModeChosen = gfx.DefaultAntiAliasMode, false
+	data, err := marshalGraphicsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "anti_aliasing") {
+		t.Errorf("a mode nobody chose was saved:\n%s", data)
+	}
+	gfx.SetAntiAliasMode(gfx.AAModeMSAA)
+	gfx.SetTAASharpen(3)
+	if !gfx.GraphicsSettingsChanged || gfx.TAASharpen != 1 {
+		t.Fatalf("changed %v, sharpen %g", gfx.GraphicsSettingsChanged, gfx.TAASharpen)
+	}
+	gfx.TAASharpen = 0.5
+	data, err = marshalGraphicsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gfx.AntiAliasMode, gfx.AntiAliasModeChosen, gfx.TAASharpen = gfx.AAModeTAA, false, 0
+	if err := applyGraphicsSettings(data); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.AntiAliasMode != gfx.AAModeMSAA || !gfx.AntiAliasModeChosen || gfx.TAASharpen != 0.5 {
+		t.Errorf("came back %v (chosen %v), sharpen %g from:\n%s", gfx.AntiAliasMode, gfx.AntiAliasModeChosen, gfx.TAASharpen, data)
+	}
+	if err := applyGraphicsSettings([]byte("anti_aliasing: supersample\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.AntiAliasMode != gfx.AAModeMSAA {
+		t.Errorf("an unknown name changed the mode to %v", gfx.AntiAliasMode)
+	}
+	for _, name := range []string{"taa", "msaa", "off"} {
+		m, ok := gfx.ParseAAMode(name)
+		if !ok || m.String() != name {
+			t.Errorf("%q parses as %v (%v)", name, m, ok)
+		}
+	}
+}

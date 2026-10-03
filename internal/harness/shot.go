@@ -112,8 +112,18 @@ func (s *Session) Shot(name string) (string, error) {
 	uidraw.SyncFontAtlases()
 	gfx.DrainTextureUploads()
 
-	render.DrawWorld(s.Level, render.WorldDraw{Now: s.T, Target: &render.FrameTarget{
-		FBO: s.target.FBO, Viewport: [4]int32{0, 0, int32(s.opts.ShotW), int32(s.opts.ShotH)}}})
+	// A TAA frame is resolved against the frames before it (render/taa.go),
+	// and a session draws only when it takes a picture — so a picture taken
+	// cold would be one jittered sample a pixel. The frame is drawn
+	// render.TAAShotFrames times first, at the same instant, which takes the
+	// history through the whole jitter sequence: the picture a player
+	// standing still would see.
+	frame := render.WorldDraw{Now: s.T, Target: &render.FrameTarget{
+		FBO: s.target.FBO, Viewport: [4]int32{0, 0, int32(s.opts.ShotW), int32(s.opts.ShotH)}}}
+	for i := 0; i < render.TAAShotFrames(); i++ {
+		render.DrawWorld(s.Level, frame)
+	}
+	render.DrawWorld(s.Level, frame)
 
 	// The game's own screens over it, bottom to top, exactly as app.Run draws
 	// them. Twice, for the glyphs: the first pass is what discovers which

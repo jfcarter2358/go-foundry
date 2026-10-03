@@ -454,6 +454,8 @@ func (r *foliageRenderer) colorUniforms(i int, lvl *world.Level, projView mgl32.
 	r.commonUniforms(p, gfx.Cam.Position)
 	gl.Uniform3f(p.U("barkColor"), 0.30, 0.24, 0.18)
 	gl.Uniform1i(p.U("alphaToCoverage"), boolToInt32(alphaToCoverage()))
+	// In a TAA frame, its dither instead (taa.go).
+	gl.Uniform1i(p.U("coverageDither"), coverageDither())
 	if i == foliageProgImp {
 		r.imp.bind(p)
 	}

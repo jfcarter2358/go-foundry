@@ -873,8 +873,10 @@ func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 	// The shadow passes deform from the same palette the colour pass uses, so an
 	// animated entity's silhouette tracks its mesh.
 	gfx.ApplySkinUniforms(skin, prog, g.BonePalette)
-	gl.BindVertexArray(g.Vao)
-	g.DrawTriangles()
+	// A coarser stand-in where the mesh has one (gfx.Geometry.ShadowLOD).
+	c := g.ShadowCaster()
+	gl.BindVertexArray(c.Vao)
+	c.DrawTriangles()
 }
 
 // ---------- Uniform upload ----------

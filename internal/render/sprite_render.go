@@ -606,6 +606,9 @@ func drawSpritePass(lvl *world.Level, batches []spriteBatch, projView mgl32.Mat4
 	gl.Uniform1i(p.directional, 0)
 	gl.Uniform1f(p.alphaCutoff, spriteAlphaCutoff)
 	gl.Uniform1i(p.tex, 0)
+	// A cutout's coverage, dithered in a TAA frame (taa.go); the blended
+	// modes never read it.
+	gl.Uniform1i(world.ProgUniformLoc(p.prog, "coverageDither\x00"), coverageDither())
 
 	switch mode {
 	case gfx.SpriteBlendCutout:
@@ -857,6 +860,7 @@ func DrawSpriteInstances(insts []particle.Instance, texture string, blend gfx.Sp
 	gl.Uniform1f(p.alphaCutoff, spriteAlphaCutoff)
 	gl.Uniform1i(p.tex, 0)
 	gl.Uniform1i(p.lit, 0)
+	gl.Uniform1i(world.ProgUniformLoc(p.prog, "coverageDither\x00"), coverageDither())
 
 	switch blend {
 	case gfx.SpriteBlendCutout:

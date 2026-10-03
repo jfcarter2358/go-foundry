@@ -32,7 +32,7 @@ broken.
 
 | Mode | |
 | --- | --- |
-| **cutout** | draws inside the opaque pass. Writes depth, needs no sorting, and its silhouette is antialiased for free. **The right default** for foliage and anything solid-looking. Set its **Alpha** below 1 — to fade it in or out — and it draws in the alpha pass until it is back at 1, keeping its cutout edge |
+| **cutout** | draws inside the opaque pass. Writes depth, needs no sorting, and its silhouette is antialiased for free (by MSAA's coverage, or under TAA by a per-frame dither the history averages). **The right default** for foliage and anything solid-looking. Set its **Alpha** below 1 — to fade it in or out — and it draws in the alpha pass until it is back at 1, keeping its cutout edge |
 | **alpha** | draws after the world's transparent pass, sorted back to front, no depth write |
 | **additive** | draws last, order-independent. What fire and sparks should use |
 

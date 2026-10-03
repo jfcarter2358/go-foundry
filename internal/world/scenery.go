@@ -419,11 +419,61 @@ func (s *Scenery) loadNanite() error {
 			if err := g.Load(rows, order, tex, mgl32.Vec3{}); err != nil {
 				return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
 			}
+			if err := s.loadShadowLOD(&g, m, si, tex); err != nil {
+				return err
+			}
 		}
 		s.Submeshes = append(s.Submeshes, g)
 	}
 	return nil
 }
+
+// loadShadowLOD gives a classic-path submesh of a cooked mesh its shadow
+// stand-in: slot si of the fallback cut, uploaded beside it (gfx.Geometry.
+// ShadowLOD), which the cascade and point-light passes draw instead of the
+// full detail.
+//
+// Why: a placement the GPU cull does not draw (no compute, the switch off, the
+// placement opted out) is drawn whole — every triangle of level 0 — and every
+// sun cascade and every face of every shadowed point light draws it again. On
+// the 244-rock bench that is ~82k triangles a rock, times three cascades, a
+// frame (docs/nanite/PHASE_4.md). The fallback is the DAG cut at a middle
+// level the cook already stores for exactly this kind of consumer (picking,
+// the GI bake): 3,480 triangles for the bench rock. Its error is the cut's,
+// FallbackError, a few centimetres on a two-metre rock, which the cascades'
+// slope bias already spans; the colour pass keeps the full detail, so what
+// the eye sees is unchanged and only the shadow's outline moves by that much.
+//
+// NaniteClassicShadowLOD=false (FOUNDRY_NANITE_CLASSIC_SHADOW_LOD=0) keeps the
+// full detail in the shadows too, as before.
+func (s *Scenery) loadShadowLOD(g *gfx.Geometry, m *nanite.Mesh, si int, tex string) error {
+	if !NaniteClassicShadowLOD || len(m.Fallback) == 0 {
+		return nil
+	}
+	idx := m.SlotFallback(si)
+	if _, count := m.SlotTriangles(si); len(idx) == 0 || len(idx)/3 >= int(count) {
+		return nil // nothing smaller to cast with
+	}
+	rows := make([][]float32, 0, len(idx))
+	normals := make([][]float32, 0, len(idx))
+	order := make([]int, len(idx))
+	for k, v := range idx {
+		rows = append(rows, m.FallbackVertices[5*v:5*v+5])
+		normals = append(normals, m.FallbackNormals[3*v:3*v+3])
+		order[k] = k
+	}
+	lod := &gfx.Geometry{Smooth: g.Smooth, AutoSmooth: true, Indexed: true, VertexNormals: normals}
+	if err := lod.Load(rows, order, tex, mgl32.Vec3{}); err != nil {
+		return fmt.Errorf("scenery %q model %q: shadow LOD: %w", s.ID, s.Model, err)
+	}
+	g.ShadowLOD = lod
+	return nil
+}
+
+// NaniteClassicShadowLOD is whether a cooked mesh drawn the classic way casts
+// its fallback cut rather than its full detail (loadShadowLOD). Read when a
+// placement loads.
+var NaniteClassicShadowLOD = gfx.EnvFlag("FOUNDRY_NANITE_CLASSIC_SHADOW_LOD", true)
 
 // SlotTexture is the texture slot si of the cooked mesh draws with: the
 // placement's override, or the cooked one.

@@ -225,6 +225,10 @@ func benchConfigure() {
 		log.Fatalf("FOUNDRY_BENCH: %v", err)
 	}
 	bench.on, bench.cfg = true, cfg
+	// A benchmark measures the game, not the editor: a TAA run gets the
+	// window a release build makes, without samples nothing would use
+	// (render.KeepWindowMSAA). Before the window is created.
+	render.KeepWindowMSAA = false
 }
 
 // benchStart loads the level and puts the engine into play on it. Called once,
@@ -257,9 +261,12 @@ func benchStart(level *world.Level) {
 	if devActive() {
 		devToggle() // into play, as tilde would
 	}
-	fmt.Fprintf(&bench.report, "bench %s (%s) — load %.1fs, %dx%d, MSAA %dx\n",
+	// The anti-aliasing mode (Phase 4): TAA draws into a scene target of its
+	// own, with the visibility buffer; MSAA into the window's samples.
+	fmt.Fprintf(&bench.report, "bench %s (%s) — load %.1fs, %dx%d, AA %s, window MSAA %dx, visibility buffer %v\n",
 		name, map[bool]string{true: "compiled", false: "yaml"}[cfg.compiled],
-		time.Since(t0).Seconds(), platform.WinWidth, platform.WinHeight, render.AntiAliasGrantedSamples)
+		time.Since(t0).Seconds(), platform.WinWidth, platform.WinHeight, gfx.AntiAliasMode, render.AntiAliasGrantedSamples,
+		render.NaniteVisBuffer)
 
 	platform.VSyncEnabled = false
 	platform.ApplyVSync()

@@ -282,6 +282,20 @@ func (g *chunkGPU) drawMain(cb *ChunkBatch, model mgl32.Mat4) int {
 		g.main.drawDebug(len(g.mainGroups), func(i int) uint32 { return cb.groups[g.mainGroups[i]].batch.Vao }, false)
 		return len(g.mainGroups)
 	}
+	// A visibility-buffer frame draws the groups' IDs instead, shaded later
+	// in one pass (nanite_vis.go).
+	if naniteVisActive() {
+		groups := make([]visGroup, len(g.mainGroups))
+		for i, gi := range g.mainGroups {
+			b := &cb.groups[gi].batch
+			i := i
+			groups[i] = visGroup{mat: &b.Material, vao: b.Vao, vbo: b.Vbo, nbo: b.Nbo, ebo: b.Ebo,
+				forward: func() { b.Bind(model); g.main.drawGroup(i) }}
+		}
+		if naniteVis.drawBatch(&g.main, groups) {
+			return len(g.mainGroups)
+		}
+	}
 	prepassBatch(&g.main, len(g.mainGroups),
 		func(i int) *gfx.Material { return &cb.groups[g.mainGroups[i]].batch.Material },
 		func(int) mgl32.Mat4 { return model },

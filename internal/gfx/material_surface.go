@@ -320,44 +320,77 @@ func TintOrWhite(tint mgl32.Vec3) mgl32.Vec3 {
 // per uniform, paid by one preview surface a frame rather than by every wall in
 // the level, which is why Apply does not simply call this.
 func (s *SurfaceState) ApplyTo(prog uint32) {
+	l := NewSurfaceLocs(prog)
+	s.ApplyLocs(&l)
+}
+
+// SurfaceLocs is the uniform locations Apply writes, resolved once for a
+// program that is not the global Program — for a caller applying many
+// surfaces through one (the visibility buffer's material pass applies one a
+// material bin, hundreds a frame on a compiled level), where ApplyTo's name
+// lookups a surface would be the cost.
+type SurfaceLocs struct {
+	alpha, smooth, normalColor, unlit                      int32
+	uvOffset, uvScaleBias, uvRotation, cutoff, tint, blend int32
+	isWater, waveAmp, waveLen, waveSpeed, reflectivity     int32
+	reflectColor, hasBlend, blendTex, blendMask            int32
+	hasNormalMap, normalMap                                int32
+}
+
+// NewSurfaceLocs resolves prog's SurfaceLocs.
+func NewSurfaceLocs(prog uint32) SurfaceLocs {
 	loc := func(name string) int32 { return UniformLoc(prog, name) }
-	gl.Uniform1f(loc("alpha\x00"), s.Alpha)
-	gl.Uniform1i(loc("smoothShading\x00"), s.SmoothFlag())
-	gl.Uniform1i(loc("normalColor\x00"), s.NormalColorFlag())
-	gl.Uniform1i(loc("unlit\x00"), s.UnlitFlag())
-	gl.Uniform2f(loc("uvOffset\x00"), s.UVOffset.X(), s.UVOffset.Y())
-	gl.Uniform2f(loc("uvScaleBias\x00"), s.UVScale.X()-1, s.UVScale.Y()-1)
-	gl.Uniform1f(loc("uvRotation\x00"), s.UVRotation)
-	gl.Uniform1f(loc("alphaCutoffBias\x00"), s.CutoffBias)
-	applyTintUniform(loc("tintBias\x00"), s.Tint)
-	gl.Uniform1i(loc("surfaceBlend\x00"), int32(s.Blend))
+	return SurfaceLocs{
+		alpha: loc("alpha\x00"), smooth: loc("smoothShading\x00"), normalColor: loc("normalColor\x00"), unlit: loc("unlit\x00"),
+		uvOffset: loc("uvOffset\x00"), uvScaleBias: loc("uvScaleBias\x00"), uvRotation: loc("uvRotation\x00"),
+		cutoff: loc("alphaCutoffBias\x00"), tint: loc("tintBias\x00"), blend: loc("surfaceBlend\x00"),
+		isWater: loc("isWater\x00"), waveAmp: loc("waveAmplitude\x00"), waveLen: loc("waveLength\x00"),
+		waveSpeed: loc("waveSpeed\x00"), reflectivity: loc("reflectivity\x00"), reflectColor: loc("reflectColor\x00"),
+		hasBlend: loc("hasBlend\x00"), blendTex: loc("blendTex\x00"), blendMask: loc("blendMask\x00"),
+		hasNormalMap: loc("hasNormalMap\x00"), normalMap: loc("normalMap\x00"),
+	}
+}
+
+// ApplyLocs is ApplyTo through locations already resolved; the program must
+// be in use.
+func (s *SurfaceState) ApplyLocs(l *SurfaceLocs) {
+	gl.Uniform1f(l.alpha, s.Alpha)
+	gl.Uniform1i(l.smooth, s.SmoothFlag())
+	gl.Uniform1i(l.normalColor, s.NormalColorFlag())
+	gl.Uniform1i(l.unlit, s.UnlitFlag())
+	gl.Uniform2f(l.uvOffset, s.UVOffset.X(), s.UVOffset.Y())
+	gl.Uniform2f(l.uvScaleBias, s.UVScale.X()-1, s.UVScale.Y()-1)
+	gl.Uniform1f(l.uvRotation, s.UVRotation)
+	gl.Uniform1f(l.cutoff, s.CutoffBias)
+	applyTintUniform(l.tint, s.Tint)
+	gl.Uniform1i(l.blend, int32(s.Blend))
 
 	if !s.Water.Enabled {
-		gl.Uniform1i(loc("isWater\x00"), 0)
+		gl.Uniform1i(l.isWater, 0)
 	} else {
-		gl.Uniform1i(loc("isWater\x00"), 1)
-		gl.Uniform1f(loc("waveAmplitude\x00"), s.Water.WaveAmplitude)
-		gl.Uniform1f(loc("waveLength\x00"), s.Water.WaveLength)
-		gl.Uniform1f(loc("waveSpeed\x00"), s.Water.WaveSpeed)
-		gl.Uniform1f(loc("reflectivity\x00"), s.Water.Reflectivity)
-		gl.Uniform3f(loc("reflectColor\x00"),
+		gl.Uniform1i(l.isWater, 1)
+		gl.Uniform1f(l.waveAmp, s.Water.WaveAmplitude)
+		gl.Uniform1f(l.waveLen, s.Water.WaveLength)
+		gl.Uniform1f(l.waveSpeed, s.Water.WaveSpeed)
+		gl.Uniform1f(l.reflectivity, s.Water.Reflectivity)
+		gl.Uniform3f(l.reflectColor,
 			s.Water.ReflectColor.X(), s.Water.ReflectColor.Y(), s.Water.ReflectColor.Z())
 	}
 
 	if s.BlendTexture == "" || s.BlendMask == "" {
-		gl.Uniform1i(loc("hasBlend\x00"), 0)
+		gl.Uniform1i(l.hasBlend, 0)
 	} else {
-		gl.Uniform1i(loc("hasBlend\x00"), 1)
+		gl.Uniform1i(l.hasBlend, 1)
 		gl.ActiveTexture(gl.TEXTURE0 + BlendTexUnit)
 		gl.BindTexture(gl.TEXTURE_2D, Textures[s.BlendTexture])
-		gl.Uniform1i(loc("blendTex\x00"), BlendTexUnit)
+		gl.Uniform1i(l.blendTex, BlendTexUnit)
 		gl.ActiveTexture(gl.TEXTURE0 + BlendMaskUnit)
 		gl.BindTexture(gl.TEXTURE_2D, Textures[s.BlendMask])
-		gl.Uniform1i(loc("blendMask\x00"), BlendMaskUnit)
+		gl.Uniform1i(l.blendMask, BlendMaskUnit)
 		gl.ActiveTexture(gl.TEXTURE0)
 	}
 
-	BindNormalMap(s.NormalMap, loc("hasNormalMap\x00"), loc("normalMap\x00"))
+	BindNormalMap(s.NormalMap, l.hasNormalMap, l.normalMap)
 }
 
 // DrawThroughProgram draws the geometry with its material applied, through a

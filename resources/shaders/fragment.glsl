@@ -27,6 +27,19 @@ uniform sampler2D normalMap;
 // pass, where alpha means blending, not coverage — behaves exactly as before.
 uniform int alphaSharpen;
 
+// TAA's stand-in for alpha-to-coverage (render/taa.go): in a TAA frame the
+// scene target has one sample a pixel, so a cutout's edge coverage becomes the
+// chance the pixel is kept, a different threshold each frame (coverageNoise),
+// and TAA's history averages the frames back into the coverage. 0 — what an
+// unwritten uniform holds — is off; otherwise one more than the frame's place
+// in the jitter sequence. MUST match coverageNoise in foliage_frag.glsl,
+// foliage_imp_frag.glsl, sprite_frag.glsl and nanite_vis_frag.glsl.
+uniform int coverageDither;
+float coverageNoise(vec2 p, int frame) {
+    float ign = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+    return fract(ign + float(frame) * 0.125);
+}
+
 // Where a cutout's edge sits once mip filtering has turned its hard 0/255
 // alpha into a ramp: the level set that best reproduces the original
 // silhouette is the halfway point, not "any alpha at all".
@@ -609,6 +622,10 @@ void main() {
         // untouched by this path, which is why it can stay on for the whole
         // opaque pass rather than being switched per surface.
         finalAlpha = clamp((finalAlpha - alphaCutoffLevel()) / max(fwidth(finalAlpha), 1e-5) + 0.5, 0.0, 1.0);
+        if (coverageDither != 0) {
+            if (finalAlpha <= coverageNoise(gl_FragCoord.xy, coverageDither)) discard;
+            finalAlpha = 1.0;
+        }
     }
 
     if (finalAlpha < 0.001) discard;

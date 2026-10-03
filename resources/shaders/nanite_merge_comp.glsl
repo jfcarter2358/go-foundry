@@ -39,6 +39,11 @@ layout(std430, binding = 13) readonly buffer KindTiles {
 };
 
 uniform uint workBase;
+// mergeMax, when not 0, is the most clusters one command may take: a run is
+// cut into commands of at most that many. The visibility buffer's camera
+// passes set it (render/nanite_vis.go), since an ID numbers a command's
+// triangles in 12 bits.
+uniform uint mergeMax;
 
 // A tile holds at most naniteTileClusters (256) slots.
 shared uint live[256];
@@ -64,14 +69,22 @@ void main() {
             continue;
         }
         uint o = (t.a.w + k) * 5u;
-        if (k > 0u && live[k - 1u] != 0u) {
+        // Where this cluster's run starts, and so whether it heads a command:
+        // the run's first, or (capped) every mergeMax-th of it.
+        uint start = k;
+        while (start > 0u && live[start - 1u] != 0u) {
+            start--;
+        }
+        bool head = mergeMax == 0u ? start == k : (k - start) % mergeMax == 0u;
+        if (!head) {
             // Inside a run: its triangles are drawn by the run's head.
             cmds[o] = 0u;
             cmds[o + 1u] = 0u;
             continue;
         }
         uint total = cnt[k];
-        for (uint e = k + 1u; e < n && live[e] != 0u; e++) {
+        uint end = mergeMax == 0u ? n : min(n, k + mergeMax);
+        for (uint e = k + 1u; e < end && live[e] != 0u; e++) {
             total += cnt[e];
         }
         cmds[o] = total;

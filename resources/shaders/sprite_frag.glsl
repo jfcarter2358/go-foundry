@@ -37,6 +37,15 @@ uniform int blendMode;
 // fragment.glsl's own so a sprite and a cutout wall dissolve alike.
 uniform float alphaCutoff;
 
+// TAA's stand-in for alpha-to-coverage (render/taa.go; fragment.glsl has the
+// full story): 0 off, else the frame's place in the jitter sequence plus one.
+// MUST match fragment.glsl's coverageNoise.
+uniform int coverageDither;
+float coverageNoise(vec2 p, int frame) {
+    float ign = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+    return fract(ign + float(frame) * 0.125);
+}
+
 // lit gates the whole lighting block. Off is the default and is right for
 // anything emissive — a flame lit by the sun looks wrong.
 uniform int lit;
@@ -75,6 +84,12 @@ void main() {
             discard;
         }
         a = clamp((a - alphaCutoff) / max(fwidth(a), 1e-5) + 0.5, 0.0, 1.0);
+        if (coverageDither != 0) {
+            if (a <= coverageNoise(gl_FragCoord.xy, coverageDither)) {
+                discard;
+            }
+            a = 1.0;
+        }
     } else if (blendMode == 3) {
         // Cutout mid-fade, drawn in the alpha pass. The cut is taken against
         // the TEXTURE's alpha alone, so the silhouette stays where it is while

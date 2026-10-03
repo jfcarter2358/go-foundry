@@ -54,6 +54,9 @@ var DebugStats struct {
 	// NaniteTriangles is the triangles the camera's GPU cull drew, counted
 	// only while FOUNDRY_NANITE_STATS=1 (it reads the commands back).
 	NaniteTriangles int
+	// NaniteVisBins is the material bins the visibility buffer's material
+	// pass shaded this frame (nanite_vis.go); 0 off the visibility buffer.
+	NaniteVisBins int
 	// The props' collision (collision/scenery_index.go): solid placements by
 	// the mode they collide in, and how many cooked meshes have their
 	// collision decoded because a body or a ray came near.
@@ -213,6 +216,9 @@ func DebugOverlayLines() []DebugLine {
 		line("Nanite:       %d placements, %d clusters to the GPU cull", DebugStats.NaniteInstances, DebugStats.NaniteClusters)
 		if NaniteStats {
 			line("Nanite drew:  %d triangles", DebugStats.NaniteTriangles)
+		}
+		if DebugStats.NaniteVisBins > 0 {
+			line("Nanite shade: visibility buffer, %d material bins", DebugStats.NaniteVisBins)
 		}
 		// The page pool (nanite_stream.go): what is resident, what moved
 		// this frame, and what waits — starved pages mean the view wants

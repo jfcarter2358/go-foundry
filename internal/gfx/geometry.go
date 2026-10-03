@@ -140,6 +140,23 @@ type Geometry struct {
 	// de-indexed soup. Uploaded to Ebo, which the VAO holds.
 	Indices []uint32
 	Ebo     uint32
+
+	// ShadowLOD, when set, is a coarser stand-in for this mesh that the
+	// shadow passes draw instead of it (ShadowCaster): a cooked Nanite mesh's
+	// fallback cut, for a placement drawn the classic way, whose full detail
+	// in every cascade and every point-light face was the whole cost of a
+	// dense prop's shadow (world.Scenery.loadNanite, docs/nanite/PHASE_4.md).
+	// Its own buffers; Delete and Unload release them with this mesh's.
+	ShadowLOD *Geometry
+}
+
+// ShadowCaster is the mesh the shadow passes draw for g: its ShadowLOD when
+// it has one uploaded, else g itself.
+func (g *Geometry) ShadowCaster() *Geometry {
+	if g.ShadowLOD != nil && g.ShadowLOD.Vao != 0 && len(g.ShadowLOD.Vertices) > 0 {
+		return g.ShadowLOD
+	}
+	return g
 }
 
 // SmoothLighting is the player's Smooth Lighting setting: while it is on,
@@ -592,6 +609,9 @@ func (g *Geometry) Delete() {
 	}
 	g.deleteSkinBuffers()
 	g.deleteBakedLightBuffer()
+	if g.ShadowLOD != nil {
+		g.ShadowLOD.Delete()
+	}
 }
 
 // Unload releases the GPU handles AND drops the CPU-side vertex data, leaving
@@ -612,6 +632,7 @@ func (g *Geometry) Unload() {
 	g.VertexLightSmooth, g.vertexLightSmooth = nil, nil
 	g.VertexNormals = nil
 	g.BonePalette = nil
+	g.ShadowLOD = nil
 }
 
 // IsTransparent returns true if this geometry has a non-opaque alpha value,

@@ -515,6 +515,24 @@ func (r *naniteSceneryRenderer) drawColour() {
 		return
 	}
 	identity := mgl32.Ident4()
+	// A visibility-buffer frame draws the placements' IDs instead, shaded
+	// later in one pass (nanite_vis.go).
+	if naniteVisActive() {
+		groups := make([]visGroup, len(r.groups))
+		for gi := range r.groups {
+			gi := gi
+			groups[gi] = visGroup{mat: &r.groups[gi], vao: r.vao, vbo: r.vbo, nbo: r.nbo, ebo: r.ebo, instanced: true,
+				forward: func() {
+					r.groups[gi].BindWorld(identity, 0, true)
+					gl.BindVertexArray(r.vao)
+					r.batch.drawGroup(gi)
+					gl.Uniform1i(gfx.InstancedUniform, 0)
+				}}
+		}
+		if naniteVis.drawBatch(&r.batch, groups) {
+			return
+		}
+	}
 	prepassBatch(&r.batch, len(r.groups),
 		func(i int) *gfx.Material { return &r.groups[i] },
 		func(int) mgl32.Mat4 { return identity },

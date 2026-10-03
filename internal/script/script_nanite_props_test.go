@@ -31,3 +31,26 @@ end`)
 		t.Errorf("a 1 MB pool came in as %d", gfx.NaniteStreamPoolMB)
 	}
 }
+
+// The anti-aliasing settings (Phase 4): the mode by name, the sharpening
+// clamped, both marked for saving; a name it does not know is an error.
+func TestAntiAliasingSettingProps(t *testing.T) {
+	m, chosen, s := gfx.AntiAliasMode, gfx.AntiAliasModeChosen, gfx.TAASharpen
+	t.Cleanup(func() {
+		gfx.AntiAliasMode, gfx.AntiAliasModeChosen, gfx.TAASharpen, gfx.GraphicsSettingsChanged = m, chosen, s, false
+	})
+	gfx.AntiAliasMode, gfx.AntiAliasModeChosen = gfx.AAModeTAA, false
+	root := withTempScriptDir(t)
+	withUIStack(t)
+	path := writeScript(t, root, "l.flang", `def on_spawn(:spawn:) -> null
+    @level.prop.anti_aliasing = "msaa"
+    @level.prop.taa_sharpen = 4
+    @self.attr.aa = @level.prop.anti_aliasing
+end`)
+	lvl := tickTestLevel(t)
+	lvl.Chunks[0].Brushes[0].Script = path
+	runTicks(t, lvl, 2)
+	if gfx.AntiAliasMode != gfx.AAModeMSAA || !gfx.AntiAliasModeChosen || gfx.TAASharpen != 1 || !gfx.GraphicsSettingsChanged {
+		t.Errorf("mode %v (chosen %v), sharpen %g, changed %v", gfx.AntiAliasMode, gfx.AntiAliasModeChosen, gfx.TAASharpen, gfx.GraphicsSettingsChanged)
+	}
+}
