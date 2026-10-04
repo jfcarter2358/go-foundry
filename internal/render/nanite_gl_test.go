@@ -126,6 +126,23 @@ func pinNaniteFlags(t *testing.T) {
 			*f.p = saved[i]
 		}
 	})
+	// The compute rasteriser (Phase 5) off, whatever the driver offers: the
+	// earlier phases' pictures are the hardware's. nanite_swraster_gl_test.go
+	// switches it on.
+	setSWRaster(t, "0")
+}
+
+// setSWRaster sets the compute rasteriser's switch for the test, rebuilding
+// its programs for it, and puts both back after.
+func setSWRaster(t *testing.T, mode string) {
+	t.Helper()
+	prev := NaniteSWRaster
+	NaniteSWRaster = mode
+	naniteSW.reset()
+	t.Cleanup(func() {
+		NaniteSWRaster = prev
+		naniteSW.reset()
+	})
 }
 
 func readColour() []uint8 {

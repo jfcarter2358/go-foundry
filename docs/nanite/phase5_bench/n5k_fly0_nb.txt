@@ -1,0 +1,83 @@
+bench nanite_bench (yaml) — load 0.1s, 1600x900, AA taa, window MSAA 0x, visibility buffer true, virtual shadow map false, compute raster ""
+
+=== pose flight 0,2,6,-1.5708,0 -> 0,20,2,-1.5708,-0.5 -> 20,10,-20,-0.7,-0.3 -> -20,15,-30,-2.2,-0.4
+frame  avg 16.03 ms (62.4 fps)  p50 16.09  p95 18.55  p99 18.79  max 19.13
+nanite pages  52 slots (9 MB) for 52 pages, 52 resident; 0 uploaded, 0 evicted, 0 starved so far; longest update 0.00 ms; staging persistent
+scene  static 0  brushes 2 in 1 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+sun shadow  cascades
+gi  bricks built 249, still waiting 4594; probes traced 2592 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   1.94      4.12     15.91     18.67
+  update                                0.18      1.87      0.02      0.02
+    player input                        0.00      0.00      0.00      0.00
+    player & vehicles                   0.02      0.16      0.00      0.00
+    ai                                  0.00      0.00      0.00      0.00
+    entity update                       0.00      0.01      0.00      0.00
+      props: resolve                    0.00      0.00      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.00      0.00      0.00
+    emitters                            0.00      0.00      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.00      0.00      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.00
+    ui tick                             0.00      0.00      0.00      0.00
+    scripts                             0.01      0.09      0.00      0.00
+    debug stats                         0.09      0.13      0.00      0.00
+    drains                              0.03      1.74      0.00      0.00
+  shadows: sun                          0.38      0.51      9.01     11.04
+    compiled                            0.00      0.00      0.00      0.00
+    chunks                              0.00      0.01      0.05      0.06
+    entities                            0.00      0.00      0.00      0.00
+    scenery                             0.03      0.09      0.00      0.00
+    nanite: scenery                     0.33      0.46      8.90     10.93
+      nanite: stream                    0.00      0.00      0.00      0.00
+      nanite: cull                      0.03      0.12      0.50      0.76
+        nanite: lod                     0.01      0.02      0.08      0.33
+    sprites                             0.00      0.00      0.00      0.00
+    scatter                             0.00      0.00      0.00      0.01
+    foliage                             0.00      0.00      0.00      0.00
+  shadows: clouds                       0.00      0.00      0.00      0.00
+  gi                                    0.97      2.25      1.26      2.08
+    gi: field                           0.94      2.22      0.01      0.26
+    gi: probes                          0.02      0.16      1.24      2.07
+  shadows: point                        0.00      0.00      0.00      0.00
+  clear                                 0.00      0.02      0.03      0.04
+  world: compiled                       0.00      0.00      0.00      0.00
+  world: chunks                         0.00      0.02      1.79      2.89
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              0.00      0.00      0.00      0.00
+  scenery                               0.01      0.13      0.00      0.00
+  nanite: scenery                       0.20      0.43      1.54      2.51
+    nanite: cull                        0.02      0.06      0.19      0.48
+      nanite: lod                       0.00      0.01      0.02      0.03
+    nanite: vis                         0.01      0.03      1.35      2.28
+      nanite: sw raster                 0.00      0.00      0.71      1.50
+      nanite: sw resolve                0.00      0.01      0.07      0.13
+  nanite: occlusion                     0.10      0.26      1.03      1.37
+    nanite: hi-z                        0.01      0.06      0.17      0.18
+    nanite: cull                        0.01      0.03      0.23      0.48
+      nanite: lod                       0.00      0.02      0.02      0.15
+    nanite: vis                         0.01      0.02      0.62      0.88
+      nanite: sw raster                 0.00      0.00      0.05      0.18
+      nanite: sw resolve                0.00      0.00      0.04      0.28
+  nanite: material                      0.03      0.05      0.85      1.52
+    nanite: classify                    0.00      0.02      0.06      0.16
+  foliage                               0.00      0.00      0.00      0.01
+  scatter                               0.00      0.00      0.00      0.00
+  sprites: cutout                       0.00      0.00      0.00      0.00
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.00      0.00      0.00      0.00
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.00      0.00      0.00      0.00
+  sprites: blended                      0.00      0.00      0.00      0.00
+  taa: motion                           0.00      0.05      0.08      0.08
+  viewmodel                             0.00      0.00      0.00      0.00
+  taa: resolve                          0.00      0.00      0.19      0.19
+  taa: output                           0.00      0.00      0.07      0.30
+  ui                                    0.00      0.00      0.00      0.00
+swap                                    0.03      0.11      0.07      0.32
+gpu wait                               14.00     16.14      0.02      0.02

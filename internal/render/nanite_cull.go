@@ -308,6 +308,7 @@ func coneSafe(m mgl32.Mat4) bool {
 // firstIndex (indices) and baseVertex: a cluster with no DAG over it — level
 // 0, no error, a root — which every LOD test passes.
 func toGPUCluster(c *cluster.Cluster, firstIndex uint32, baseVertex int32) gpuCluster {
+	noteClusterTris(uint32(c.TriCount))
 	g := gpuCluster{
 		Sphere: [4]float32{c.Center[0], c.Center[1], c.Center[2], c.Radius},
 		Apex:   [4]float32{c.ConeApex[0], c.ConeApex[1], c.ConeApex[2], 0},
@@ -381,8 +382,11 @@ type cullBatch struct {
 	compacted                     bool
 	// tileCountBuf is each tile's survivor count, which the cluster cull
 	// writes; tileOffBuf each tile's place in its group, which the packing's
-	// scan writes.
-	tileCountBuf, tileOffBuf uint32
+	// scan writes, through tilePrefixBuf (each tile's prefix in its block of
+	// 256) and blockPrefixBuf (the blocks' prefixes, then the total).
+	tileCountBuf, tileOffBuf        uint32
+	tilePrefixBuf, blockPrefixBuf   uint32
+	tilePrefixSize, blockPrefixSize int
 
 	// nodes is the SSBO of LOD tree nodes the instances' Flags[1] index (the
 	// Nanite mesh pool's); leaves is how many leaf marks the instances need
@@ -417,6 +421,17 @@ type cullBatch struct {
 	visGroupBuf uint32
 	visGroupSig uint64
 	visFits     bool
+
+	// The compute rasteriser's share (nanite_swraster.go). swGroups is per
+	// group whether it may take the group's clusters (nil: none; the owner
+	// sets it), uploaded to swGroupBuf; swListBuf is a camera pass's list
+	// (swListSize bytes). swAdmit is the cap admitSW granted the next cull,
+	// swCap the cap the last cull listed up to, for drawBatch (0: none).
+	swGroups              []bool
+	swGroupsDirty         bool
+	swGroupBuf, swListBuf uint32
+	swListSize            int
+	swAdmit, swCap        int
 
 	// live, when set, is per group whether the CPU found any of its
 	// candidates in the frustum this frame (markLive): a group with none
@@ -618,7 +633,9 @@ type naniteCuller struct {
 	stamp uint32
 	// compact is the packing pass (nanite_compact_comp.glsl), built when the
 	// driver has the indirect-count draw.
-	compactScan         progUniforms
+	compactBlocks       progUniforms
+	compactBlockScan    progUniforms
+	compactFinish       progUniforms
 	compactScatter      progUniforms
 	compactScatterRange progUniforms
 	canCompact          bool
@@ -706,7 +723,8 @@ func (n *naniteCuller) build() (err error) {
 		for _, v := range []struct {
 			define string
 			out    *progUniforms
-		}{{"COMPACT_SCAN", &n.compactScan}, {"COMPACT_SCATTER", &n.compactScatter},
+		}{{"COMPACT_BLOCKS", &n.compactBlocks}, {"COMPACT_BLOCKSCAN", &n.compactBlockScan},
+			{"COMPACT_FINISH", &n.compactFinish}, {"COMPACT_SCATTER", &n.compactScatter},
 			{"COMPACT_SCATTER_RANGE", &n.compactScatterRange}} {
 			if cerr != nil {
 				break
@@ -760,6 +778,7 @@ func (b *cullBatch) setTiles(tiles []gpuTile, groups []cullGroup, slots int) {
 		}
 		if gi < len(groups) {
 			tiles[ti].B[1] = uint32(groups[gi].first)
+			tiles[ti].B[3] = uint32(gi)
 		}
 	}
 }
@@ -899,6 +918,8 @@ func (b *cullBatch) cull(v cullView) bool {
 	// A debug view's colour pass: a command a cluster, its slot its base
 	// instance (nanite_debug.go).
 	debug := v.camera && naniteDebugActive()
+	// The compute rasteriser's list, for a camera pass it was admitted to.
+	b.swPrepare(v, debug)
 	n.stamp++
 	if n.stamp == 0 {
 		n.stamp = 1
@@ -936,6 +957,7 @@ func (b *cullBatch) cull(v cullView) bool {
 		gl.Uniform1i(p.U("streamOn"), boolToInt32(streamOn))
 		gl.Uniform1ui(p.U("streamFrame"), streamFrame)
 		gl.Uniform1ui(p.U("streamPages"), streamPages)
+		b.swUniforms(p)
 	}
 	setCommon(&n.inst)
 	gl.DispatchCompute(uint32((len(b.insts)+63)/64), 1, 1)
@@ -1014,7 +1036,7 @@ func (b *cullBatch) cull(v cullView) bool {
 			log.Printf("nanite stats: packed %d commands in %d groups (%d in live groups)", total, len(counts), live)
 		}
 	}
-	for i := uint32(0); i < 16; i++ {
+	for i := uint32(0); i < 18; i++ {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, i, 0)
 	}
 	return true
@@ -1090,8 +1112,9 @@ func passStore(buf uint32, have *int, size int) {
 
 // compactCommands packs the pass's surviving commands to the front of each
 // group's run and counts them (nanite_compact_comp.glsl), so drawGroup can
-// draw exactly the survivors: a scan per group over its tiles' counts, then a
-// scatter per tile. The cull's SSBO bindings are still up; this adds 6-10.
+// draw exactly the survivors: a prefix sum over every tile's survivor count
+// (in blocks, then the blocks', then each tile's place in its group), then a
+// scatter per tile. The cull's SSBO bindings are still up; this adds 6-12.
 func (b *cullBatch) compactCommands() {
 	n := &naniteCull
 	if b.packedBuf == 0 {
@@ -1121,14 +1144,45 @@ func (b *cullBatch) compactCommands() {
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 8, b.groupBuf)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 10, b.tileOffBuf)
 
+	// work workgroups; workBase counts them for the block and scatter
+	// stages, and threads (64 a workgroup) for the finish.
 	dispatch := func(p *progUniforms, work int) {
 		gl.UseProgram(p.prog)
 		for done := 0; done < work; done += 65535 {
-			gl.Uniform1ui(p.U("workBase"), uint32(done))
+			base := done
+			if p == &n.compactFinish {
+				base = done * 64
+			}
+			gl.Uniform1ui(p.U("workBase"), uint32(base))
 			gl.DispatchCompute(uint32(min(work-done, 65535)), 1, 1)
 		}
 	}
-	dispatch(&n.compactScan, len(b.groups))
+	// Each tile's place in its group: a prefix sum over every tile, in
+	// blocks of 256, then the blocks', then each tile's less its group's
+	// first tile's — and each group's count.
+	tilesN := len(b.tiles)
+	blocks := (tilesN + 255) / 256
+	if b.tilePrefixBuf == 0 {
+		gl.GenBuffers(1, &b.tilePrefixBuf)
+		gl.GenBuffers(1, &b.blockPrefixBuf)
+	}
+	passStore(b.tilePrefixBuf, &b.tilePrefixSize, max(tilesN, 1)*4)
+	passStore(b.blockPrefixBuf, &b.blockPrefixSize, (blocks+1)*4)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, b.tilePrefixBuf)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 12, b.blockPrefixBuf)
+	for _, p := range []*progUniforms{&n.compactBlocks, &n.compactBlockScan, &n.compactFinish} {
+		gl.UseProgram(p.prog)
+		gl.Uniform1ui(p.U("tileCount"), uint32(tilesN))
+		gl.Uniform1ui(p.U("blockCount"), uint32(blocks))
+		gl.Uniform1ui(p.U("groupCount"), uint32(len(b.groups)))
+	}
+	dispatch(&n.compactBlocks, blocks)
+	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
+	gl.UseProgram(n.compactBlockScan.prog)
+	gl.Uniform1ui(n.compactBlockScan.U("workBase"), 0)
+	gl.DispatchCompute(1, 1, 1)
+	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
+	dispatch(&n.compactFinish, (max(tilesN, len(b.groups))+63)/64)
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
 	if b.clusterTiles > 0 {
 		dispatch(&n.compactScatter, b.clusterTiles)
@@ -1150,14 +1204,16 @@ func (b *cullBatch) compactCommands() {
 func (b *cullBatch) release() {
 	for _, buf := range []*uint32{&b.tileBuf, &b.instBuf, &b.visBuf, &b.histBuf, &b.cmdBuf,
 		&b.packedBuf, &b.countBuf, &b.groupBuf, &b.tileCountBuf, &b.tileOffBuf, &b.leafBuf, &b.slotBuf, &b.kindBuf,
-		&b.visGroupBuf} {
+		&b.visGroupBuf, &b.swGroupBuf, &b.swListBuf, &b.tilePrefixBuf, &b.blockPrefixBuf} {
 		if *buf != 0 {
 			gl.DeleteBuffers(1, buf)
 			*buf = 0
 		}
 	}
-	b.histLen, b.leafCap = 0, 0
+	b.histLen, b.leafCap, b.swListSize = 0, 0, 0
+	b.swGroupsDirty = b.swGroups != nil
 	b.cmdSize, b.packedSize, b.countSize = 0, 0, 0
+	b.tilePrefixSize, b.blockPrefixSize = 0, 0
 	b.tilesDirty, b.instDirty = len(b.tiles) > 0, len(b.insts) > 0
 }
 

@@ -1,0 +1,80 @@
+bench phase4_composite (yaml) — load 1.0s, 1600x900, AA taa, window MSAA 0x, visibility buffer true, virtual shadow map true, compute raster "0"
+
+=== pose 0,2,7,-1.5708,-0.14
+frame  avg 13.10 ms (76.3 fps)  p50 13.10  p95 13.56  p99 13.70  max 14.04
+nanite pages  52 slots (9 MB) for 52 pages, 52 resident; 0 uploaded, 0 evicted, 0 starved so far; longest update 0.00 ms; staging persistent
+scene  static 0  brushes 2 in 1 calls  chunks 2  scenery 1  sprites 0 (111 particles, 212 draws)  volume marches 1.0
+point shadows re-rendered 0.00 of 0 a frame
+sun shadow  virtual in 100% of frames: 623 pages resident, 454.3 drawn in 16.9 rects, 0.0 starved a frame
+gi  bricks built 70, still waiting 0; probes traced 2592 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   2.28      5.79     13.01     13.36
+  update                                0.52      2.49      0.02      0.03
+    player input                        0.00      0.05      0.00      0.01
+    player & vehicles                   0.13      0.24      0.00      0.00
+    ai                                  0.00      0.01      0.00      0.00
+    entity update                       0.12      0.27      0.00      0.00
+      props: resolve                    0.00      0.55      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.04      0.00      0.00
+    emitters                            0.01      0.11      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.00      0.01      0.00      0.00
+    sky                                 0.00      0.01      0.00      0.00
+    ui tick                             0.00      0.00      0.00      0.00
+    scripts                             0.09      0.38      0.00      0.00
+    debug stats                         0.11      0.48      0.00      0.00
+    drains                              0.02      1.87      0.00      0.00
+  shadows: sun                          0.88      1.44      2.32      2.70
+    vsm                                 0.88      1.43      2.32      2.70
+      compiled                          0.00      0.00      0.00      0.00
+      chunks                            0.10      0.10      0.00      0.00
+      scenery                           0.00      0.00      0.00      0.00
+      nanite: scenery                   0.01      0.01      0.00      0.00
+        nanite: stream                  0.00      0.00      0.00      0.00
+        nanite: cull                    0.00      0.00      0.00      0.00
+          nanite: lod                   0.00      0.00      0.00      0.00
+      entities                          0.01      0.04      0.07      0.08
+      foliage                           0.48      0.82      0.11      0.37
+  shadows: clouds                       0.01      0.04      0.03      0.15
+  gi                                    0.12      0.26      1.49      1.89
+    gi: field                           0.10      0.24      0.04      0.38
+    gi: probes                          0.02      0.04      1.44      1.78
+  shadows: point                        0.00      0.00      0.00      0.01
+  clear                                 0.00      0.01      0.04      0.31
+  world: compiled                       0.00      0.00      0.00      0.00
+  world: chunks                         0.01      0.03      0.65      0.92
+  terrain                               0.16      0.25      2.30      2.72
+  entities                              0.01      0.02      0.51      0.78
+  scenery                               0.01      0.03      0.48      0.74
+  nanite: scenery                       0.04      0.07      0.38      0.63
+    nanite: cull                        0.02      0.03      0.12      0.36
+      nanite: lod                       0.00      0.00      0.02      0.04
+    nanite: vis                         0.01      0.02      0.27      0.52
+  nanite: occlusion                     0.03      0.09      0.36      0.64
+    nanite: hi-z                        0.01      0.07      0.18      0.45
+    nanite: cull                        0.01      0.02      0.13      0.38
+      nanite: lod                       0.00      0.00      0.02      0.04
+    nanite: vis                         0.01      0.02      0.05      0.31
+  nanite: material                      0.03      0.06      0.78      1.04
+    nanite: classify                    0.00      0.00      0.04      0.28
+  foliage                               0.12      0.20      1.32      1.69
+  scatter                               0.00      0.00      0.00      0.00
+  sprites: cutout                       0.01      0.03      0.00      0.00
+  vsm: mark                             0.03      3.54      0.17      0.42
+  decals                                0.01      0.03      0.13      0.13
+  sky                                   0.00      0.02      0.00      0.01
+  transparent                           0.00      0.00      0.59      0.91
+  volumetrics                           0.02      0.04      0.56      0.83
+  sprites: blended                      0.04      0.06      0.01      0.28
+  taa: motion                           0.01      0.01      0.09      0.35
+  viewmodel                             0.01      0.04      0.48      0.76
+  taa: resolve                          0.00      0.02      0.20      0.32
+  taa: output                           0.00      0.00      0.07      0.32
+  ui                                    0.00      0.00      0.00      0.00
+swap                                    0.03      0.14      0.07      0.32
+gpu wait                               10.74     11.41      0.02      0.04
+    nanite: stream                      0.00      0.01      0.00      0.01

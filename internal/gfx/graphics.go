@@ -203,6 +203,11 @@ func WorldProgramSources(vertexShaderPath, fragmentShaderPath string) (string, s
 	if err != nil {
 		return "", "", err
 	}
+	// And the sun's virtual shadow map — vsm.glsl (vsm_shader.go).
+	fragmentSource, err = InjectVSM(fragmentSource)
+	if err != nil {
+		return "", "", err
+	}
 	return vertexSource, fragmentSource, nil
 }
 

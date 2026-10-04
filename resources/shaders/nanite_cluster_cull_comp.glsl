@@ -37,6 +37,10 @@ void main() {
         if (vis) {
             streamNote(ci, cl, m, s, draw);
         }
+        // Small on screen: the compute rasteriser's, not a command.
+        if (draw && swTake(cl, m, s, ii, t.b.w)) {
+            draw = false;
+        }
         uint o = (t.a.w + k) * 5u;
         cmds[o] = draw ? cl.draw.y : 0u;
         cmds[o + 1u] = draw ? 1u : 0u;

@@ -57,6 +57,17 @@ var DebugStats struct {
 	// NaniteVisBins is the material bins the visibility buffer's material
 	// pass shaded this frame (nanite_vis.go); 0 off the visibility buffer.
 	NaniteVisBins int
+	// NaniteSWClusters is the clusters the compute rasteriser drew this
+	// frame (nanite_swraster.go), counted only while FOUNDRY_NANITE_STATS=1
+	// (it reads the lists' counts back); NaniteSWMode its form: 0 off, 32 or
+	// 64 (the atomics it runs on).
+	NaniteSWClusters int
+	NaniteSWMode     int
+	// The sun's virtual shadow map (vsm.go): pages holding a physical page,
+	// pages drawn this frame and in how many rectangles, and requests the
+	// pool had no page for. VSMOn says the frame's sun used it.
+	VSMOn                                    bool
+	VSMPages, VSMDrawn, VSMRects, VSMStarved int
 	// The props' collision (collision/scenery_index.go): solid placements by
 	// the mode they collide in, and how many cooked meshes have their
 	// collision decoded because a body or a ray came near.
@@ -220,6 +231,14 @@ func DebugOverlayLines() []DebugLine {
 		if DebugStats.NaniteVisBins > 0 {
 			line("Nanite shade: visibility buffer, %d material bins", DebugStats.NaniteVisBins)
 		}
+		if DebugStats.NaniteSWMode > 0 {
+			if NaniteStats {
+				line("Nanite raster: compute (%d-bit atomics) for clusters under %.0f px, %d clusters",
+					DebugStats.NaniteSWMode, swPixels(), DebugStats.NaniteSWClusters)
+			} else {
+				line("Nanite raster: compute (%d-bit atomics) for clusters under %.0f px", DebugStats.NaniteSWMode, swPixels())
+			}
+		}
 		// The page pool (nanite_stream.go): what is resident, what moved
 		// this frame, and what waits — starved pages mean the view wants
 		// more than the pool holds.
@@ -231,6 +250,10 @@ func DebugOverlayLines() []DebugLine {
 		// Only when there are any: a level with no decals should not carry a
 		// permanently-zero line in an overlay that is already dense.
 		line("Decals:       %d drawn", DebugStats.Decals)
+	}
+	if DebugStats.VSMOn {
+		line("Sun shadow:   virtual, %d pages resident, %d drawn in %d rects, %d starved",
+			DebugStats.VSMPages, DebugStats.VSMDrawn, DebugStats.VSMRects, DebugStats.VSMStarved)
 	}
 	line("Point shadows: %d re-rendered of %d", DebugStats.PointShadowRenders, DebugStats.PointShadows)
 	if s := GIStatsLast; s.Active {

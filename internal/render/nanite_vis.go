@@ -263,6 +263,10 @@ func naniteVisBegin() {
 	v.used = false
 	v.recordsUsed = 0
 	DebugStats.NaniteVisBins = 0
+	DebugStats.NaniteSWClusters, DebugStats.NaniteSWMode = 0, 0
+	if v.active && naniteSW.on() {
+		DebugStats.NaniteSWMode = naniteSW.mode
+	}
 	v.bins = v.bins[:0]
 	clear(v.binBase)
 	if v.active {
@@ -279,26 +283,63 @@ func naniteVisBegin() {
 // visibility buffer this frame.
 func naniteVisActive() bool { return naniteVis.active }
 
-// drawBatch draws one pass of b's groups into the visibility buffer — the
-// ones the material pass can shade; the rest the forward way. False when the
-// frame cannot take the batch, for the caller to draw it the forward way.
-func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
+// admits reports whether the frame can take one pass of b's groups with
+// extra records beyond its commands' (the compute rasteriser's list): the
+// bins, the tile lists' storage block, the records and every buffer the
+// material pass reads. warn logs (once) why not. drawBatch asks it, and so
+// does the rasteriser before the cull lists anything (cullBatch.admitSW): a
+// cluster listed for a batch the frame then refused would draw nowhere.
+func (v *naniteVisPass) admits(b *cullBatch, groups []visGroup, extra int, warn bool) bool {
+	say := func(format string, args ...any) bool {
+		if warn {
+			v.warn(format, args...)
+		}
+		return false
+	}
 	if !v.active || len(groups) != len(b.groups) || b.slots == 0 {
 		return false
 	}
-	base, ok := v.binBase[b]
-	if !ok {
+	if !naniteClustersFitVis() {
+		return say("a cluster over %d triangles", naniteVisClusterTris)
+	}
+	if _, ok := v.binBase[b]; !ok {
 		if len(v.bins)+len(groups) > naniteVisMaxBins {
-			v.warn("more than %d material bins", naniteVisMaxBins)
-			return false
+			return say("more than %d material bins", naniteVisMaxBins)
 		}
 		// The bins' tile lists are one storage block, a screen's worth of
 		// tiles a bin (ensureBins sizes it at least 256 bins).
 		tiles := int64((scene.w+naniteVisTile-1)/naniteVisTile) * int64((scene.h+naniteVisTile-1)/naniteVisTile)
 		if lists := int64(max(len(v.bins)+len(groups), 256)) * tiles * 4; v.maxBlock > 0 && lists > v.maxBlock {
-			v.warn("tile lists larger than the driver's largest storage block (%d MB)", v.maxBlock>>20)
-			return false
+			return say("tile lists larger than the driver's largest storage block (%d MB)", v.maxBlock>>20)
 		}
+	}
+	if v.recordsUsed+b.slots+extra > naniteVisMaxRecords {
+		return say("more than %d commands", naniteVisMaxRecords)
+	}
+	if !b.visGroupsFit(groups, v.maxBlock) {
+		return say("a buffer larger than the driver's largest storage block (%d MB)", v.maxBlock>>20)
+	}
+	return true
+}
+
+// drawBatch draws one pass of b's groups into the visibility buffer — the
+// ones the material pass can shade; the rest the forward way — and, when
+// the cull listed clusters for it, runs the compute rasteriser over them
+// (nanite_swraster.go). False when the frame cannot take the batch, for the
+// caller to draw it the forward way.
+func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
+	sw := b.swCap
+	b.swCap = 0
+	if !v.admits(b, groups, sw, true) {
+		if sw > 0 {
+			// admitSW asked the same question before the cull; nothing
+			// between should change the answer.
+			log.Printf("nanite: visibility buffer refused a batch the compute rasteriser had listed %d clusters for", sw)
+		}
+		return false
+	}
+	base, ok := v.binBase[b]
+	if !ok {
 		base = len(v.bins)
 		v.binBase[b] = base
 		for _, g := range groups {
@@ -306,16 +347,8 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 				baked: g.baked, shade: prepassable(g.mat)})
 		}
 	}
-	if v.recordsUsed+b.slots > naniteVisMaxRecords {
-		v.warn("more than %d commands", naniteVisMaxRecords)
-		return false
-	}
-	if !b.visGroupsFit(groups, v.maxBlock) {
-		v.warn("a buffer larger than the driver's largest storage block (%d MB)", v.maxBlock>>20)
-		return false
-	}
 	ProfileBegin("nanite: vis")
-	v.ensureRecords(v.recordsUsed + b.slots)
+	v.ensureRecords(v.recordsUsed + b.slots + sw)
 
 	// Number the pass's commands.
 	cmd := b.cmdBuf
@@ -394,6 +427,11 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, 0)
+	// The clusters the cull listed for the compute rasteriser, into the same
+	// IDs and depth, their records after the commands'.
+	if sw > 0 && len(groups) > 0 {
+		naniteSW.rasterBatch(b, &groups[0], v.recordsUsed+b.slots, base, sw)
+	}
 	drawBuffersColour()
 	gl.StencilFunc(gl.ALWAYS, 0, 0xff)
 	gl.UseProgram(gfx.Program)
@@ -408,7 +446,7 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 		}
 		gl.BindVertexArray(0)
 	}
-	v.recordsUsed += b.slots
+	v.recordsUsed += b.slots + sw
 	v.used = true
 	return true
 }

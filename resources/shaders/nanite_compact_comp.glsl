@@ -5,22 +5,37 @@
 // fixed list, culled commands and all, is drawn as it stands. The #version
 // line, and COMPACT_SCAN or COMPACT_SCATTER, are the Go side's.
 //
-// Two dispatches, both parallel:
+// The dispatches, all parallel:
 //
-//   COMPACT_SCAN    one workgroup per group: an exclusive prefix sum over its
-//                   tiles' survivor counts (the cull wrote them), giving each
-//                   tile its place in the group, and the group's count.
+//   COMPACT_BLOCKS  a workgroup per 256 tiles: the exclusive prefix sum of
+//                   their survivor counts (the cull wrote them) within the
+//                   block, and the block's total.
+//   COMPACT_BLOCKSCAN  one workgroup: the exclusive prefix sum of the
+//                   blocks' totals, a 256 of them at a time.
+//   COMPACT_FINISH  a thread per tile: its place in its GROUP — its prefix
+//                   over every tile less its group's first tile's (the tiles
+//                   of a group are consecutive, tile.b.w names the group) —
+//                   and, a thread per group, the group's count.
 //   COMPACT_SCATTER one workgroup per cluster tile: a prefix sum over its own
 //                   slots, writing each survivor at the group's start + the
 //                   tile's place + its own.
 //   COMPACT_SCATTER_RANGE  one thread per range tile, the same for its few
 //                   slots.
 //
+// (Phase 5: the prefix sum was one workgroup per group, walking its tiles
+// 64 at a time — a field of rocks is one group of forty thousand tiles, and
+// that walk, on one multiprocessor, cost a millisecond. Docs/nanite/
+// PHASE_5.md.)
+//
 // The order survives the packing — a cluster that drew after another still
 // does — so a capture stays the same from run to run and a coplanar tie
 // resolves the way it did before.
 
+#if defined(COMPACT_BLOCKS) || defined(COMPACT_BLOCKSCAN)
+layout(local_size_x = 256) in;
+#else
 layout(local_size_x = 64) in;
+#endif
 
 struct Tile {
     uvec4 a;
@@ -57,12 +72,43 @@ layout(std430, binding = 13) readonly buffer KindTiles {
     uint kindTiles[];
 };
 
+// The scan's own: each tile's prefix within its block, the blocks' totals
+// (made exclusive prefixes by COMPACT_BLOCKSCAN), and the tile count.
+layout(std430, binding = 11) buffer TilePrefix {
+    uint tilePrefix[];
+};
+layout(std430, binding = 12) buffer BlockPrefix {
+    uint blockPrefix[];
+};
+
 uniform uint workBase;
 uniform uint kindTileCount;
+uniform uint tileCount;
+uniform uint blockCount;
+uniform uint groupCount;
 
-shared uint scan[64];
+shared uint scan[256];
 
-// scanStep turns scan[] into its inclusive prefix sum.
+// scanBlock turns scan[0..256) into its inclusive prefix sum (256 threads).
+void scanBlock(uint lid) {
+    for (uint off = 1u; off < 256u; off <<= 1u) {
+        uint v = lid >= off ? scan[lid - off] : 0u;
+        barrier();
+        scan[lid] += v;
+        barrier();
+    }
+}
+
+// prefixOf is tile i's exclusive prefix over every tile (i == tileCount: the
+// total).
+uint prefixOf(uint i) {
+    if (i >= tileCount) {
+        return blockPrefix[blockCount];
+    }
+    return tilePrefix[i] + blockPrefix[i / 256u];
+}
+
+// scanStep turns scan[0..64) into its inclusive prefix sum (64 threads).
 void scanStep(uint lid) {
     for (uint off = 1u; off < 64u; off <<= 1u) {
         uint v = lid >= off ? scan[lid - off] : 0u;
@@ -74,23 +120,44 @@ void scanStep(uint lid) {
 
 void main() {
     uint lid = gl_LocalInvocationID.x;
-#ifdef COMPACT_SCAN
-    uvec4 g = groups[workBase + gl_WorkGroupID.x];
+#if defined(COMPACT_BLOCKS)
+    uint b = workBase + gl_WorkGroupID.x;
+    uint i = b * 256u + lid;
+    uint n = i < tileCount ? tileCounts[i] : 0u;
+    scan[lid] = n;
+    barrier();
+    scanBlock(lid);
+    if (i < tileCount) {
+        tilePrefix[i] = scan[lid] - n;
+    }
+    if (lid == 255u) {
+        blockPrefix[b] = scan[255];
+    }
+#elif defined(COMPACT_BLOCKSCAN)
     uint total = 0u;
-    for (uint base = 0u; base < g.w; base += 64u) {
+    for (uint base = 0u; base < blockCount; base += 256u) {
         uint i = base + lid;
-        uint n = i < g.w ? tileCounts[g.z + i] : 0u;
+        uint n = i < blockCount ? blockPrefix[i] : 0u;
         scan[lid] = n;
         barrier();
-        scanStep(lid);
-        if (i < g.w) {
-            tileOffsets[g.z + i] = total + scan[lid] - n;
+        scanBlock(lid);
+        if (i < blockCount) {
+            blockPrefix[i] = total + scan[lid] - n;
         }
-        total += scan[63];
+        total += scan[255];
         barrier();
     }
     if (lid == 0u) {
-        counts[workBase + gl_WorkGroupID.x] = total;
+        blockPrefix[blockCount] = total;
+    }
+#elif defined(COMPACT_FINISH)
+    uint i = workBase + gl_GlobalInvocationID.x;
+    if (i < tileCount) {
+        tileOffsets[i] = prefixOf(i) - prefixOf(groups[tiles[i].b.w].z);
+    }
+    if (i < groupCount) {
+        uvec4 g = groups[i];
+        counts[i] = prefixOf(g.z + g.w) - prefixOf(g.z);
     }
 #elif defined(COMPACT_SCATTER_RANGE)
     // A thread a range tile: its RANGE_SLOTS_COMPACT slots, in order.

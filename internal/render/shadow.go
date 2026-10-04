@@ -396,6 +396,9 @@ func newShadowFrame(numDir int, near float32) ShadowFrame {
 	}
 	for i := range f.Lights {
 		f.Lights[i].BaseLayer = -1
+	// VSM is the sun's virtual shadow map when this frame drew one in place
+	// of that light's cascades (vsm.go); nil otherwise.
+	VSM *VSMFrame
 		for c := range f.Lights[i].Cascades {
 			f.Lights[i].Cascades[c].Matrix = mgl32.Ident4()
 		}
@@ -551,7 +554,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 
 	shadowCount := 0
 	for i := 0; i < numDir; i++ {
-		if lights.Directional[i].CastsShadows() {
+		if lights.Directional[i].CastsShadows() && i != vsmLight {
 			shadowCount++
 		}
 	}
@@ -559,6 +562,9 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	if shadowCount == 0 || Shadows.CascadeArray == 0 {
 		return frame
 	}
+	// The sun's virtual shadow map, drawn in place of its cascades (vsm.go,
+	// Nanite Phase 5): the light it took, or -1.
+	vsmLight := vsmShadowPass(lights, level, view, projection, &frame)
 	// A compiled level's baked surfaces carry the sun's share, and swap it
 	// for the sun these cascades shadow (see ShadowFrame.BakedSun).
 	if level != nil && level.Static != nil {
@@ -580,7 +586,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	layer := int32(0)
 	for i := 0; i < numDir; i++ {
 		dl := lights.Directional[i]
-		if !dl.CastsShadows() {
+		if !dl.CastsShadows() || i == vsmLight {
 			continue
 		}
 		frame.Lights[i].BaseLayer = layer
@@ -971,6 +977,8 @@ func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
 
 	baseUnit := int32(CascadeTexUnit + 1) // unit 0 = albedo, unit 1 = dir cascade array
+	// And the sun's virtual shadow map, or word that there is none (vsm.go).
+	uploadVSMTo(prog, frame)
 
 	// Bind the dummy cubemap to ALL pointShadowMap slots (not just active
 	// lights) so that every samplerCube uniform references a unit with a valid

@@ -106,7 +106,10 @@ var bench struct {
 type benchCounts struct {
 	staticDrawn, brushCalls, brushes, chunks, sprites, particles, spriteDraws, volumeDraws, scenery int
 	pointShadows, pointShadowRenders                                                                int
-	giBuilt, giPending, giTraced                                                                    int
+	// The sun's virtual shadow map (Phase 5): frames it ran in, pages
+	// resident, drawn, rectangles drawn, requests starved.
+	vsmFrames, vsmPages, vsmDrawn, vsmRects, vsmStarved int
+	giBuilt, giPending, giTraced                        int
 }
 
 // benchParse reads FOUNDRY_BENCH. ok is false when it is unset.
@@ -263,10 +266,10 @@ func benchStart(level *world.Level) {
 	}
 	// The anti-aliasing mode (Phase 4): TAA draws into a scene target of its
 	// own, with the visibility buffer; MSAA into the window's samples.
-	fmt.Fprintf(&bench.report, "bench %s (%s) — load %.1fs, %dx%d, AA %s, window MSAA %dx, visibility buffer %v\n",
+	fmt.Fprintf(&bench.report, "bench %s (%s) — load %.1fs, %dx%d, AA %s, window MSAA %dx, visibility buffer %v, virtual shadow map %v, compute raster %q\n",
 		name, map[bool]string{true: "compiled", false: "yaml"}[cfg.compiled],
 		time.Since(t0).Seconds(), platform.WinWidth, platform.WinHeight, gfx.AntiAliasMode, render.AntiAliasGrantedSamples,
-		render.NaniteVisBuffer)
+		render.NaniteVisBuffer, render.NaniteVSM, render.NaniteSWRaster)
 
 	platform.VSyncEnabled = false
 	platform.ApplyVSync()
@@ -363,6 +366,13 @@ func benchEndFrame() {
 		c.scenery += s.Scenery
 		c.pointShadows += s.PointShadows
 		c.pointShadowRenders += s.PointShadowRenders
+		if s.VSMOn {
+			c.vsmFrames++
+			c.vsmPages += s.VSMPages
+			c.vsmDrawn += s.VSMDrawn
+			c.vsmRects += s.VSMRects
+			c.vsmStarved += s.VSMStarved
+		}
 		g := render.GIStatsLast
 		c.giBuilt += g.BricksBuilt
 		c.giPending += g.BricksPending
@@ -420,6 +430,13 @@ func benchWritePose() {
 		per(c.staticDrawn), per(c.brushes), per(c.brushCalls), per(c.chunks), per(c.scenery),
 		per(c.sprites), per(c.particles), per(c.spriteDraws), per(c.volumeDraws))
 	fmt.Fprintf(r, "point shadows re-rendered %.2f of %.0f a frame\n", per(c.pointShadowRenders), per(c.pointShadows))
+	if c.vsmFrames > 0 {
+		vf := float64(c.vsmFrames)
+		fmt.Fprintf(r, "sun shadow  virtual in %.0f%% of frames: %.0f pages resident, %.1f drawn in %.1f rects, %.1f starved a frame\n",
+			100*vf/n, float64(c.vsmPages)/vf, float64(c.vsmDrawn)/vf, float64(c.vsmRects)/vf, float64(c.vsmStarved)/vf)
+	} else {
+		fmt.Fprintf(r, "sun shadow  cascades\n")
+	}
 	fmt.Fprintf(r, "gi  bricks built %.0f, still waiting %.0f; probes traced %.0f a frame\n",
 		per(c.giBuilt), per(c.giPending), per(c.giTraced))
 	fmt.Fprintf(r, "%-34s %9s %9s %9s %9s\n", "section", "cpu avg", "cpu max", "gpu avg", "gpu max")

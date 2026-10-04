@@ -534,6 +534,14 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		gl.Uniform1i(gfx.AlphaSharpenUniform, 0)
 		gl.Uniform1i(gfx.UniformLoc(gfx.Program, "coverageDither\x00"), 0)
 
+		// The sun's virtual shadow map: the pages the opaque world's pixels
+		// read, asked for from the depth it left, for a frame or two from
+		// now (vsm.go). Before the decals and everything translucent, which
+		// read what the opaque world asked for.
+		if !editorWire {
+			vsmMarkReceivers()
+		}
+
 		// --- Decals ---
 		// Between the opaque world and the sky, and every part of that is
 		// deliberate: a decal blends with the surface under it, so that

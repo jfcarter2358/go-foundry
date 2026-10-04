@@ -152,6 +152,15 @@ float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3
 float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir) {
     int layerBase = dirLightShadowLayer[lightIdx];
     if (layerBase < 0) {
+    // The sun's virtual shadow map, when the frame drew one for this light
+    // (vsm.glsl, render/vsm.go), faded out at the end of the shadow distance
+    // as the cascades are below.
+    if (vsmShadows(lightIdx)) {
+        float vsmMaxDist = cascadeSplit[SHADOW_CASCADES - 1];
+        float vsmFadeBegin = vsmMaxDist * (1.0 - SHADOW_FADE_FRACTION);
+        return vsmShadow(worldPos, normal, lightDir) *
+            (1.0 - clamp((viewDepth - vsmFadeBegin) / max(vsmMaxDist - vsmFadeBegin, 1e-4), 0.0, 1.0));
+    }
         return 0.0;
     }
 

@@ -261,6 +261,13 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 	}
 	r.batch.clusters = r.clusters
 	r.batch.setTiles(tiles, groups, slot)
+	// The groups the compute rasteriser may take: every group shares the
+	// pool's buffers, so only the material decides (nanite_swraster.go).
+	sw := make([]bool, len(r.groups))
+	for gi := range r.groups {
+		sw[gi] = swEligible(&r.groups[gi])
+	}
+	r.batch.setSWGroups(sw)
 	r.batch.ensureHistory(int(hist))
 	r.insts = r.insts[:0]
 }
@@ -478,19 +485,22 @@ func RenderNaniteScenery(lvl *world.Level, frustum Frustum, projView mgl32.Mat4)
 	}
 	eye := gfx.Cam.Position
 	mode := int32(cullPlain)
-	// Packed by the shadows' rule (renderNaniteSceneryShadow): only with most
-	// placements out of view. The cooked meshes' DAGs are range tiles, whose
-	// list is short already, and on the rock field the packing cost the
-	// camera's two passes a millisecond (docs/nanite/PHASE_2.md).
-	compact := in*2 < len(r.spheres)
+	// The camera's passes are packed (cameraCullView's default), however
+	// many placements are in view. Phase 2 packed them only with most
+	// placements out of view, measuring the packing at a millisecond on the
+	// rock field; that was its prefix sum, one workgroup walking the whole
+	// group's tiles, and since Phase 5's scan (nanite_compact_comp.glsl) it
+	// costs a tenth of a millisecond and saves the draw walking tens of
+	// thousands of empty commands: the rock field behind its wall drew a
+	// millisecond faster (docs/nanite/PHASE_5.md). It matters the more since
+	// the compute rasteriser empties the commands of every small cluster.
 	if naniteTwoPass && r.batch.slots > 0 {
 		mode = cullPass1
 		r.pass2 = true
 		r.pass2View = cameraCullView(frustum, projView, eye, cullPass2)
-		r.pass2View.compact = compact
 	}
 	v := cameraCullView(frustum, projView, eye, mode)
-	v.compact = compact
+	r.batch.admitSW(r.visGroups())
 	if r.batch.cull(v) {
 		r.drawColour()
 	}
@@ -504,9 +514,27 @@ func (r *naniteSceneryRenderer) drawOcclusion() {
 		return
 	}
 	r.pass2 = false
+	r.batch.admitSW(r.visGroups())
 	if r.batch.cull(r.pass2View) {
 		r.drawColour()
 	}
+}
+
+// visGroups is the batch's groups as the visibility buffer draws them.
+func (r *naniteSceneryRenderer) visGroups() []visGroup {
+	identity := mgl32.Ident4()
+	groups := make([]visGroup, len(r.groups))
+	for gi := range r.groups {
+		gi := gi
+		groups[gi] = visGroup{mat: &r.groups[gi], vao: r.vao, vbo: r.vbo, nbo: r.nbo, ebo: r.ebo, instanced: true,
+			forward: func() {
+				r.groups[gi].BindWorld(identity, 0, true)
+				gl.BindVertexArray(r.vao)
+				r.batch.drawGroup(gi)
+				gl.Uniform1i(gfx.InstancedUniform, 0)
+			}}
+	}
+	return groups
 }
 
 func (r *naniteSceneryRenderer) drawColour() {
@@ -518,18 +546,7 @@ func (r *naniteSceneryRenderer) drawColour() {
 	// A visibility-buffer frame draws the placements' IDs instead, shaded
 	// later in one pass (nanite_vis.go).
 	if naniteVisActive() {
-		groups := make([]visGroup, len(r.groups))
-		for gi := range r.groups {
-			gi := gi
-			groups[gi] = visGroup{mat: &r.groups[gi], vao: r.vao, vbo: r.vbo, nbo: r.nbo, ebo: r.ebo, instanced: true,
-				forward: func() {
-					r.groups[gi].BindWorld(identity, 0, true)
-					gl.BindVertexArray(r.vao)
-					r.batch.drawGroup(gi)
-					gl.Uniform1i(gfx.InstancedUniform, 0)
-				}}
-		}
-		if naniteVis.drawBatch(&r.batch, groups) {
+		if naniteVis.drawBatch(&r.batch, r.visGroups()) {
 			return
 		}
 	}

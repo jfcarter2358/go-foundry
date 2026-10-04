@@ -62,10 +62,13 @@ void main() {
         if (vis) {
             inCut |= 1u << k;
             bool d = clusterDraws(clusters[ci], true, m, s, cone, t.b.x + k);
-            if (d) {
+            streamNote(ci, clusters[ci], m, s, d);
+            // Small on screen: the compute rasteriser's. It stays in the cut,
+            // so a join may still cover it — drawn twice then, harmlessly:
+            // the same triangles at the same depth.
+            if (d && !swTake(clusters[ci], m, s, ii, t.b.w)) {
                 drawn |= 1u << k;
             }
-            streamNote(ci, clusters[ci], m, s, d);
         } else if (mode == CULL_PASS2) {
             // Out of the cut or out of view: nothing to read, but pass 2
             // still records that it was not seen.

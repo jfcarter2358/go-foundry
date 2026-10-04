@@ -316,6 +316,11 @@ float calcDirShadowUnfaded(int layerBase, int lightIdx, vec3 normal, vec3 lightD
         // cascade's box; the next one out always contains it.
         if (c + 1 < SHADOW_CASCADES) {
             c += 1;
+    // The sun's virtual shadow map, when the frame drew one for this light
+    // in place of its cascades (vsm.glsl, render/vsm.go).
+    if (vsmShadows(lightIdx)) {
+        return vsmShadow(fragWorldPos, normal, lightDir);
+    }
             shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir);
         }
         if (shadow < 0.0) {

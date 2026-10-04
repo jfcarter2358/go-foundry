@@ -38,7 +38,8 @@ struct Cluster {
 
 // a: first cluster, cluster count, instance, first command slot.
 // b.x: first history entry; b.y: the first slot of the tile's group (for the
-// packing pass); b.z: the mode — 0 a cluster tile, 1 a range tile.
+// packing pass); b.z: the mode — 0 a cluster tile, 1 a range tile; b.w: the
+// tile's group (the software rasteriser's bin and eligibility, below).
 struct Tile {
     uvec4 a;
     uvec4 b;
@@ -190,4 +191,60 @@ bool instanceCones(uint fl) {
 // instanceWalked is whether the instance's leaf marks are this pass's.
 bool instanceWalked(uint fl) {
     return lodMode != 0 && lodWalk != 0 && (fl & 8u) != 0u;
+}
+
+// ---------- the software rasteriser's share (render/nanite_swraster.go; Phase 5) ----------
+//
+// In a camera pass of a visibility-buffer frame, a cluster that will draw and
+// is small on screen — its sphere under swPixels across — is taken out of the
+// hardware's commands and listed for the compute rasteriser instead
+// (nanite_swraster_comp.glsl), which writes its triangles' depth and IDs
+// without the hardware's per-triangle setup and 2x2 quads. Only in front of
+// swNear (every corner then has a positive w, so the rasteriser needs no
+// clipping), only for groups whose material it can draw (swGroupOK: opaque
+// to the last texel — it decides no coverage), and only while the list has
+// room: a cluster past swCap is drawn by the hardware as before. Its history
+// and streaming feedback are those of a drawn cluster either way.
+
+uniform int swOn;
+uniform vec3 swForward;
+// projection[1][1] times half the viewport's height: a length l at view
+// depth z is l * swScale / z pixels tall.
+uniform float swScale;
+uniform float swPixels;
+uniform float swNear;
+uniform uint swCap;
+
+// The list: a count, then two uvec4 a cluster — (first index, index count,
+// base vertex, instance) and (group, 0, 0, 0).
+layout(std430, binding = 16) buffer SwList {
+    uint swCount;
+    uint swPad0;
+    uint swPad1;
+    uint swPad2;
+    uvec4 swEntries[];
+};
+layout(std430, binding = 17) readonly buffer SwGroups {
+    uint swGroupOK[];
+};
+
+// swTake lists cluster cl of instance ii, in group, for the software
+// rasteriser when it qualifies (see above), and reports whether it did.
+bool swTake(Cluster cl, mat4 m, float s, uint ii, uint group) {
+    if (swOn == 0 || swGroupOK[group] == 0u) {
+        return false;
+    }
+    vec3 c = (m * vec4(cl.sphere.xyz, 1.0)).xyz;
+    float r = cl.sphere.w * s;
+    float z = dot(c - eye.xyz, swForward) - r;
+    if (z < swNear || 2.0 * r * swScale > swPixels * z) {
+        return false;
+    }
+    uint i = atomicAdd(swCount, 1u);
+    if (i >= swCap) {
+        return false;
+    }
+    swEntries[2u * i] = uvec4(cl.draw.x, cl.draw.y, cl.draw.z, ii);
+    swEntries[2u * i + 1u] = uvec4(group, 0u, 0u, 0u);
+    return true;
 }

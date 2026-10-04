@@ -205,7 +205,11 @@ func biomeLightSnippet(pcf int, pointShadows, cascadeBlend bool) string {
 	//
 	// light_model.glsl goes ahead of it too: the lighting block's terms are
 	// the world shader's, from the one file.
+	//
+	// vsm.glsl, the sun's virtual shadow map (vsm.go), likewise: the
+	// lighting block's biomeDirShadow reads it for the light it shadows.
 	return src + mustReadShader(biomeShaderPath("cloud_shadow.glsl")) +
+		"\n" + mustReadShader(biomeShaderPath("vsm.glsl")) +
 		"\n" + mustReadShader(biomeShaderPath("light_model.glsl")) +
 		"\n" + mustReadShader(biomeShaderPath("biome_light.glsl")) +
 		"\n" + mustReadShader(biomeShaderPath("fog.glsl"))

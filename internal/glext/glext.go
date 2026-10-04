@@ -22,6 +22,13 @@
 //     (render/nanite_stream.go, Phase 3). The 4.3 alternative is a plain
 //     buffer written with glBufferSubData and read with glMapBufferRange,
 //     fenced the same way.
+//   - 64-bit integer atomics in shaders (GL_NV_shader_atomic_int64, with the
+//     64-bit integer types of GL_ARB_gpu_shader_int64 or GL_NV_gpu_shader5):
+//     no entry point, only a feature the compute rasteriser's one-pass form
+//     needs — an atomicMax of depth<<32 | triangle ID into one word a pixel
+//     (render/nanite_swraster.go, Phase 5). No 4.x core version has them.
+//     Without them the rasteriser is either off (the hardware draws every
+//     triangle) or, asked for, runs its two-pass 32-bit form.
 package glext
 
 /*
@@ -85,6 +92,9 @@ var (
 	tried         bool
 	mdeic         unsafe.Pointer
 	bufferStorage unsafe.Pointer
+	// int64Atomics: the shading language has 64-bit integers and atomics on
+	// them in storage buffers.
+	int64Atomics bool
 )
 
 // Init looks the entry points up. Call with a context current; calling it
@@ -100,6 +110,8 @@ func Init() {
 	if has(4, 4, "GL_ARB_buffer_storage") {
 		bufferStorage = lookup("glBufferStorage")
 	}
+	int64Atomics = hasExtension("GL_NV_shader_atomic_int64") &&
+		(hasExtension("GL_ARB_gpu_shader_int64") || hasExtension("GL_NV_gpu_shader5"))
 }
 
 // lookup is the first of names the driver has an entry point for.
@@ -124,6 +136,11 @@ func has(major, minor int32, ext string) bool {
 	if ma > major || (ma == major && mi >= minor) {
 		return true
 	}
+	return hasExtension(ext)
+}
+
+// hasExtension is whether the context lists the extension.
+func hasExtension(ext string) bool {
 	var n int32
 	gl.GetIntegerv(gl.NUM_EXTENSIONS, &n)
 	for i := int32(0); i < n; i++ {
@@ -140,14 +157,23 @@ func IndirectCountAvailable() bool { return mdeic != nil }
 
 // Disable forgets the entry points, so every caller takes its 4.3 path: for
 // A/B timing and for the tests that pin the fallback.
-func Disable() { mdeic, bufferStorage = nil, nil }
+func Disable() { mdeic, bufferStorage, int64Atomics = nil, nil, false }
 
 // Reinit looks the entry points up again, undoing Disable.
 func Reinit() {
 	tried = false
-	mdeic, bufferStorage = nil, nil
+	mdeic, bufferStorage, int64Atomics = nil, nil, false
 	Init()
 }
+
+// Int64AtomicsAvailable reports whether a shader may declare uint64_t storage
+// and atomicMax on it (see the file comment); the shaders that do declare the
+// extensions themselves. Init must have run.
+func Int64AtomicsAvailable() bool { return int64Atomics }
+
+// DisableInt64Atomics forgets the 64-bit atomics alone (the compute
+// rasteriser's two-pass and hardware fallbacks, for tests and A/B timing).
+func DisableInt64Atomics() { int64Atomics = false }
 
 // DisableBufferStorage forgets glBufferStorage alone (the streamer's 4.3
 // path, for its tests and FOUNDRY_NANITE_PERSISTENT=0).
