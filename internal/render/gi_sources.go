@@ -84,7 +84,7 @@ type giGroup struct {
 // belongs to, and its index there. A struct rather than a formatted string so
 // that looking a group up every frame allocates nothing.
 type giKey struct {
-	kind  byte // 'b' static brush, 'd' dynamic brush, 't' terrain, 'e' entity model, 'n' Nanite scenery
+	kind  byte // 'b' static brush, 'd' dynamic brush, 't' terrain, 'e' entity model, 'n' Nanite scenery, 'f' a foliage unit's trees
 	owner string
 	a, b  int
 }
@@ -234,6 +234,9 @@ func (s *giSourceSet) collect(lvl *world.Level) {
 		}
 		s.putHashed(k, false, naniteSceneryGISources(sc, wm, s.minModel), h)
 	}
+
+	// Tree crowns, from the Nanite foliage's voxels (nfoliage_gi.go).
+	s.foliageCanopySources()
 
 	for k, g := range s.groups {
 		if g.seen != s.frame {

@@ -118,7 +118,11 @@ Things to know:
   their solid hulls (a detail mesh counts as its hull), block terrain, and
   entity models that are opaque, not unlit and not skinned. Characters,
   foliage, sprites, particles, water and glass do not block or bounce GI
-  light, but they are lit by it.
+  light, but they are lit by it. (With `FOUNDRY_NANITE_FOLIAGE_GI=1`, terrain
+  trees within about 120 units of the camera count by their crowns — the
+  dense part of each, from its [Nanite foliage](30-terrain.md) voxels — so a
+  forest floor is shaded by the canopy over it. It is off by default: it
+  makes a forest noticeably darker.)
 - **Thin walls can leak.** GI's probes sit on a grid, and a wall much thinner
   than the probe spacing can let light through to the far side. If it does,
   lower Probe Spacing or thicken the wall.

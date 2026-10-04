@@ -99,6 +99,10 @@ type foliageUnit struct {
 	builtFor float32
 	first, n int
 	batches  []foliageBatchGPU
+	// trees are its tall plants' placements, kept on the CPU for the GI
+	// field (nfoliage_gi.go); treesGen counts their rebuilds.
+	trees    []nfGITree
+	treesGen uint64
 	// lo, hi bound its instances, chunk space.
 	lo, hi mgl32.Vec3
 	count  int
@@ -262,6 +266,8 @@ func (u *foliageUnit) release() {
 	u.first, u.n = 0, 0
 	u.built, u.gen, u.builtFor, u.count = false, 0, 0, 0
 	u.batches = u.batches[:0]
+	u.trees = u.trees[:0]
+	u.treesGen++
 	u.merge = nil
 }
 
@@ -809,6 +815,8 @@ func (r *foliageRenderer) build(j foliageJob, start time.Time) {
 func (r *foliageRenderer) upload(u *foliageUnit, batches []world.FoliageBatch, count int, lo, hi mgl32.Vec3) {
 	u.built = true
 	u.batches = u.batches[:0]
+	u.trees = nfKeepTrees(u.trees[:0], batches)
+	u.treesGen++
 	u.lo, u.hi, u.count = lo, hi, count
 	if u.n > 0 && u.n != count {
 		r.pool.free(u.first, u.n)

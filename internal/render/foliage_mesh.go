@@ -74,6 +74,8 @@ func (m *fmesh) card(base, right, up mgl32.Vec3, tile int, part int, n mgl32.Vec
 	if n == (mgl32.Vec3{}) {
 		n = right.Cross(up).Normalize()
 	}
+	defer m.recordCard(m.mark(), asmCard{base: base, right: right, up: up, n: n, tile: tile, part: part,
+		sway0: sway0, sway1: sway1, tone: tone})
 	a := fvert{p: base.Sub(right), n: n, uv: tileUV(tile, 0, 0), sway: sway0, tone: tone, part: part}
 	b := fvert{p: base.Add(right), n: n, uv: tileUV(tile, 1, 0), sway: sway0, tone: tone, part: part}
 	c := fvert{p: base.Add(right).Add(up), n: n, uv: tileUV(tile, 1, 1), sway: sway1, tone: tone, part: part}
@@ -84,6 +86,7 @@ func (m *fmesh) card(base, right, up mgl32.Vec3, tile int, part int, n mgl32.Vec
 // blade is a curved, tapering strip rising from base: it grows along up for
 // height h, bending toward lean by bend*h at its tip, w wide at the root.
 func (m *fmesh) blade(base, up, lean mgl32.Vec3, h, w, bend float32, segs int, part int, toneLo, toneHi float32, swayScale float32) {
+	defer m.recordAxis(m.mark(), base, base.Add(up.Mul(h)).Add(lean.Mul(bend*h)))
 	side := up.Cross(lean)
 	if side.Len() < 1e-4 {
 		side = mgl32.Vec3{1, 0, 0}
@@ -118,6 +121,7 @@ func (m *fmesh) blade(base, up, lean mgl32.Vec3, h, w, bend float32, segs int, p
 
 // tube is a polyline of rings: pts with radii, sides round.
 func (m *fmesh) tube(pts []mgl32.Vec3, radii, sway, tone []float32, sides int, part int) {
+	defer m.recordAxis(m.mark(), pts[0], pts[len(pts)-1])
 	rings := make([][]fvert, len(pts))
 	for i := range pts {
 		var dir mgl32.Vec3
@@ -153,6 +157,7 @@ func (m *fmesh) tube(pts []mgl32.Vec3, radii, sway, tone []float32, sides int, p
 // blob is an icosphere of radius 1 subdivided sub times, reshaped by
 // shape(unit direction) -> point; flat-shaded when flat.
 func (m *fmesh) blob(sub int, shape func(d mgl32.Vec3) mgl32.Vec3, flat bool, part int, toneOf func(p mgl32.Vec3) float32, keep func(d mgl32.Vec3) bool) {
+	defer m.recordOther(m.mark())
 	t := float32((1 + math.Sqrt(5)) / 2)
 	vs := []mgl32.Vec3{
 		{-1, t, 0}, {1, t, 0}, {-1, -t, 0}, {1, -t, 0},
@@ -401,6 +406,8 @@ func buildFern(variant, lod int) []float32 {
 		pt := func(t float32) mgl32.Vec3 {
 			return out.Mul(l * t).Add(yUp.Mul(l * (rise*t - 0.62*t*t)))
 		}
+		// The frond is one strip, bent as one (foliage_assembly.go).
+		start := m.mark()
 		for s := 0; s < segs; s++ {
 			t0, t1 := float32(s)/float32(segs), float32(s+1)/float32(segs)
 			p0, p1 := pt(t0), pt(t1)
@@ -419,6 +426,7 @@ func buildFern(variant, lod int) []float32 {
 			m.quad(mk(p0.Sub(side.Mul(w0)), 0, uv0, t0), mk(p0.Add(side.Mul(w0)), 1, uv0, t0),
 				mk(p1.Add(side.Mul(w1)), 1, uv1, t1), mk(p1.Sub(side.Mul(w1)), 0, uv1, t1))
 		}
+		m.recordAxis(start, pt(0), pt(1))
 	}
 	return m.v
 }
@@ -804,6 +812,7 @@ func buildDeadwood(variant, lod int) []float32 {
 // out by depth (a fraction of the radius) and the grooves between are
 // shaded darker, the way a cactus is pleated.
 func (m *fmesh) ribTube(pts []mgl32.Vec3, radii []float32, ribs int, depth float32, tone []float32, part int) {
+	defer m.recordAxis(m.mark(), pts[0], pts[len(pts)-1])
 	sides := ribs * 2
 	rings := make([][]fvert, len(pts))
 	for i := range pts {
@@ -847,6 +856,7 @@ func (m *fmesh) ribTube(pts []mgl32.Vec3, radii []float32, ribs int, depth float
 // fold (a fraction of the width), so a palm frond or a banana leaf is a
 // shallow V rather than a board.
 func (m *fmesh) frond(pt func(t float32) mgl32.Vec3, w func(t float32) float32, side mgl32.Vec3, segs, tile int, fold, sway0, sway1 float32) {
+	defer m.recordAxis(m.mark(), pt(0), pt(1))
 	for s := 0; s < segs; s++ {
 		t0, t1 := float32(s)/float32(segs), float32(s+1)/float32(segs)
 		p0, p1 := pt(t0), pt(t1)

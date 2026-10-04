@@ -345,6 +345,7 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		naniteVisBegin()
 		naniteChunkPending = naniteChunkPending[:0]
 		DebugStats.NaniteClusters, DebugStats.NaniteTriangles = 0, 0
+		DebugStats.NaniteFoliage = false
 		ProfileBegin("world: compiled")
 		if lvl.Static != nil {
 			staticDrawScratch = lvl.Static.VisibleSurfaces(gfx.Cam.Position, staticDrawScratch)

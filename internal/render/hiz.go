@@ -194,3 +194,26 @@ func (h *hiZPyramid) resize(w, hh int32) {
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST_MIPMAP_NEAREST)
 	gl.BindTexture(gl.TEXTURE_2D, 0)
 }
+
+// release frees the pyramid's GL objects; init makes them again.
+func (h *hiZPyramid) release() {
+	if h.prog.prog != 0 {
+		gl.DeleteProgram(h.prog.prog)
+	}
+	for _, t := range []*uint32{&h.depthTex, &h.tex} {
+		if *t != 0 {
+			gl.DeleteTextures(1, t)
+			*t = 0
+		}
+	}
+	for _, f := range []*uint32{&h.depthFBO, &h.fbo} {
+		if *f != 0 {
+			gl.DeleteFramebuffers(1, f)
+			*f = 0
+		}
+	}
+	if h.vao != 0 {
+		gl.DeleteVertexArrays(1, &h.vao)
+	}
+	*h = hiZPyramid{}
+}

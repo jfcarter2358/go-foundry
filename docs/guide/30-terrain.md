@@ -320,11 +320,20 @@ without a draw per section. How it is drawn:
 - each kind of plant thins out with distance, and the plants that are left
   grow to cover for the ones that went, so a meadow stays a meadow rather than
   stopping at a line; they fade rather than pop;
-- each kind switches to a far mesh with a fraction of the triangles, then to a
-  far tier: grass, flowers, ferns and reeds to cards showing a whole tuft;
-  trees, shrubs, rocks and bushes to impostors — one card showing the plant
-  from the nearest of 64 directions, baked when the game starts and lit like
-  the real thing;
+- trees, shrubs, rocks, bushes and fallen wood are drawn as **Nanite
+  foliage**: each plant is kept as its parts (a tree's leaf cards placed by
+  transforms, its trunk and branches) with a level-of-detail tree above them
+  whose far levels are small blocks of voxels, and every plant draws the
+  level whose error is under a pixel. Up close it is the full plant; past a
+  hundred metres or so its crown is voxels that keep the crown's colour and
+  how much sky shows through it; at the horizon a tree is a block or two. The
+  change between levels is under a pixel, so a forest has no line where it
+  switches and nothing pops as you move. Plants bend in the wind on bones
+  that follow their branches, and the bend is part of the motion TAA uses,
+  so swaying leaves stay sharp;
+- grass, flowers, ferns, reeds and the rest of the ground cover switch to a
+  far mesh with a fraction of the triangles, then to cards showing a whole
+  tuft;
 - where the ground cover finally stops, the painted ground carries its colour
   and grain on to the horizon;
 - on graphics cards with compute shaders every plant is tested on the GPU
@@ -335,6 +344,14 @@ without a draw per section. How it is drawn:
 
 Trees reach about 1.5 km, shrubs and rocks about 400–500 m, grass and flowers
 about 130 m.
+
+On a graphics driver that cannot run the Nanite foliage (it needs 44 texture
+units and compute shaders), or with `FOUNDRY_NANITE_FOLIAGE=0`, trees, shrubs
+and rocks are drawn the older way: a far mesh, then an impostor (one card
+showing the plant from the nearest of 64 directions, baked when the game
+starts) with a dithered hand-over between them.
+[Testing and debugging](19-testing-and-debugging.md#nanite-foliage) has the
+switches.
 
 Two player settings control the cost. A settings screen can offer them, and
 both are saved to `graphics.yaml`:

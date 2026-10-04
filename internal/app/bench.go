@@ -109,6 +109,7 @@ type benchCounts struct {
 	// The sun's virtual shadow map (Phase 5): frames it ran in, pages
 	// resident, drawn, rectangles drawn, requests starved.
 	vsmFrames, vsmPages, vsmDrawn, vsmRects, vsmStarved int
+	nfFrames, nfItems, nfRefs, nfBricks                 int
 	giBuilt, giPending, giTraced                        int
 }
 
@@ -373,6 +374,12 @@ func benchEndFrame() {
 			c.vsmRects += s.VSMRects
 			c.vsmStarved += s.VSMStarved
 		}
+		if s.NaniteFoliage {
+			c.nfFrames++
+			c.nfItems += s.NaniteFoliageItems
+			c.nfRefs += s.NaniteFoliageRefs
+			c.nfBricks += s.NaniteFoliageBricks
+		}
 		g := render.GIStatsLast
 		c.giBuilt += g.BricksBuilt
 		c.giPending += g.BricksPending
@@ -436,6 +443,11 @@ func benchWritePose() {
 			100*vf/n, float64(c.vsmPages)/vf, float64(c.vsmDrawn)/vf, float64(c.vsmRects)/vf, float64(c.vsmStarved)/vf)
 	} else {
 		fmt.Fprintf(r, "sun shadow  cascades\n")
+	}
+	if c.nfFrames > 0 {
+		f := float64(c.nfFrames)
+		fmt.Fprintf(r, "foliage  Nanite in %.0f%% of frames: %.0f plant clusters, %.0f references, %.0f voxel bricks a frame; voxels %s\n",
+			100*f/n, float64(c.nfItems)/f, float64(c.nfRefs)/f, float64(c.nfBricks)/f, render.NaniteFoliageVoxelMode())
 	}
 	fmt.Fprintf(r, "gi  bricks built %.0f, still waiting %.0f; probes traced %.0f a frame\n",
 		per(c.giBuilt), per(c.giPending), per(c.giTraced))

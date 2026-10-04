@@ -216,6 +216,8 @@ type foliageRenderer struct {
 	items      [foliagePrograms][]foliageItem
 	scratch    []float32
 	gpu        foliageGPU
+	// nan is the Nanite path (nfoliage.go).
+	nan nfRenderer
 }
 
 var foliage foliageRenderer
@@ -314,12 +316,14 @@ func FoliageInit() {
 	}
 	gl.BindVertexArray(0)
 
-	foliage.atlas = uploadFoliageAtlas(buildFoliageAtlas())
+	atlasChain := buildFoliageAtlas()
+	foliage.atlas = uploadFoliageAtlas(atlasChain)
 	foliage.imp = bakeFoliageImpostors()
 	foliage.cache = map[*world.Terrain]*foliageTerrainGPU{}
 	foliage.pool.init(true)
 	foliage.initialized = true
 	foliage.gpu.init()
+	foliage.nan.init(nfAtlas{chain: atlasChain})
 }
 
 // bindTemplateAttributes points attributes 0-3 at the template buffer, which
@@ -483,6 +487,9 @@ func (r *foliageRenderer) foliageItems(frustum *Frustum) {
 		}
 		for bi := range dr.u.batches {
 			b := &dr.u.batches[bi]
+			if r.nan.takes(b.shape) {
+				continue
+			}
 			info := foliageShapes[b.shape]
 			p := r.params[b.shape]
 			if dr.d > p.rng {
@@ -523,12 +530,20 @@ func RenderFoliage(lvl *world.Level, projView mgl32.Mat4, frustum *Frustum, fram
 	if !foliage.initialized || lvl == nil || len(foliage.draws) == 0 {
 		return 0
 	}
+	drawn := 0
+	// The Nanite path takes the shapes it draws (nfoliage.go); the tiers
+	// below draw the rest, in the same frame.
+	if foliage.nan.active() {
+		drawn += foliage.nan.render(lvl, projView, frustum, frame)
+		if !foliage.nan.leavesAny() {
+			return drawn
+		}
+	}
 	if foliage.gpu.active() {
-		return foliage.gpu.render(lvl, projView, frustum, frame)
+		return drawn + foliage.gpu.render(lvl, projView, frustum, frame)
 	}
 	r := &foliage
 	r.foliageItems(frustum)
-	drawn := 0
 	for i := foliageProgFull; i <= foliageProgImp; i++ {
 		items := r.items[i]
 		if len(items) == 0 {
@@ -575,6 +590,12 @@ func RenderFoliageDirShadow(lvl *world.Level, lsm mgl32.Mat4, cascade int, cull 
 	if !foliage.initialized || lvl == nil || !gfx.FoliageShadows || len(foliage.draws) == 0 || cascade > 2 {
 		return
 	}
+	if foliage.nan.active() {
+		foliage.nan.renderShadow(lvl, lsm, cull)
+		if !foliage.nan.leavesAny() {
+			return
+		}
+	}
 	r := &foliage
 	p := &r.progs[foliageProgShadow]
 	started := false
@@ -587,7 +608,7 @@ func RenderFoliageDirShadow(lvl *world.Level, lsm mgl32.Mat4, cascade int, cull 
 		}
 		for bi := range dr.u.batches {
 			b := &dr.u.batches[bi]
-			if !foliageShapes[b.shape].casts {
+			if !foliageShapes[b.shape].casts || r.nan.takes(b.shape) {
 				continue
 			}
 			pr := r.params[b.shape]

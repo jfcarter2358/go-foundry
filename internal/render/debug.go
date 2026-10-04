@@ -68,6 +68,14 @@ var DebugStats struct {
 	// pool had no page for. VSMOn says the frame's sun used it.
 	VSMOn                                    bool
 	VSMPages, VSMDrawn, VSMRects, VSMStarved int
+	// The Nanite foliage (nfoliage.go): whether the frame's foliage took it,
+	// and what its camera pass drew a frame or two ago (read back without
+	// waiting): plant clusters, references (a triangle cluster, a part or a
+	// brick each), and voxel bricks of those; Overflow its capacity
+	// warnings (1 items, 2 references; it grows).
+	NaniteFoliage                                              bool
+	NaniteFoliageItems, NaniteFoliageRefs, NaniteFoliageBricks int
+	NaniteFoliageOverflow                                      uint32
 	// The props' collision (collision/scenery_index.go): solid placements by
 	// the mode they collide in, and how many cooked meshes have their
 	// collision decoded because a body or a ray came near.
@@ -250,6 +258,10 @@ func DebugOverlayLines() []DebugLine {
 		// Only when there are any: a level with no decals should not carry a
 		// permanently-zero line in an overlay that is already dense.
 		line("Decals:       %d drawn", DebugStats.Decals)
+	}
+	if DebugStats.NaniteFoliage {
+		line("Foliage:      Nanite, %d plant clusters, %d references, %d voxel bricks (%s)",
+			DebugStats.NaniteFoliageItems, DebugStats.NaniteFoliageRefs, DebugStats.NaniteFoliageBricks, foliage.nan.vox.mode())
 	}
 	if DebugStats.VSMOn {
 		line("Sun shadow:   virtual, %d pages resident, %d drawn in %d rects, %d starved",

@@ -220,6 +220,9 @@ func (g *foliageGPU) render(lvl *world.Level, projView mgl32.Mat4, frustum *Frus
 		t := &terrains[ti]
 		for bi := range dr.u.batches {
 			b := &dr.u.batches[bi]
+			if r.nan.takes(b.shape) {
+				continue
+			}
 			p := r.params[b.shape]
 			if dr.d > p.rng {
 				continue
@@ -264,6 +267,10 @@ func (g *foliageGPU) render(lvl *world.Level, projView mgl32.Mat4, frustum *Frus
 	submitted := 0
 	for _, t := range terrains {
 		submitted += t.submitted
+	}
+	if len(sorted) == 0 {
+		// Every batch in view is the Nanite path's (nfoliage.go).
+		return 0
 	}
 
 	useHiz := g.hiz.build()

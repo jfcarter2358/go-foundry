@@ -120,6 +120,29 @@ unresolved — the pair the renderer's picture tests compare.
 A headless shot (`foundry play`'s `shot`) draws the frame sixteen times at the
 same instant before taking it, so the picture is TAA's converged one.
 
+### Nanite foliage
+
+Terrain trees, shrubs, rocks and bushes are drawn as **Nanite foliage** (see
+[Terrain](30-terrain.md)): parts and voxels chosen per plant by
+screen size, bent on bones. The `F3` overlay adds a `Foliage: Nanite` line —
+how many plant clusters and references the last frame drew, how many voxel
+bricks, and whether the bricks small on screen go to a **compute
+rasteriser** (`compute raster (64-bit atomics)`, NVIDIA's GL) or are
+ray-marched as boxes (WSL's GL and other drivers without 64-bit atomics). The
+profiler rows, under `foliage`: `foliage: bones`, `foliage: nanite cull`,
+`foliage: nanite draw`, `foliage: nanite voxels` with `foliage: voxel raster`
+and `foliage: voxel resolve`; the bones and the cull show again under
+`shadows: sun`.
+
+| Switch | |
+| --- | --- |
+| `FOUNDRY_NANITE_FOLIAGE=0` | the older far meshes and impostors instead |
+| `FOUNDRY_NANITE_FOLIAGE_GROUND=1` | grass, flowers and the rest of the ground cover on the Nanite path too (costlier: a meadow of one-pixel voxels) |
+| `FOUNDRY_NANITE_FOLIAGE_PX=n` | the level of detail's error, in pixels (default 1) |
+| `FOUNDRY_NANITE_FOLIAGE_SWRASTER=0` | ray-march every voxel brick, even where the compute rasteriser could run |
+| `FOUNDRY_NANITE_FOLIAGE_GI=1` | put the tree crowns into live GI, so a canopy shades the ground under it (off by default: a forest comes out noticeably darker) |
+| `FOUNDRY_NANITE_FOLIAGE_FLUSH=0` / `=1` | on WSL's GL (Mesa's D3D12 driver) the Nanite foliage submits the GPU's queued work between its shadow and camera passes, to step round a driver hang; `0` turns that off, `1` on everywhere |
+
 ## Live GI
 
 [Live GI](07-lighting.md#live-gi) adds two rows to the `F3` overlay: its tier,

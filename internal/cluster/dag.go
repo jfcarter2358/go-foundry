@@ -82,7 +82,23 @@ type DAGOptions struct {
 	Locked func(v uint32) bool
 	// MaxLevels caps the levels built; 0 means no cap short of the root.
 	MaxLevels int
+	// Voxels, when set, lets a group be replaced by voxel bricks instead of
+	// simplified triangles, whichever errs less (voxel.go) — and keeps the
+	// build going past one cluster until the root is a few bricks
+	// (VoxelOptions.RootBricks). Nil builds triangles only, exactly as before.
+	Voxels *VoxelOptions
+	// Base, when set, is level 0 as the caller cut it: each entry a cluster's
+	// triangles (numbers into the mesh's triangle list, at most
+	// Options.MaxTriangles of them). Foliage's assemblies cut level 0 by part
+	// (render/foliage_assembly.go). Nil cuts it with Build.
+	Base [][]uint32
 }
+
+// The kinds of DAG node.
+const (
+	KindTriangles = 0
+	KindVoxels    = 1
+)
 
 // LODCluster is a cluster of the DAG.
 type LODCluster struct {
@@ -102,6 +118,18 @@ type LODCluster struct {
 	// Group is the group that made it (-1 at level 0), Parent the group that
 	// consumed it (-1 for a root).
 	Group, Parent int32
+	// Kind is KindTriangles or KindVoxels; Voxel, for a voxel node, its
+	// cluster in DAG.Voxels (-1 otherwise). A voxel node has no triangles.
+	Kind  int32
+	Voxel int32
+	// Base is, at level 0 of a DAG built from DAGOptions.Base, the entry it
+	// is (-1 otherwise).
+	//
+	// A cluster gob-decoded from a file cooked before these fields existed
+	// (.fnm, internal/nanite) has Kind, Voxel and Base all 0, not -1: test
+	// Kind before reading Voxel, and read Base only from a DAG built with
+	// DAGOptions.Base.
+	Base int32
 }
 
 // IsRoot reports whether nothing simplified c further.
@@ -137,6 +165,12 @@ type DAG struct {
 	// so these are Indices' first triangles), the input triangle it is —
 	// for a caller that keeps something per input triangle.
 	BaseOrder []uint32
+	// Voxels are the voxel nodes' bricks, in Clusters order.
+	Voxels []VoxelCluster
+	// VoxelUnit and VoxelOrigin are the voxel lattice: its finest edge and
+	// its corner (DAGOptions.Voxels).
+	VoxelUnit   float32
+	VoxelOrigin mgl32.Vec3
 }
 
 // BaseTriangles is how many triangles level 0 holds.
@@ -201,7 +235,13 @@ type building struct {
 	clusters []LODCluster
 	tris     [][]uint32
 	src      [][]uint32 // level 0's input triangles
+	vox      []*VoxelCluster
 	groups   []LODGroup
+	// The voxel lattice (DAGOptions.Voxels): its finest edge, its corner,
+	// and the largest edge worth making (past it a level would be one brick
+	// of mostly empty space).
+	vunit, vmax float32
+	vorigin     mgl32.Vec3
 }
 
 // BuildDAG builds m's cluster DAG. m must be indexed or a soup (nil
@@ -220,23 +260,51 @@ func BuildDAG(m Mesh, opt DAGOptions) DAG {
 	b := &building{m: m, opt: opt}
 	b.posID = positionIDs(&m)
 
-	base := Build(m, opt.Cluster)
-	current := make([]int32, 0, len(base.Clusters))
-	for _, c := range base.Clusters {
-		tris := make([]uint32, 0, 3*c.TriCount)
-		for _, t := range base.Order[c.TriFirst : c.TriFirst+c.TriCount] {
-			tris = append(tris, m.Indices[3*t:3*t+3]...)
+	var current []int32
+	if opt.Base != nil {
+		for bi, list := range opt.Base {
+			if len(list) == 0 {
+				continue
+			}
+			c := Cluster{TriCount: uint32(len(list))}
+			seen := map[uint32]bool{}
+			tris := make([]uint32, 0, 3*len(list))
+			for _, t := range list {
+				for k := 0; k < 3; k++ {
+					v := m.Corner(int(t), k)
+					seen[v] = true
+					tris = append(tris, v)
+				}
+			}
+			c.Vertices = uint32(len(seen))
+			bound(&m, list, &c)
+			id := b.add(c, 0, 0, c.Center, c.Radius, -1, tris)
+			b.src[id] = list
+			b.clusters[id].Base = int32(bi)
+			current = append(current, id)
 		}
-		id := b.add(c, 0, 0, c.Center, c.Radius, -1, tris)
-		b.src[id] = base.Order[c.TriFirst : c.TriFirst+c.TriCount]
-		current = append(current, id)
+	} else {
+		base := Build(m, opt.Cluster)
+		current = make([]int32, 0, len(base.Clusters))
+		for _, c := range base.Clusters {
+			tris := make([]uint32, 0, 3*c.TriCount)
+			for _, t := range base.Order[c.TriFirst : c.TriFirst+c.TriCount] {
+				tris = append(tris, m.Indices[3*t:3*t+3]...)
+			}
+			id := b.add(c, 0, 0, c.Center, c.Radius, -1, tris)
+			b.src[id] = base.Order[c.TriFirst : c.TriFirst+c.TriCount]
+			current = append(current, id)
+		}
+	}
+	if opt.Voxels != nil {
+		b.voxelLattice()
 	}
 
 	maxLevels := opt.MaxLevels
 	if maxLevels <= 0 {
 		maxLevels = 64
 	}
-	for level := int32(0); len(current) > 1 && int(level)+1 < maxLevels; level++ {
+	for level := int32(0); (len(current) > 1 || b.wantsCoarser(current)) && int(level)+1 < maxLevels; level++ {
 		groups := b.partition(current)
 		// A position two groups share is locked for this level.
 		owner := make(map[int32]int32, len(current)*64)
@@ -286,9 +354,10 @@ func BuildDAG(m Mesh, opt DAGOptions) DAG {
 func (b *building) add(c Cluster, level int32, errv float32, centre mgl32.Vec3, radius float32, group int32, tris []uint32) int32 {
 	id := int32(len(b.clusters))
 	b.clusters = append(b.clusters, LODCluster{Cluster: c, Level: level, Error: errv, LODCenter: centre, LODRadius: radius,
-		ParentError: -1, Group: group, Parent: -1})
+		ParentError: -1, Group: group, Parent: -1, Voxel: -1, Base: -1})
 	b.tris = append(b.tris, tris)
 	b.src = append(b.src, nil)
+	b.vox = append(b.vox, nil)
 	return id
 }
 
@@ -299,6 +368,8 @@ type groupResult struct {
 	err      float32
 	trisIn   int
 	clusters Result
+	// vox, when set, is the group as voxel clusters instead (voxel.go).
+	vox []VoxelCluster
 }
 
 // simplifyGroup merges, simplifies and re-splits one group — or reports it
@@ -307,24 +378,134 @@ type groupResult struct {
 func (b *building) simplifyGroup(g []int32, locked func(uint32) bool) groupResult {
 	var idx []uint32
 	childErr := float32(0)
+	voxels := false
 	for _, ci := range g {
 		idx = append(idx, b.tris[ci]...)
 		childErr = max(childErr, b.clusters[ci].Error)
+		voxels = voxels || b.vox[ci] != nil
 	}
 	nt := len(idx) / 3
-	res := Simplify(b.m.Positions, b.m.stride(), idx, SimplifyOptions{
-		TargetTriangles: nt / 2,
-		AttrWeights:     b.opt.AttrWeights,
-		Locked:          locked,
-	})
-	out := len(res.Indices) / 3
-	if out == 0 || float64(out) > 0.85*float64(nt) {
-		return groupResult{}
+	tri := groupResult{}
+	// Triangles can only stand for triangles: a group holding voxels is
+	// voxels from here on.
+	if !voxels && nt > 0 {
+		res := Simplify(b.m.Positions, b.m.stride(), idx, SimplifyOptions{
+			TargetTriangles: nt / 2,
+			AttrWeights:     b.opt.AttrWeights,
+			Locked:          locked,
+		})
+		out := len(res.Indices) / 3
+		if out > 0 && float64(out) <= 0.85*float64(nt) {
+			// Never below a child's: error only grows going up.
+			errv := max(res.Error, deviation(&b.m, idx, res.Indices), childErr)
+			sub := Mesh{Positions: b.m.Positions, Stride: b.m.Stride, Indices: res.Indices}
+			tri = groupResult{ok: true, idx: res.Indices, err: errv, trisIn: nt, clusters: Build(sub, b.opt.Cluster)}
+		}
 	}
-	// Never below a child's: error only grows going up.
-	errv := max(res.Error, deviation(&b.m, idx, res.Indices), childErr)
-	sub := Mesh{Positions: b.m.Positions, Stride: b.m.Stride, Indices: res.Indices}
-	return groupResult{ok: true, idx: res.Indices, err: errv, trisIn: nt, clusters: Build(sub, b.opt.Cluster)}
+	if b.opt.Voxels == nil {
+		return tri
+	}
+	vox := b.voxelizeGroup(g, idx, childErr)
+	// Whichever errs less: the voxels' half diagonal or the simplifier's
+	// measured error (voxel.go's "Error").
+	if vox.ok && (!tri.ok || vox.err < tri.err) {
+		vox.trisIn = nt
+		return vox
+	}
+	return tri
+}
+
+// voxelLattice sets the voxel lattice up from the mesh's box.
+func (b *building) voxelLattice() {
+	nv := b.m.VertexCount()
+	if nv == 0 {
+		return
+	}
+	lo, hi := b.m.Position(0), b.m.Position(0)
+	for v := 1; v < nv; v++ {
+		p := b.m.Position(uint32(v))
+		lo, hi = vmin(lo, p), vmax(hi, p)
+	}
+	ext := hi.Sub(lo)
+	big := max(ext[0], ext[1], ext[2], 1e-4)
+	b.vunit = b.opt.Voxels.Unit
+	if b.vunit <= 0 {
+		b.vunit = big / 256
+	}
+	b.vmax = big * 2
+	// A voxel's margin round the box, so nothing sits on the lattice's edge.
+	b.vorigin = lo.Sub(mgl32.Vec3{b.vunit, b.vunit, b.vunit})
+}
+
+// wantsCoarser is whether a voxel build should keep going with current as
+// its top level: a lone triangle cluster, or a voxel root of more bricks
+// than VoxelOptions.RootBricks.
+func (b *building) wantsCoarser(current []int32) bool {
+	if b.opt.Voxels == nil || len(current) != 1 {
+		return false
+	}
+	v := b.vox[current[0]]
+	if v == nil {
+		return true
+	}
+	return len(v.Bricks) > max(b.opt.Voxels.RootBricks, 1) && v.Size*2 <= b.vmax
+}
+
+// voxelizeGroup is group g as voxel clusters: its triangles idx sampled and
+// its voxel children folded in, at the finest lattice size that is at least
+// twice every voxel child's and fits about half as many clusters as the
+// group holds (one at least) — the same halving the triangles get.
+func (b *building) voxelizeGroup(g []int32, idx []uint32, childErr float32) groupResult {
+	size := b.vunit
+	for _, ci := range g {
+		if v := b.vox[ci]; v != nil {
+			size = max(size, v.Size*2)
+		}
+	}
+	target := max(1, len(g)/2)
+	// Skip the sizes that cannot fit: a brick holds at most about three
+	// bricks' faces of surface, so the group's area alone rules out every
+	// size under sqrt(area / (3·16·bricks)).
+	area := 0.0
+	for t := 0; t+2 < len(idx); t += 3 {
+		p0, p1, p2 := b.m.Position(idx[t]), b.m.Position(idx[t+1]), b.m.Position(idx[t+2])
+		area += float64(p1.Sub(p0).Cross(p2.Sub(p0)).Len()) * 0.5
+	}
+	for _, ci := range g {
+		if v := b.vox[ci]; v != nil {
+			for i := range v.Voxels {
+				area += float64(v.Voxels[i].Weight)
+			}
+		}
+	}
+	floor := float32(math.Sqrt(area / float64(3*BrickVoxels/BrickSide*MaxClusterBricks*target)))
+	for size < floor {
+		size *= 2
+	}
+	for ; size <= b.vmax; size *= 2 {
+		grid := newVoxelGrid(b.opt.Voxels, b.vorigin, size)
+		grid.addTriangles(&b.m, idx)
+		for _, ci := range g {
+			if v := b.vox[ci]; v != nil {
+				grid.addVoxels(v)
+			}
+		}
+		n := grid.brickCount()
+		if n == 0 {
+			return groupResult{}
+		}
+		if n > MaxClusterBricks*target {
+			continue
+		}
+		// A lone voxel cluster must come out smaller than it went in, or the
+		// build would go round for ever.
+		if len(g) == 1 && b.vox[g[0]] != nil && n >= len(b.vox[g[0]].Bricks) && n > 1 {
+			continue
+		}
+		cs := grid.clusters()
+		return groupResult{ok: true, err: max(VoxelError(size), childErr), vox: cs}
+	}
+	return groupResult{}
 }
 
 // commitGroup records a simplified group and the clusters it made.
@@ -343,6 +524,14 @@ func (b *building) commitGroup(g []int32, level int32, r *groupResult) []int32 {
 			tris = append(tris, r.idx[3*t:3*t+3]...)
 		}
 		grp.Made = append(grp.Made, b.add(c, level, r.err, centre, radius, gid, tris))
+	}
+	for i := range r.vox {
+		v := &r.vox[i]
+		c := Cluster{Lo: v.Lo, Hi: v.Hi, Center: v.Center, Radius: v.Radius*1.0001 + 1e-6, ConeCutoff: NoCone}
+		id := b.add(c, level, r.err, centre, radius, gid, nil)
+		b.clusters[id].Kind = KindVoxels
+		b.vox[id] = v
+		grp.Made = append(grp.Made, id)
 	}
 	b.groups = append(b.groups, grp)
 	return grp.Made
@@ -468,6 +657,12 @@ func (b *building) partition(clusters []int32) [][]int32 {
 					best, bestW, bestD = nb, w, d
 				}
 			}
+			if best < 0 && b.opt.Voxels != nil {
+				// A voxel build's clusters need not touch — leaf cards share
+				// no corners, voxel clusters have none — so it takes the
+				// nearest free cluster instead.
+				best = nearestFree(cent, groupOf, centre)
+			}
 			if best < 0 {
 				break
 			}
@@ -505,6 +700,9 @@ func (b *building) partition(clusters []int32) [][]int32 {
 				best, bestW = og, w
 			}
 		}
+		if best < 0 && b.opt.Voxels != nil {
+			best = b.nearestGroup(groups, gi, cent, size)
+		}
 		if best < 0 {
 			continue
 		}
@@ -526,6 +724,44 @@ func (b *building) partition(clusters []int32) [][]int32 {
 		out = append(out, ids)
 	}
 	return out
+}
+
+// nearestFree is the free cluster (groupOf < 0) whose centre is nearest p,
+// ties to the lower index; -1 when none is free.
+func nearestFree(cent []mgl32.Vec3, groupOf []int32, p mgl32.Vec3) int32 {
+	best, bestD := int32(-1), float32(math.MaxFloat32)
+	for k := range cent {
+		if groupOf[k] >= 0 {
+			continue
+		}
+		if d := cent[k].Sub(p).Len(); d < bestD {
+			best, bestD = int32(k), d
+		}
+	}
+	return best
+}
+
+// nearestGroup is the group, other than gi and with room for it, whose
+// centre is nearest gi's; -1 when none has room.
+func (b *building) nearestGroup(groups [][]int32, gi int, cent []mgl32.Vec3, size int) int32 {
+	mean := func(g []int32) mgl32.Vec3 {
+		var c mgl32.Vec3
+		for _, m := range g {
+			c = c.Add(cent[m])
+		}
+		return c.Mul(1 / float32(len(g)))
+	}
+	from := mean(groups[gi])
+	best, bestD := int32(-1), float32(math.MaxFloat32)
+	for og, g := range groups {
+		if og == gi || len(g) == 0 || len(g)+len(groups[gi]) > size+size/2 {
+			continue
+		}
+		if d := mean(g).Sub(from).Len(); d < bestD {
+			best, bestD = int32(og), d
+		}
+	}
+	return best
 }
 
 // layout orders the clusters — by level, then by the group that consumes
@@ -559,13 +795,17 @@ func (b *building) layout() DAG {
 	for k, old := range order {
 		newID[old] = int32(k)
 	}
-	d := DAG{Clusters: make([]LODCluster, n), Groups: b.groups}
+	d := DAG{Clusters: make([]LODCluster, n), Groups: b.groups, VoxelUnit: b.vunit, VoxelOrigin: b.vorigin}
 	for k, old := range order {
 		c := b.clusters[old]
 		c.TriFirst = uint32(len(d.Indices) / 3)
 		d.Indices = append(d.Indices, b.tris[old]...)
 		if c.Level == 0 {
 			d.BaseOrder = append(d.BaseOrder, b.src[old]...)
+		}
+		if v := b.vox[old]; v != nil {
+			c.Voxel = int32(len(d.Voxels))
+			d.Voxels = append(d.Voxels, *v)
 		}
 		d.Clusters[k] = c
 		d.Levels = max(d.Levels, int(c.Level)+1)
