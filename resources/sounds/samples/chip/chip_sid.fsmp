@@ -1,0 +1,10 @@
+base_note: C-4
+loop: forward
+loop_start: 4312
+loop_end: 18623
+tags:
+- chip
+- sid
+- c64
+- 8bit
+description: 'SID: pulse and saw ANDed through a 12 dB filter'

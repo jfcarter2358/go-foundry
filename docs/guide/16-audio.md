@@ -70,6 +70,10 @@ stop_music(2.0)
 `play_music` returns `false` when that track is already playing, so a handler
 that sets the track every tick does not restart it every tick.
 
+A track can also be a tracker song, `sounds/<name>.ftrk`. A song plays the
+same way but can be steered while it plays: sections, params, mutes, stingers.
+See [Music tracker](31-music-tracker.md).
+
 ## One-shots
 
 What gameplay reaches for. Both place a sound that removes itself when it

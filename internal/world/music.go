@@ -11,8 +11,18 @@ package world
 //
 // It is played through the same mixer as everything else, on its own bus, so
 // the player's music slider reaches it and nothing else.
+//
+// A track is either a recording (sounds/<name>.ogg and friends) or a tracker
+// song (sounds/<name>.ftrk). A song is the same single voice on the music bus,
+// but it is generated live by internal/tracker, so scripts can steer it while
+// it plays — switch section on a beat, ramp a param, mute a channel. What they
+// asked for is mirrored here (Section, Params, Mutes) so a save game restores
+// the music the player was hearing, not the one the level started with.
 
-import "foundry/internal/audio"
+import (
+	"foundry/internal/audio"
+	"foundry/internal/tracker"
+)
 
 // Music is a level's global track.
 type Music struct {
@@ -28,8 +38,21 @@ type Music struct {
 	// ramp in when this one starts.
 	Fade float32
 
+	// Section is the song section to start at (tracker songs only).
+	Section string
+	// Params are song params as last set — by the level file at start, then
+	// by scripts. Mutes is the channels a script has muted.
+	Params map[string]float32
+	Mutes  map[string]bool
+
 	// Voice is the mixer handle. Runtime-only, never serialized.
 	Voice audio.VoiceID
+	// Song is the tracker player when the track is a song. Runtime-only.
+	Song *tracker.Player
+	// Resume starts a song at ResumeOrder/ResumeRow rather than at Section,
+	// for a save game. Runtime-only, consumed by the next start.
+	Resume                 bool
+	ResumeOrder, ResumeRow int
 }
 
 // NewMusic returns a track at its own level, looping.
@@ -51,6 +74,10 @@ func MusicUpdate(lvl *Level) {
 	if m.Track == "" || !m.Voice.IsZero() {
 		return
 	}
+	if tracker.IsSong(m.Track) {
+		startSong(m)
+		return
+	}
 	m.Voice = audio.Play(audio.PlayOptions{
 		Clip:   m.Track,
 		Bus:    audio.BusMusic,
@@ -61,6 +88,31 @@ func MusicUpdate(lvl *Level) {
 		// would make it pan as the player turns their head.
 		Spatial: false,
 	})
+}
+
+// startSong plays a tracker song. Without a device it does nothing, so the
+// once-a-frame retry costs a stat rather than a player per frame.
+func startSong(m *Music) {
+	if !audio.Available() {
+		return
+	}
+	p, id, err := tracker.Play(m.Track, tracker.PlayOptions{
+		Section: m.Section, Gain: m.Gain, FadeIn: m.Fade, Params: m.Params,
+		Resume: m.Resume, Order: m.ResumeOrder, Row: m.ResumeRow,
+	})
+	if err != nil || id.IsZero() {
+		return
+	}
+	for ch, on := range m.Mutes {
+		if on {
+			p.Mute(ch, true, 0)
+		}
+	}
+	if musicPaused {
+		p.Pause(true)
+	}
+	m.Song, m.Voice = p, id
+	m.Resume = false
 }
 
 // SetMusic switches the level's track, crossfading out whatever was playing.
@@ -101,6 +153,20 @@ func StopMusic(lvl *Level, fade float32) {
 		}
 		lvl.Music.Voice = 0
 	}
+	lvl.Music.Song = nil
+}
+
+// MusicSection names the section the level's song is playing, or "".
+func MusicSection(lvl *Level) string {
+	if lvl == nil || lvl.Music == nil || lvl.Music.Song == nil {
+		return ""
+	}
+	pos := lvl.Music.Song.Position()
+	s := lvl.Music.Song.Song()
+	if pos.Section >= 0 && pos.Section < len(s.Sections) {
+		return s.Sections[pos.Section].Name
+	}
+	return ""
 }
 
 // ---------- serialization ----------
@@ -111,12 +177,20 @@ func MusicFromRaw(r *RawMusic) *Music {
 	if r == nil {
 		return nil
 	}
-	return &Music{
-		Track: r.Track,
-		Gain:  float32Default(r.Gain, 1),
-		Loop:  BoolDefault(r.Loop, true),
-		Fade:  r.Fade,
+	m := &Music{
+		Track:   r.Track,
+		Gain:    float32Default(r.Gain, 1),
+		Loop:    BoolDefault(r.Loop, true),
+		Fade:    r.Fade,
+		Section: r.Section,
 	}
+	if len(r.Params) > 0 {
+		m.Params = make(map[string]float32, len(r.Params))
+		for k, v := range r.Params {
+			m.Params[k] = v
+		}
+	}
+	return m
 }
 
 // MusicToRaw writes it back, omitting every key at its default.
@@ -129,5 +203,95 @@ func MusicToRaw(m *Music) *RawMusic {
 		Gain:  float32PtrIfNot(m.Gain, 1),
 		Loop:  BoolPtrIfFalse(m.Loop),
 		Fade:  m.Fade,
+		// Scripts write Params during play too, but a play session restores
+		// the level before the editor can save it, so this is the authored set.
+		Section: m.Section,
+		Params:  m.Params,
 	}
+}
+
+// ---------- steering a song ----------
+
+// PlaySong switches the level's track to a tracker song starting at section.
+// When that song is already playing it changes section on the next beat
+// instead of restarting, and reports false.
+func PlaySong(lvl *Level, name, section string, fade float32) bool {
+	if lvl == nil {
+		return false
+	}
+	if m := lvl.Music; m != nil && m.Track == name && !m.Voice.IsZero() && m.Song != nil {
+		if section != "" {
+			m.Section = section
+			m.Song.Section(section, tracker.QuantBeat)
+		}
+		return false
+	}
+	StopMusic(lvl, fade)
+	m := NewMusic(name)
+	if fade > 0 {
+		m.Fade = fade
+	}
+	m.Section = section
+	lvl.Music = &m
+	MusicUpdate(lvl)
+	return true
+}
+
+// SongPlayer is the level's tracker player, or nil when no song is playing.
+func SongPlayer(lvl *Level) *tracker.Player {
+	if lvl == nil || lvl.Music == nil {
+		return nil
+	}
+	return lvl.Music.Song
+}
+
+// SetSongSection queues a section change and remembers it for a save.
+func SetSongSection(lvl *Level, name string, q tracker.Quantize) bool {
+	p := SongPlayer(lvl)
+	if p == nil || p.Song().SectionIndex(name) < 0 {
+		return false
+	}
+	lvl.Music.Section = name
+	return p.Section(name, q)
+}
+
+// SetSongParam ramps a song param and remembers it for a save.
+func SetSongParam(lvl *Level, name string, v, secs float32) bool {
+	p := SongPlayer(lvl)
+	if p == nil || p.Song().ParamIndex(name) < 0 {
+		return false
+	}
+	if lvl.Music.Params == nil {
+		lvl.Music.Params = map[string]float32{}
+	}
+	lvl.Music.Params[name] = v
+	return p.SetParam(name, v, secs)
+}
+
+// SetSongMute fades a channel out or in and remembers it for a save.
+func SetSongMute(lvl *Level, channel string, on bool, secs float32) bool {
+	p := SongPlayer(lvl)
+	if p == nil || p.Song().ChannelIndex(channel) < 0 {
+		return false
+	}
+	if lvl.Music.Mutes == nil {
+		lvl.Music.Mutes = map[string]bool{}
+	}
+	lvl.Music.Mutes[channel] = on
+	return p.Mute(channel, on, secs)
+}
+
+// musicPaused is the pause state last sent to the song, so a paused game does
+// not send a command a frame.
+var musicPaused bool
+
+// MusicPause freezes or resumes the level's song with the level's hard pause.
+func MusicPause(lvl *Level, paused bool) {
+	if paused == musicPaused {
+		return
+	}
+	if p := SongPlayer(lvl); p != nil {
+		p.Pause(paused)
+	}
+	musicPaused = paused
 }

@@ -63,7 +63,15 @@ type Host interface {
 	CreateShortcut(link, target, workDir string) error
 	// InUse reports whether a file is held open by a running program.
 	InUse(path string) bool
+	// Launch starts the installed program. It must not hand down Setup's own
+	// error mode: the Go runtime turns off Windows' "a DLL is missing" dialog
+	// for itself, and a child that inherited that would exit without a word.
 	Launch(exe, dir string) error
+
+	// ProbeGraphics reports what OpenGL this machine offers (graphics.go).
+	ProbeGraphics() GraphicsInfo
+	// OpenURL opens a web page in the player's browser.
+	OpenURL(url string) error
 }
 
 // KnownFolder names one of the per-user folders a shortcut goes in.
@@ -228,6 +236,7 @@ func Install(h Host, in *Installer, o Options) error {
 	if o.Silent {
 		return nil
 	}
+	warnAboutGraphics(h, st.Title)
 	msg := st.Title + " is installed."
 	if len(problems) > 0 {
 		msg += "\n\nSome shortcuts could not be made:\n" + strings.Join(problems, "\n")

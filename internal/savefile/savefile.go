@@ -276,6 +276,15 @@ type MusicState struct {
 	Gain  float32
 	Loop  bool
 	Fade  float32
+	// A tracker song also keeps where it was and what scripts set: the
+	// section it was in, the order position and row to resume at, and the
+	// params and channel mutes last asked for. Gob reads an older save
+	// without them as zero, which is "from the top, as authored".
+	Section    string
+	Order, Row int
+	Playing    bool
+	Params     map[string]float32
+	Mutes      map[string]bool
 }
 
 // ---------- player ----------

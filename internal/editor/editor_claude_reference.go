@@ -42,6 +42,7 @@ import (
 	"foundry/internal/model"
 	"foundry/internal/particle"
 	"foundry/internal/script"
+	"foundry/internal/tracker"
 	"foundry/internal/world"
 )
 
@@ -96,7 +97,8 @@ func claudeReferenceTools() []claude.Tool {
 		{
 			Name: "list_assets",
 			Description: "The names of the assets this project has: textures, materials, models, " +
-				"scripts, entity types, particle effects, AI decision trees, sounds and levels. " +
+				"scripts, entity types, particle effects, AI decision trees, sounds, tracker songs " +
+				"(sounds/*.ftrk), the tracker's sample library (as songs name them) and levels. " +
 				"A level file names " +
 				"assets by name, not by path, and these are those names.",
 			Schema: map[string]any{
@@ -105,7 +107,7 @@ func claudeReferenceTools() []claude.Tool {
 					"kind": map[string]any{
 						"type": "string",
 						"enum": []any{"textures", "materials", "models", "scripts", "entities",
-							"particles", "ai", "biomes", "sounds", "levels", "all"},
+							"particles", "ai", "biomes", "sounds", "songs", "samples", "levels", "all"},
 						"description": "Which kind to list. Defaults to all of them.",
 					},
 					"filter": map[string]any{
@@ -317,6 +319,14 @@ func claudeListAssetsText(kind, filter string) string {
 	// names them with the folder included.
 	if kind == "" || kind == "all" || kind == "scripts" {
 		list("scripts", fileutil.ScanScriptFiles())
+	}
+	// Songs and samples nest too, and are named by their path under sounds/
+	// and sounds/samples/ respectively.
+	if kind == "" || kind == "all" || kind == "songs" {
+		list("songs", tracker.ScanSongNames())
+	}
+	if kind == "" || kind == "all" || kind == "samples" {
+		list("samples", tracker.ScanSampleNames())
 	}
 	if total == 0 {
 		if filter != "" {

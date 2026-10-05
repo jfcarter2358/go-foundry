@@ -157,6 +157,7 @@ func ScriptEventsReset() {
 func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	scriptEvents.stackElapsed += float64(dt)
 	postKeyEvents(rt, lvl, dt, scriptEvents.paused)
+	postSongEvents(rt, lvl, scriptEvents.paused)
 	if scriptEvents.paused {
 		postPausedEvents(rt, dt)
 		return

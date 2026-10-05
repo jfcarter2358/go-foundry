@@ -1,0 +1,10 @@
+base_note: C-4
+loop: forward
+loop_start: 4848
+loop_end: 100985
+tags:
+- leads
+- pwm
+- pulse
+- analog
+description: Pulse-width-modulated lead

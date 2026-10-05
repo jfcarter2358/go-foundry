@@ -63,8 +63,9 @@ func Run() {
 
 	executable, err := os.Executable()
 	if err != nil {
-		// Can't get path — write to stderr only and exit.
-		log.Fatalf("os.Executable: %v", err)
+		// No log yet — it goes beside the executable in a dev build — so only
+		// the message box says it.
+		fatalStartupf("os.Executable: %v", err)
 	}
 	fileutil.ExecutablePath = filepath.Dir(executable)
 	// Every asset the engine reads — levels, textures, shaders, scripts,
@@ -115,7 +116,9 @@ func Run() {
 	if bench.on {
 		logPath = fileutil.StatePath("foundry-bench.log")
 	}
-	logFile, ferr := os.Create(logPath)
+	// openBootLog falls back to the temporary folder, and sends Go's own crash
+	// reports here too — the only record a windowsgui build has of one.
+	logFile, ferr := openBootLog(logPath)
 	var logSinks io.Writer = os.Stderr
 	if ferr != nil {
 		log.Printf("WARNING: could not create log file %s: %v — logging to stderr only", logPath, ferr)
@@ -128,6 +131,12 @@ func Run() {
 	}
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
 	log.SetPrefix("[foundry] ")
+	if bootLogPath != "" && bootLogPath != logPath {
+		log.Printf("WARNING: could not write %s; logging to %s instead", logPath, bootLogPath)
+	}
+	// A panic anywhere in startup or the main loop is logged with its stack
+	// and put in front of the player — see boot_failure.go.
+	defer recoverToLog()
 
 	// Anything scaffoldResources and startupConfigure could not report for want
 	// of a log — in that order, so a manifest that could not be written is
@@ -165,14 +174,6 @@ func Run() {
 	}
 	log.Printf("loaded %d biome files", nb)
 
-	// Catch any unexpected panic and write it to the log before exiting.
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("PANIC: %v", r)
-			os.Exit(1)
-		}
-	}()
-
 	log.Printf("executable directory: %s", fileutil.ExecutablePath)
 	log.Printf("project: %s (%s)", fileutil.ProjectPath, projectReason)
 	log.Printf("resources directory: %s", fileutil.ResourcesPath)
@@ -184,7 +185,8 @@ func Run() {
 	// Before Init, or the controllers open with SDL's label-ordered buttons.
 	configurePadHints()
 	if err = sdl.Init(sdl.INIT_EVERYTHING); err != nil {
-		log.Fatalf("sdl.Init: %v", err)
+		fatalStartup(fmt.Sprintf("SDL could not start: %v", err),
+			"Make sure SDL2.dll sits beside the game's program, and reinstall the game if it does not.")
 	}
 	defer sdl.Quit()
 
@@ -239,7 +241,7 @@ func Run() {
 	platform.WinHalfHeight = platform.WinHeight / 2
 	mainWindowID, err := platform.Window.GetID()
 	if err != nil {
-		log.Fatalf("Window.GetID: %v", err)
+		fatalStartupf("Window.GetID: %v", err)
 	}
 	devSetMainWindowID(mainWindowID)
 
@@ -287,7 +289,7 @@ func Run() {
 		}
 	}
 	if err := render.StandUpWorld(platform.WinWidth, platform.WinHeight); err != nil {
-		log.Fatalf("%v", err)
+		fatalStartup(err.Error(), "The graphics driver could not build the game's shaders. Updating the graphics driver usually fixes this; if the shader files are missing, reinstall the game.")
 	}
 	log.Printf("shader program linked OK (id=%d)", gfx.Program)
 
@@ -302,7 +304,7 @@ func Run() {
 	log.Printf("%s", startupDescribeLevel())
 	level, levelPath, levelsDir, err := startupLevel()
 	if err != nil {
-		log.Fatalf("startup level: %v", err)
+		fatalStartup(fmt.Sprintf("The first level would not load: %v", err), "Reinstalling the game may fix this.")
 	}
 	log.Printf("level loaded: %d chunk(s), %d dir light(s), %d point light(s)",
 		len(level.Chunks),
@@ -768,10 +770,13 @@ func Run() {
 
 // fatalGL ends startup over a GL context the engine cannot run on. A release
 // build has no console to log to, so the reason goes in a message box too.
+//
+// The usual cause on Windows is no vendor driver at all: Windows' own display
+// driver ("GDI Generic", "Microsoft Basic Render Driver") offers OpenGL 1.1,
+// and only NVIDIA's, AMD's or Intel's driver adds a modern one.
 func fatalGL(err error) {
-	log.Printf("FATAL: %v", err)
-	_ = sdl.ShowSimpleMessageBox(sdl.MESSAGEBOX_ERROR, platform.WinTitle,
-		fmt.Sprintf("%v\n\nUpdate your graphics driver, or run on a GPU that supports OpenGL %d.%d.",
-			err, glctx.MajorVersion, glctx.MinorVersion), nil)
-	os.Exit(1)
+	fatalStartup(err.Error(), fmt.Sprintf("This game needs OpenGL %d.%d, which comes with your graphics card's driver. "+
+		"Install the latest driver from NVIDIA, AMD or Intel (whichever made your graphics card), restart, and try again. "+
+		"On a virtual machine or remote desktop, enable 3D acceleration or run the game on the machine itself.",
+		glctx.MajorVersion, glctx.MinorVersion))
 }

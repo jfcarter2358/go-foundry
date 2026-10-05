@@ -176,6 +176,7 @@ func (b *builder) platform(p Platform) error {
 	res, err := pack.Pack(pack.Options{
 		Src:     b.resources,
 		Shaders: b.shaders(),
+		LibDirs: b.libDirs(),
 		Out:     stage,
 		Exe:     exe,
 		GOOS:    p.GOOS,
@@ -245,6 +246,21 @@ func (b *builder) shaders() string {
 	return fileutil.EngineShadersFor(fileutil.ExecutablePath, b.root)
 }
 
+// libDirs are where a Windows game's DLLs come from when the project has no
+// copy: its runtimes/, then the editor install's — runtimes/, and beside the
+// editor itself, where a Windows editor loads its own SDL2.dll from — then the
+// Foundry checkout the binary is built from.
+func (b *builder) libDirs() []string {
+	dirs := []string{filepath.Join(b.root, RuntimesDirName)}
+	if fileutil.ExecutablePath != "" {
+		dirs = append(dirs, filepath.Join(fileutil.ExecutablePath, RuntimesDirName), fileutil.ExecutablePath)
+	}
+	if b.source != "" {
+		dirs = append(dirs, fileutil.ResourcesDir(b.source))
+	}
+	return dirs
+}
+
 // installer builds one installer that needs a tool, or says why it could not.
 //
 // A missing tool is a warning rather than a failure: the archive beside it is
@@ -280,6 +296,17 @@ func (b *builder) player(p Platform) (string, error) {
 	warning, err := CheckPlayer(path, p)
 	if err != nil {
 		return "", err
+	}
+	// The game would refuse every level in the build and close on the player
+	// — the one failure a release can be sure of before it ships.
+	if stale := StalePlayer(path); stale != "" {
+		return "", fmt.Errorf("%s. Delete it to use the editor's own, or rebuild it with `task runtime-%s RUNTIMES_DIR=%s`",
+			stale, p.Name, filepath.Dir(path))
+	}
+	if own := filepath.Join(b.root, RuntimesDirName, PlayerFileName(p)); own != path {
+		if stale := StalePlayer(own); stale != "" {
+			b.warn("%s; using the editor's instead — delete the project's copy", stale)
+		}
 	}
 	if warning != "" {
 		b.warn("%s", warning)

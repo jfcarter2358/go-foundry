@@ -6,6 +6,7 @@ import (
 	"foundry/internal/compile"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/tracker"
 	"foundry/internal/world"
 	"log"
 	"os"
@@ -618,7 +619,10 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 
 	level.Music = world.MusicFromRaw(raw.Music)
 	if level.Music != nil && level.Music.Track != "" {
-		if _, err := audio.ClipFor(level.Music.Track); err != nil {
+		// A song preloads its samples; a recording, its clip.
+		if tracker.IsSong(level.Music.Track) {
+			tracker.Load(level.Music.Track)
+		} else if _, err := audio.ClipFor(level.Music.Track); err != nil {
 			log.Printf("music %q: %v", level.Music.Track, err)
 		}
 	}

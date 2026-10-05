@@ -247,8 +247,12 @@ func (host) InUse(path string) bool {
 	return false
 }
 
+// Launch starts the program with Windows' default error mode rather than the
+// one the Go runtime set for Setup, which silences the loader's "SDL2.dll was
+// not found" dialog — a game missing a DLL would otherwise just not appear.
 func (host) Launch(exe, dir string) error {
 	cmd := exec.Command(exe)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createDefaultErrorMode}
 	return cmd.Start()
 }

@@ -41,7 +41,9 @@ float hash13(vec3 p) {
     return fract((p.x + p.y) * p.z);
 }
 
-float noise3(vec3 p) {
+// Not "noise3": that's a (deprecated) GLSL built-in returning vec3, and stricter
+// drivers reject a float overload of it.
+float valueNoise3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
@@ -74,10 +76,10 @@ void main() {
     // local tangent frame so it stays roughly on the surface.
     vec3 p = vWorldPos * 3.0;
     float e = 0.06;
-    float h = noise3(p);
-    vec3 grad = vec3(noise3(p + vec3(e, 0.0, 0.0)) - h,
-                      noise3(p + vec3(0.0, e, 0.0)) - h,
-                      noise3(p + vec3(0.0, 0.0, e)) - h) / e;
+    float h = valueNoise3(p);
+    vec3 grad = vec3(valueNoise3(p + vec3(e, 0.0, 0.0)) - h,
+                      valueNoise3(p + vec3(0.0, e, 0.0)) - h,
+                      valueNoise3(p + vec3(0.0, 0.0, e)) - h) / e;
     vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
     vec3 tangent = normalize(cross(up, n));
     vec3 bitangent = cross(n, tangent);

@@ -1,0 +1,9 @@
+base_note: C-4
+loop: forward
+loop_start: 29140
+loop_end: 172979
+tags:
+- pads
+- pwm
+- analog
+description: Two pulses with opposed PWM

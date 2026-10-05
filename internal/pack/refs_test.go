@@ -375,3 +375,28 @@ func TestAnAuthoredLevelIsDroppedOnceItHasBeenCompiled(t *testing.T) {
 		t.Error("an entity definition was treated as a level source")
 	}
 }
+
+// A level names a tracker song by track; the song names its samples by their
+// path under the sample library. Both hops must survive, sidecars included,
+// and a library sample no song plays must not.
+func TestTrackerSongPullsInItsSamples(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":                       "font: title\n",
+		"ui/loading.fui":                     "id: loading\n",
+		"ui/pause.fui":                       "id: pause\n",
+		"levels/start.yaml":                  "music:\n  track: combat\n  section: intro\n",
+		"sounds/combat.ftrk":                 "version: 1\nbpm: 120\ninstruments:\n  - name: Kick\n    samples: [drums/kick_808]\n",
+		"sounds/samples/drums/kick_808.wav":  "RIFF",
+		"sounds/samples/drums/kick_808.fsmp": "base_note: C-4\n",
+		"sounds/samples/drums/snare_909.wav": "RIFF",
+	})
+	keep := keepSet(t, root, game.Manifest{StartLevel: "start"})
+	for _, want := range []string{"sounds/combat.ftrk", "sounds/samples/drums/kick_808.wav", "sounds/samples/drums/kick_808.fsmp"} {
+		if !keep[want] {
+			t.Errorf("%s was pruned", want)
+		}
+	}
+	if keep["sounds/samples/drums/snare_909.wav"] {
+		t.Error("an unplayed library sample was kept")
+	}
+}

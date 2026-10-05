@@ -54,7 +54,7 @@
 // Width of the cross-fade band at the tail of a cascade, as a fraction of that
 // cascade's own span. Must match ShadowCascadeBlend in shadow.go, exactly as
 // fragment.glsl's copy does. Only read when BIOME_LIGHT_CASCADE_BLEND is set.
-#define SHADOW_CASCADE_BLEND  0.12
+#define SHADOW_CASCADE_BLEND  0.25
 
 // World->view matrix, used only to recover the view-axis distance that picks a
 // cascade. Matches vertex.glsl's fragViewDepth (-(camera * worldPos).z) so the
@@ -74,6 +74,8 @@ uniform float dirLightBrightness[MAX_DIR_LIGHTS];
 uniform sampler2DArrayShadow shadowMapArray;
 uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+// One texel of each cascade in world units (render.DirCascade.Texel).
+uniform float cascadeTexel[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeSplit[SHADOW_CASCADES];
 uniform int   dirLightShadowLayer[MAX_DIR_LIGHTS];
 uniform bool  dirLightCastShadows[MAX_DIR_LIGHTS];
@@ -107,7 +109,7 @@ float biomeViewDepth(vec3 worldPos) {
 // fragment path would sample anyway — and textureGrad is the only explicit-lod
 // form GLSL defines for a sampler2DArrayShadow, textureLod having no such
 // overload.
-float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3 lightDir) {
+float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3 lightDir, float spread) {
     vec4 posLS = cascadeMatrix[matIdx] * vec4(worldPos, 1.0);
     vec3 projCoords = posLS.xyz / posLS.w;
     projCoords = projCoords * 0.5 + 0.5;
@@ -121,7 +123,7 @@ float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3
     // Same quadratic slope-scaled bias as fragment.glsl's sampleCascade.
     float base = cascadeBias[matIdx];
     float cosTheta = abs(dot(normal, lightDir));
-    float bias = base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05;
+    float bias = (base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05) * spread;
     float currentDepth = projCoords.z;
 
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMapArray, 0).xy);
@@ -137,7 +139,7 @@ float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3
     for (int x = -BIOME_LIGHT_PCF; x <= BIOME_LIGHT_PCF; x++) {
         for (int y = -BIOME_LIGHT_PCF; y <= BIOME_LIGHT_PCF; y++) {
             lit += textureGrad(shadowMapArray,
-                vec4(projCoords.xy + vec2(x, y) * texelSize, float(layer), ref),
+                vec4(projCoords.xy + vec2(x, y) * texelSize * spread, float(layer), ref),
                 vec2(0.0), vec2(0.0));
             taps += 1.0;
         }
@@ -150,8 +152,6 @@ float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3
 // cross-faded into the next one at the split if BIOME_LIGHT_CASCADE_BLEND is
 // set (see the header note), faded out as the shadow range runs out.
 float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir) {
-    int layerBase = dirLightShadowLayer[lightIdx];
-    if (layerBase < 0) {
     // The sun's virtual shadow map, when the frame drew one for this light
     // (vsm.glsl, render/vsm.go), faded out at the end of the shadow distance
     // as the cascades are below.
@@ -161,6 +161,8 @@ float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, 
         return vsmShadow(worldPos, normal, lightDir) *
             (1.0 - clamp((viewDepth - vsmFadeBegin) / max(vsmMaxDist - vsmFadeBegin, 1e-4), 0.0, 1.0));
     }
+    int layerBase = dirLightShadowLayer[lightIdx];
+    if (layerBase < 0) {
         return 0.0;
     }
 
@@ -176,17 +178,31 @@ float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, 
     }
 
     int matBase = lightIdx * SHADOW_CASCADES;
-    float shadow = biomeSampleCascade(matBase + c, layerBase + c, worldPos, normal, lightDir);
+    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
+    float span = max(cascadeSplit[c] - prev, 1e-4);
+    float t = (viewDepth - prev) / span;
+    // fragment.glsl's cascadeSpread, so a ground patch's shadow edge softens
+    // with distance exactly as the floor beside it does. Moot unfiltered.
+    float spread = 1.0;
+#if BIOME_LIGHT_PCF != 0
+    if (c + 1 < SHADOW_CASCADES) {
+        float own = max(cascadeTexel[matBase + c], 1e-5);
+        spread = mix(1.0, max(cascadeTexel[matBase + c + 1] / own, 1.0), smoothstep(0.25, 1.0, t));
+    }
+#endif
+    float shadow = biomeSampleCascade(matBase + c, layerBase + c, worldPos, normal, lightDir, spread);
+    bool fellThrough = false;
     if (shadow < 0.0) {
         // A point at the corner of a slice can sit just outside its own
         // cascade's box; the next one out always contains it.
         if (c + 1 < SHADOW_CASCADES) {
             c += 1;
-            shadow = biomeSampleCascade(matBase + c, layerBase + c, worldPos, normal, lightDir);
+            shadow = biomeSampleCascade(matBase + c, layerBase + c, worldPos, normal, lightDir, 1.0);
         }
         if (shadow < 0.0) {
             return 0.0;
         }
+        fellThrough = true;
     }
 
 #ifdef BIOME_LIGHT_CASCADE_BLEND
@@ -194,13 +210,10 @@ float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, 
     // reads as a softening rather than a seam — fragment.glsl's calcDirShadow
     // does exactly this, and the ground patch has to agree with it where the
     // two surfaces meet.
-    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
-    float span = max(cascadeSplit[c] - prev, 1e-4);
-    float t = (viewDepth - prev) / span;
-    if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
-        float next = biomeSampleCascade(matBase + c + 1, layerBase + c + 1, worldPos, normal, lightDir);
+    if (!fellThrough && c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
+        float next = biomeSampleCascade(matBase + c + 1, layerBase + c + 1, worldPos, normal, lightDir, 1.0);
         if (next >= 0.0) {
-            shadow = mix(shadow, next, (t - (1.0 - SHADOW_CASCADE_BLEND)) / SHADOW_CASCADE_BLEND);
+            shadow = mix(shadow, next, smoothstep(1.0 - SHADOW_CASCADE_BLEND, 1.0, t));
         }
     }
 #endif

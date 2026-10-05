@@ -30,6 +30,11 @@ import (
 )
 
 func main() {
+	// Setup running itself to ask the graphics driver what it offers; see
+	// graphics_windows.go.
+	if len(os.Args) == 2 && os.Args[1] == probeGraphicsFlag {
+		runGraphicsProbe()
+	}
 	silent := flag.Bool("silent", false, "install or uninstall without asking anything")
 	desktop := flag.Bool("desktop", false, "with -silent, also put a shortcut on the desktop")
 	dir := flag.String("dir", "", `install a fresh copy here instead of in %LOCALAPPDATA%\Programs`)

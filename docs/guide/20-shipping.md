@@ -341,6 +341,25 @@ Without the variable, neither key does anything, so a player never sees it.
 
 [Testing and debugging](19-testing-and-debugging.md) has the details.
 
+### When the game will not start
+
+Every startup failure is put in a message box that says what went wrong and
+where the log is: `%APPDATA%\<data dir>\foundry.log`, or the same name in
+`%TEMP%` if that folder cannot be written. Go's own crash reports (a panic on
+any goroutine, a fault in C code) go to the same file.
+
+- **"OpenGL 4.3 is required" / "could not create an OpenGL window"**: the
+  machine has no vendor graphics driver. Windows on its own offers OpenGL 1.1
+  ("GDI Generic", "Microsoft Basic Render Driver"). Install the NVIDIA, AMD or
+  Intel driver; on a VM, turn on 3D acceleration. Setup checks this when it
+  installs, names the graphics card, and offers the maker's download page.
+- **No window, no message box, no log**: Windows could not load a DLL the game
+  imports, which happens before any of the game's code runs. The pack refuses
+  to build a Windows tree whose program imports a DLL that neither Windows nor
+  the tree provides, and it takes `SDL2.dll` from the editor's `runtimes/` when
+  the project has none, so a current build should never do this. Started from
+  Explorer, Windows names the missing file.
+
 ## Checklist
 
 1. `resources/game.yaml` names the real `start_level`, not the default

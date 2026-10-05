@@ -1,0 +1,10 @@
+base_note: C-2
+loop: forward
+loop_start: 4800
+loop_end: 100204
+tags:
+- bass
+- pulse
+- pwm
+- analog
+description: 25% pulse with slow pulse-width modulation

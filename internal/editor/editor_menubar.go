@@ -55,6 +55,7 @@ const (
 	editorKindMaterial
 	editorKindUI
 	editorKindAI
+	editorKindTracker
 )
 
 // editorSwitchTarget is one entry of the switcher strip.
@@ -99,6 +100,9 @@ func editorSwitchTargets() []editorSwitchTarget {
 			"Draw behaviours as decision trees (.fai) — what an agent does about\n" +
 				"what happens to it. Give one to an entity type with `ai_tree:`;\n" +
 				"the `ai:` block beside it still says how it moves."},
+		{editorKindTracker, "Tracker", TrackerEditorOpen, OpenTrackerEditorWindow,
+			"Compose music (.ftrk) — patterns, instruments and samples, with\n" +
+				"sections and params a script can steer. Play one with play_music."},
 	}
 }
 

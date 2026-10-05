@@ -49,6 +49,12 @@ vars:
   # -H windowsgui suppresses the console window that would otherwise open
   # behind the game. The engine logs to a file for exactly this reason (app.go).
   WINDOWS_LDFLAGS: '{{.RELEASE_LDFLAGS}} -H windowsgui'
+  # Every cgo build for Windows links mingw's own runtime in. Left dynamic, the
+  # exe imports libgcc_s_seh-1.dll and libstdc++-6.dll (imgui is C++), which no
+  # Windows machine has unless a mingw toolchain is on its PATH — so it ran on
+  # the machine that built it and nowhere else. pack.CheckImports refuses a
+  # Windows pack that would need either.
+  WINDOWS_STATIC: -extldflags "-static-libgcc -static-libstdc++"
 
   PRUNE_FLAG: '{{if eq .PRUNE "1"}}-prune{{end}}'
 
@@ -71,6 +77,7 @@ vars:
     -runtime {{.EDITOR_RUNTIMES}}/foundry-release-windows-amd64.exe
     -runtime {{.EDITOR_RUNTIMES}}/foundry-release-linux-amd64
     -runtime {{.EDITOR_RUNTIMES}}/foundry-setup-windows-amd64.exe
+    -runtime resources/SDL2.dll
 
 tasks:
   default:
@@ -99,7 +106,7 @@ tasks:
       # 	cp -r resources/* /mnt/c/Users/jcart/OneDrive/Documents/Foundry
       # 	cp resources/SDL2.dll /mnt/c/Users/jcart/OneDrive/Documents/Foundry/SDL2.dll
       # 	cp foundrypack /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundrypack
-      - GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc go build -x -v -o /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundry.exe ./cmd/foundry
+      - GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc go build -x -v -ldflags '{{.WINDOWS_STATIC}}' -o /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundry.exe ./cmd/foundry
       # The shaders go with the binary: the engine binds uniforms and attribute
       # locations they declare, so an exe newer than its shaders renders wrong
       # (dynamic lights, explosions). Only the shaders — the rest of resources/
@@ -114,7 +121,7 @@ tasks:
       - rm -rf dist || true
       - mkdir dist
       - cp resources/SDL2.dll dist/SDL2.dll
-      - env CGO_ENABLED="1" CC="/usr/bin/x86_64-w64-mingw32-gcc" GOOS="windows" CGO_LDFLAGS="-lmingw32 -lSDL2" CGO_CFLAGS="-D_REENTRANT" go build -v -o dist/foundry -x ./cmd/foundry
+      - env CGO_ENABLED="1" CC="/usr/bin/x86_64-w64-mingw32-gcc" GOOS="windows" CGO_LDFLAGS="-lmingw32 -lSDL2" CGO_CFLAGS="-D_REENTRANT" go build -v -ldflags '{{.WINDOWS_STATIC}}' -o dist/foundry -x ./cmd/foundry
 
   run-linux:
     desc: Run the editor built into dist/.
@@ -199,7 +206,7 @@ tasks:
       - >-
         GOOS=windows GOARCH=amd64 CGO_ENABLED=1
         CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
-        go build -tags {{.RELEASE_TAGS}} -ldflags "{{.WINDOWS_LDFLAGS}}" -o {{.RUNTIMES_DIR}}/foundry-release-windows-amd64.exe ./cmd/foundry
+        go build -tags {{.RELEASE_TAGS}} -ldflags '{{.WINDOWS_LDFLAGS}} {{.WINDOWS_STATIC}}' -o {{.RUNTIMES_DIR}}/foundry-release-windows-amd64.exe ./cmd/foundry
       # The installer every Windows release is appended to (internal/setup).
       # Pure Go, so no mingw.
       - >-
@@ -259,7 +266,7 @@ tasks:
       - >-
         GOOS=windows GOARCH=amd64 CGO_ENABLED=1
         CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
-        go build -o {{.BUILD_DIR}}/foundry-editor-windows.exe ./cmd/foundry
+        go build -ldflags '{{.WINDOWS_STATIC}}' -o {{.BUILD_DIR}}/foundry-editor-windows.exe ./cmd/foundry
       - >-
         {{.EDITOR_PACK}} -goos windows -exe {{.BUILD_DIR}}/foundry-editor-windows.exe
         -lib resources/SDL2.dll -setup-stub {{.EDITOR_RUNTIMES}}/foundry-setup-windows-amd64.exe
@@ -312,7 +319,7 @@ tasks:
       - >-
         GOOS=windows GOARCH=amd64 CGO_ENABLED=1
         CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
-        go build -tags {{.RELEASE_TAGS}} -ldflags "{{.WINDOWS_LDFLAGS}}" -o {{.BUILD_DIR}}/foundry-release.exe ./cmd/foundry
+        go build -tags {{.RELEASE_TAGS}} -ldflags '{{.WINDOWS_LDFLAGS}} {{.WINDOWS_STATIC}}' -o {{.BUILD_DIR}}/foundry-release.exe ./cmd/foundry
       - go run ./cmd/foundrypack -goos windows -exe {{.BUILD_DIR}}/foundry-release.exe -out {{.WINDOWS_STAGE}} {{.PRUNE_FLAG}}
       - 'echo "release-windows: staged in {{.WINDOWS_STAGE}}"'
 

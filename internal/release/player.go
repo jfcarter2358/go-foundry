@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/levelio"
 	"foundry/internal/pack"
 )
 
@@ -48,7 +49,59 @@ func PlayerFileName(p Platform) string {
 
 // PrebuiltPlayer is where a platform's prebuilt game binary is expected.
 func PrebuiltPlayer(root string, p Platform) string {
-	return runtimeFile(root, PlayerFileName(p))
+	name := PlayerFileName(p)
+	own := filepath.Join(root, RuntimesDirName, name)
+	// A project's own player wins, except over the editor's when it cannot
+	// read the levels this editor compiles — a runtimes/ copied in from an
+	// older Foundry and forgotten. See StalePlayer.
+	if fileutil.ExecutablePath != "" && StalePlayer(own) != "" {
+		editor := filepath.Join(fileutil.ExecutablePath, RuntimesDirName, name)
+		if _, err := os.Stat(editor); err == nil && StalePlayer(editor) == "" {
+			return editor
+		}
+	}
+	return runtimeFile(root, name)
+}
+
+// PlayerLevelVersion reads the compiled-level version a game binary loads
+// from its levelio.CompiledVersionStamp. ok is false for a binary with no
+// stamp: one built before the stamp existed (format 9), which is older than
+// any compiler that writes it.
+func PlayerLevelVersion(path string) (version int, ok bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	prefix := []byte(strings.TrimSuffix(levelio.CompiledVersionStamp, fmt.Sprint(levelio.CompiledVersion)+";"))
+	i := bytes.Index(data, prefix)
+	if i < 0 {
+		return 0, false
+	}
+	rest := data[i+len(prefix):]
+	end := bytes.IndexByte(rest, ';')
+	if end <= 0 || end > 6 {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(string(rest[:end]), "%d", &version); err != nil {
+		return 0, false
+	}
+	return version, true
+}
+
+// StalePlayer says why the game binary at path cannot load the levels this
+// program compiles, or "" when it can (or is not there to ask).
+func StalePlayer(path string) string {
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	v, ok := PlayerLevelVersion(path)
+	switch {
+	case !ok:
+		return fmt.Sprintf("%s is from an older Foundry and cannot load levels compiled by this editor (format %d)", path, levelio.CompiledVersion)
+	case v != levelio.CompiledVersion:
+		return fmt.Sprintf("%s loads compiled levels of format %d, and this editor compiles format %d", path, v, levelio.CompiledVersion)
+	}
+	return ""
 }
 
 // runtimeFile finds a file in the project's runtimes/, or else in the one
@@ -141,9 +194,11 @@ func BuildPlayer(ctx context.Context, src string, p Platform, out string, w io.W
 
 	// -s -w drop the symbol table and DWARF. -H windowsgui keeps a console
 	// window from opening behind the game; the engine logs to a file instead.
+	// The static mingw runtime is the Taskfile's WINDOWS_STATIC: without it the
+	// game needs libgcc/libstdc++ DLLs no player has.
 	ldflags := "-s -w"
 	if p.GOOS == "windows" {
-		ldflags += " -H windowsgui"
+		ldflags += ` -H windowsgui -extldflags "-static-libgcc -static-libstdc++"`
 	}
 	return goBuildEngine(ctx, goTool, src, p, absOut, w, "-tags", "release", "-ldflags", ldflags)
 }

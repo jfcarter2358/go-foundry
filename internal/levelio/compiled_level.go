@@ -127,6 +127,14 @@ const CompiledExt = ".fbsp"
 // full detail at any distance.
 const CompiledVersion = 9
 
+// CompiledVersionStamp is CompiledVersion spelled where a release build can
+// find it in a game binary's bytes (release.PlayerLevelVersion): a prebuilt
+// player left in a project's runtimes/ from an older Foundry would otherwise
+// ship, refuse every level the editor compiled, and close on the player. It is
+// a literal because Go cannot format a constant at compile time; a test holds
+// it to CompiledVersion, and ReadCompiledLevel uses it so the linker keeps it.
+const CompiledVersionStamp = "FOUNDRY-FBSP-VERSION=9;"
+
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure
 // halfway through.
@@ -295,8 +303,8 @@ func ReadCompiledLevel(path string) (*CompiledLevel, error) {
 		return nil, fmt.Errorf("decoding compiled level: %w", err)
 	}
 	if f.Version != CompiledVersion {
-		return nil, fmt.Errorf("%s was compiled by version %d of the compiler; this build wants %d — recompile the level",
-			path, f.Version, CompiledVersion)
+		return nil, fmt.Errorf("%s was compiled by version %d of the compiler; this build wants %d (%s) — recompile the level, or rebuild the game binary with the editor that compiled it",
+			path, f.Version, CompiledVersion, CompiledVersionStamp)
 	}
 	c := CompiledLevel{
 		Version:  f.Version,

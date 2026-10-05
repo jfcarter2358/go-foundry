@@ -55,6 +55,7 @@ and is always current.
 | [Sprites and particles](15-sprites-and-particles.md) | Billboards, the particle editor, and explosion effects |
 | [Decals](29-decals.md) | Textures projected onto the level's surfaces: posters, stencils, scorch marks, bullet holes |
 | [Audio](16-audio.md) | Placed sounds, music, attenuation, the mixer settings |
+| [Music tracker](31-music-tracker.md) | Songs as patterns and samples, the Tracker editor, steering music from scripts, the sample library |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
 | [Saves and checkpoints](26-saves-and-checkpoints.md) | Checkpoint volumes, Retry, save slots, per-level save mode |

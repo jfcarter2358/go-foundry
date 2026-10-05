@@ -759,6 +759,11 @@ type RawMusic struct {
 	Loop  *bool    `yaml:"loop,omitempty"` // default true
 	// Fade is the crossfade in seconds when a script switches track.
 	Fade float32 `yaml:"fade,omitempty"`
+	// Section is where a tracker song (sounds/<track>.ftrk) starts. Ignored
+	// for a recording.
+	Section string `yaml:"section,omitempty"`
+	// Params sets a tracker song's params (0..1) before it starts.
+	Params map[string]float32 `yaml:"params,omitempty"`
 }
 
 // RawCompile is a level's own compile settings (Level.LightGrid). A zero

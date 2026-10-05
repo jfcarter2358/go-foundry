@@ -57,6 +57,7 @@ var textExts = map[string]bool{
 	".fmdl":  true, // models, which name the skeleton they are rigged to
 	".fskl":  true, // skeletons, whose clips name nothing but are scanned for consistency
 	".flang": true,
+	".ftrk":  true, // tracker songs, which name their library samples
 	".obj":   true, // model source, names its .mtl
 	".mtl":   true, // and that names its textures
 }
@@ -122,6 +123,12 @@ func referenceNames(slash string) []string {
 		inner := slash[i+1:]
 		names = append(names, inner, strings.TrimSuffix(inner, filepath.Ext(inner)))
 	}
+	// A library sample is named by songs relative to the library root —
+	// "drums/kick_808" for sounds/samples/drums/kick_808.wav — and its .fsmp
+	// sidecar answers to the same names, so the two always ship together.
+	if rel, ok := strings.CutPrefix(slash, trackerSamplesDir); ok {
+		names = append(names, rel, strings.TrimSuffix(rel, filepath.Ext(rel)))
+	}
 	// A normal map is never named by content: the engine derives its name from
 	// the albedo's and loads it alongside (gfx.ensureNormalMapLoaded). So it
 	// answers to the albedo's names too — otherwise every texture's relief
@@ -144,6 +151,9 @@ func referenceNames(slash string) []string {
 // cubemapFaceSuffixes mirror world.SkyFaceSuffix, spelled out here for the
 // same reason as LevelSourceExt: this tool does not depend on the engine.
 var cubemapFaceSuffixes = []string{"_px", "_nx", "_py", "_ny", "_pz", "_nz"}
+
+// trackerSamplesDir mirrors tracker.SamplesDir under the content root.
+const trackerSamplesDir = "sounds/samples/"
 
 // manifestRoots is what a game reaches before any content says anything.
 //

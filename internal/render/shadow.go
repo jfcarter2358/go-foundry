@@ -45,9 +45,14 @@ const shadowSplitNear = 1.0
 // ShadowCascadeBlend is the fraction of a cascade's depth range over which it
 // cross-fades into the next one, hiding the resolution seam at the split. Each
 // cascade's box is extended back over the preceding blend band so both
-// cascades hold valid depth there. fragment.glsl mirrors this as
-// SHADOW_CASCADE_BLEND; change both together.
-const ShadowCascadeBlend = 0.12
+// cascades hold valid depth there. fragment.glsl and biome_light.glsl mirror
+// this as SHADOW_CASCADE_BLEND; change all three together.
+//
+// A quarter: at 0.12 the band was 3.6 m at the first split and the hand-over
+// read as a line across the ground. The filter matching (DirCascade.Texel)
+// does most of the work; the band only has to hide the difference in depth
+// resolution that is left.
+const ShadowCascadeBlend = 0.25
 
 // shadowFadeFraction is the fraction of ShadowMaxDistance over which the shadow
 // term fades to zero as it approaches the limit. Applied by fragment.glsl, which
@@ -364,6 +369,12 @@ func cubeFaceViews(pos mgl32.Vec3) [6]mgl32.Mat4 {
 type DirCascade struct {
 	Matrix mgl32.Mat4
 	Bias   float32 // ShadowWorldBias expressed in this cascade's depth range
+	// Texel is one texel of this cascade in world units. Each cascade's box is
+	// several times the last one's, so a fixed filter footprint in texels made
+	// shadow edges jump that many times softer at every split; the shaders
+	// widen a cascade's filter toward the next one's texel as the split nears
+	// (cascadeTexel), so the two agree where they hand over.
+	Texel float32
 }
 
 // DirShadow is a directional light's full cascade set. BaseLayer indexes the
@@ -385,6 +396,9 @@ type ShadowFrame struct {
 	// (fragment.glsl, bakedSunLight). A zero frame has neither.
 	BakedSunCast bool
 	BakedSun     int
+	// VSM is the sun's virtual shadow map when this frame drew one in place
+	// of that light's cascades (vsm.go); nil otherwise.
+	VSM *VSMFrame
 }
 
 // newShadowFrame returns a frame with every light marked as non-casting, so the
@@ -396,9 +410,6 @@ func newShadowFrame(numDir int, near float32) ShadowFrame {
 	}
 	for i := range f.Lights {
 		f.Lights[i].BaseLayer = -1
-	// VSM is the sun's virtual shadow map when this frame drew one in place
-	// of that light's cascades (vsm.go); nil otherwise.
-	VSM *VSMFrame
 		for c := range f.Lights[i].Cascades {
 			f.Lights[i].Cascades[c].Matrix = mgl32.Ident4()
 		}
@@ -551,6 +562,9 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 		numDir = world.MaxDirLights
 	}
 	frame := newShadowFrame(len(lights.Directional), near)
+	// The sun's virtual shadow map, drawn in place of its cascades (vsm.go,
+	// Nanite Phase 5): the light it took, or -1.
+	vsmLight := vsmShadowPass(lights, level, view, projection, &frame)
 
 	shadowCount := 0
 	for i := 0; i < numDir; i++ {
@@ -562,9 +576,6 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	if shadowCount == 0 || Shadows.CascadeArray == 0 {
 		return frame
 	}
-	// The sun's virtual shadow map, drawn in place of its cascades (vsm.go,
-	// Nanite Phase 5): the light it took, or -1.
-	vsmLight := vsmShadowPass(lights, level, view, projection, &frame)
 	// A compiled level's baked surfaces carry the sun's share, and swap it
 	// for the sun these cascades shadow (see ShadowFrame.BakedSun).
 	if level != nil && level.Static != nil {
@@ -595,7 +606,9 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			sliceNear := cascadeSliceNear(c, near, frame.Splits)
 			corners := frustumSliceCorners(view, tanHalfV, aspect, sliceNear, frame.Splits[c])
 			lsm, depth := CascadeLightMatrix(dl.Direction, corners)
-			frame.Lights[i].Cascades[c] = DirCascade{Matrix: lsm, Bias: ShadowWorldBias / depth}
+			// The box is 2r across, r being what the depth was built from.
+			texel := (depth - ShadowCasterExtrusion) / ShadowMapSize
+			frame.Lights[i].Cascades[c] = DirCascade{Matrix: lsm, Bias: ShadowWorldBias / depth, Texel: texel}
 
 			gl.FramebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,
 				Shadows.CascadeArray, 0, layer)
@@ -955,6 +968,8 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 			gl.UniformMatrix4fv(uniformLoc(matName), 1, false, &m.Matrix[0])
 			biasName := fmt.Sprintf("cascadeBias[%d]\x00", idx)
 			gl.Uniform1f(uniformLoc(biasName), m.Bias)
+			texelName := fmt.Sprintf("cascadeTexel[%d]\x00", idx)
+			gl.Uniform1f(uniformLoc(texelName), m.Texel)
 		}
 	}
 	// The clouds' shadow rides here because every program that can read it
@@ -962,6 +977,8 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 	// same reason (gi.go).
 	uploadCloudShadowTo(prog)
 	uploadGITo(prog)
+	// And the sun's virtual shadow map, or word that there is none (vsm.go).
+	uploadVSMTo(prog, frame)
 	gl.ActiveTexture(gl.TEXTURE0)
 }
 
@@ -977,8 +994,6 @@ func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
 
 	baseUnit := int32(CascadeTexUnit + 1) // unit 0 = albedo, unit 1 = dir cascade array
-	// And the sun's virtual shadow map, or word that there is none (vsm.go).
-	uploadVSMTo(prog, frame)
 
 	// Bind the dummy cubemap to ALL pointShadowMap slots (not just active
 	// lights) so that every samplerCube uniform references a unit with a valid

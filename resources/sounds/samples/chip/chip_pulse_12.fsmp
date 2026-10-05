@@ -1,0 +1,10 @@
+base_note: C-4
+loop: forward
+loop_start: 4035
+loop_end: 18346
+tags:
+- chip
+- pulse
+- nes
+- 8bit
+description: 'NES pulse at 12.5% duty: thin and nasal'

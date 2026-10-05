@@ -136,7 +136,7 @@ uniform int   dirLightDynamic[MAX_DIR_LIGHTS];
 // SHADOW_CASCADES, SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION must match
 // ShadowCascades / ShadowCascadeBlend / shadowFadeFraction in shadow.go.
 #define SHADOW_CASCADES       3
-#define SHADOW_CASCADE_BLEND  0.12
+#define SHADOW_CASCADE_BLEND  0.25
 #define SHADOW_FADE_FRACTION  0.15
 
 // One array texture holds every cascade of every casting light — MAX_DIR_LIGHTS
@@ -149,6 +149,8 @@ uniform int   dirLightDynamic[MAX_DIR_LIGHTS];
 uniform sampler2DArrayShadow shadowMapArray;
 uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+// One texel of each cascade in world units (render.DirCascade.Texel).
+uniform float cascadeTexel[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeSplit[SHADOW_CASCADES]; // view-space distance each cascade ends at
 uniform int   dirLightShadowLayer[MAX_DIR_LIGHTS]; // first array layer, -1 = light doesn't cast
 uniform bool  dirLightCastShadows[MAX_DIR_LIGHTS];
@@ -242,10 +244,11 @@ mat3 cotangentFrame(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
     return mat3(T * invmax, B * invmax, N);
 }
 
-// 5x5 PCF sample of a single cascade layer. Returns occlusion in 0..1, or -1.0
-// when the fragment falls outside this cascade's box — the caller then falls
-// through to a wider cascade rather than reporting the fragment as lit.
-float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal, vec3 lightDir) {
+// 5x5 PCF sample of a single cascade layer, its taps spread texels apart.
+// Returns occlusion in 0..1, or -1.0 when the fragment falls outside this
+// cascade's box — the caller then falls through to a wider cascade rather than
+// reporting the fragment as lit.
+float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal, vec3 lightDir, float spread) {
     vec4 posLS = cascadeMatrix[matIdx] * vec4(fragWorldPos, 1.0);
     vec3 projCoords = posLS.xyz / posLS.w;
     projCoords = projCoords * 0.5 + 0.5;
@@ -261,7 +264,10 @@ float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal
     // over its own depth range.
     float base = cascadeBias[matIdx];
     float cosTheta = abs(dot(normal, lightDir));
-    float bias = base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05;
+    // Scaled by the spread: a tap further out along a slope reads a depth
+    // that much further from this fragment's, and would shadow the surface
+    // it stands on.
+    float bias = (base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05) * spread;
     float currentDepth = projCoords.z;
 
     // 5x5 PCF for softer edges. Every tap is itself bilinearly filtered by the
@@ -276,7 +282,7 @@ float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal
     for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
             lit += texture(map,
-                vec4(projCoords.xy + vec2(x, y) * texelSize, float(layer), ref));
+                vec4(projCoords.xy + vec2(x, y) * texelSize * spread, float(layer), ref));
         }
     }
     return 1.0 - lit / 25.0;
@@ -290,10 +296,31 @@ float dirShadowReach() {
     return 1.0 - clamp((fragViewDepth - fadeBegin) / max(maxDist - fadeBegin, 1e-4), 0.0, 1.0);
 }
 
+// cascadeSpread is how many of its own texels apart cascade c's PCF taps are,
+// at fraction t of the way through its depth range: one, its own resolution,
+// for the near part of it, widening to the next cascade's texel by the split.
+// Each cascade's texels are several times the last one's, so a fixed
+// footprint in texels made shadow edges jump that much softer at every
+// hand-over; matched like this, the two cascades filter alike where they meet
+// and the edges soften steadily with distance instead.
+float cascadeSpread(int matBase, int c, float t) {
+    if (c + 1 >= SHADOW_CASCADES) {
+        return 1.0;
+    }
+    float own = max(cascadeTexel[matBase + c], 1e-5);
+    float ratio = max(cascadeTexel[matBase + c + 1] / own, 1.0);
+    return mix(1.0, ratio, smoothstep(0.25, 1.0, t));
+}
+
 // calcDirShadowUnfaded is the cascades' shadow at this fragment for light
 // lightIdx, whose cascades in the array start at layerBase (-1: none), before
 // the fade at the end of their range.
 float calcDirShadowUnfaded(int layerBase, int lightIdx, vec3 normal, vec3 lightDir) {
+    // The sun's virtual shadow map, when the frame drew one for this light
+    // in place of its cascades (vsm.glsl, render/vsm.go).
+    if (vsmShadows(lightIdx)) {
+        return vsmShadow(fragWorldPos, normal, lightDir);
+    }
     if (layerBase < 0) {
         return 0.0;
     }
@@ -310,33 +337,31 @@ float calcDirShadowUnfaded(int layerBase, int lightIdx, vec3 normal, vec3 lightD
     }
 
     int matBase = lightIdx * SHADOW_CASCADES;
-    float shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir);
+    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
+    float span = max(cascadeSplit[c] - prev, 1e-4);
+    float t = (fragViewDepth - prev) / span;
+    float shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir,
+        cascadeSpread(matBase, c, t));
     if (shadow < 0.0) {
         // A fragment at the corner of a slice can sit just outside its own
         // cascade's box; the next one out always contains it.
         if (c + 1 < SHADOW_CASCADES) {
             c += 1;
-    // The sun's virtual shadow map, when the frame drew one for this light
-    // in place of its cascades (vsm.glsl, render/vsm.go).
-    if (vsmShadows(lightIdx)) {
-        return vsmShadow(fragWorldPos, normal, lightDir);
-    }
-            shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir);
+            shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir, 1.0);
         }
         if (shadow < 0.0) {
             return 0.0;
         }
+        return shadow;
     }
 
-    // Cross-fade over the tail of this cascade so the jump in texel density
-    // reads as a softening rather than a seam.
-    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
-    float span = max(cascadeSplit[c] - prev, 1e-4);
-    float t = (fragViewDepth - prev) / span;
+    // Cross-fade over the tail of this cascade, so what the filter matching
+    // in cascadeSpread leaves of the change in depth resolution reads as a
+    // softening rather than a seam.
     if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
-        float next = sampleCascade(shadowMapArray, matBase + c + 1, layerBase + c + 1, normal, lightDir);
+        float next = sampleCascade(shadowMapArray, matBase + c + 1, layerBase + c + 1, normal, lightDir, 1.0);
         if (next >= 0.0) {
-            shadow = mix(shadow, next, (t - (1.0 - SHADOW_CASCADE_BLEND)) / SHADOW_CASCADE_BLEND);
+            shadow = mix(shadow, next, smoothstep(1.0 - SHADOW_CASCADE_BLEND, 1.0, t));
         }
     }
 

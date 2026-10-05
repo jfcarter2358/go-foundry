@@ -75,7 +75,13 @@ func (m *mixer) render(dst []float32, frames int) {
 		if v.bus == BusMusic {
 			bus = musicGain
 		}
-		if finished := m.mixVoice(v, out, frames, listener, listenerVel, bus); finished {
+		var finished bool
+		if v.gen != nil {
+			finished = m.mixGenerator(v, out, frames, bus)
+		} else {
+			finished = m.mixVoice(v, out, frames, listener, listenerVel, bus)
+		}
+		if finished {
 			m.freeVoice(i)
 		}
 	}

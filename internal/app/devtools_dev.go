@@ -32,6 +32,7 @@ import (
 	"foundry/internal/release"
 	"foundry/internal/render"
 	"foundry/internal/sim"
+	"foundry/internal/tracker/trackercli"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
 
@@ -88,6 +89,8 @@ func devWireframe() bool {
 //   - `nanite cook/inspect/sample` cooks a dense mesh (glTF, OBJ, .fmdl) into
 //     a Nanite mesh (.fnm, internal/nanite; the cook is internal/nanitecook)
 //     and reports on one.
+//   - `tracker list/inspect/check/render/samples/new/gen-samples` works on
+//     the music tracker's songs (sounds/*.ftrk) and its sample library.
 //   - `bench` is not a command at all: it fills FOUNDRY_BENCH and lets the
 //     engine boot, because the benchmark measures the real frame in the real
 //     window and there is nothing headless about it.
@@ -122,6 +125,8 @@ func devRunCommand(args []string) (exitCode int, ran bool) {
 		return preview.ModelMain(commandProject(), args[1:], os.Stdout), true
 	case nanitecook.Command:
 		return nanitecook.Main(commandProject(), args[1:], os.Stdout), true
+	case trackercli.Command:
+		return trackercli.Main(commandProject(), args[1:], os.Stdout), true
 	case "bench":
 		// Not handled here: FOUNDRY_BENCH is read during boot (bench.go), so
 		// this sets it and reports "no command ran", which lets the engine start

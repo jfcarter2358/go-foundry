@@ -280,6 +280,9 @@ func openEditors() []openEditor {
 	if AIEditorOpen() {
 		out = append(out, openEditor{"AI", aiEditorDirty, aiSaveCurrent})
 	}
+	if TrackerEditorOpen() {
+		out = append(out, openEditor{"Tracker", trackerEditorDirty, trkSaveCurrent})
+	}
 	if ScriptEditorOpen() {
 		out = append(out, openEditor{"Script", scriptEditorDirty, scriptSaveAllTabs})
 	}

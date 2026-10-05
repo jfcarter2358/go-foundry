@@ -138,7 +138,11 @@ fallback mesh, a few percent of its triangles, rather than from the full detail
 With TAA, the default anti-aliasing, cooked props and a compiled level's
 surfaces are shaded through a visibility buffer: each pixel once, from the
 triangle the GPU cull left nearest there (see
-[Testing and debugging](19-testing-and-debugging.md#anti-aliasing)).
+[Testing and debugging](19-testing-and-debugging.md#anti-aliasing)). Where the
+graphics driver allows it, the parts of a cooked prop that are small on screen
+are drawn into it by a compute rasteriser rather than the hardware's, which is
+faster for triangles of a pixel or two and draws the same picture. A slot whose
+texture has any transparent texel is always left to the hardware.
 
 ### Streaming and the memory budget
 

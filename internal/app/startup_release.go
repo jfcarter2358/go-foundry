@@ -23,6 +23,7 @@ package app
 //     nil-returning default.
 
 import (
+	"fmt"
 	"log"
 
 	"foundry/internal/fileutil"
@@ -85,8 +86,9 @@ func startupConfigure() {
 // which file and why.
 func startupVerify() {
 	if manifestErr != nil {
-		log.Fatalf("%v\n\nThis looks like a broken or incomplete installation: the game's manifest should be %s.",
-			manifestErr, game.Path())
+		fatalStartup(manifestErr.Error(), fmt.Sprintf(
+			"This looks like a broken or incomplete installation: the game's manifest should be %s. Reinstalling the game should fix it.",
+			game.Path()))
 	}
 	log.Printf("game: %s (%s)", manifest.Title, manifest.Version)
 	log.Printf("user data directory: %s", fileutil.StateDir())

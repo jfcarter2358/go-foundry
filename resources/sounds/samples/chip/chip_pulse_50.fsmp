@@ -1,0 +1,10 @@
+base_note: C-4
+loop: forward
+loop_start: 4127
+loop_end: 18438
+tags:
+- chip
+- pulse
+- nes
+- 8bit
+description: 'NES pulse at 50% duty: hollow square'

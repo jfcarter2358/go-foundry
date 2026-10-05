@@ -61,7 +61,10 @@ const (
 
 // PlayRequest is everything needed to start a voice.
 type PlayRequest struct {
-	Clip     *Clip
+	Clip *Clip
+	// Gen, when set, is played instead of Clip: the voice pulls each block from
+	// it rather than reading a decoded buffer. See Generator.
+	Gen      Generator
 	Bus      Bus
 	Gain     float32
 	Pitch    float32
@@ -135,6 +138,7 @@ type voice struct {
 	id     VoiceID
 
 	clip *Clip
+	gen  Generator
 	bus  Bus
 	loop bool
 	prio Priority
@@ -261,7 +265,7 @@ func (m *mixer) drainCommands() {
 func (m *mixer) apply(c command) {
 	switch c.kind {
 	case cmdPlay:
-		if c.req.Clip == nil || c.req.Clip.Frames() == 0 {
+		if c.req.Gen == nil && (c.req.Clip == nil || c.req.Clip.Frames() == 0) {
 			return
 		}
 		// A cap on sustained voices, so a script bug that starts a loop every
@@ -283,6 +287,7 @@ func (m *mixer) apply(c command) {
 			active: true,
 			id:     c.id,
 			clip:   c.req.Clip,
+			gen:    c.req.Gen,
 			bus:    c.req.Bus,
 			loop:   c.req.Loop,
 			prio:   c.req.Priority,

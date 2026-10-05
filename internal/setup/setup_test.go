@@ -16,17 +16,19 @@ import (
 
 // fakeHost is a Windows user profile in a temporary directory.
 type fakeHost struct {
-	root    string
-	ask     func(text string) bool // nil answers yes to everything
-	asked   []string
-	told    []string
-	busy    int  // how many more InUse checks report the game running
-	retry   bool // what Retry answers
-	retried int
-	reg     map[string]map[string]RegistryValue
-	links   map[string]string
-	launch  string
-	inUse   map[string]bool // base names that are always in use
+	graphics GraphicsInfo
+	opened   string
+	root     string
+	ask      func(text string) bool // nil answers yes to everything
+	asked    []string
+	told     []string
+	busy     int  // how many more InUse checks report the game running
+	retry    bool // what Retry answers
+	retried  int
+	reg      map[string]map[string]RegistryValue
+	links    map[string]string
+	launch   string
+	inUse    map[string]bool // base names that are always in use
 }
 
 func newHost(t *testing.T) *fakeHost {
@@ -86,7 +88,8 @@ func (f *fakeHost) InUse(path string) bool {
 }
 
 func (f *fakeHost) Launch(exe, dir string) error { f.launch = exe; return nil }
-
+func (f *fakeHost) ProbeGraphics() GraphicsInfo  { return f.graphics }
+func (f *fakeHost) OpenURL(url string) error     { f.opened = url; return nil }
 
 const stubBytes = "MZ this stands in for the installer program"
 

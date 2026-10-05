@@ -31,6 +31,7 @@ import (
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
+	"foundry/internal/tracker"
 	"foundry/internal/ui"
 	"foundry/internal/world"
 
@@ -101,6 +102,9 @@ type ScriptRuntime struct {
 	lvl   *world.Level
 	cache *refCache
 	host  *levelHost
+
+	// songEvents is reused each frame to drain the level song's events.
+	songEvents []tracker.Event
 
 	// units is one entry per distinct script path, shared by every object that
 	// names it — a hundred barrels of one type parse their script once.

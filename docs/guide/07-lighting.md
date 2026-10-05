@@ -153,8 +153,22 @@ corner of the viewport shows where the selected one points.
 | Cast shadows | |
 | Shadow strength | how dark the shadow is, when casting |
 
-Directional shadows use three cascades — high resolution near the camera, coarser
-further out. You do not configure them per light beyond the on/off and strength.
+In the game (Play, and a release build drawing with TAA), the sun's shadow is a
+**virtual shadow map**: one shadow of very high resolution, cut into small
+pages, of which only the pages something on screen reads are drawn, so a shadow
+edge is about a pixel sharp whether it is two metres away or two hundred. A page
+stays drawn until something that casts into it moves, so a still scene costs
+almost nothing and a character walking through it redraws only the pages under
+it. If a level has more than one shadowing directional light, the sun (the baked
+one in a compiled level, else the first) takes the virtual map and the others
+use three **cascades**: high resolution near the camera, coarser further out.
+The cascades are also what the editor's own 3D view, the MSAA and "off"
+anti-aliasing modes, and `FOUNDRY_NANITE_VSM=0` draw. You do not configure
+either per light beyond the on/off and strength.
+
+A page that has not been drawn yet, in the first frame or two after something
+comes into view, reads a coarser level of the map until its own arrives: a
+softer shadow for a moment, never a missing one within the shadow range.
 
 A directional light has no position and no scale; those rows are absent from the
 panel.
@@ -295,6 +309,8 @@ of the editor settings:
 | `F9` | how many LOD tiers cast at all |
 
 These are engine switches, not level data. They do not save with the level.
+Under the virtual shadow map, `F8` still applies: a page is cast into by the
+scatter when the distance it is read at falls in a cascade `F8` allows.
 
 ## Scripting lights
 

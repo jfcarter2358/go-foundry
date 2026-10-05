@@ -70,6 +70,10 @@ type Options struct {
 	// of the engine the game binary was built from, which an installed editor
 	// carries beside itself (fileutil.EngineShadersDir).
 	Shaders string
+	// LibDirs are searched, in order, for a DLL the Windows program imports
+	// that the project does not supply (imports.go): the runtimes/ folders an
+	// editor install carries SDL2.dll in, so a project need not keep a copy.
+	LibDirs []string
 	// Verbose names every file copied and every asset pruned.
 	Verbose bool
 	// Logf receives progress. Nil means log.Printf.
@@ -125,7 +129,7 @@ func Pack(o Options) (Result, error) {
 		return Result{}, err
 	}
 
-	p := &packer{src: o.Src, out: o.Out, goos: o.GOOS, verbose: o.Verbose, manifest: m, logf: o.Logf, shaders: o.Shaders}
+	p := &packer{src: o.Src, out: o.Out, goos: o.GOOS, verbose: o.Verbose, manifest: m, logf: o.Logf, shaders: o.Shaders, libDirs: o.LibDirs}
 	return p.run(o.Exe, o.ExeName, o.Prune)
 }
 
@@ -154,6 +158,7 @@ type packer struct {
 	manifest game.Manifest
 	logf     func(format string, args ...any)
 	shaders  string
+	libDirs  []string
 
 	copied int
 	bytes  int64
@@ -183,6 +188,15 @@ func (p *packer) run(exePath, exeName string, prune bool) (Result, error) {
 	// IsDevelopmentFile does.
 	if err := p.copyLooseFiles(); err != nil {
 		return Result{}, err
+	}
+	if p.goos == "windows" {
+		exe := filepath.Join(p.out, exeName)
+		if err := p.supplyDLLs(exe, p.libDirs); err != nil {
+			return Result{}, err
+		}
+		if err := checkDLLs(exe, "Put it in the project's runtimes/ folder; SDL2.dll comes with the Foundry editor, in its own runtimes/."); err != nil {
+			return Result{}, err
+		}
 	}
 
 	for _, dir := range alwaysDirs {

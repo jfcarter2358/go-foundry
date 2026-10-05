@@ -97,6 +97,11 @@ func StageEditor(o EditorOptions) (Result, error) {
 			return Result{}, err
 		}
 	}
+	if o.GOOS == "windows" {
+		if err := checkDLLs(filepath.Join(o.Out, o.ExeName), "Pass it with -lib."); err != nil {
+			return Result{}, err
+		}
+	}
 	entries, err := os.ReadDir(o.Shaders)
 	if err != nil {
 		return Result{}, err

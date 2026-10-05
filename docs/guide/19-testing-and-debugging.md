@@ -117,8 +117,32 @@ visibility buffer` with how many materials it shaded; the profiler's rows are
 instead, and `FOUNDRY_TAA_RESOLVE=0` keeps the TAA frame's target but shows it
 unresolved — the pair the renderer's picture tests compare.
 
+Where the driver has 64-bit shader atomics (NVIDIA's GL does), the clusters
+of cooked meshes that are small on screen are drawn by a **compute
+rasteriser** into that visibility buffer instead of by the hardware, which
+is slow on triangles of a pixel or two. The overlay says `Nanite raster:
+compute (64-bit atomics) for clusters under 32 px`, and the profiler adds
+`nanite: sw raster` and `nanite: sw resolve` under `nanite: vis`.
+`FOUNDRY_NANITE_SWRASTER=0` leaves every triangle to the hardware; `=1` turns
+it on even without 64-bit atomics, in a slower two-pass form (for drivers such
+as WSL's that lack them); `FOUNDRY_NANITE_SWRASTER_PX=n` sets the largest
+cluster, in pixels across, it takes.
+
+The sun's **virtual shadow map** (see [Lighting](07-lighting.md)) adds a
+`Sun shadow: virtual` line to the overlay — pages resident, drawn this frame
+and in how many rectangles, and any the page pool had no room for — and the
+profiler rows `vsm` (under `shadows: sun`) and `vsm: mark`.
+`FOUNDRY_NANITE_VSM=0` gives the sun its three cascades back;
+`FOUNDRY_NANITE_VSM_PAGES=n` sizes the page pool (2048 pages of 64 KB by
+default) and `FOUNDRY_NANITE_VSM_RES=r` its resolution, in texels a screen
+pixel across (1 by default; 0.5 needs a quarter of the pages). On WSL's GL
+(Mesa's D3D12 driver) a frame that draws shadow pages waits for the GPU
+afterwards, to step round a driver hang (`FOUNDRY_NANITE_VSM_FINISH=0`
+turns that off, `=1` on everywhere).
+
 A headless shot (`foundry play`'s `shot`) draws the frame sixteen times at the
-same instant before taking it, so the picture is TAA's converged one.
+same instant before taking it, so the picture is TAA's converged one; a
+virtual shadow map has its pages by then.
 
 ### Nanite foliage
 
