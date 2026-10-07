@@ -104,15 +104,21 @@ float vsmSampleLevel(vec3 worldPos, vec3 normal, vec3 lightDir, int l) {
     vec3 p = worldPos + normal * (texel * vsmNormalOffset);
     vec3 ls = vsmRot * (p - vsmCamPos);
     vec2 t = vsmWindowTexel(ls, l);
-    // The filter's bilinear taps reach 1.5 texels each way.
+    // The filter's bilinear taps reach 1.5 texels each way: a page or the
+    // next on each axis (a page is far wider than the filter), so at most
+    // the four pages lo..hi, each read from the table once here. Every tap
+    // below falls on one of them and takes its layer from these, where it
+    // used to read the table again: thirteen fetches a level at worst, now
+    // four, and one where the filter sits inside a page, as it nearly always
+    // does.
     ivec2 lo = ivec2(floor((t - 1.5) / VSM_PAGE_TEXELS));
     ivec2 hi = ivec2(floor((t + 1.5) / VSM_PAGE_TEXELS));
-    for (int y = lo.y; y <= hi.y; y++) {
-        for (int x = lo.x; x <= hi.x; x++) {
-            if (vsmLayer(ivec2(x, y), l) < 0) {
-                return -1.0;
-            }
-        }
+    int l00 = vsmLayer(lo, l);
+    int l10 = hi.x != lo.x ? vsmLayer(ivec2(hi.x, lo.y), l) : l00;
+    int l01 = hi.y != lo.y ? vsmLayer(ivec2(lo.x, hi.y), l) : l00;
+    int l11 = hi.x != lo.x ? (hi.y != lo.y ? vsmLayer(hi, l) : l10) : l01;
+    if (min(min(l00, l10), min(l01, l11)) < 0) {
+        return -1.0;
     }
     float cosTheta = clamp(abs(dot(normal, lightDir)), 0.05, 1.0);
     float slope = min(sqrt(1.0 - cosTheta * cosTheta) / cosTheta, 8.0);
@@ -123,7 +129,9 @@ float vsmSampleLevel(vec3 worldPos, vec3 normal, vec3 lightDir, int l) {
             vec2 tt = t + vec2(x, y);
             ivec2 pg = ivec2(floor(tt / VSM_PAGE_TEXELS));
             vec2 uv = (tt - vec2(pg) * VSM_PAGE_TEXELS) / VSM_PAGE_TEXELS;
-            lit += vsmCompare(uv, float(vsmLayer(pg, l)), ref);
+            bvec2 up = greaterThan(pg, lo);
+            int layer = up.y ? (up.x ? l11 : l01) : (up.x ? l10 : l00);
+            lit += vsmCompare(uv, float(layer), ref);
         }
     }
     return 1.0 - lit / 9.0;

@@ -20,6 +20,7 @@ package model
 import (
 	"foundry/internal/geom"
 	"sort"
+	"sync/atomic"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -98,6 +99,10 @@ type ModelDoc struct {
 	// editor's visibility pass — compares it to know whether the mesh it was
 	// computed from is still the mesh on screen.
 	rev uint64
+	// poseRig caches the pose-independent half of PoseMatrices/PoseDeltas
+	// (model_pose_cache.go). It validates itself against the bones on every
+	// use, so no edit path has to remember to clear it.
+	poseRig atomic.Pointer[poseRig]
 }
 
 // SetTexture repoints the whole model at tex. The empty string is a real

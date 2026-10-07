@@ -15,8 +15,10 @@ package nav
 // that has something asking for a path.
 
 import (
+	"bytes"
 	"math"
 	"sync"
+	"unsafe"
 
 	"foundry/internal/meshcollide"
 	"foundry/internal/world"
@@ -358,54 +360,151 @@ func navigable(lvl *world.Level, ch *world.Chunk) bool {
 // are there, where they are placed, and the corners of every static solid in
 // them.
 //
-// It runs every frame, over every corner of every static solid, so it is
-// FNV-1a taken a 32-bit word at a time and written out inline. Fed through
-// hash.Hash four bytes per call it was most of what the AI cost on a
-// three-thousand-brush level with nothing moving; the answer is still a pure
-// function of the same data, so an edit anywhere still changes it.
+// It runs every frame, and on a level whose shape has not changed — nearly
+// every frame of play — the hash it gives is the one it gave last time. So
+// rather than hash, it compares: every word the hash is taken over is laid
+// down in a stream (sigWords) and the stream is checked against the one the
+// last hash was taken over, and only a stream that differs anywhere is hashed
+// again. The hash is FNV-1a a 32-bit word at a time over the stream — the
+// same value it has always been, word for word.
+//
+// Why compare rather than trust a counter: a vertex can be edited in place —
+// the editor's drags write b.Verts directly, and nothing that does so is made
+// to bump world.BrushMeshGeneration first (a memo keyed on that was tried and
+// missed TestSyncRebuildsWhenTheShapeChanges). Laying the stream down reads
+// every corner as hashing did, so a moved corner is still seen on the very
+// frame it is moved; corner runs are copied whole and the stream compared as
+// one block of memory, which the runtime does many words a cycle where FNV's
+// multiply chain took several cycles a word.
+//
+// A face's index count is the one thing not read afresh, because reading it
+// was nearly all of the cost: a BrushFace is most of a kilobyte, so the count
+// of each is a cache line (and on a big level a TLB entry) of its own, twenty
+// thousand of them a frame. What it relies on instead — the invariant — is
+// that a brush's faces are never re-indexed in place: an edit that changes
+// how many corners a face has hands the brush a new Faces array (the editor's
+// mesh operations, a level load, an undo) or changes how many faces it has,
+// and BrushMesh.Load rebuilds geometry inside the array it was given without
+// touching Indices. So a brush whose Faces is the very array, at the same
+// length, that it was last frame has the same counts it had, and they are
+// copied from last frame's stream. sigMemo.runs holds every array it vouches
+// for, so none can be freed and another allocated at its address while the
+// memo still names it.
 func Signature(lvl *world.Level) uint64 {
+	sigMemo.Lock()
+	defer sigMemo.Unlock()
+	clear(sigMemo.spareRuns[:cap(sigMemo.spareRuns)])
+	cur, runs := sigWords(lvl, sigMemo.spare[:0], sigMemo.last, sigMemo.runs, sigMemo.spareRuns[:0])
+	// runs locate counts in cur; when cur matches last they locate them in
+	// last just as well, so either way they go with what is kept as last.
+	sigMemo.spareRuns, sigMemo.runs = sigMemo.runs, runs
+	if sigMemo.valid && sameWords(cur, sigMemo.last) {
+		sigMemo.spare = cur
+		return sigMemo.hash
+	}
+	sigMemo.spare, sigMemo.last = sigMemo.last, cur
+	sigMemo.hash, sigMemo.valid = fnvWords(cur), true
+	return sigMemo.hash
+}
+
+// sigMemo is the stream Signature last hashed and the hash it gave, and a
+// second buffer the next stream is laid down in, so neither is reallocated
+// from one frame to the next. Guarded, since Signature is exported and pure
+// to its callers: two goroutines asking at once must not share a buffer.
+var sigMemo struct {
+	sync.Mutex
+	last, spare []uint32
+	// runs is, for each solid brush in the order last lays them down, the
+	// Faces array whose index counts it holds and where they start.
+	runs, spareRuns []faceRun
+	hash            uint64
+	valid           bool
+}
+
+// faceRun is one brush's face index counts in a signature stream: one word a
+// face, starting at at, read from faces.
+type faceRun struct {
+	faces []world.BrushFace
+	at    int
+}
+
+// sameWords compares two runs of words as bytes, which the runtime does with
+// vector loads.
+func sameWords(a, b []uint32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	ab := unsafe.Slice((*byte)(unsafe.Pointer(&a[0])), len(a)*4)
+	bb := unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), len(b)*4)
+	return bytes.Equal(ab, bb)
+}
+
+// vertWords is a brush's corners as the words their float bits are: X, Y, Z
+// of each in turn, as they sit in memory.
+func vertWords(v []mgl32.Vec3) []uint32 {
+	if len(v) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*uint32)(unsafe.Pointer(&v[0])), len(v)*3)
+}
+
+// fnvWords is FNV-1a over a stream of words: each word xored in whole, then
+// one multiply.
+func fnvWords(ws []uint32) uint64 {
 	const prime = 1099511628211
 	h := uint64(14695981039346656037)
-	w := func(v uint32) {
+	for _, v := range ws {
 		h ^= uint64(v)
 		h *= prime
 	}
+	return h
+}
+
+// sigWords appends every word Signature is a hash of to buf, in order, taking
+// a brush's face index counts from last where prev says last has them for
+// the same Faces array, and recording in runs where they are in buf.
+func sigWords(lvl *world.Level, buf, last []uint32, prev, runs []faceRun) ([]uint32, []faceRun) {
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		if !navigable(lvl, ch) {
 			continue
 		}
+		// One word a byte: what hashing the ID's bytes one at a time was.
 		for i := 0; i < len(ch.ID); i++ {
-			h ^= uint64(ch.ID[i])
-			h *= prime
+			buf = append(buf, uint32(ch.ID[i]))
 		}
 		m := ch.ModelMatrix()
 		for _, v := range m {
-			w(math.Float32bits(v))
+			buf = append(buf, math.Float32bits(v))
 		}
-		w(uint32(len(ch.Brushes)))
+		buf = append(buf, uint32(len(ch.Brushes)))
 		for bi := range ch.Brushes {
 			b := &ch.Brushes[bi]
 			if !b.Solid || b.Dynamic {
-				w(0xffffffff)
+				buf = append(buf, 0xffffffff)
 				continue
 			}
-			w(uint32(len(b.Verts)))
-			for _, v := range b.Verts {
-				w(math.Float32bits(v.X()))
-				w(math.Float32bits(v.Y()))
-				w(math.Float32bits(v.Z()))
+			buf = append(buf, uint32(len(b.Verts)))
+			buf = append(buf, vertWords(b.Verts)...)
+			buf = append(buf, uint32(len(b.Faces)))
+			at, k := len(buf), len(runs)
+			runs = append(runs, faceRun{faces: b.Faces, at: at})
+			if n := len(b.Faces); n > 0 && k < len(prev) && len(prev[k].faces) == n &&
+				&prev[k].faces[0] == &b.Faces[0] && prev[k].at+n <= len(last) {
+				buf = append(buf, last[prev[k].at:prev[k].at+n]...)
+				continue
 			}
-			w(uint32(len(b.Faces)))
 			for fi := range b.Faces {
-				w(uint32(len(b.Faces[fi].Indices)))
+				buf = append(buf, uint32(len(b.Faces[fi].Indices)))
 			}
 		}
 		// A terrain's generation moves on every edit (world.Terrain.Touch),
 		// so it stands in for hashing every height every frame.
 		if t := ch.Terrain; t != nil {
-			w(uint32(t.Generation))
-			w(uint32(t.Generation >> 32))
+			buf = append(buf, uint32(t.Generation), uint32(t.Generation>>32))
 		}
 	}
 	// The props navigation rasterises (appendScenerySolids): their mode,
@@ -416,25 +515,20 @@ func Signature(lvl *world.Level) uint64 {
 		if mode != meshcollide.ModeHulls && mode != meshcollide.ModeMesh {
 			continue
 		}
-		w(uint32(si))
-		w(uint32(mode))
 		d := sc.CollisionData()
-		w(uint32(d.TriangleCount()))
-		w(uint32(len(d.Hulls)))
-		for _, v := range [6]float32{d.Lo.X(), d.Lo.Y(), d.Lo.Z(), d.Hi.X(), d.Hi.Y(), d.Hi.Z()} {
-			w(math.Float32bits(v))
-		}
 		// The matrix's inputs rather than the matrix: this runs every frame
 		// over every such prop, and ModelMatrix is six sines and cosines a
 		// placement where these are nine loads.
 		sx := sc.EffectiveScale()
-		for _, v := range [9]float32{
-			sc.Position.X(), sc.Position.Y(), sc.Position.Z(),
-			sc.Rotation.X(), sc.Rotation.Y(), sc.Rotation.Z(),
-			sx.X(), sx.Y(), sx.Z(),
-		} {
-			w(math.Float32bits(v))
-		}
+		buf = append(buf,
+			uint32(si), uint32(mode),
+			uint32(d.TriangleCount()), uint32(len(d.Hulls)),
+			math.Float32bits(d.Lo.X()), math.Float32bits(d.Lo.Y()), math.Float32bits(d.Lo.Z()),
+			math.Float32bits(d.Hi.X()), math.Float32bits(d.Hi.Y()), math.Float32bits(d.Hi.Z()),
+			math.Float32bits(sc.Position.X()), math.Float32bits(sc.Position.Y()), math.Float32bits(sc.Position.Z()),
+			math.Float32bits(sc.Rotation.X()), math.Float32bits(sc.Rotation.Y()), math.Float32bits(sc.Rotation.Z()),
+			math.Float32bits(sx.X()), math.Float32bits(sx.Y()), math.Float32bits(sx.Z()),
+		)
 	}
-	return h
+	return buf, runs
 }

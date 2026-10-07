@@ -13,8 +13,13 @@
 // sprite, a particle) ever reads it, and the trace updates it a fraction as
 // often. In an open level that is most of the grid.
 //
-// gi_sdf_common.glsl and light_model.glsl (for giSlot/giTile and the GI
-// uniforms) are spliced in ahead of this file.
+// It also decides which probes the trace takes this frame — a live one whose
+// turn it is: one in `period` frames, a resting one in `restPeriod` — and
+// lists them for it (see gi_probe_trace_comp.glsl, which is dispatched over
+// the list rather than over every probe).
+//
+// GI_PROBES_PER_CASCADE (a define), gi_sdf_common.glsl and light_model.glsl
+// (for giSlot/giTile and the GI uniforms) are spliced in ahead of this file.
 
 layout(local_size_x = 64) in;
 
@@ -22,10 +27,28 @@ layout(rgba16f, binding = 0) uniform image2D probeImage;
 // The probe's nearest surface, where one is within half a spacing: the normal
 // facing the probe (xyz) and the distance to it (w). Zero where none is close.
 layout(rgba16f, binding = 1) writeonly uniform image2D surfaceImage;
+// Both of the above in one texel, as the shading reads them (light_model.glsl's
+// giProbePacked): probeImage's offset and state, then surfaceImage's plane,
+// each pair of halves packed into a word. Both images are half floats
+// already, so the packing loses nothing.
+layout(rgba32ui, binding = 2) writeonly uniform uimage2D packedImage;
+
+// The trace's list (probeList, at cascade * GI_PROBES_PER_CASCADE) and its
+// indirect dispatches, three words a cascade: the count of probes listed,
+// then 1, 1. render/gi.go zeroes the counts before this pass runs.
+layout(std430, binding = 0) writeonly buffer ProbeList {
+    uint probeList[];
+};
+layout(std430, binding = 1) buffer ProbeDispatch {
+    uint probeDispatch[];
+};
 
 uniform int   cascade;
 uniform ivec3 prevMin;   // the cascade's first probe index last frame
 uniform int   resetAll;  // 1: treat every probe as fresh
+uniform int   frameIndex;
+uniform int   period;     // the trace takes one probe in `period` each frame
+uniform int   restPeriod; // and one resting probe in `restPeriod`
 
 // The state bits, as render/gi.go has them.
 #define STATE_ACTIVE 1.0
@@ -81,4 +104,16 @@ void main() {
         plane = vec4(n, max(clear, 0.0));
     }
     imageStore(surfaceImage, tile, plane);
+    imageStore(packedImage, tile, uvec4(packHalf2x16(offset.xy), packHalf2x16(vec2(offset.z, state)),
+        packHalf2x16(plane.xy), packHalf2x16(plane.zw)));
+
+    // Is it the trace's this frame? A buried probe has nothing to trace
+    // from; a fresh one is taken at the live rate whatever it rests as.
+    // (The trace used to ask this itself, of every probe, from what this pass
+    // had just written.)
+    int every = (resting && !fresh) ? restPeriod : period;
+    if (alive && (i + frameIndex) % every == 0) {
+        uint at = atomicAdd(probeDispatch[cascade * 3], 1u);
+        probeList[cascade * GI_PROBES_PER_CASCADE + int(at)] = uint(i);
+    }
 }

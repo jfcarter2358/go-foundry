@@ -284,6 +284,13 @@ func CutStaticGroup(s *StaticGeometry, g *StaticGroup) StaticClusterGroup {
 // floor, another material's wall — every level keeps the corners the
 // neighbour draws there, and no cut of either can open a crack between them.
 func BuildStaticGroupDAG(s *StaticGeometry, g *StaticGroup, seams map[[3]uint32]bool) *StaticGroupDAG {
+	return buildStaticGroupDAG(s, g, seams, false)
+}
+
+// buildStaticGroupDAG is BuildStaticGroupDAG; serial builds the DAG on the
+// calling goroutine alone (cluster.DAGOptions.Serial), for a caller already
+// building several groups side by side.
+func buildStaticGroupDAG(s *StaticGeometry, g *StaticGroup, seams map[[3]uint32]bool, serial bool) *StaticGroupDAG {
 	if !StaticLOD || g.Key.DoubleSided || g.Key.Mat.Alpha < 1 || triangleCount(s, g) < StaticDAGMin {
 		return nil
 	}
@@ -338,7 +345,7 @@ func BuildStaticGroupDAG(s *StaticGeometry, g *StaticGroup, seams map[[3]uint32]
 		}
 	}
 	d := cluster.BuildDAG(cluster.Mesh{Positions: rows, Stride: stride, Indices: idx},
-		cluster.DAGOptions{Cluster: StaticClusterOptions, AttrWeights: weights, Locked: locked})
+		cluster.DAGOptions{Cluster: StaticClusterOptions, AttrWeights: weights, Locked: locked, Serial: serial})
 	if d.Levels < 2 {
 		return nil
 	}
@@ -375,9 +382,23 @@ func StaticSeams(s *StaticGeometry, groups []StaticGroup) map[[3]uint32]bool {
 	return seams
 }
 
+// parallelStaticClusters builds BuildStaticClusters' groups side by side
+// (cluster.BuildJobs). Off, they are built one at a time in group order, as
+// they always were; a test switches it off to show both build the same.
+var parallelStaticClusters = true
+
 // BuildStaticClusters cuts every group of s — what the compiler stores: a
 // DAG for each group that takes one (BuildStaticGroupDAG), the flat cut for
 // the rest.
+//
+// The groups are cut independently — each reads s and the seams and nothing
+// else, and writes only its own out[gi] — so they are cut side by side
+// (cluster.BuildJobs: a group too big to share a worker fans out over the
+// cores itself, the rest take a worker each). One at a time, a level of a
+// few hundred groups spent most of its time with one core simplifying and
+// the rest waiting at the barrier between each DAG's levels. What is stored
+// is the same either way: every group's cut depends on nothing that ran
+// before it.
 func BuildStaticClusters(s *StaticGeometry) []StaticClusterGroup {
 	if s == nil {
 		return nil
@@ -385,13 +406,17 @@ func BuildStaticClusters(s *StaticGeometry) []StaticClusterGroup {
 	groups, _ := StaticGroups(s)
 	seams := StaticSeams(s, groups)
 	out := make([]StaticClusterGroup, len(groups))
+	sizes := make([]int, len(groups))
 	for gi := range groups {
-		if d := BuildStaticGroupDAG(s, &groups[gi], seams); d != nil {
+		sizes[gi] = triangleCount(s, &groups[gi])
+	}
+	cluster.BuildJobs(sizes, parallelStaticClusters, func(gi int, inner bool) {
+		if d := buildStaticGroupDAG(s, &groups[gi], seams, !inner); d != nil {
 			out[gi] = StaticClusterGroup{Key: groups[gi].Key.ID(), Sig: StaticGroupSignature(s, &groups[gi]), DAG: d}
-			continue
+			return
 		}
 		out[gi] = CutStaticGroup(s, &groups[gi])
-	}
+	})
 	return out
 }
 

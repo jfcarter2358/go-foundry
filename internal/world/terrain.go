@@ -128,6 +128,11 @@ type Terrain struct {
 	// stale without hashing it.
 	Generation uint64
 
+	// edits remembers where recent edits changed the surface
+	// (terrain_edits.go), so a cache over a large area can rebuild only
+	// round them. Unexported, like mesh.
+	edits terrainEditLog
+
 	// mesh is the derived surface, rebuilt section by section as edits dirty
 	// it (terrain_mesh.go). Unexported, so gob leaves it out of compiled
 	// levels and a clone starts without one.
@@ -212,6 +217,7 @@ func (t *Terrain) Touch() {
 	if t.mesh != nil {
 		t.mesh.dirtyAll = true
 	}
+	t.forgetEdits()
 }
 
 // TouchBlocks marks blocks [x0,x1] x [y0,y1] x [z0,z1] edited — cheaper than
@@ -232,6 +238,12 @@ func (t *Terrain) touch(x0, y0, z0, x1, y1, z1 int, shape bool) {
 	if t.mesh != nil {
 		t.mesh.markDirty(t, x0, y0, z0, x1, y1, z1, shape)
 	}
+	// The same reach markDirty rebuilds for (SurfaceChangedSince).
+	reach := 2
+	if shape {
+		reach = t.smoothReach()
+	}
+	t.recordEdit(x0, y0, z0, x1, y1, z1, reach)
 }
 
 // Clone returns an independent deep copy.

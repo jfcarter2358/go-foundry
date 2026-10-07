@@ -22,13 +22,20 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"math"
+	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
 // tileColumns is a tile's width in columns: 32 m at DefaultCellSize.
 const tileColumns = 128
+
+// parallelTiles rasterises the tiles a build needs across CPUs. Each tile is
+// rasterised from its own solids into its own heightfield, so the split
+// changes nothing; tests switch it off to prove that.
+var parallelTiles = true
 
 type tileKey struct {
 	tx, tz int32
@@ -129,8 +136,15 @@ func buildHeightfield(solids []solid, cell, maxSlopeCos float32) *Heightfield {
 		}
 	}
 
+	// Hash every tile and take what the cache already holds; what is left
+	// to rasterise is independent tile from tile.
 	tiles := make([]*Heightfield, tilesW*tilesD)
-	var subset []solid
+	type tileJob struct {
+		t   int
+		key tileKey
+		sum uint64
+	}
+	var jobs []tileJob
 	for t, ids := range members {
 		if len(ids) == 0 {
 			continue
@@ -153,20 +167,59 @@ func buildHeightfield(solids []solid, cell, maxSlopeCos float32) *Heightfield {
 			tiles[t] = e.hf
 			continue
 		}
+		jobs = append(jobs, tileJob{t: t, key: key, sum: sum})
+	}
 
+	// Rasterise the rest, a worker per CPU, each with its own solid list.
+	// rasterise reads only the solids it is handed and keeps its scratch to
+	// itself, and every tile lands in its own slot, so the heightfields are
+	// the same bytes in any order.
+	raster := func(subset []solid, j tileJob) []solid {
 		subset = subset[:0]
-		for _, si := range ids {
+		for _, si := range members[j.t] {
 			subset = append(subset, solids[si])
 		}
-		origin := mgl32.Vec2{float32(key.tx) * tw, float32(key.tz) * tw}
-		thf := rasterise(subset, origin, cell, tileColumns, tileColumns, maxSlopeCos)
-		tiles[t] = thf
+		origin := mgl32.Vec2{float32(j.key.tx) * tw, float32(j.key.tz) * tw}
+		tiles[j.t] = rasterise(subset, origin, cell, tileColumns, tileColumns, maxSlopeCos)
+		return subset
+	}
+	workers := 1
+	if parallelTiles {
+		workers = min(runtime.NumCPU(), len(jobs))
+	}
+	if workers <= 1 {
+		var subset []solid
+		for _, j := range jobs {
+			subset = raster(subset, j)
+		}
+	} else {
+		var next atomic.Int64
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var subset []solid
+				for {
+					k := int(next.Add(1)) - 1
+					if k >= len(jobs) {
+						return
+					}
+					subset = raster(subset, jobs[k])
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	if len(jobs) > 0 {
 		tileCache.Lock()
 		if tileCache.m == nil {
 			tileCache.m = map[tileKey]tileEntry{}
 		}
-		tileCache.m[key] = tileEntry{hash: sum, hf: thf}
-		tileCache.built++
+		for _, j := range jobs {
+			tileCache.m[j.key] = tileEntry{hash: j.sum, hf: tiles[j.t]}
+		}
+		tileCache.built += len(jobs)
 		tileCache.Unlock()
 	}
 

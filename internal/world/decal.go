@@ -138,9 +138,12 @@ type Decal struct {
 	Pieces []DecalPiece
 	// built is the fingerprint of the decal and the world its Pieces were built
 	// from, and builtOK that a build has run at all. SyncDecals compares against
-	// both — see decalFingerprint.
-	built   uint64
-	builtOK bool
+	// both — see decalFingerprint. builtTerrain is TerrainGeneration as of
+	// that build, or as of the last terrain edit SyncDecals found clear of it
+	// (decalTerrainChanged).
+	built        uint64
+	builtOK      bool
+	builtTerrain uint64
 }
 
 // Defaults for a freshly placed decal. A quarter-unit square is about the size

@@ -10,11 +10,38 @@ package hooks
 //
 // All three are drained rather than read: taking the buffer empties it, so an
 // event fires exactly once even if nothing is listening that frame.
+//
+// The per-frame event buffers (collisions, animation transitions, waypoint
+// arrivals, AI events) are eventBuffers: two backing arrays used alternately,
+// so a drain hands back one while recording continues into the other, and
+// neither is reallocated frame after frame. The price is a lifetime rule — a
+// slice a Take* returned is only valid until the Take after next — which the
+// drains in script_events.go meet trivially, since they walk the slice once
+// and copy what they keep into queued messages.
+
+// eventBuffer is a drained, double-buffered per-frame event list.
+type eventBuffer[T any] struct{ cur, spare []T }
+
+func (b *eventBuffer[T]) record(v T) { b.cur = append(b.cur, v) }
+
+// take returns what was recorded since the last take (nil for nothing, as the
+// single-buffer version did) and starts recording into the other array.
+func (b *eventBuffer[T]) take() []T {
+	out := b.cur
+	if len(out) == 0 {
+		return nil
+	}
+	// Zero the array being recycled, so the strings the last frame's events
+	// held are not kept alive by a buffer nobody reads any more.
+	clear(b.spare)
+	b.cur, b.spare = b.spare[:0], out
+	return out
+}
 
 // ---------- collisions ----------
 
 // collisionPairs are the entity pairs the resolver pushed apart this frame.
-var collisionPairs [][2]string
+var collisionPairs eventBuffer[[2]string]
 
 // RecordCollisionPair notes that two entities were separated. Called from
 // ResolveEntityCollisions, which is the only place that knows which pair.
@@ -22,14 +49,12 @@ func RecordCollisionPair(a, b string) {
 	if a == "" || b == "" {
 		return
 	}
-	collisionPairs = append(collisionPairs, [2]string{a, b})
+	collisionPairs.record([2]string{a, b})
 }
 
 // TakeCollisionPairs returns this frame's pairs and clears the buffer.
 func TakeCollisionPairs() [][2]string {
-	out := collisionPairs
-	collisionPairs = nil
-	return out
+	return collisionPairs.take()
 }
 
 // ---------- animation transitions ----------
@@ -42,7 +67,7 @@ type AnimEvent struct {
 	Ended     bool
 }
 
-var animEvents []AnimEvent
+var animEvents eventBuffer[AnimEvent]
 
 // EditorActive reports whether the editor is open, and is the only thing in
 // this file that needs to know anything about the editor at all.
@@ -59,17 +84,15 @@ var EditorActive = func() bool { return false }
 // that is what lets a clip be previewed while placing the thing that plays it —
 // and an editor preview must not fire script events.
 func RecordAnimEvent(ev AnimEvent) {
-	if EditorActive() {
+	if EditorActive() || captureAnim(ev) {
 		return
 	}
-	animEvents = append(animEvents, ev)
+	animEvents.record(ev)
 }
 
 // TakeAnimEvents returns this frame's transitions and clears the buffer.
 func TakeAnimEvents() []AnimEvent {
-	out := animEvents
-	animEvents = nil
-	return out
+	return animEvents.take()
 }
 
 // ---------- the interact key ----------
@@ -271,7 +294,7 @@ type WaypointEvent struct {
 	Events []string
 }
 
-var waypointEvents []WaypointEvent
+var waypointEvents eventBuffer[WaypointEvent]
 
 // RecordWaypointEvent notes an arrival.
 //
@@ -280,17 +303,15 @@ var waypointEvents []WaypointEvent
 // deliver. The editor's preview seeks rather than steps, so it never gets here,
 // but the step it would be one call away from does.
 func RecordWaypointEvent(ev WaypointEvent) {
-	if EditorActive() {
+	if EditorActive() || captureWaypoint(ev) {
 		return
 	}
-	waypointEvents = append(waypointEvents, ev)
+	waypointEvents.record(ev)
 }
 
 // TakeWaypointEvents returns this frame's arrivals and clears the buffer.
 func TakeWaypointEvents() []WaypointEvent {
-	out := waypointEvents
-	waypointEvents = nil
-	return out
+	return waypointEvents.take()
 }
 
 // ---------- AI controllers ----------
@@ -314,7 +335,7 @@ type AIEvent struct {
 	ToObjective bool
 }
 
-var aiEvents []AIEvent
+var aiEvents eventBuffer[AIEvent]
 
 // RecordAIEvent notes a controller event. Gated on play for RecordAnimEvent's
 // reason, although nothing runs a controller in the editor today.
@@ -322,14 +343,12 @@ func RecordAIEvent(ev AIEvent) {
 	if EditorActive() {
 		return
 	}
-	aiEvents = append(aiEvents, ev)
+	aiEvents.record(ev)
 }
 
 // TakeAIEvents returns this frame's controller events and clears the buffer.
 func TakeAIEvents() []AIEvent {
-	out := aiEvents
-	aiEvents = nil
-	return out
+	return aiEvents.take()
 }
 
 // ---------- the player's footing ----------

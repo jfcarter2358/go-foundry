@@ -80,6 +80,12 @@ type sceneryInstancer struct {
 	boxes []sceneryBox
 	buf   uint32
 	data  []float32
+	// gpu is the GPU cull's half (scenery_gpu_cull.go).
+	gpu sceneryGPU
+	// sigFrame is the DrawWorld frame the signature was last checked in: a
+	// frame's passes (the camera, every cascade, every cube face) share the
+	// answer, since nothing between them adds or reloads a placement.
+	sigFrame uint64
 }
 
 var scenery sceneryInstancer
@@ -119,6 +125,12 @@ func sceneryGroupsSignature(lvl *world.Level) uint64 {
 func (in *sceneryInstancer) prepare(lvl *world.Level) {
 	if in.buf == 0 {
 		gl.GenBuffers(1, &in.buf)
+	}
+	if drawFrameOpen && in.sigFrame == drawFrameNo && lvl == in.lvl {
+		return
+	}
+	if drawFrameOpen {
+		in.sigFrame = drawFrameNo
 	}
 	sig := sceneryGroupsSignature(lvl)
 	if lvl == in.lvl && sig == in.sig {
@@ -169,15 +181,23 @@ func (in *sceneryInstancer) prepare(lvl *world.Level) {
 
 // matrix is placement i's model matrix, from the cache when it has not moved.
 func (in *sceneryInstancer) matrix(i int) mgl32.Mat4 {
+	in.refresh(i)
+	return in.mats[i]
+}
+
+// refresh brings placement i's cached matrix and box up to date, and reports
+// whether it had moved.
+func (in *sceneryInstancer) refresh(i int) bool {
 	s := &in.lvl.Scenery[i]
 	x := sceneryXform{s.Position, s.Rotation, s.Scale}
-	if in.xforms[i] != x {
-		in.xforms[i] = x
-		in.mats[i] = s.ModelMatrix()
-		lo, hi, ok := s.WorldAABB()
-		in.boxes[i] = sceneryBox{lo, hi, ok}
+	if in.xforms[i] == x {
+		return false
 	}
-	return in.mats[i]
+	in.xforms[i] = x
+	in.mats[i] = s.ModelMatrix()
+	lo, hi, ok := s.WorldAABB()
+	in.boxes[i] = sceneryBox{lo, hi, ok}
+	return true
 }
 
 // visible is SceneryInFrustum from the cached bounds.
@@ -238,6 +258,9 @@ func firstDrawnSub(s *world.Scenery) int {
 func renderSceneryInstanced(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool)) int {
 	in := &scenery
 	in.prepare(lvl)
+	if in.gpuActive() {
+		return renderSceneryGPU(in, lvl, cull, draw)
+	}
 	visible := in.fill(cull, false)
 	for gi := range in.groups {
 		g := &in.groups[gi]
@@ -268,6 +291,10 @@ func renderSceneryInstanced(lvl *world.Level, cull *Frustum, draw func(g *gfx.Ge
 func renderSceneryShadowInstanced(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms, cull *Frustum) {
 	in := &scenery
 	in.prepare(lvl)
+	if in.gpuActive() {
+		renderSceneryShadowGPU(in, lvl, prog, skin, cull)
+		return
+	}
 	if in.fill(cull, true) == 0 {
 		return
 	}

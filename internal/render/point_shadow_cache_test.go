@@ -1,8 +1,8 @@
 package render
 
-// A kept cubemap is only right if the signature moves whenever anything the
-// six faces draw moves — and it is only worth anything if it stays put when
-// nothing in the light's reach has.
+// A kept cubemap face is only right if its signature moves whenever anything
+// that face draws moves — and it is only worth anything if it stays put when
+// nothing the face can see has.
 
 import (
 	"testing"
@@ -36,15 +36,19 @@ func shadowCacheLevel() (*world.Level, world.PointLight) {
 	return lvl, world.PointLight{Position: mgl32.Vec3{0, 2, 0}, Radius: 10}
 }
 
+type pointShadowSigs struct {
+	static uint64
+	faces  [6]uint64
+}
+
 func TestAPointShadowSignatureMovesWithWhatTheLightCanSee(t *testing.T) {
 	lvl, pl := shadowCacheLevel()
-	type sigs struct{ static, moving uint64 }
-	sig := func() sigs {
-		st, mv, _, ok := pointShadowSignatures(lvl, pl, 7)
+	sig := func() pointShadowSigs {
+		st, faces, _, ok := pointShadowSignatures(lvl, pl, 7)
 		if !ok {
 			t.Fatal("nothing in this level should force a render")
 		}
-		return sigs{st, mv}
+		return pointShadowSigs{st, faces}
 	}
 	base := sig()
 	if sig() != base {
@@ -109,6 +113,52 @@ func TestAPointShadowSignatureMovesWithWhatTheLightCanSee(t *testing.T) {
 	}
 }
 
+// Only the faces that can see a caster are dirtied by it: a character on the
+// floor under a ceiling lamp is nothing to the face looking up.
+func TestAMoverDirtiesOnlyTheFacesThatSeeIt(t *testing.T) {
+	lvl, pl := shadowCacheLevel()
+	// Straight below the light, two metres down: the -Y face's alone, or near
+	// enough — its box pokes into the side faces' frusta, but not up.
+	lvl.Entities[0].Position = mgl32.Vec3{0, -0.5, 0.2}
+	_, mid, _, _ := pointShadowSignatures(lvl, pl, 7)
+	lvl.Entities[0].Position = mgl32.Vec3{0, -0.5, 0.3}
+	_, after, _, _ := pointShadowSignatures(lvl, pl, 7)
+	changed := 0
+	for f := range after {
+		if after[f] != mid[f] {
+			changed++
+		}
+	}
+	const up = 2 // +Y
+	if after[up] != mid[up] {
+		t.Error("a mover under the light dirtied the face that looks up")
+	}
+	if mid[3] == after[3] {
+		t.Error("a mover under the light did not dirty the face that looks down at it")
+	}
+	if changed == 6 {
+		t.Error("a mover seen by one or two faces dirtied all six")
+	}
+}
+
+// A posed entity is signed by its animation's pose generation, not bone by
+// bone: a new pose steps the generation (world.EntityAnim.setPalette), and the
+// generation is what the face has to see change.
+func TestAPosedEntityIsSignedByItsPoseGeneration(t *testing.T) {
+	lvl, pl := shadowCacheLevel()
+	m := &lvl.Entities[0].Models[0]
+	m.Anim = &world.EntityAnim{Palette: m.Submeshes[0].BonePalette}
+	sig := func() pointShadowSigs {
+		st, faces, _, _ := pointShadowSignatures(lvl, pl, 7)
+		return pointShadowSigs{st, faces}
+	}
+	base := sig()
+	m.Anim.PoseGen++
+	if sig() == base {
+		t.Fatal("a new pose generation left the signature alone: the character's shadow would freeze")
+	}
+}
+
 func TestAPointShadowRedrawsOnlyTheHalfThatChanged(t *testing.T) {
 	lvl, pl := shadowCacheLevel()
 	pointShadowStates = nil
@@ -116,29 +166,39 @@ func TestAPointShadowRedrawsOnlyTheHalfThatChanged(t *testing.T) {
 	// A map whose static layer already exists, so planning makes no GL calls.
 	pm := &PointShadowMap{Cubemap: 3, StaticCubemap: 4, StaticFBO: 5}
 
+	plan := func(what string) pointShadowPlan {
+		t.Helper()
+		return planPointShadow(0, lvl, pl, pm)
+	}
 	expect := func(what string, want pointShadowPlan) {
 		t.Helper()
-		if got := planPointShadow(0, lvl, pl, pm); got != want {
-			t.Fatalf("%s: planned %d, want %d", what, got, want)
+		if got := plan(what); got != want {
+			t.Fatalf("%s: planned %+v, want %+v", what, got, want)
 		}
 	}
-	expect("a map never rendered", pointShadowStaticAndMoving)
-	expect("nothing changed", pointShadowKeep)
+	expect("a map never rendered", pointShadowPlan{faces: allPointShadowFaces, static: true})
+	expect("nothing changed", pointShadowPlan{})
 
 	lvl.Entities[0].Position = mgl32.Vec3{0, 0, 2}
-	expect("a character moved in reach", pointShadowMoving)
-	expect("and then stood still", pointShadowKeep)
+	got := plan("a character moved in reach")
+	if got.static || got.all || got.keep() {
+		t.Fatalf("a character moved in reach: planned %+v, want some faces' moving layer alone", got)
+	}
+	if got.faces == allPointShadowFaces || got.faces&(1<<2) != 0 {
+		t.Fatalf("a character moved below the light: planned faces %06b, want not all, and not +Y", got.faces)
+	}
+	expect("and then stood still", pointShadowPlan{})
 
 	lvl.Chunks[0].Brushes[0].Offset = mgl32.Vec3{0, 0, 1}
-	expect("the door slid", pointShadowStaticAndMoving)
+	expect("the door slid", pointShadowPlan{faces: allPointShadowFaces, static: true})
 
 	// With nothing moving in reach there is no static layer to keep apart.
 	lvl.Entities[0].Visible, lvl.Entities[1].Visible = false, false
 	world.MarkBrushMeshesChanged()
-	expect("the room changed with nobody in it", pointShadowEverything)
+	expect("the room changed with nobody in it", pointShadowPlan{faces: allPointShadowFaces, all: true})
 
 	PointShadowCaching = false
 	t.Cleanup(func() { PointShadowCaching = true })
-	expect("caching off", pointShadowEverything)
-	expect("caching off, nothing changed", pointShadowEverything)
+	expect("caching off", pointShadowPlan{faces: allPointShadowFaces, all: true})
+	expect("caching off, nothing changed", pointShadowPlan{faces: allPointShadowFaces, all: true})
 }

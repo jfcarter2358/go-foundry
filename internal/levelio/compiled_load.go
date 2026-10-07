@@ -31,6 +31,9 @@ package levelio
 
 import (
 	"fmt"
+	"runtime"
+	"sync"
+	"sync/atomic"
 
 	"github.com/go-gl/mathgl/mgl32"
 
@@ -52,7 +55,9 @@ func LoadCompiledLevel(path string) (world.Level, error) {
 	if err != nil {
 		return world.Level{}, err
 	}
+	job.waitForRead()
 	for !job.Step() {
+		job.waitForStatic()
 	}
 	if err := job.Err(); err != nil {
 		return world.Level{}, err
@@ -67,7 +72,7 @@ func LoadCompiledLevel(path string) (world.Level, error) {
 // through the stepped job instead.
 func StaticGeometryFrom(c *CompiledLevel) (*world.StaticGeometry, error) {
 	var lvl world.Level
-	if _, err := buildStaticRange(c, &lvl, 0, len(c.Faces)); err != nil {
+	if err := buildStaticAll(c, &lvl, nil); err != nil {
 		return nil, err
 	}
 	if lvl.Static == nil {
@@ -127,14 +132,99 @@ func loadCompiledChunkRange(c *CompiledLevel, level *world.Level, texNeeded map[
 	return to, nil
 }
 
-// buildStaticRange uploads compiled surfaces [from, from+count).
-//
-// Through the same BuildBrushFaceMesh and ApplyUVTransform a brush face goes
-// through, so a compiled surface and an authored one are the same mesh built
-// the same way — which is what makes the two interchangeable in the draw loop,
-// and is the only reason a compiled level looks identical to the one it came
-// from.
+// parallelStaticBuild spreads the compiled surfaces' mesh builds over every
+// core (buildStaticAll). Off, they are built in order on the calling
+// goroutine, which is what the test comparing the two forces.
+var parallelStaticBuild = true
+
+// staticBuildBatch is how many surfaces a worker claims at a time: enough
+// that claiming is not the cost, few enough that the cores finish together.
+const staticBuildBatch = 256
+
+// buildStaticRange builds compiled surfaces [from, from+count) in order, and
+// finishes the static world after the last one.
 func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (int, error) {
+	beginStatic(c, level)
+	to := from + count
+	if to > len(c.Faces) {
+		to = len(c.Faces)
+	}
+	for i := from; i < to; i++ {
+		if err := buildStaticSurface(c, level.Static, i); err != nil {
+			return i, err
+		}
+	}
+	if to == len(c.Faces) {
+		finishStatic(c, level)
+	}
+	return to, nil
+}
+
+// buildStaticAll builds every compiled surface and finishes the static world.
+//
+// Each surface is built from its own face into its own slot of Surfaces and
+// touches nothing else — no GL either, since a compiled surface is CPU-only
+// (the renderer batches them) — so they are built on every core at once, and
+// the result is the same surfaces, bit for bit, as building them in order
+// (TestTheParallelStaticBuildIsTheSerialOne). done, if not nil, counts
+// surfaces as they finish, for a progress bar read from another goroutine.
+//
+// An error names the LOWEST failing surface, as the serial build would have:
+// which surface a broken file reports should not depend on scheduling.
+func buildStaticAll(c *CompiledLevel, level *world.Level, done *atomic.Int64) error {
+	beginStatic(c, level)
+	n := len(c.Faces)
+	workers := runtime.GOMAXPROCS(0)
+	if !parallelStaticBuild || workers < 2 || n < 2*staticBuildBatch {
+		if _, err := buildStaticRange(c, level, 0, n); err != nil {
+			return err
+		}
+		if done != nil {
+			done.Store(int64(n))
+		}
+		return nil
+	}
+	var next atomic.Int64
+	var mu sync.Mutex
+	failAt, failErr := n, error(nil)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				from := int(next.Add(staticBuildBatch)) - staticBuildBatch
+				if from >= n {
+					return
+				}
+				to := min(from+staticBuildBatch, n)
+				for i := from; i < to; i++ {
+					if err := buildStaticSurface(c, level.Static, i); err != nil {
+						mu.Lock()
+						if i < failAt {
+							failAt, failErr = i, err
+						}
+						mu.Unlock()
+						break
+					}
+				}
+				if done != nil {
+					done.Add(int64(to - from))
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if failErr != nil {
+		return failErr
+	}
+	finishStatic(c, level)
+	return nil
+}
+
+// beginStatic gives the level its static world, with a slot for every
+// surface, if it has none yet.
+func beginStatic(c *CompiledLevel, level *world.Level) {
 	if level.Static == nil {
 		level.Static = &world.StaticGeometry{
 			Tree:     c.Tree,
@@ -142,77 +232,83 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 			Surfaces: make([]world.StaticSurface, len(c.Faces)),
 		}
 	}
-	to := from + count
-	if to > len(c.Faces) {
-		to = len(c.Faces)
-	}
-	for i := from; i < to; i++ {
-		f := &c.Faces[i]
-		if f.NoDraw {
-			// Structure, not surface: it shaped the tree and is in no cell's
-			// draw list (compile/csg.go, Face.NoDraw). The light stage drops
-			// these, so only a level compiled without one still carries them —
-			// the surface is left zeroed and the draw loop skips it for having
-			// no vertices.
-			continue
-		}
-		surf := &level.Static.Surfaces[i]
-		surf.DoubleSided = f.DoubleSided
-		surf.Chunk, surf.Brush = f.Chunk, f.Brush
-		surf.CoveredBy = f.CoveredBy
-		surf.Normal = f.Plane.N
-		surf.Lo, surf.Hi = bsp.Bounds(f.Points)
+}
 
-		// From the SOURCE face's corner and plane, not this fragment's: every
-		// piece of one authored face has to land on the same texture, or every
-		// cut in the level is a seam.
-		verts, indices := world.BuildBrushFaceMeshFrom(f.Points, f.DoubleSided, f.Plane.N, f.UVOrigin)
-		if len(verts) == 0 {
-			continue
-		}
-		if f.UVMapped {
-			// An unwrapped face: its UVs are a function of position, evaluated
-			// here at this fragment's own corners (compile.Face.UVMap).
-			world.ApplyUVMap(verts, f.UVMap)
-		}
-		world.ApplyUVTransform(verts, f.UVOffset, f.UVScale, f.UVRotation)
+// buildStaticSurface builds compiled surface i into its slot.
+//
+// Through the same BuildBrushFaceMesh and ApplyUVTransform a brush face goes
+// through, so a compiled surface and an authored one are the same mesh built
+// the same way — which is what makes the two interchangeable in the draw loop,
+// and is the only reason a compiled level looks identical to the one it came
+// from.
+func buildStaticSurface(c *CompiledLevel, static *world.StaticGeometry, i int) error {
+	f := &c.Faces[i]
+	if f.NoDraw {
+		// Structure, not surface: it shaped the tree and is in no cell's
+		// draw list (compile/csg.go, Face.NoDraw). The light stage drops
+		// these, so only a level compiled without one still carries them —
+		// the surface is left zeroed and the draw loop skips it for having
+		// no vertices.
+		return nil
+	}
+	surf := &static.Surfaces[i]
+	surf.DoubleSided = f.DoubleSided
+	surf.Chunk, surf.Brush = f.Chunk, f.Brush
+	surf.CoveredBy = f.CoveredBy
+	surf.Normal = f.Plane.N
+	surf.Lo, surf.Hi = bsp.Bounds(f.Points)
 
-		g := &surf.Geometry
-		g.Smooth, g.SmoothAngle = f.Smooth, f.SmoothAngle
-		// No buffers of its own: the renderer batches a compiled level's
-		// surfaces per source chunk and material (render/static_batch.go).
-		g.CPUOnly = true
-		g.VertexLight = bakedLightRows(f, f.Light, f.BackLight, f.Indirect, f.BackIndirect, len(verts))
-		g.VertexLightSmooth = bakedLightRows(f, f.SmoothLight, f.SmoothBackLight, f.SmoothIndirect, f.SmoothBackIndirect, len(verts))
-		// The face's own smoothed normals, interpolated from its source face
-		// (compile/smooth.go). A flat face has none, and shades from the facet
-		// the way a flat face would anyway.
-		g.VertexNormals = compiledNormalRows(f.VertexNormals(), len(f.Points), len(verts))
-		if err := g.Load(verts, indices, f.Texture, mgl32.Vec3{}); err != nil {
-			return i, fmt.Errorf("compiled face %d: %w", i, err)
-		}
-		g.Alpha = f.Alpha
-		g.BlendTexture = f.BlendTexture
-		g.BlendMask = f.BlendMask
+	// From the SOURCE face's corner and plane, not this fragment's: every
+	// piece of one authored face has to land on the same texture, or every
+	// cut in the level is a seam.
+	verts, indices := world.BuildBrushFaceMeshFrom(f.Points, f.DoubleSided, f.Plane.N, f.UVOrigin)
+	if len(verts) == 0 {
+		return nil
 	}
-	if to == len(c.Faces) {
-		// The compiler's cut of the surfaces into clusters, for the
-		// GPU-driven cull (world/static_clusters.go). The renderer checks
-		// each group's against the surfaces it actually built and cuts any
-		// that do not match.
-		level.Static.SetClusters(c.Clusters)
-		// A streamed chunk is baked but starts switched off, and its surfaces
-		// have to start hidden with it. SyncChunkGeometry would hide them on
-		// the first frame, which is one frame too late: the area would flash
-		// up as the level appeared. After the last range rather than the
-		// first, because hiding reads which chunk each surface came from.
-		for ci := range level.Chunks {
-			if ch := &level.Chunks[ci]; ch.Compiled && ch.Disabled {
-				level.Static.SetChunkHidden(ch.ID, true)
-			}
+	if f.UVMapped {
+		// An unwrapped face: its UVs are a function of position, evaluated
+		// here at this fragment's own corners (compile.Face.UVMap).
+		world.ApplyUVMap(verts, f.UVMap)
+	}
+	world.ApplyUVTransform(verts, f.UVOffset, f.UVScale, f.UVRotation)
+
+	g := &surf.Geometry
+	g.Smooth, g.SmoothAngle = f.Smooth, f.SmoothAngle
+	// No buffers of its own: the renderer batches a compiled level's
+	// surfaces per source chunk and material (render/static_batch.go).
+	g.CPUOnly = true
+	g.VertexLight = bakedLightRows(f, f.Light, f.BackLight, f.Indirect, f.BackIndirect, len(verts))
+	g.VertexLightSmooth = bakedLightRows(f, f.SmoothLight, f.SmoothBackLight, f.SmoothIndirect, f.SmoothBackIndirect, len(verts))
+	// The face's own smoothed normals, interpolated from its source face
+	// (compile/smooth.go). A flat face has none, and shades from the facet
+	// the way a flat face would anyway.
+	g.VertexNormals = compiledNormalRows(f.VertexNormals(), len(f.Points), len(verts))
+	if err := g.Load(verts, indices, f.Texture, mgl32.Vec3{}); err != nil {
+		return fmt.Errorf("compiled face %d: %w", i, err)
+	}
+	g.Alpha = f.Alpha
+	g.BlendTexture = f.BlendTexture
+	g.BlendMask = f.BlendMask
+	return nil
+}
+
+// finishStatic is what follows the last surface.
+func finishStatic(c *CompiledLevel, level *world.Level) {
+	// The compiler's cut of the surfaces into clusters, for the
+	// GPU-driven cull (world/static_clusters.go). The renderer checks
+	// each group's against the surfaces it actually built and cuts any
+	// that do not match.
+	level.Static.SetClusters(c.Clusters)
+	// A streamed chunk is baked but starts switched off, and its surfaces
+	// have to start hidden with it. SyncChunkGeometry would hide them on
+	// the first frame, which is one frame too late: the area would flash
+	// up as the level appeared. After the last surface rather than the
+	// first, because hiding reads which chunk each surface came from.
+	for ci := range level.Chunks {
+		if ch := &level.Chunks[ci]; ch.Compiled && ch.Disabled {
+			level.Static.SetChunkHidden(ch.ID, true)
 		}
 	}
-	return to, nil
 }
 
 func noteFaceTextures(texNeeded map[string]bool, f *world.BrushFace) {
@@ -266,7 +362,10 @@ func bakedLightRows(f *compile.Face, front, back, indFront, indBack []mgl32.Vec3
 	if len(shareBack) != len(front) {
 		shareBack = shareFront
 	}
+	// One backing array for every row rather than an allocation per vertex;
+	// each row is capped so it cannot grow into its neighbour.
 	out := make([][]float32, n)
+	flat := make([]float32, n*bakedLightRow)
 	for i := range out {
 		k := i % len(front)
 		l, share, ind := front[k], shareFront, indFront
@@ -281,10 +380,15 @@ func bakedLightRows(f *compile.Face, front, back, indFront, indBack []mgl32.Vec3
 		if ind != nil {
 			in = ind[k]
 		}
-		out[i] = []float32{l.X(), l.Y(), l.Z(), sun, in.X(), in.Y(), in.Z()}
+		row := flat[i*bakedLightRow : (i+1)*bakedLightRow : (i+1)*bakedLightRow]
+		row[0], row[1], row[2], row[3], row[4], row[5], row[6] = l.X(), l.Y(), l.Z(), sun, in.X(), in.Y(), in.Z()
+		out[i] = row
 	}
 	return out
 }
+
+// bakedLightRow is the floats in one of bakedLightRows' rows: gfx.LightStride.
+const bakedLightRow = 7
 
 // compiledNormalRows lays a face's per-point normals out per vertex of its mesh
 // — the far side of a double-sided face, whose vertices follow the near
@@ -294,12 +398,15 @@ func compiledNormalRows(ns []mgl32.Vec3, points, n int) [][]float32 {
 		return nil
 	}
 	out := make([][]float32, n)
+	flat := make([]float32, 3*n)
 	for i := range out {
 		v := ns[i%points]
 		if i >= points {
 			v = v.Mul(-1)
 		}
-		out[i] = []float32{v.X(), v.Y(), v.Z()}
+		row := flat[3*i : 3*i+3 : 3*i+3]
+		row[0], row[1], row[2] = v.X(), v.Y(), v.Z()
+		out[i] = row
 	}
 	return out
 }

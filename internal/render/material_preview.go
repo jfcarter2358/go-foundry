@@ -82,6 +82,14 @@ func PrepareWorldProgramForPreview(prog uint32, view, proj mgl32.Mat4, camPos mg
 	gl.Uniform3f(loc("camPos\x00"), camPos.X(), camPos.Y(), camPos.Z())
 	gl.Uniform1f(loc("time\x00"), time)
 
+	// The lights, shadows and fog below are the scene block's members, and the
+	// level window's block is the level's: this program reads a block of its
+	// own (gfx.PreviewScene), so the writers below fill that one. Bound here,
+	// in the preview window's context, every frame — a binding point is
+	// per-context state.
+	gfx.UsePreviewScene(prog)
+	defer gfx.PreviewScene.Bind()
+
 	lights := PreviewLights()
 	world.UploadLightsTo(prog, lights, false)
 
@@ -106,8 +114,8 @@ func PrepareWorldProgramForPreview(prog uint32, view, proj mgl32.Mat4, camPos mg
 
 	// A preview surface is lit live and never baked, has no skin, and its
 	// silhouette is judged on screen rather than fed to alpha-to-coverage.
+	// (bakedSunLight, the block's, is already -1: the frame above bakes no sun.)
 	gl.Uniform1i(loc("bakedLight\x00"), 0)
-	gl.Uniform1i(loc("bakedSunLight\x00"), -1)
 	// Nor bounced: the sphere is in a booth, not in the level GI traced.
 	disableGITo(prog)
 	gl.UseProgram(prog)

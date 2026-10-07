@@ -345,6 +345,60 @@ func (t *trackerState) advance() {
 	}
 }
 
+// typeAlong moves the cursor on after a character of a code is typed: to the
+// next character of the same code — an effect's letter, then its two digits;
+// an instrument's or a volume's two digits — and no further, the way typing
+// text moves along a word. Leaving the row is Enter's job (nextLine), so a
+// code is typed whole before the cursor goes anywhere.
+func (t *trackerState) typeAlong() {
+	if t.Cur.Field < t.fieldGroupEnd(t.Cur.Field) {
+		t.Cur.Field++
+	}
+}
+
+// fieldGroupStart and fieldGroupEnd are the first and last field of the code
+// field f is part of: the note on its own, the instrument's two digits, the
+// volume's two, or one effect's letter and two digits.
+func (t *trackerState) fieldGroupStart(f int) int {
+	switch kind, fx, _ := trkFieldKind(f); kind {
+	case trkKindNote:
+		return 0
+	case trkKindInstr:
+		return 1
+	case trkKindVol:
+		return 3
+	default:
+		return trkFieldsFixed + 3*fx
+	}
+}
+
+func (t *trackerState) fieldGroupEnd(f int) int {
+	if kind, _, _ := trkFieldKind(f); kind == trkKindNote {
+		return 0
+	}
+	start := t.fieldGroupStart(f)
+	if start >= trkFieldsFixed {
+		return start + 2
+	}
+	return start + 1
+}
+
+// nextLine is Enter: down by the edit step (one row when the step is 0, since
+// Enter is asking to move), back to the start of the code being typed.
+func (t *trackerState) nextLine() {
+	p := t.pattern()
+	if p == nil {
+		return
+	}
+	step := t.Step
+	if step < 1 {
+		step = 1
+	}
+	t.breakUndoRun()
+	t.Cur.Row = clampI(t.Cur.Row+step, 0, p.Rows()-1)
+	t.Cur.Field = t.fieldGroupStart(t.Cur.Field)
+}
+
 // moveField moves the cursor d fields, crossing into the neighbouring channel
 // at a cell's edge.
 func (t *trackerState) moveField(d int) {
@@ -368,6 +422,40 @@ func (t *trackerState) moveField(d int) {
 		f -= n
 	}
 	t.Cur.Field = f
+}
+
+// insertChannel adds an empty channel at index at and puts the cursor on it.
+func (t *trackerState) insertChannel(at int) {
+	if len(t.Song.Channels) >= tracker.MaxChannels {
+		t.Status = fmt.Sprintf("A song has at most %d channels", tracker.MaxChannels)
+		return
+	}
+	t.pushUndo("")
+	t.Song.InsertChannel(at)
+	t.touch()
+	t.Cur.Ch, t.Cur.Field = clampI(at, 0, len(t.Song.Channels)-1), 0
+	t.SelOn = false
+	trkChannelsShifted()
+	t.Status = "Added " + t.Song.Channels[t.Cur.Ch].Name
+}
+
+// deleteChannel removes channel c, notes and all, from every pattern.
+func (t *trackerState) deleteChannel(c int) {
+	if len(t.Song.Channels) <= 1 {
+		t.Status = "A song needs at least one channel"
+		return
+	}
+	if c < 0 || c >= len(t.Song.Channels) {
+		return
+	}
+	name := t.Song.Channels[c].Name
+	t.pushUndo("")
+	t.Song.DeleteChannel(c)
+	t.touch()
+	t.SelOn = false
+	t.clampCursor()
+	trkChannelsShifted()
+	t.Status = "Deleted " + name
 }
 
 // nextChannel moves d channels, onto the note field — Tab and Shift+Tab.
@@ -569,7 +657,7 @@ func (t *trackerState) enterHex(d int) bool {
 		return false
 	}
 	t.touch()
-	t.advance()
+	t.typeAlong()
 	return true
 }
 
@@ -590,7 +678,7 @@ func (t *trackerState) enterEffect(cmd byte) bool {
 	t.pushUndo("type")
 	c.FX[fx].Cmd = cmd
 	t.touch()
-	t.advance()
+	t.typeAlong()
 	return true
 }
 

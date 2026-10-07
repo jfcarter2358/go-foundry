@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"sync"
 )
 
 const size = 64
@@ -406,7 +407,46 @@ func clamp8(v float64) uint8 {
 	return uint8(math.Min(255, math.Max(0, v)))
 }
 
+// parallelSkies runs the skyboxes alongside the seeded generators. Off,
+// everything runs one after another in the order main lists it, as it always
+// did; a test switches it off to show both write the same files.
+var parallelSkies = true
+
+// main writes every texture.
+//
+// Two independent chains: the seeded generators, which must run in exactly
+// this order on one goroutine because each draws from the one rng the last
+// left off (see the notes below), and the four skyboxes, which draw from no
+// rng at all — their noise is hashed from position (sky.go), and they read
+// nothing but constants — and each write files of their own. So the skies
+// run side by side with the seeded chain and with each other: they are
+// nearly all of the run's work (six 512² faces each, supersampled, against
+// a handful of 64² tiles), and one after another they used the six cores
+// their faces fan out over and left the rest idle.
 func main() {
+	if !parallelSkies {
+		genSeeded()
+		for _, sky := range skies {
+			sky()
+		}
+		return
+	}
+	var wg sync.WaitGroup
+	for _, gen := range append([]func(){genSeeded}, skies...) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			gen()
+		}()
+	}
+	wg.Wait()
+}
+
+// skies are the skybox generators, in the order main once called them.
+var skies = []func(){genSkyDay, genSkySpace, genSkyCanyon, genSkyNight}
+
+// genSeeded runs the generators that share the seeded rng, in their order.
+func genSeeded() {
 	rng := rand.New(rand.NewSource(42))
 	genGrass(rng)
 	genDirt(rng)
@@ -421,13 +461,11 @@ func main() {
 	// rng, so inserting a call earlier in the sequence would shift the draws
 	// of all the textures after it and silently regenerate them differently.
 	genMoss(rng)
-	// The skybox draws from no rng at all (its noise is hashed from position —
-	// see sky.go), so unlike the calls above it can be moved without silently
-	// regenerating anything else.
-	genSkyDay()
-	genSkySpace()
-	genSkyCanyon()
-	genSkyNight()
+	// The skyboxes once ran here. They draw from no rng at all (their noise
+	// is hashed from position — see sky.go), so they could be moved without
+	// silently regenerating anything else, and main now runs them alongside
+	// this chain (skies).
+	//
 	// The dropship's four, last for the reason genMoss is: they draw from the
 	// shared rng, and inserting them earlier would regenerate everything after.
 	genHullPlate(rng)

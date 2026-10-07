@@ -11,9 +11,15 @@ package levelio
 //
 // What is chunked is the chunk loop and the texture loads, which is where the
 // time on a large level actually goes: building sector geometry and decoding
-// PNGs. The YAML parse and the level-scoped objects are one step each. Moving
-// the parse off-thread is a later change and a safe one — it is pure CPU over
-// data nothing else touches — but it is not where the stall is.
+// PNGs. The YAML parse and the level-scoped objects are one step each.
+//
+// A compiled level's READ is the exception to "not a goroutine": decoding the
+// file is pure CPU over bytes nothing else touches, and on a large level it
+// was most of a second with nothing on screen, because it ran before the job —
+// and so the loading screen — existed. So BeginLoadCompiled checks only the
+// header, returns at once, and the decode runs on its own goroutine while the
+// job sits in its first stage ("Reading level") polling for it. Everything
+// after that is the main-thread state machine as before.
 //
 // The load runs the same four functions rawToLevel does, in the same order.
 // That is deliberate and it is the whole safety argument: there is one loader,
@@ -23,6 +29,7 @@ package levelio
 import (
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foundry/internal/fileutil"
@@ -50,7 +57,10 @@ const (
 type loadStage int
 
 const (
-	loadStageChunks loadStage = iota
+	// loadStageReading is a compiled load waiting for its file to decode off
+	// the main thread. An authored load starts at loadStageChunks.
+	loadStageReading loadStage = iota
+	loadStageChunks
 	loadStageObjects
 	loadStageTextures
 	loadStageStatic
@@ -60,6 +70,7 @@ const (
 
 // loadStageNames is what the loading screen's label shows.
 var loadStageNames = [...]string{
+	loadStageReading:  "Reading level",
 	loadStageChunks:   "Building geometry",
 	loadStageObjects:  "Placing objects",
 	loadStageTextures: "Loading textures",
@@ -79,7 +90,10 @@ type LoadJob struct {
 	raw   world.RawLevel
 	level world.Level
 	// compiled is the artefact for a compiled load, nil for an authored one.
+	// Nil too while a compiled load is still reading; see read.
 	compiled *CompiledLevel
+	// read delivers the decoded file to a compiled load in loadStageReading.
+	read chan compiledRead
 
 	texNeeded map[string]bool
 	texNames  []string
@@ -88,6 +102,10 @@ type LoadJob struct {
 	chunkAt  int
 	texAt    int
 	staticAt int
+	// staticDone is the parallel surface build's completion, nil until it
+	// starts; staticBuilt counts its surfaces for the bar. See loadStageStatic.
+	staticDone  chan error
+	staticBuilt atomic.Int64
 
 	err error
 }
@@ -110,32 +128,81 @@ func BeginLoad(levelPath string) (*LoadJob, error) {
 // would otherwise have the job parse the same two megabytes a second time.
 // levelPath is only what the job reports as its path.
 func BeginLoadRaw(levelPath string, raw world.RawLevel) *LoadJob {
-	j := &LoadJob{path: levelPath, raw: raw, texNeeded: map[string]bool{}}
+	j := &LoadJob{path: levelPath, raw: raw, texNeeded: map[string]bool{}, stage: loadStageChunks}
 	j.publish()
 	return j
 }
 
-// BeginLoadCompiled reads a compiled level and returns a job that will build
-// it.
+// BeginLoadCompiled starts reading a compiled level and returns a job that will
+// build it.
 //
-// The read is synchronous for the same reason BeginLoad's parse is: a file that
-// will not decode is a failure the caller should see now, rather than one frame
-// into a loading screen it has already put up.
+// Only the header is read here — enough to refuse, now, a file that is
+// missing, is not a compiled level, or was compiled by a version this build
+// does not read, which is a failure the caller should see before it has put a
+// loading screen up. The rest of the file decodes on another goroutine while
+// the job's first stage waits for it; a file that turns out to be damaged
+// fails the job there, through Err, exactly as a failed build step does.
 func BeginLoadCompiled(levelPath string) (*LoadJob, error) {
-	c, err := ReadCompiledLevel(levelPath)
-	if err != nil {
+	if err := CheckCompiledLevel(levelPath); err != nil {
 		return nil, err
 	}
-	j := &LoadJob{path: levelPath, compiled: c, raw: c.Raw, texNeeded: map[string]bool{}}
+	j := &LoadJob{path: levelPath, texNeeded: map[string]bool{}, stage: loadStageReading,
+		read: make(chan compiledRead, 1)}
+	go func(ch chan<- compiledRead) { ch <- readCompiledForLoad(levelPath) }(j.read)
+	j.publish()
+	return j, nil
+}
+
+// compiledRead is what the reading goroutine hands the job.
+type compiledRead struct {
+	c         *CompiledLevel
+	texNeeded map[string]bool
+	err       error
+}
+
+// readCompiledForLoad is the off-thread half of BeginLoadCompiled: the decode,
+// and the other work that needs only the decoded file and no GL — which
+// textures the surfaces want, so that list is ready the moment the main
+// thread takes the file.
+func readCompiledForLoad(path string) compiledRead {
+	c, err := ReadCompiledLevel(path)
+	if err != nil {
+		return compiledRead{err: err}
+	}
+	tex := map[string]bool{}
 	// The compiled surfaces' textures are known from the file alone, so they
 	// join the list up front rather than being discovered a stage later.
 	for i := range c.Faces {
-		noteCompiledFaceTextures(j.texNeeded, &c.Faces[i])
+		noteCompiledFaceTextures(tex, &c.Faces[i])
+	}
+	return compiledRead{c: c, texNeeded: tex}
+}
+
+// adoptCompiled takes the decoded file into the job, on the main thread.
+func (j *LoadJob) adoptCompiled(r compiledRead) {
+	j.compiled, j.raw, j.read = r.c, r.c.Raw, nil
+	for t := range r.texNeeded {
+		j.texNeeded[t] = true
 	}
 	// So they decode on the other cores while this one places the objects.
 	gfx.PrefetchTextures(textureLoadOrder(j.texNeeded))
+	j.stage = loadStageChunks
+}
+
+// waitForRead blocks until a compiled load's file has decoded. For the
+// synchronous callers (LoadCompiledLevel), which have no frame to keep and
+// would otherwise spin on Step.
+func (j *LoadJob) waitForRead() {
+	if j.stage != loadStageReading || j.read == nil {
+		return
+	}
+	r := <-j.read
+	if r.err != nil {
+		j.fail(r.err)
+		return
+	}
+	j.adoptCompiled(r)
 	j.publish()
-	return j, nil
 }
 
 // Step does a bounded slice of work and reports whether the load has finished.
@@ -149,6 +216,17 @@ func (j *LoadJob) Step() bool {
 	}
 
 	switch j.stage {
+	case loadStageReading:
+		select {
+		case r := <-j.read:
+			if r.err != nil {
+				return j.fail(r.err)
+			}
+			j.adoptCompiled(r)
+		default:
+			// Still decoding: nothing to do this step.
+		}
+
 	case loadStageChunks:
 		next, total, err := j.stepChunks()
 		if err != nil {
@@ -188,6 +266,29 @@ func (j *LoadJob) Step() bool {
 			j.stage = loadStageIndexes
 			break
 		}
+		if parallelStaticBuild {
+			// Every surface at once, on the other cores (buildStaticAll),
+			// while this one keeps the loading screen drawing. Nothing on
+			// the main thread touches the level until the build reports
+			// back, and the build touches nothing but the level's surfaces.
+			if j.staticDone == nil {
+				j.staticDone = make(chan error, 1)
+				go func(c *CompiledLevel, lvl *world.Level, done chan<- error) {
+					done <- buildStaticAll(c, lvl, &j.staticBuilt)
+				}(j.compiled, &j.level, j.staticDone)
+			}
+			select {
+			case err := <-j.staticDone:
+				if err != nil {
+					return j.fail(err)
+				}
+				j.staticAt = len(j.compiled.Faces)
+				j.stage = loadStageIndexes
+			default:
+				j.staticAt = int(j.staticBuilt.Load())
+			}
+			break
+		}
 		next, err := buildStaticRange(j.compiled, &j.level, j.staticAt, staticSurfacesPerStep)
 		if err != nil {
 			return j.fail(err)
@@ -217,10 +318,37 @@ func (j *LoadJob) StepFor(budget time.Duration) bool {
 		if j.Step() {
 			return true
 		}
+		if j.waiting() {
+			// Waiting on the decode or the surface build, which is other
+			// goroutines' work: the rest of the budget is better spent
+			// drawing the frame.
+			return false
+		}
 		if time.Since(start) >= budget {
 			return false
 		}
 	}
+}
+
+// waiting is whether the job's current stage is another goroutine's work that
+// has not finished.
+func (j *LoadJob) waiting() bool {
+	return j.stage == loadStageReading || (j.stage == loadStageStatic && j.staticDone != nil)
+}
+
+// waitForStatic blocks until a parallel surface build has finished, for the
+// synchronous callers.
+func (j *LoadJob) waitForStatic() {
+	if j.stage != loadStageStatic || j.staticDone == nil {
+		return
+	}
+	if err := <-j.staticDone; err != nil {
+		j.fail(err)
+		return
+	}
+	j.staticAt = len(j.compiled.Faces)
+	j.stage = loadStageIndexes
+	j.publish()
 }
 
 // stepChunks builds one slice of chunks, from whichever source this job has,
@@ -251,6 +379,8 @@ func (j *LoadJob) fail(err error) bool {
 func (j *LoadJob) Progress() (float32, string) {
 	label := loadStageNames[j.stage]
 	switch j.stage {
+	case loadStageReading:
+		return 0, label
 	case loadStageChunks:
 		return 0.50 * fraction(j.chunkAt, j.chunkTotal()), label
 	case loadStageObjects:

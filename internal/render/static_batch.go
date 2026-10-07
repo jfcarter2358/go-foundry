@@ -16,6 +16,15 @@ package render
 // is handed a different one — a level load, or the editor's compiled preview
 // going up or down.
 //
+// The groups' vertices are not in a buffer each but in POOLS: every group's
+// corners, normals and baked light back to back in one set of buffers (or a
+// few, where one would pass the driver's largest storage block), under one
+// vertex array, each group's ranges addressing its own stretch. A group is
+// still its own draw state and its own ranges; what it no longer has is a
+// vertex array of its own, so the GPU-driven passes below draw every group of
+// a pool without binding another, and a material's groups in every chunk are
+// one draw (static_nanite.go).
+//
 // Since Phase 1 of the Nanite plan each group's buffer also carries an index
 // list in CLUSTER order (world/static_clusters.go — the compiler's cut), and
 // the opaque groups are culled and drawn by the GPU-driven cull
@@ -53,9 +62,13 @@ func staticKeyOf(k world.StaticGroupKey) staticKey {
 type staticGroup struct {
 	key       staticKey
 	coveredBy []string // the surfaces' CoveredBy, which key.cover joins
-	batch     gfx.Batch
+	// batch is the group's draw state, its buffers its pool's.
+	batch gfx.Batch
+	// pool is the pool the group's vertices are in, from vertBase on.
+	pool     int
+	vertBase int32
 	// surfaces lists the group's surface indexes in buffer order; firsts and
-	// counts are their ranges, parallel to it. The order is spatial (see
+	// counts are their ranges in the pool's buffers, parallel to it. The order is spatial (see
 	// world.SortSurfacesSpatially), which is what lets clusters below be both
 	// compact boxes and contiguous runs of the buffer.
 	surfaces       []int32
@@ -82,6 +95,9 @@ type staticCluster struct {
 	lo, hi     mgl32.Vec3
 }
 
+// staticBox is a surface's bounds.
+type staticBox struct{ lo, hi mgl32.Vec3 }
+
 // staticClusterSize is how many surfaces a culling cluster holds. A shadow
 // pass tests every cluster box and then, for a cluster straddling a plane,
 // every surface in it: small enough that a straddling cluster wastes little,
@@ -101,6 +117,10 @@ type staticBatches struct {
 	// visBits) and the cluster it is in.
 	posInGroup []int32
 	clusterOf  []int32
+	// boxes is each surface's bounds, packed: the walks below read a box
+	// per visible surface, and a StaticSurface (its CPU mesh and all) is
+	// several cache lines wide.
+	boxes []staticBox
 	// Per cluster, level-wide: the camera pass's verdict on it, stamped with
 	// the pass it was made in so nothing is cleared between frames. clusters
 	// indexes the groups' clusters by that level-wide number.
@@ -118,10 +138,49 @@ type staticBatches struct {
 	transparent    []bool
 	transparentSig uint64
 	anyTransparent bool
+	// transVisible is the visible surfaces in transparent groups, out of the
+	// PVS answer it was filtered from (transSerial, and the list's own
+	// identity) under the transparency transSig hashes: a level of tens of
+	// thousands of visible surfaces and a few dozen panes of glass walks the
+	// dozens, and the thousands only when the answer changes.
+	transVisible []int
+	transSerial  uint64
+	transSig     uint64
+	transFrom    *int
+	transLen     int
+	transValid   bool
 	// gpu is the GPU-driven cull's half (static_nanite.go), nil while it is
 	// off or cannot run.
 	gpu *staticGPU
+	// pools are the buffers the groups' vertices share.
+	pools []*staticPool
 }
+
+// staticPool is one set of buffers several groups' vertices share: positions
+// and texture coordinates, normals and baked light where any group of the pool
+// has them (a group without is padded with what its own vertex array would
+// have read: nothing), and — once the GPU path has made them — the groups'
+// cluster-order index lists, back to back.
+type staticPool struct {
+	batch gfx.Batch
+	verts int32
+	// idx is buildStaticGPU's index list while it is being made.
+	idx []uint32
+}
+
+// staticPoolBytes caps a pool's largest buffer: the driver's largest storage
+// block (the visibility buffer's material pass reads every buffer as one), and
+// no more than this whatever the driver allows, so a level's buffers are never
+// one allocation of half a gigabyte.
+const staticPoolBytes = 256 << 20
+
+// StaticPools switches the pooling: off (FOUNDRY_STATIC_POOLS=0), every group
+// is a pool of its own, as every group had buffers of its own before.
+var StaticPools = gfx.EnvFlag("FOUNDRY_STATIC_POOLS", true)
+
+// staticLightPad is a baked-light record for a corner with none: what a
+// vertex array with the attribute switched off reads.
+var staticLightPad = [gfx.LightStride]float32{0, 0, 0, 1, 0, 0, 0}
 
 var staticCache = map[*world.Level]*staticBatches{}
 
@@ -162,6 +221,10 @@ func buildStaticBatches(s *world.StaticGeometry) *staticBatches {
 	}
 	sb.posInGroup = make([]int32, len(s.Surfaces))
 	sb.clusterOf = make([]int32, len(s.Surfaces))
+	sb.boxes = make([]staticBox, len(s.Surfaces))
+	for i := range s.Surfaces {
+		sb.boxes[i] = staticBox{s.Surfaces[i].Lo, s.Surfaces[i].Hi}
+	}
 	for _, grp := range sb.groups {
 		grp.buildClusters(s)
 		grp.visBits = make([]uint64, (len(grp.surfaces)+63)/64)
@@ -174,25 +237,108 @@ func buildStaticBatches(s *world.StaticGeometry) *staticBatches {
 			}
 			sb.clusters = append(sb.clusters, c)
 		}
-		var verts, normals, light []float32
+	}
+	sb.buildPools(s)
+	if NaniteClusters && gfx.GeometryUploadsEnabled {
+		sb.gpu = buildStaticGPU(s, sb, planned)
+	}
+	return sb
+}
+
+// buildPools lays the groups' vertices out in pools, in group order, a new
+// pool started wherever the next group would take the current one past
+// staticPoolBytes or the driver's largest storage block, and uploads them.
+func (sb *staticBatches) buildPools(s *world.StaticGeometry) {
+	limit := int64(staticPoolBytes)
+	if gfx.GeometryUploadsEnabled {
+		var block int64
+		gl.GetInteger64v(gl.MAX_SHADER_STORAGE_BLOCK_SIZE, &block)
+		if block > 0 {
+			limit = min(limit, block)
+		}
+	}
+	// The baked light is the widest record a corner has.
+	maxVerts := int32(limit / (gfx.LightStride * 4))
+	start := 0
+	var count int32
+	flush := func(end int) {
+		if end > start {
+			sb.uploadPool(s, sb.groups[start:end])
+		}
+		start, count = end, 0
+	}
+	for gi, grp := range sb.groups {
+		n := int32(0)
+		for _, si := range grp.surfaces {
+			n += int32(len(s.Surfaces[si].Geometry.Vertices) / 5)
+		}
+		if count > 0 && (count+n > maxVerts || !StaticPools) {
+			flush(gi)
+		}
+		count += n
+	}
+	flush(len(sb.groups))
+}
+
+// uploadPool makes one pool of groups.
+func (sb *staticBatches) uploadPool(s *world.StaticGeometry, groups []*staticGroup) {
+	pool := &staticPool{}
+	pi := len(sb.pools)
+	sb.pools = append(sb.pools, pool)
+	anyNormals, anyLight := false, false
+	for _, grp := range groups {
+		anyNormals = anyNormals || grp.key.mat.Normals
+		anyLight = anyLight || grp.key.mat.Baked
+	}
+	var verts, normals, light []float32
+	for _, grp := range groups {
+		grp.pool, grp.vertBase = pi, int32(len(verts)/5)
 		for _, si := range grp.surfaces {
 			g := &s.Surfaces[si].Geometry
 			grp.firsts = append(grp.firsts, int32(len(verts)/5))
 			grp.counts = append(grp.counts, int32(len(g.Vertices)/5))
 			verts = append(verts, g.Vertices...)
-			if grp.key.mat.Normals {
-				normals = append(normals, g.Normals...)
+			// The normals and the light line up with the corners whatever a
+			// surface carries: a group without them (or a surface short of
+			// them) reads what its own vertex array would have, nothing.
+			want := len(verts) / 5
+			if anyNormals {
+				if grp.key.mat.Normals {
+					normals = append(normals, g.Normals[:min(len(g.Normals), (want-len(normals)/3)*3)]...)
+				}
+				for len(normals) < want*3 {
+					normals = append(normals, 0)
+				}
 			}
-			if grp.key.mat.Baked {
-				light = append(light, g.BakedLightData()...)
+			if anyLight {
+				if grp.key.mat.Baked {
+					l := g.BakedLightData()
+					light = append(light, l[:min(len(l), (want-len(light)/gfx.LightStride)*gfx.LightStride)]...)
+				}
+				for len(light) < want*gfx.LightStride {
+					light = append(light, staticLightPad[len(light)%gfx.LightStride])
+				}
 			}
 		}
-		grp.batch.Upload(verts, normals, light)
 	}
-	if NaniteClusters && gfx.GeometryUploadsEnabled {
-		sb.gpu = buildStaticGPU(s, sb, planned)
+	pool.verts = int32(len(verts) / 5)
+	pool.batch.Upload(verts, normals, light)
+	for _, grp := range groups {
+		grp.batch.Vao, grp.batch.Vbo, grp.batch.Nbo, grp.batch.Lbo = pool.batch.Vao, pool.batch.Vbo, pool.batch.Nbo, pool.batch.Lbo
+		if !grp.key.mat.Normals {
+			// The group's own normals flag, as its own buffers would have
+			// said: the pool's normals are padding for it.
+			grp.batch.Nbo = 0
+		}
+		if !grp.key.mat.Baked {
+			grp.batch.Lbo = 0
+		}
+		n := int32(0)
+		for _, c := range grp.counts {
+			n += c
+		}
+		grp.batch.Verts = n
 	}
-	return sb
 }
 
 // noteTransparency records each group's IsTransparent for this frame.
@@ -205,7 +351,7 @@ func (sb *staticBatches) noteTransparency() {
 	h := uint64(14695981039346656037)
 	sb.anyTransparent = false
 	for gi, grp := range sb.groups {
-		t := grp.batch.IsTransparent()
+		t := frameSurface(&grp.batch.Material).transparent
 		sb.transparent[gi] = t
 		if t {
 			h ^= uint64(gi) + 1
@@ -237,9 +383,11 @@ func (g *staticGroup) buildClusters(s *world.StaticGeometry) {
 }
 
 func (sb *staticBatches) release() {
-	for _, g := range sb.groups {
-		g.batch.Delete()
+	// The groups' buffers are their pools'.
+	for _, p := range sb.pools {
+		p.batch.Delete()
 	}
+	sb.pools = nil
 	sb.groups = nil
 	if sb.gpu != nil {
 		sb.gpu.release()
@@ -338,6 +486,9 @@ func (sb *staticBatches) gatherVisibleMode(s *world.StaticGeometry, visible []in
 			return 0
 		}
 	}
+	if transparentOnly {
+		visible = sb.transparentVisible(s, visible)
+	}
 	if len(sb.clusterAt) != len(sb.clusters) {
 		sb.clusterAt = make([]uint64, len(sb.clusters))
 		sb.clusterIs = make([]FrustumClass, len(sb.clusters))
@@ -361,7 +512,7 @@ func (sb *staticBatches) gatherVisibleMode(s *world.StaticGeometry, visible []in
 		case FrustumOutside:
 			continue
 		case FrustumIntersects:
-			if surf := &s.Surfaces[si]; !AABBInFrustum(frustum, surf.Lo, surf.Hi) {
+			if box := &sb.boxes[si]; !AABBInFrustum(frustum, box.lo, box.hi) {
 				continue
 			}
 		}
@@ -370,8 +521,17 @@ func (sb *staticBatches) gatherVisibleMode(s *world.StaticGeometry, visible []in
 		drawn++
 	}
 	identity := mgl32.Ident4()
-	for _, grp := range sb.groups {
-		transparent := grp.batch.IsTransparent()
+	for gi, grp := range sb.groups {
+		var transparent bool
+		if transparentOnly {
+			// noteTransparency's answer for this frame; nothing in an
+			// opaque group was marked.
+			if transparent = sb.transparent[gi]; !transparent {
+				continue
+			}
+		} else {
+			transparent = frameSurface(&grp.batch.Material).transparent
+		}
 		// The visible surfaces in buffer order, a word of the bitset at a
 		// time; a group nothing of which is visible is a scan of zeros.
 		for w, bits := range grp.visBits {
@@ -382,8 +542,8 @@ func (sb *staticBatches) gatherVisibleMode(s *world.StaticGeometry, visible []in
 			for ; bits != 0; bits &= bits - 1 {
 				k := w<<6 + stdbits.TrailingZeros64(bits)
 				if transparent {
-					surf := &s.Surfaces[grp.surfaces[k]]
-					c := surf.Lo.Add(surf.Hi).Mul(0.5).Sub(camPos)
+					box := &sb.boxes[grp.surfaces[k]]
+					c := box.lo.Add(box.hi).Mul(0.5).Sub(camPos)
 					queue(BatchDraw{Batch: &grp.batch, Model: identity, First: grp.firsts[k : k+1], Count: grp.counts[k : k+1],
 						DoubleSided: grp.key.doubleSided}, c.Dot(c))
 					continue
@@ -393,6 +553,31 @@ func (sb *staticBatches) gatherVisibleMode(s *world.StaticGeometry, visible []in
 		}
 	}
 	return drawn
+}
+
+// transparentVisible is the surfaces of visible in transparent groups, in
+// visible's order: what gatherVisibleMode's walk would have kept of it.
+// Rebuilt only when the PVS answer (its serial, and the list itself) or the
+// groups' transparency changed; the frustum is the walk's, every frame.
+func (sb *staticBatches) transparentVisible(s *world.StaticGeometry, visible []int) []int {
+	var from *int
+	if len(visible) > 0 {
+		from = &visible[0]
+	}
+	if sb.transValid && sb.transSerial == s.VisibleSerial() && sb.transSig == sb.transparentSig &&
+		sb.transFrom == from && sb.transLen == len(visible) {
+		return sb.transVisible
+	}
+	sb.transVisible = sb.transVisible[:0]
+	for _, si := range visible {
+		if si < 0 || si >= len(sb.groupOf) || sb.groupOf[si] < 0 || !sb.transparent[sb.groupOf[si]] {
+			continue
+		}
+		sb.transVisible = append(sb.transVisible, si)
+	}
+	sb.transSerial, sb.transSig, sb.transFrom, sb.transLen, sb.transValid =
+		s.VisibleSerial(), sb.transparentSig, from, len(visible), true
+	return sb.transVisible
 }
 
 // shadowStaticSurfaces casts every compiled surface that is not hidden and

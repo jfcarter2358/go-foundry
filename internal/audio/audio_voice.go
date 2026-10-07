@@ -270,8 +270,11 @@ func (m *mixer) apply(c command) {
 		}
 		// A cap on sustained voices, so a script bug that starts a loop every
 		// frame cannot eat the pool and silence everything else. One-shots are
-		// unaffected, which is the common case.
-		if c.req.Loop && m.loopingVoices() >= maxLoopingVoices {
+		// unaffected, which is the common case. So is the music bus: a level's
+		// song is one deliberate voice, and refusing it because the level
+		// already has eight ambience loops going left the level silent for good
+		// (world.MusicUpdate holds the handle and never retries).
+		if c.req.Loop && c.req.Bus != BusMusic && m.loopingVoices() >= maxLoopingVoices {
 			m.dropped.Add(1)
 			return
 		}
@@ -358,11 +361,12 @@ func (m *mixer) peakApprox() float32 {
 	return math.Float32frombits(m.lastPeak.Load())
 }
 
-// loopingVoices counts sustained voices, for the cap. Mixer-goroutine only.
+// loopingVoices counts the sustained voices the cap applies to: every loop
+// but the music bus's. Mixer-goroutine only.
 func (m *mixer) loopingVoices() int {
 	n := 0
 	for i := range m.voices {
-		if m.voices[i].active && m.voices[i].loop {
+		if m.voices[i].active && m.voices[i].loop && m.voices[i].bus != BusMusic {
 			n++
 		}
 	}

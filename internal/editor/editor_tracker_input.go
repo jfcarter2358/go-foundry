@@ -226,9 +226,9 @@ func trkGridKey(sc sdl.Scancode, ctrl, shift, repeat bool) {
 		e.insertRow()
 		return
 	case sdl.SCANCODE_RETURN, sdl.SCANCODE_KP_ENTER:
-		if k, _, _ := trkFieldKind(e.Cur.Field); k == trkKindFXCmd || k == trkKindFXParam {
-			trkOpenEffectPicker()
-		}
+		// Codes are typed along a row and Enter takes the next line; the
+		// effect picker is Ctrl+Space.
+		e.nextLine()
 		return
 	case sdl.SCANCODE_KP_PLUS:
 		trkSelectInstrument(e.Instr + 1)

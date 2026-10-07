@@ -32,6 +32,15 @@ import (
 // over a rising one.
 const particleProbeDepth = float32(4.0)
 
+// The parallel emitter step (world/emitter.go) runs this seam from several
+// goroutines at once, so it is bracketed the way the parallel entity update is:
+// every cache a probe would fill lazily — brush boxes, terrain surfaces, the
+// scenery index — is brought up to date first and only read while it runs.
+func init() {
+	world.EmitterParallelBegin = freezeCollision
+	world.EmitterParallelEnd = thawCollision
+}
+
 // ParticleCollide sweeps a particle of radius r from `from` to `to` against
 // the level, returning where it first touched a solid brush face and the
 // surface normal there.

@@ -125,5 +125,10 @@ void main() {
     // sign of the homogeneous determinant, which is the screen-space area's
     // for any corners in front of the eye.
     nvFrontFacing = determinant(M) > 0.0;
+#ifdef GI_HALF_RES
+    // Which pixel the half-resolution probe light is read back for
+    // (light_model.glsl's giHalfResIrradiance).
+    giHalfResPixel = gl_FragCoord.xy;
+#endif
     nvShadeMain();
 }

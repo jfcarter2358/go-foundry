@@ -27,9 +27,10 @@ package collision
 // asks for, and it is deliberately cheap.
 
 import (
+	"slices"
+
 	"foundry/internal/hooks"
 	"foundry/internal/world"
-	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -225,7 +226,12 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 	if lvl == nil || !world.EntityEntityCollisionEnabled {
 		return nil
 	}
-	idx := make([]int, 0, len(lvl.Entities))
+	// The participants, each with the centre height it is sorted by. One
+	// slice of pairs rather than an index list plus a map from index to
+	// height: the sort then compares two fields instead of hashing twice per
+	// comparison, and nothing is allocated per frame (entityPassScratch).
+	sc := &entityPassScratch
+	order := sc.order[:0]
 	for i := range lvl.Entities {
 		// An entity that carries brushes presents THOSE as its solid, not its
 		// bounding cage — see entity_brushes.go. Resolving its box here as well
@@ -238,20 +244,27 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 		// solid, and an entity dressed in nothing else would otherwise collide
 		// with nothing at all.
 		if lvl.Entities[i].CollidesWithEntities() && !lvl.Entities[i].HasSolidBrushes() {
-			idx = append(idx, i)
+			order = append(order, participant{i: i, y: lvl.Entities[i].BoundCenter().Y()})
 		}
 	}
-	if len(idx) == 0 {
+	sc.order = order
+	if len(order) == 0 {
 		return nil
 	}
-	// Lowest volume centre first; ties broken by index so the walk is stable
-	// and two runs over the same level always agree.
-	centreY := make(map[int]float32, len(idx))
-	for _, i := range idx {
-		centreY[i] = lvl.Entities[i].BoundCenter().Y()
-	}
-	sort.SliceStable(idx, func(a, b int) bool {
-		return centreY[idx[a]] < centreY[idx[b]]
+	// Lowest volume centre first; ties keep index order (a stable sort over a
+	// list built in index order), so the walk is stable and two runs over the
+	// same level always agree.
+	//
+	// The comparison is the plain `<` the old sort.SliceStable used, not
+	// cmp.Compare, which orders a NaN centre differently.
+	slices.SortStableFunc(order, func(a, b participant) int {
+		switch {
+		case a.y < b.y:
+			return -1
+		case b.y < a.y:
+			return 1
+		}
+		return 0
 	})
 
 	// Every participant's box once, rather than both boxes once per PAIR: a
@@ -259,19 +272,21 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 	// with a hundred soldiers on the field there are five thousand pairs. A box
 	// is refreshed when its entity is pushed, so each pair still sees exactly
 	// the boxes resolveEntityOverlap would have built for it.
-	type cachedBox struct {
-		min, max mgl32.Vec3
-		ok       bool
-	}
-	boxes := make([]cachedBox, len(idx))
-	for k, i := range idx {
-		boxes[k].min, boxes[k].max, boxes[k].ok = lvl.Entities[i].CollisionAABB()
+	boxes := slices.Grow(sc.boxes[:0], len(order))[:len(order)]
+	sc.boxes = boxes
+	for k, p := range order {
+		boxes[k].min, boxes[k].max, boxes[k].ok = lvl.Entities[p.i].CollisionAABB()
 	}
 
-	moved := map[int]bool{}
-	for a := 0; a < len(idx); a++ {
-		for b := a + 1; b < len(idx); b++ {
-			ea, eb := &lvl.Entities[idx[a]], &lvl.Entities[idx[b]]
+	// Which level entities a push moved, by index — a slice the size of the
+	// level rather than a map, read back in index order below.
+	moved := slices.Grow(sc.moved[:0], len(lvl.Entities))[:len(lvl.Entities)]
+	clear(moved)
+	sc.moved = moved
+	anyMoved := false
+	for a := 0; a < len(order); a++ {
+		for b := a + 1; b < len(order); b++ {
+			ea, eb := &lvl.Entities[order[a].i], &lvl.Entities[order[b].i]
 			if !ea.Collision.Movable && !eb.Collision.Movable {
 				continue
 			}
@@ -312,38 +327,87 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 				hooks.RecordCollisionPair(ea.ID, eb.ID)
 			}
 			if movedA {
-				moved[idx[a]] = true
+				moved[order[a].i] = true
+				anyMoved = true
 			}
 			if movedB {
-				moved[idx[b]] = true
+				moved[order[b].i] = true
+				anyMoved = true
 			}
 		}
 	}
 
 	// The player takes part on the same terms as anything else, so a solid
 	// crate is solid to walk into and — if it is movable — to shove.
+	//
+	// Against the cached boxes first, as the pair pass is: resolveEntityOverlap
+	// would build both boxes and reject on them anyway, and for every soldier
+	// on the field nowhere near the player that is all it does. The player's
+	// box is rebuilt whenever a push moves the player, and an entity's cached
+	// box is current — the pair pass refreshed it after every push — so the
+	// pre-test turns away exactly the pairs resolveEntityOverlap would have.
 	if player != nil && player.HasBounds() {
-		for _, i := range idx {
-			if player.Frame != lvl.Entities[i].Frame {
+		pmin, pmax, pok := player.CollisionAABB()
+		for k, p := range order {
+			e := &lvl.Entities[p.i]
+			if player.Frame != e.Frame {
 				continue // different coordinate systems — see the note above
 			}
-			movedP, movedE := resolveEntityOverlap(player, &lvl.Entities[i])
+			if !pok || !boxes[k].ok {
+				continue
+			}
+			if _, touching := boxOverlaps(pmin, pmax, boxes[k].min, boxes[k].max); !touching {
+				continue
+			}
+			movedP, movedE := resolveEntityOverlap(player, e)
 			if movedP || movedE {
-				hooks.RecordCollisionPair(player.ID, lvl.Entities[i].ID)
+				hooks.RecordCollisionPair(player.ID, e.ID)
+			}
+			if movedP {
+				pmin, pmax, pok = player.CollisionAABB()
 			}
 			if movedE {
-				moved[i] = true
+				boxes[k].min, boxes[k].max, boxes[k].ok = e.CollisionAABB()
+				moved[p.i] = true
+				anyMoved = true
 			}
 		}
 	}
 
-	out := make([]int, 0, len(moved))
+	if !anyMoved {
+		return nil
+	}
+	out := make([]int, 0, 8)
 	for i := range lvl.Entities {
 		if moved[i] {
 			out = append(out, i)
 		}
 	}
 	return out
+}
+
+// participant is one entity in ResolveEntityCollisions' walk: its level index
+// and the centre height the walk is ordered by.
+type participant struct {
+	i int
+	y float32
+}
+
+// entityPairBox is a participant's cached CollisionAABB.
+type entityPairBox struct {
+	min, max mgl32.Vec3
+	ok       bool
+}
+
+// entityPassScratch is ResolveEntityCollisions' per-frame working memory,
+// reused frame to frame. The pass runs on the frame loop's thread only (it is
+// the serial half of EntityUpdate).
+var entityPassScratch struct {
+	order []participant
+	boxes []entityPairBox
+	moved []bool
+	// ids is the parallel pass's entity-ID index (entity_update_parallel.go).
+	ids map[string]int
 }
 
 // resolveEntityOverlap separates two overlapping entities and reports which of

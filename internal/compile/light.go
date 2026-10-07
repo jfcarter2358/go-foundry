@@ -166,6 +166,16 @@ func bakeLight(t *BSPTree, lvl *world.Level, opt LightOptions, p Progress) {
 		b.softRadius = opt.MinGridStep
 	}
 
+	// Every face's smoothed normals, worked out once. The direct pass, every
+	// bounce and the final sum all want them, and each used to call
+	// VertexNormals afresh — a fan search per point, three or more times per
+	// face. A side table rather than a cache on Face, because faces are
+	// copied, cut and renumbered on the way here (SubdivideFaces, the
+	// refinement just above), and a table built after the last of those can
+	// never be stale: nothing below changes a face's points or normals.
+	b.smooth = make([][]mgl32.Vec3, len(t.Faces))
+	parallelFor(len(t.Faces), func(fi int) { b.smooth[fi] = t.Faces[fi].VertexNormals() })
+
 	// The direct light, kept per exclusion group (see lightGroups) until the
 	// bounce has had its turn, because what a bounce may carry into a chunk
 	// depends on which lights were allowed there in the first place.
@@ -181,7 +191,10 @@ func bakeLight(t *BSPTree, lvl *world.Level, opt LightOptions, p Progress) {
 		total = b.bounce(direct, bounces)
 	}
 	p.report("Light: summing", 0)
-	for fi := range t.Faces {
+	// Each face's sums read only its own samples and write only its own
+	// fields, in the same order whichever goroutine runs it, so the parallel
+	// sum is the serial one to the bit (TestParallelLightSumIsSerial).
+	sumFace := func(fi int) {
 		f := &t.Faces[fi]
 		fs := &total[fi]
 		f.Light = fs.sum(kindFront, b.groups())
@@ -190,13 +203,24 @@ func bakeLight(t *BSPTree, lvl *world.Level, opt LightOptions, p Progress) {
 		f.SmoothBackLight = fs.sum(kindSmoothBack, b.groups())
 		f.SunShare, f.BackSunShare = direct[fi].sun[0], direct[fi].sun[1]
 
-		smooth := f.VertexNormals()
+		smooth := b.smooth[fi]
 		f.Indirect = b.indirect(f, smooth, kindFront, f.Light, &direct[fi])
 		f.BackIndirect = b.indirect(f, smooth, kindBack, f.BackLight, &direct[fi])
 		f.SmoothIndirect = b.indirect(f, smooth, kindSmoothFront, f.SmoothLight, &direct[fi])
 		f.SmoothBackIndirect = b.indirect(f, smooth, kindSmoothBack, f.SmoothBackLight, &direct[fi])
 	}
+	if parallelLightSum {
+		parallelFor(len(t.Faces), sumFace)
+	} else {
+		for fi := range t.Faces {
+			sumFace(fi)
+		}
+	}
 }
+
+// parallelLightSum sums the faces' final answers across cores; false runs the
+// same per-face sum serially, which a test compares against.
+var parallelLightSum = true
 
 // indirect is the part of answer k (total, already summed) that live GI
 // replaces: the ambient term plus whatever the bounce added — everything but
@@ -285,7 +309,7 @@ func kindFrame(f *Face, smooth []mgl32.Vec3, k int) (normals []mgl32.Vec3, side 
 func (b *baker) directFace(fi int) faceSamples {
 	f := &b.tree.Faces[fi]
 	var fs faceSamples
-	smooth := f.VertexNormals()
+	smooth := b.smooth[fi]
 	groups := b.groups()
 	// One probe per corner per side, shared by the flat and smooth answers:
 	// where a shadow falls does not depend on which normal shades the point.
@@ -348,6 +372,9 @@ type baker struct {
 	// and a patch their own size would only smear the neighbours' edges onto
 	// them.
 	softRadius float32
+	// smooth is every face's VertexNormals, filled once the faces are final
+	// (bakeLight) and indexed like tree.Faces.
+	smooth [][]mgl32.Vec3
 	// sun is lights.BakedSun(): the light Face.SunShare is kept for, or -1.
 	sun int
 	// seal is the level's sealing box, where a sun's shadow ray stops (see

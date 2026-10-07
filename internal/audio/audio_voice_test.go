@@ -102,6 +102,26 @@ func TestTheLoopingCapStopsAScriptFromEatingThePool(t *testing.T) {
 	}
 }
 
+func TestTheLoopingCapLeavesRoomForTheMusic(t *testing.T) {
+	// level2 starts ten ambience and engine loops at load, and its song used
+	// to be the voice the cap turned away — silently, for the whole level.
+	m := newTestMixer(t)
+	for i := 0; i < maxLoopingVoices+2; i++ {
+		playConst(m, constClip(0.5, 1<<16, 1), 1, true, PriorityNormal)
+	}
+	id := newVoiceID()
+	m.apply(command{kind: cmdPlay, id: id, req: PlayRequest{
+		Gen: &constGen{level: 0.25, blocks: 1 << 20}, Bus: BusMusic, Gain: 1, Loop: true, Priority: PriorityHigh,
+	}})
+	if _, ok := m.byID[id]; !ok {
+		t.Fatal("the song was refused because the looping cap was full")
+	}
+	// And the music does not use up the cap the effects loops share.
+	if got := m.loopingVoices(); got > maxLoopingVoices {
+		t.Errorf("%d capped looping voices live, cap is %d", got, maxLoopingVoices)
+	}
+}
+
 func TestAStaleHandleCannotSteerAVoiceThatReplacedIt(t *testing.T) {
 	// Handles come from a monotonic counter and are never reused, so a Stop
 	// arriving after its sound already ended is a no-op rather than silencing

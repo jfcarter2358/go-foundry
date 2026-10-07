@@ -53,8 +53,11 @@ package render
 // past the driver's largest storage block) is drawn the forward way.
 
 import (
+	"cmp"
 	"fmt"
 	"log"
+	"slices"
+	"strings"
 
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
@@ -158,6 +161,10 @@ type naniteVisPass struct {
 	bins        []visBin
 	binBase     map[*cullBatch]int
 	warned      bool
+	// cov is the ID pass's coverage state as last set (groupCoverage).
+	cov visCoverage
+	// order is the material pass's bins in the order it shades them.
+	order []int
 }
 
 var naniteVis naniteVisPass
@@ -199,6 +206,7 @@ func (v *naniteVisPass) build() (err error) {
 	if err != nil {
 		return err
 	}
+	matFrag = giHalfResSource(matFrag) // GI at half resolution (gi_halfres.go)
 	prog, err = gfx.CompileProgramFromSources(mustReadShader(biomeShaderPath("nanite_material_vert.glsl")), matFrag)
 	if err != nil {
 		return fmt.Errorf("material pass: %v", err)
@@ -344,7 +352,7 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 		v.binBase[b] = base
 		for _, g := range groups {
 			v.bins = append(v.bins, visBin{mat: g.mat, vbo: g.vbo, nbo: g.nbo, lbo: g.lbo, ebo: g.ebo, ins: b.instBuf,
-				baked: g.baked, shade: prepassable(g.mat)})
+				baked: g.baked, shade: frameSurface(g.mat).prepass})
 		}
 	}
 	ProfileBegin("nanite: vis")
@@ -385,45 +393,44 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	gl.Uniform1i(p.U("alphaSharpen"), 1)
 	gl.Uniform1i(p.U("coverageDither"), coverageDither())
 	gl.Uniform1f(p.U("time"), gfx.MaterialScrollTime)
+	// Never water: a water material is not prepassable, and is drawn the
+	// forward way below.
+	gl.Uniform1i(p.U("isWater"), 0)
 	gfx.ApplySkinUniforms(&v.matSkin, p.prog, nil)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, b.instBuf)
 	gl.StencilFunc(gl.ALWAYS, 1, 0xff)
 	drawBuffersOnly(sceneAttachVisID)
+	// The coverage state the groups set is set only where it differs from
+	// the group before's: the uniforms are this program's own, but the
+	// textures are bound to units anything since the last pass may have
+	// rebound, so the record of them starts over every pass.
+	v.cov = visCoverage{}
+	gl.ActiveTexture(gl.TEXTURE0)
+	// One indirect buffer for every group of the pass, and the records'
+	// attributes set once for each run of groups drawn from one vertex array
+	// (the cooked meshes' groups share theirs, and a compiled level's share
+	// its pool's), not once a group: a group's own cost used to be thirty-odd
+	// driver calls.
+	b.bindIndirect()
+	var bound visVAOState
 	forward := false
 	for gi := range groups {
 		g := &groups[gi]
 		if !b.groupLive(gi) {
 			continue
 		}
-		if !prepassable(g.mat) {
+		fs := frameSurface(g.mat)
+		if !fs.prepass {
 			forward = true
 			continue
 		}
 		v.bins[base+gi].drawn = true
-		v.groupCoverage(g.mat)
-		gl.BindVertexArray(g.vao)
-		if g.instanced {
-			for k := uint32(0); k < 4; k++ {
-				gl.DisableVertexAttribArray(gfx.AttribInstanceModel + k)
-			}
-		}
-		gl.BindBuffer(gl.ARRAY_BUFFER, v.records)
-		for k := uint32(0); k < 2; k++ {
-			gl.EnableVertexAttribArray(naniteSlotAttrib + k)
-			gl.VertexAttribIPointerWithOffset(naniteSlotAttrib+k, 4, gl.UNSIGNED_INT, naniteVisRecordBytes, uintptr(16*k))
-			gl.VertexAttribDivisor(naniteSlotAttrib+k, 1)
-		}
-		b.drawGroup(gi)
-		for k := uint32(0); k < 2; k++ {
-			gl.DisableVertexAttribArray(naniteSlotAttrib + k)
-			gl.VertexAttribDivisor(naniteSlotAttrib+k, 0)
-		}
-		if g.instanced {
-			for k := uint32(0); k < 4; k++ {
-				gl.EnableVertexAttribArray(gfx.AttribInstanceModel + k)
-			}
-		}
+		v.groupCoverage(&fs.st)
+		bound.bind(g, v.records)
+		b.drawGroupBound(gi)
 	}
+	bound.release()
+	b.unbindIndirect()
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, 0)
@@ -440,7 +447,7 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	// What the material pass does not shade, the forward way.
 	if forward {
 		for gi := range groups {
-			if b.groupLive(gi) && !prepassable(groups[gi].mat) && groups[gi].forward != nil {
+			if b.groupLive(gi) && !frameSurface(groups[gi].mat).prepass && groups[gi].forward != nil {
 				groups[gi].forward()
 			}
 		}
@@ -451,29 +458,122 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	return true
 }
 
-// groupCoverage sets the ID pass's coverage uniforms for a group in material
-// m: what decides whether a fragment is the surface's (nanite_prepass.go's
-// material, which this mirrors).
-func (v *naniteVisPass) groupCoverage(m *gfx.Material) {
-	p := &v.vis
-	st := m.SurfaceState()
-	gl.Uniform1f(p.U("alpha"), st.Alpha)
-	gl.Uniform1f(p.U("alphaCutoffBias"), st.CutoffBias)
-	gl.Uniform1i(p.U("normalColor"), st.NormalColorFlag())
-	gl.Uniform2f(p.U("uvOffset"), st.UVOffset.X(), st.UVOffset.Y())
-	gl.Uniform2f(p.U("uvScaleBias"), st.UVScale.X()-1, st.UVScale.Y()-1)
-	gl.Uniform1f(p.U("uvRotation"), st.UVRotation)
-	gl.Uniform1i(p.U("isWater"), 0)
-	hasBlend := st.BlendTexture != "" && st.BlendMask != ""
-	gl.Uniform1i(p.U("hasBlend"), boolToInt32(hasBlend))
-	if hasBlend {
-		gl.ActiveTexture(gl.TEXTURE0 + gfx.BlendTexUnit)
-		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[st.BlendTexture])
-		gl.ActiveTexture(gl.TEXTURE0 + gfx.BlendMaskUnit)
-		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[st.BlendMask])
+// visVAOState is the vertex array the ID pass has bound, with the records'
+// attributes set on it, and whether its instance matrix is switched off.
+type visVAOState struct {
+	vao       uint32
+	instanced bool
+}
+
+// bind readies g's vertex array for the ID draws, unless it is the one
+// already readied: the instance matrix off (the ID draw's base instance is a
+// record number, not an instance), the record attributes on.
+func (s *visVAOState) bind(g *visGroup, records uint32) {
+	if s.vao != 0 && s.vao == g.vao && s.instanced == g.instanced {
+		return
 	}
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[st.Texture])
+	s.release()
+	gl.BindVertexArray(g.vao)
+	if g.instanced {
+		for k := uint32(0); k < 4; k++ {
+			gl.DisableVertexAttribArray(gfx.AttribInstanceModel + k)
+		}
+	}
+	gl.BindBuffer(gl.ARRAY_BUFFER, records)
+	for k := uint32(0); k < 2; k++ {
+		gl.EnableVertexAttribArray(naniteSlotAttrib + k)
+		gl.VertexAttribIPointerWithOffset(naniteSlotAttrib+k, 4, gl.UNSIGNED_INT, naniteVisRecordBytes, uintptr(16*k))
+		gl.VertexAttribDivisor(naniteSlotAttrib+k, 1)
+	}
+	s.vao, s.instanced = g.vao, g.instanced
+}
+
+// release puts the bound vertex array back as every other pass expects it:
+// no record attributes, and the instance matrix on where it has one.
+func (s *visVAOState) release() {
+	if s.vao == 0 {
+		return
+	}
+	for k := uint32(0); k < 2; k++ {
+		gl.DisableVertexAttribArray(naniteSlotAttrib + k)
+		gl.VertexAttribDivisor(naniteSlotAttrib+k, 0)
+	}
+	if s.instanced {
+		for k := uint32(0); k < 4; k++ {
+			gl.EnableVertexAttribArray(gfx.AttribInstanceModel + k)
+		}
+	}
+	*s = visVAOState{}
+}
+
+// visCoverage is the coverage state the ID pass last set: its uniforms, and
+// the textures on unit 0 and the blend pair's units. valid is false at the
+// start of a pass, when nothing is known.
+type visCoverage struct {
+	valid                     bool
+	alpha, cutoff, uvRot      float32
+	normalColor, hasBlend     int32
+	uvOff, uvScaleBias        [2]float32
+	tex, blendTex, blendMask  uint32
+	texSet, blendSet, maskSet bool
+}
+
+// groupCoverage sets the ID pass's coverage uniforms for a group in a
+// material of state st — what decides whether a fragment is the surface's
+// (nanite_prepass.go's material, which this mirrors) — wherever they differ
+// from what is already set. Texture unit 0 is active on entry and on return.
+func (v *naniteVisPass) groupCoverage(st *gfx.SurfaceState) {
+	p := &v.vis
+	c := &v.cov
+	first := !c.valid
+	c.valid = true
+	if first || c.alpha != st.Alpha {
+		c.alpha = st.Alpha
+		gl.Uniform1f(p.U("alpha"), st.Alpha)
+	}
+	if first || c.cutoff != st.CutoffBias {
+		c.cutoff = st.CutoffBias
+		gl.Uniform1f(p.U("alphaCutoffBias"), st.CutoffBias)
+	}
+	if nc := st.NormalColorFlag(); first || c.normalColor != nc {
+		c.normalColor = nc
+		gl.Uniform1i(p.U("normalColor"), nc)
+	}
+	if off := [2]float32{st.UVOffset.X(), st.UVOffset.Y()}; first || c.uvOff != off {
+		c.uvOff = off
+		gl.Uniform2f(p.U("uvOffset"), off[0], off[1])
+	}
+	if sb := [2]float32{st.UVScale.X() - 1, st.UVScale.Y() - 1}; first || c.uvScaleBias != sb {
+		c.uvScaleBias = sb
+		gl.Uniform2f(p.U("uvScaleBias"), sb[0], sb[1])
+	}
+	if first || c.uvRot != st.UVRotation {
+		c.uvRot = st.UVRotation
+		gl.Uniform1f(p.U("uvRotation"), st.UVRotation)
+	}
+	hasBlend := st.BlendTexture != "" && st.BlendMask != ""
+	if hb := boolToInt32(hasBlend); first || c.hasBlend != hb {
+		c.hasBlend = hb
+		gl.Uniform1i(p.U("hasBlend"), hb)
+	}
+	if hasBlend {
+		if t := gfx.Textures[st.BlendTexture]; !c.blendSet || c.blendTex != t {
+			c.blendTex, c.blendSet = t, true
+			gl.ActiveTexture(gl.TEXTURE0 + gfx.BlendTexUnit)
+			gl.BindTexture(gl.TEXTURE_2D, t)
+			gl.ActiveTexture(gl.TEXTURE0)
+		}
+		if t := gfx.Textures[st.BlendMask]; !c.maskSet || c.blendMask != t {
+			c.blendMask, c.maskSet = t, true
+			gl.ActiveTexture(gl.TEXTURE0 + gfx.BlendMaskUnit)
+			gl.BindTexture(gl.TEXTURE_2D, t)
+			gl.ActiveTexture(gl.TEXTURE0)
+		}
+	}
+	if t := gfx.Textures[st.Texture]; !c.texSet || c.tex != t {
+		c.tex, c.texSet = t, true
+		gl.BindTexture(gl.TEXTURE_2D, t)
+	}
 }
 
 // ensureRecords grows the record buffer to hold n, keeping what this frame
@@ -516,7 +616,7 @@ func (b *cullBatch) visGroupsFit(groups []visGroup, maxBlock int64) bool {
 		sig = mix(sig, uint64(b.groups[gi].first)<<32|uint64(b.groups[gi].count))
 		sig = mix(sig, uint64(g.vbo)<<32|uint64(g.ebo))
 		sig = mix(sig, uint64(g.nbo)<<32|uint64(g.lbo))
-		sig = mix(sig, uint64(boolToInt32(prepassable(g.mat))))
+		sig = mix(sig, uint64(boolToInt32(frameSurface(g.mat).prepass)))
 	}
 	if b.visGroupBuf != 0 && sig == b.visGroupSig {
 		return b.visFits
@@ -524,7 +624,7 @@ func (b *cullBatch) visGroupsFit(groups []visGroup, maxBlock int64) bool {
 	b.visGroupSig = sig
 	table := make([]uint32, 0, 4*len(groups))
 	for gi, g := range groups {
-		table = append(table, uint32(b.groups[gi].first), uint32(b.groups[gi].count), uint32(boolToInt32(prepassable(g.mat))), 0)
+		table = append(table, uint32(b.groups[gi].first), uint32(b.groups[gi].count), uint32(boolToInt32(frameSurface(g.mat).prepass)), 0)
 	}
 	if b.visGroupBuf == 0 {
 		gl.GenBuffers(1, &b.visGroupBuf)
@@ -635,6 +735,10 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 	gl.BindVertexArray(v.vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, 3)
 
+	// GI's probe light at half resolution, from the depth now final
+	// (gi_halfres.go).
+	giHalfResRun()
+
 	// 4. Each bin's pixels, shaded: its tiles at its depth, GL_EQUAL.
 	gl.BindFramebuffer(gl.FRAMEBUFFER, v.colourFBO)
 	gl.Viewport(0, 0, w, h)
@@ -642,6 +746,7 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 	gl.DepthMask(false)
 	m := &v.material
 	v.frameUniforms(lvl, frame, now)
+	giHalfResBindTo(m.prog)
 	gl.UseProgram(m.prog)
 	gl.Uniform1i(m.U("visIDs"), naniteVisIDUnit)
 	gl.Uniform1i(m.U("binIDs"), naniteVisBinUnit)
@@ -664,24 +769,58 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 		gl.GenQueries(1, &query)
 		gl.BeginQuery(gl.SAMPLES_PASSED, query)
 	}
+	// Each bin's pixels are its own, so the order the bins are shaded in
+	// changes nothing on screen; they go in the order that changes the least
+	// state between them — by material, then by buffers — and what a bin
+	// shares with the one before (its material's every uniform and texture,
+	// its flags, its buffers) is not set again.
+	v.order = v.order[:0]
 	for bi := range v.bins {
-		bn := &v.bins[bi]
-		if !bn.shade || !bn.drawn {
-			continue
+		if bn := &v.bins[bi]; bn.shade && bn.drawn {
+			v.order = append(v.order, bi)
 		}
-		st := bn.mat.SurfaceState()
-		st.ApplyLocs(&v.matLocs)
-		gl.Uniform1i(v.matBaked, boolToInt32(bn.baked))
-		gl.Uniform1i(v.matHasNormals, boolToInt32(bn.nbo != 0))
-		gl.Uniform1i(v.matHasLight, boolToInt32(bn.lbo != 0))
+	}
+	slices.SortStableFunc(v.order, func(a, b int) int { return v.binLess(a, b) })
+	var bound [6]uint32
+	bind := func(i int, buf uint32) {
+		if bound[i] != buf {
+			bound[i] = buf
+			gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, uint32(i), buf)
+		}
+	}
+	// What the loop leaves bound and set, for the next bin to compare with:
+	// a copy, since outside a frame frameSurface answers in one scratch state.
+	var applied gfx.SurfaceState
+	appliedOK := false
+	baked, hasNormals, hasLight := int32(-1), int32(-1), int32(-1)
+	gl.ActiveTexture(gl.TEXTURE0)
+	for _, bi := range v.order {
+		bn := &v.bins[bi]
+		st := &frameSurface(bn.mat).st
+		if !appliedOK || applied != *st {
+			st.ApplyLocs(&v.matLocs)
+			gl.ActiveTexture(gl.TEXTURE0)
+			gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[st.Texture])
+			applied, appliedOK = *st, true
+		}
+		if f := boolToInt32(bn.baked); f != baked {
+			baked = f
+			gl.Uniform1i(v.matBaked, f)
+		}
+		if f := boolToInt32(bn.nbo != 0); f != hasNormals {
+			hasNormals = f
+			gl.Uniform1i(v.matHasNormals, f)
+		}
+		if f := boolToInt32(bn.lbo != 0); f != hasLight {
+			hasLight = f
+			gl.Uniform1i(v.matHasLight, f)
+		}
 		gl.Uniform1ui(v.matBin, uint32(bi))
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[st.Texture])
-		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, bn.ins)
-		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 2, bn.ebo)
-		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, bn.vbo)
-		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, orDummy(bn.nbo, v.dummy))
-		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, orDummy(bn.lbo, v.dummy))
+		bind(0, bn.ins)
+		bind(2, bn.ebo)
+		bind(3, bn.vbo)
+		bind(4, orDummy(bn.nbo, v.dummy))
+		bind(5, orDummy(bn.lbo, v.dummy))
 		gl.DrawArraysIndirect(gl.TRIANGLES, gl.PtrOffset(bi*16))
 		shaded++
 	}
@@ -712,6 +851,25 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 	gl.DepthFunc(gl.LEQUAL)
 	gl.DepthMask(true)
 	gl.UseProgram(gfx.Program)
+}
+
+// binLess orders the material pass's bins: by texture, so bins of one
+// material come together, then by vertex buffer, so bins of one batch do.
+func (v *naniteVisPass) binLess(a, b int) int {
+	x, y := &v.bins[a], &v.bins[b]
+	if x.mat != y.mat {
+		// One at a time: outside a frame frameSurface answers in one
+		// scratch state.
+		tx := frameSurface(x.mat).st.Texture
+		ty := frameSurface(y.mat).st.Texture
+		if c := strings.Compare(tx, ty); c != 0 {
+			return c
+		}
+	}
+	if x.vbo != y.vbo {
+		return cmp.Compare(x.vbo, y.vbo)
+	}
+	return cmp.Compare(a, b)
 }
 
 func orDummy(buf, dummy uint32) uint32 {

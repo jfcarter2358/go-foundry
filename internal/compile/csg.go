@@ -238,9 +238,44 @@ func csg(lvl *world.Level) ([]Face, []StreamedClip, error) {
 		c.Faces++
 		c.Area += area
 	}
-	out := make([]Face, 0, len(faces))
-	for i := range faces {
-		out = append(out, clipFaceAgainstSolidsReporting(faces[i], solids, streamed, report)...)
+
+	// Every face is clipped on its own, so the faces are clipped in parallel,
+	// each against only the solids whose boxes it could overlap (solidBoxes),
+	// visited in solid order — the order the clip folds them in. What comes
+	// out is gathered per face and joined in face order, and the streamed
+	// reports are kept per face and replayed in face order too: Area is a
+	// float sum, and adding the same numbers in another order is a different
+	// number. So the output is the serial walk's to the bit.
+	index := newSolidBoxes(solids)
+	pieces := make([][]Face, len(faces))
+	reports := make([][]streamedReport, len(faces))
+	clipOne := func(i int) {
+		var cand []int32
+		if index != nil {
+			lo, hi := bsp.Bounds(faces[i].Points)
+			cand = index.overlapping(lo, hi, nil)
+		}
+		pieces[i] = clipFaceAgainst(faces[i], solids, cand, index != nil, streamed, func(faceChunk, solidChunk string, area float32) {
+			reports[i] = append(reports[i], streamedReport{faceChunk, solidChunk, area})
+		})
+	}
+	if parallelCSG {
+		parallelFor(len(faces), clipOne)
+	} else {
+		for i := range faces {
+			clipOne(i)
+		}
+	}
+	n := 0
+	for i := range pieces {
+		n += len(pieces[i])
+	}
+	out := make([]Face, 0, max(n, len(faces)))
+	for i := range pieces {
+		out = append(out, pieces[i]...)
+		for _, r := range reports[i] {
+			report(r.faceChunk, r.solidChunk, r.area)
+		}
 	}
 	list := make([]StreamedClip, 0, len(clips))
 	for _, c := range clips {
@@ -253,6 +288,20 @@ func csg(lvl *world.Level) ([]Face, []StreamedClip, error) {
 		return list[a].SolidChunk < list[b].SolidChunk
 	})
 	return out, list, nil
+}
+
+// parallelCSG clips faces across cores, and indexSolids finds each face's
+// solids through solidBoxes rather than by testing every solid's box. Both are
+// switches only so the tests can compare against the plain serial walk.
+var (
+	parallelCSG = true
+	indexSolids = true
+)
+
+// streamedReport is one call of csg's report, kept until the faces are joined.
+type streamedReport struct {
+	faceChunk, solidChunk string
+	area                  float32
 }
 
 // StreamedClip is surface of one chunk that CSG removed because it was inside a
@@ -511,6 +560,15 @@ func clipFaceAgainstSolids(f Face, solids []solid) []Face {
 // A nil streamed map is the plain clip every other caller wants.
 func clipFaceAgainstSolidsReporting(f Face, solids []solid, streamed map[string]bool,
 	report func(faceChunk, solidChunk string, area float32)) []Face {
+	return clipFaceAgainst(f, solids, nil, false, streamed, report)
+}
+
+// clipFaceAgainst is clipFaceAgainstSolidsReporting over only the solids cand
+// names, in ascending order, when indexed is set — which must include every
+// solid whose box overlaps the face's (solidBoxes.overlapping). Every other
+// solid is skipped by the box test anyway, so the answer is the same.
+func clipFaceAgainst(f Face, solids []solid, cand []int32, indexed bool, streamed map[string]bool,
+	report func(faceChunk, solidChunk string, area float32)) []Face {
 	// A fragment and what it is buried under. Every fragment starts visible;
 	// one a streamed neighbour's solid swallows becomes a cover fragment and
 	// carries on being clipped, since whatever else it is inside still buries
@@ -522,7 +580,15 @@ func clipFaceAgainstSolidsReporting(f Face, solids []solid, streamed map[string]
 	frags := []frag{{pts: f.Points}}
 	lo, hi := bsp.Bounds(f.Points)
 
-	for si := range solids {
+	count := len(solids)
+	if indexed {
+		count = len(cand)
+	}
+	for ci := 0; ci < count; ci++ {
+		si := ci
+		if indexed {
+			si = int(cand[ci])
+		}
 		s := &solids[si]
 		if len(frags) == 0 {
 			break
@@ -578,6 +644,105 @@ func clipFaceAgainstSolidsReporting(f Face, solids []solid, streamed map[string]
 		}
 		out = append(out, g)
 	}
+	return out
+}
+
+// solidBoxes is a bounding-volume tree over the solids' boxes, for finding the
+// few a face could touch without testing all of them: the clip was every face
+// against every solid's box, which in a big level is most of CSG's time.
+type solidBoxes struct {
+	nodes []solidNode
+	items []int32 // solid indices, grouped by leaf
+}
+
+// solidNode is a box and either its children (count 0) or its solids
+// (items[left : left+count]).
+type solidNode struct {
+	lo, hi             mgl32.Vec3
+	left, right, count int32
+}
+
+const solidLeafSize = 8
+
+// newSolidBoxes is the tree over solids' boxes, or nil when there are too few
+// for one to be worth it (or indexSolids is off) — the caller then walks them
+// all.
+func newSolidBoxes(solids []solid) *solidBoxes {
+	if !indexSolids || len(solids) <= 2*solidLeafSize {
+		return nil
+	}
+	sb := &solidBoxes{}
+	idx := make([]int32, len(solids))
+	for i := range idx {
+		idx[i] = int32(i)
+	}
+	centre := func(i int32, a int) float32 { return (solids[i].lo[a] + solids[i].hi[a]) / 2 }
+	var build func(idx []int32) int32
+	build = func(idx []int32) int32 {
+		ni := int32(len(sb.nodes))
+		sb.nodes = append(sb.nodes, solidNode{})
+		lo, hi := solids[idx[0]].lo, solids[idx[0]].hi
+		for _, i := range idx[1:] {
+			for a := 0; a < 3; a++ {
+				lo[a], hi[a] = min(lo[a], solids[i].lo[a]), max(hi[a], solids[i].hi[a])
+			}
+		}
+		sb.nodes[ni].lo, sb.nodes[ni].hi = lo, hi
+		if len(idx) <= solidLeafSize {
+			sb.nodes[ni].left, sb.nodes[ni].count = int32(len(sb.items)), int32(len(idx))
+			sb.items = append(sb.items, idx...)
+			return ni
+		}
+		axis, span := 0, hi[0]-lo[0]
+		for a := 1; a < 3; a++ {
+			if s := hi[a] - lo[a]; s > span {
+				axis, span = a, s
+			}
+		}
+		// Which solids share a leaf only decides how fast the search is, never
+		// what it finds, but the index breaks ties anyway to keep the tree the
+		// same every run.
+		slices.SortFunc(idx, func(x, y int32) int {
+			cx, cy := centre(x, axis), centre(y, axis)
+			switch {
+			case cx < cy:
+				return -1
+			case cx > cy:
+				return 1
+			}
+			return int(x - y)
+		})
+		mid := len(idx) / 2
+		left := build(idx[:mid])
+		right := build(idx[mid:])
+		sb.nodes[ni].left, sb.nodes[ni].right = left, right
+		return ni
+	}
+	build(idx)
+	return sb
+}
+
+// overlapping appends to out every solid whose box might overlap lo..hi by
+// bsp.BoxesOverlap — a superset of the ones that do, since a node's box holds
+// all of its solids' — in ascending index order, the order the clip visits
+// solids in.
+func (sb *solidBoxes) overlapping(lo, hi mgl32.Vec3, out []int32) []int32 {
+	var stack [64]int32
+	sp := 1
+	for sp > 0 {
+		sp--
+		n := &sb.nodes[stack[sp]]
+		if !bsp.BoxesOverlap(lo, hi, n.lo, n.hi) {
+			continue
+		}
+		if n.count > 0 {
+			out = append(out, sb.items[n.left:n.left+n.count]...)
+			continue
+		}
+		stack[sp], stack[sp+1] = n.left, n.right
+		sp += 2
+	}
+	slices.Sort(out)
 	return out
 }
 

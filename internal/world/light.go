@@ -1,7 +1,6 @@
 package world
 
 import (
-	"fmt"
 	"foundry/internal/gfx"
 	"log"
 	"math"
@@ -379,73 +378,80 @@ func ProgUniformLoc(prog uint32, name string) int32 {
 // UploadLights sends all light uniforms to the main shader program.
 func UploadLights(ls LightSet) { UploadLightsTo(gfx.Program, ls, true) }
 
-// UploadLightsTo sends all light uniforms to prog. prog must already be linked;
-// this binds it as the active program. verbose enables the informational log
-// (used only for the main program's initial upload).
+// UploadLightsTo hands the lights to every program that reads the scene block
+// (gfx/scene_block.go) — or, for a program pointed at another block (the
+// material preview's), to that one. prog must already be linked; this binds it
+// as the active program, as it always has, for callers that draw through it
+// straight after. verbose enables the informational log (used only for the
+// main program's initial upload).
+//
+// Once these were prog's own uniforms and every lit program needed its own
+// call every frame. They are one buffer now, so the call for the second
+// program in a frame finds nothing changed and costs a comparison.
 func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
-	// No program, nothing to upload to. Every uniform location on program 0 is
-	// -1, so the whole body below is already a no-op wherever a GL context does
-	// exist; without one — a headless load, an undo restore in a test — it is a
-	// crash in cgo instead. Answering "nothing to do" is the same answer, given
-	// earlier.
+	// No program, nothing to upload to: a headless load, an undo restore in a
+	// test, where a GL call with no context current is a crash in cgo rather
+	// than a no-op.
 	if prog == 0 {
 		return
 	}
 	gl.UseProgram(prog)
-	UniformLoc := func(name string) int32 { return ProgUniformLoc(prog, name) }
 	if verbose {
 		log.Printf("uploading lights: global=1, directional=%d, point=%d",
 			len(ls.Directional), len(ls.Points))
 	}
-
-	gl.Uniform3f(UniformLoc("globalLightColor\x00"),
-		ls.Global.Color[0], ls.Global.Color[1], ls.Global.Color[2])
-	gl.Uniform1f(UniformLoc("globalLightBrightness\x00"), ls.Global.EffectiveBrightness())
-	gl.Uniform1f(UniformLoc("lightWrap\x00"), max(ls.Global.Wrap, 0))
-	gl.Uniform1f(UniformLoc("ambientHemisphere\x00"), min(max(ls.Global.Hemisphere, 0), 1))
-
-	numDir := len(ls.Directional)
-	if numDir > MaxDirLights {
-		numDir = MaxDirLights
-	}
-	gl.Uniform1i(UniformLoc("numDirLights\x00"), int32(numDir))
-	for i := 0; i < numDir; i++ {
-		d := ls.Directional[i]
-		// [SCENARIO 5] Keep Sprintf result in a named variable so the string
-		// backing array stays alive for the duration of the gl call.
-		dirName := fmt.Sprintf("dirLightDir[%d]\x00", i)
-		gl.Uniform3f(UniformLoc(dirName), d.Direction[0], d.Direction[1], d.Direction[2])
-		colorName := fmt.Sprintf("dirLightColor[%d]\x00", i)
-		gl.Uniform3f(UniformLoc(colorName), d.Color[0], d.Color[1], d.Color[2])
-		brightnessName := fmt.Sprintf("dirLightBrightness[%d]\x00", i)
-		gl.Uniform1f(UniformLoc(brightnessName), d.EffectiveBrightness())
-		dynName := fmt.Sprintf("dirLightDynamic[%d]\x00", i)
-		gl.Uniform1i(UniformLoc(dynName), boolInt(d.LitLive()))
-	}
-
-	numPoint := len(ls.Points)
-	if numPoint > MaxPointLights {
-		numPoint = MaxPointLights
-	}
-	gl.Uniform1i(UniformLoc("numPointLights\x00"), int32(numPoint))
-	for i := 0; i < numPoint; i++ {
-		p := ls.Points[i]
-		posName := fmt.Sprintf("pointLightPos[%d]\x00", i)
-		gl.Uniform3f(UniformLoc(posName), p.Position[0], p.Position[1], p.Position[2])
-		colorName := fmt.Sprintf("pointLightColor[%d]\x00", i)
-		gl.Uniform3f(UniformLoc(colorName), p.Color[0], p.Color[1], p.Color[2])
-		brightnessName := fmt.Sprintf("pointLightBrightness[%d]\x00", i)
-		gl.Uniform1f(UniformLoc(brightnessName), p.EffectiveBrightness())
-		radiusName := fmt.Sprintf("pointLightRadius[%d]\x00", i)
-		gl.Uniform1f(UniformLoc(radiusName), p.Radius)
-		dynName := fmt.Sprintf("pointLightDynamic[%d]\x00", i)
-		gl.Uniform1i(UniformLoc(dynName), boolInt(p.LitLive()))
-	}
-
+	s := gfx.SceneFor(prog)
+	PackLights(&s.Block, ls)
+	s.Flush()
 	if verbose {
 		log.Printf("light uniforms uploaded")
 	}
 }
+
+// PackLights writes ls into the light members of the scene block b: what the
+// shader reads under globalLight*, lightWrap, ambientHemisphere, dirLight* and
+// pointLight* (all but the shadow switches, which are the shadow passes'). No
+// GL. Slots past the light counts are zeroed: the shader never reads them, and
+// a block that holds nothing stale compares equal frame to frame.
+func PackLights(b *gfx.SceneBlock, ls LightSet) {
+	b.GlobalLightColor = ls.Global.Color
+	b.GlobalLightBrightness = ls.Global.EffectiveBrightness()
+	b.LightWrap = max(ls.Global.Wrap, 0)
+	b.AmbientHemisphere = min(max(ls.Global.Hemisphere, 0), 1)
+
+	numDir := min(len(ls.Directional), MaxDirLights)
+	b.NumDirLights = int32(numDir)
+	for i := 0; i < MaxDirLights; i++ {
+		if i >= numDir {
+			b.DirLightDir[i], b.DirLightColor[i], b.DirLightBrightness[i], b.DirLightDynamic[i] = [4]float32{}, [4]float32{}, [4]float32{}, [4]int32{}
+			continue
+		}
+		d := &ls.Directional[i]
+		b.DirLightDir[i] = vec3Std140(d.Direction)
+		b.DirLightColor[i] = vec3Std140(d.Color)
+		b.DirLightBrightness[i] = [4]float32{d.EffectiveBrightness()}
+		b.DirLightDynamic[i] = [4]int32{boolInt(d.LitLive())}
+	}
+
+	numPoint := min(len(ls.Points), MaxPointLights)
+	b.NumPointLights = int32(numPoint)
+	for i := 0; i < MaxPointLights; i++ {
+		if i >= numPoint {
+			b.PointLightPos[i], b.PointLightColor[i] = [4]float32{}, [4]float32{}
+			b.PointLightBrightness[i], b.PointLightRadius[i], b.PointLightDynamic[i] = [4]float32{}, [4]float32{}, [4]int32{}
+			continue
+		}
+		p := &ls.Points[i]
+		b.PointLightPos[i] = vec3Std140(p.Position)
+		b.PointLightColor[i] = vec3Std140(p.Color)
+		b.PointLightBrightness[i] = [4]float32{p.EffectiveBrightness()}
+		b.PointLightRadius[i] = [4]float32{p.Radius}
+		b.PointLightDynamic[i] = [4]int32{boolInt(p.LitLive())}
+	}
+}
+
+// vec3Std140 is v as one std140 array element: a vec3 padded to 16 bytes.
+func vec3Std140(v mgl32.Vec3) [4]float32 { return [4]float32{v[0], v[1], v[2], 0} }
 
 // boolInt is a bool as the 0/1 a GLSL int uniform takes.
 func boolInt(b bool) int32 {

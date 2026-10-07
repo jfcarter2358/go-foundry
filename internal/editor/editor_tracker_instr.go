@@ -63,7 +63,32 @@ func trkInstrumentPane() {
 var (
 	trkRenamingInstr = -1
 	trkInstrRename   string
+	// trkInstrNameBuf is the instrument editor's Name field while it is being
+	// typed in; between edits it follows the instrument's own name.
+	trkInstrNameBuf    string
+	trkInstrNameActive bool
+	// trkInstrNameFor is the instrument the field was typed for. Clicking
+	// another instrument in the list ends the edit on the same frame the
+	// selection changes, so committing to trkEd.Instr would rename the one
+	// just clicked.
+	trkInstrNameFor int
 )
+
+// trkRenameInstrument names instrument n (1-based). A blank name, or the name
+// it already has, changes nothing. Cells refer to an instrument by number, so
+// the pattern is unaffected; a script's play_note that names it by its old
+// name will no longer find it.
+func trkRenameInstrument(n int, name string) bool {
+	in := trkEd.Song.Instrument(uint8(max(0, n)))
+	name = strings.TrimSpace(name)
+	if in == nil || name == "" || name == in.Name {
+		return false
+	}
+	trkEd.pushUndo("")
+	in.Name = name
+	trkEd.touch()
+	return true
+}
 
 func trkInstrumentList() {
 	s := trkEd.Song
@@ -105,15 +130,13 @@ func trkInstrumentList() {
 			if imgui.IsWindowAppearing() || !imgui.IsAnyItemActive() {
 				imgui.SetKeyboardFocusHere()
 			}
-			if imgui.InputTextV("##trkinrename", &trkInstrRename, imgui.InputTextFlagsEnterReturnsTrue|imgui.InputTextFlagsAutoSelectAll, nil) {
-				if strings.TrimSpace(trkInstrRename) != "" {
-					trkEd.pushUndo("")
-					in.Name = strings.TrimSpace(trkInstrRename)
-					trkEd.touch()
-				}
-				trkRenamingInstr = -1
-			}
+			// Enter or clicking away keeps the name; Escape puts the old one
+			// back (imgui reverts the text, so the rename is a no-op).
+			imgui.InputTextV("##trkinrename", &trkInstrRename, imgui.InputTextFlagsAutoSelectAll, nil)
 			if imgui.IsItemDeactivated() {
+				if imgui.IsItemDeactivatedAfterEdit() {
+					trkRenameInstrument(n, trkInstrRename)
+				}
 				trkRenamingInstr = -1
 			}
 		} else {
@@ -127,8 +150,12 @@ func trkInstrumentList() {
 			if imgui.IsItemHovered() && imgui.IsMouseDoubleClicked(0) {
 				trkRenamingInstr, trkInstrRename = n, in.Name
 			}
-			if imgui.IsItemHovered() && missing != "" {
-				imgui.SetTooltip("No sample loaded: " + strings.Join(in.Samples, ", "))
+			if imgui.IsItemHovered() {
+				if missing != "" {
+					imgui.SetTooltip("No sample loaded: " + strings.Join(in.Samples, ", ") + "\nDouble-click to rename")
+				} else {
+					imgui.SetTooltip("Double-click to rename")
+				}
 			}
 		}
 		imgui.PopID()
@@ -199,7 +226,18 @@ func (t *trackerState) deleteInstrument(n int) {
 // ---------- the editor ----------
 
 func trkInstrumentEditor(in *tracker.Instrument) {
-	imgui.Text(fmt.Sprintf("%02X %s", trkEd.Instr, in.Name))
+	imgui.Text(fmt.Sprintf("%02X", trkEd.Instr))
+	imgui.SameLine()
+	imgui.SetNextItemWidth(-60)
+	if !trkInstrNameActive {
+		trkInstrNameBuf, trkInstrNameFor = in.Name, trkEd.Instr
+	}
+	imgui.InputTextV("Name##trkinname", &trkInstrNameBuf, 0, nil)
+	trkInstrNameActive = imgui.IsItemActive()
+	if imgui.IsItemDeactivatedAfterEdit() {
+		trkRenameInstrument(trkInstrNameFor, trkInstrNameBuf)
+	}
+	editorMenuTooltip("The instrument's name. Enter or clicking away keeps it; Escape cancels.")
 	if imgui.CollapsingHeaderV("Samples & keymap##trkinsamp", imgui.TreeNodeFlagsDefaultOpen) {
 		trkInstrSamples(in)
 		trkKeymap(in)

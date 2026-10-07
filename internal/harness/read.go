@@ -6,7 +6,8 @@ package harness
 // carries, `<entity>#<attachment>.<field>` for a model attachment,
 // `<screen>:<widget>.<field>` for a widget on a screen that is up, or
 // `player.position`, `player.frame`, `player.attr.health` for the player — who
-// is not one of the level's entities.
+// is not one of the level's entities — or `music.track` / `music.section` for
+// the level's music, as scripts last set it.
 //
 // Fields are the ones that matter for machinery: position, rotation, scale,
 // velocity, angular_velocity, brightness, enabled, visible — and, on an entity
@@ -48,6 +49,22 @@ func read(lvl *world.Level, w string) string {
 			return p.Frame
 		case "attr.health":
 			return fmt.Sprint(p.Attributes["health"])
+		}
+		return "?"
+	}
+	if id == "music" {
+		m := lvl.Music
+		switch field {
+		case "track":
+			if m == nil {
+				return "none"
+			}
+			return m.Track
+		case "section":
+			if m == nil {
+				return "none"
+			}
+			return m.Section
 		}
 		return "?"
 	}

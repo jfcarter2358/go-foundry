@@ -118,6 +118,18 @@ func (w *visWorld) target(size int32) uint32 {
 func (w *visWorld) frameInto(lvl *world.Level, fbo uint32, size int32) []uint8 {
 	DrawWorld(lvl, WorldDraw{Now: 1, Skip: func(p string) bool { return p == "gi" },
 		Target: &FrameTarget{FBO: fbo, Viewport: [4]int32{0, 0, size, size}}})
+	return w.readFrame(fbo, size)
+}
+
+// frameIntoWith is frame with the caller's WorldDraw, drawn into the world's
+// own target.
+func (w *visWorld) frameIntoWith(lvl *world.Level, o WorldDraw) []uint8 {
+	o.Target = &FrameTarget{FBO: w.fbo, Viewport: [4]int32{0, 0, w.size, w.size}}
+	DrawWorld(lvl, o)
+	return w.readFrame(w.fbo, w.size)
+}
+
+func (w *visWorld) readFrame(fbo uint32, size int32) []uint8 {
 	gl.BindFramebuffer(gl.FRAMEBUFFER, fbo)
 	px := make([]uint8, size*size*4)
 	glext.ReadPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))

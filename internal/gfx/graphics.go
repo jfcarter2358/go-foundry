@@ -281,6 +281,12 @@ func CompileShader(source string, shaderType uint32) (uint32, error) {
 		typeName = "compute"
 	}
 
+	// The shared declarations a file asks for itself (shader_include.go).
+	source, err := ExpandShaderIncludes(source)
+	if err != nil {
+		return 0, fmt.Errorf("%s shader: %w", typeName, err)
+	}
+
 	shader := gl.CreateShader(shaderType)
 	csources, free := gl.Strs(source + "\x00")
 	gl.ShaderSource(shader, 1, csources, nil)

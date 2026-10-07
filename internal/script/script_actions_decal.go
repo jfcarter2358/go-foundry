@@ -352,7 +352,7 @@ var decalVerbs = map[string]scriptVerb{
 			// not the one in hand — which is exactly what clearing it arranges.
 			rt.cache = nil
 		}
-		rt.cacheAdded(func(c *refCache) { c.decal[d.ID] = len(rt.lvl.Decals) - 1 })
+		rt.cacheAdded(flang.RefDecal)
 		return flang.RefVal{Kind: flang.RefDecal, A: d.ID}, nil
 	},
 }

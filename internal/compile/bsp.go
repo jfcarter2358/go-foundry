@@ -423,6 +423,8 @@ func (t *BSPTree) chooseSplitter(faceIdx []int) (bsp.Plane, bool) {
 		found     bool
 		tried     []bsp.Plane
 	)
+	// The candidates are the first distinct planes in face order — which ones
+	// does not depend on how they score, so they are all picked first.
 	for _, fi := range faceIdx {
 		if len(tried) >= maxSplitterCandidates {
 			break
@@ -432,7 +434,14 @@ func (t *BSPTree) chooseSplitter(faceIdx []int) (bsp.Plane, bool) {
 			continue
 		}
 		tried = append(tried, pl)
-
+	}
+	// Counting each candidate's sides is the work: candidates times faces. The
+	// counts are integers and each candidate's are its own, so counting them
+	// in parallel and then scoring in candidate order below picks exactly the
+	// plane the serial loop did, ties and all.
+	counts := make([][3]int, len(tried))
+	count := func(c int) {
+		pl := tried[c]
 		front, back, splits := 0, 0, 0
 		for _, oi := range faceIdx {
 			switch t.sideOf(oi, pl) {
@@ -444,6 +453,17 @@ func (t *BSPTree) chooseSplitter(faceIdx []int) (bsp.Plane, bool) {
 				splits++
 			}
 		}
+		counts[c] = [3]int{front, back, splits}
+	}
+	if parallelSplitterScore && len(faceIdx) >= parallelSplitterFaces {
+		parallelFor(len(tried), count)
+	} else {
+		for c := range tried {
+			count(c)
+		}
+	}
+	for c, pl := range tried {
+		front, back, splits := counts[c][0], counts[c][1], counts[c][2]
 		if front == 0 && back == 0 && splits == 0 {
 			// Everything left is coplanar with this plane: it separates
 			// nothing, but it does consume those faces onto the node, which is
@@ -467,6 +487,13 @@ func (t *BSPTree) chooseSplitter(faceIdx []int) (bsp.Plane, bool) {
 	}
 	return best, found
 }
+
+// parallelSplitterScore counts the splitter candidates' sides across cores at
+// a node holding at least parallelSplitterFaces faces; below that the
+// goroutines cost more than they save. The switch is for the tests.
+var parallelSplitterScore = true
+
+var parallelSplitterFaces = 2048
 
 const (
 	// splitPenalty weights one cut face against one unit of imbalance. See

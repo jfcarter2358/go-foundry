@@ -113,7 +113,7 @@ func LoadSkeleton(path string) (*SkeletonDoc, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var raw RawSkeleton
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	if err := decodeYAMLCached(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if err := validateRawSkeleton(raw); err != nil {

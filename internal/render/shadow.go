@@ -283,8 +283,22 @@ func createDummyCubemap() uint32 {
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+	// Compared like the real ones, so the samplerCubeShadow it stands in for
+	// reads a defined "lit" rather than whatever an unset compare mode gives.
+	pointShadowCompare()
 	gl.BindTexture(gl.TEXTURE_CUBE_MAP, 0)
 	return tex
+}
+
+// pointShadowCompare makes the bound cubemap a comparison texture: a
+// samplerCubeShadow tap hands the hardware the fragment's own distance and
+// gets back the filtered compare of the 2x2 texels around it
+// (point_shadow.glsl). LEQUAL is "lit": the fragment is no farther than the
+// nearest caster the face saw. A depth blit (the static layer's copy) ignores
+// the compare mode.
+func pointShadowCompare() {
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL)
 }
 
 // ---------- Point light cubemap shadow maps ----------
@@ -334,6 +348,8 @@ func createDepthCube() (cube, fbo uint32) {
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+	// LINEAR with a compare: the hardware's 2x2 percentage-closer filter.
+	pointShadowCompare()
 
 	prevFBO := boundFramebuffer()
 	gl.GenFramebuffers(1, &pm.FBO)
@@ -684,24 +700,25 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 		}
 
 		pm := &Shadows.PointMaps[mapIdx]
+		// The six faces' matrices and frusta, made once and shared by the
+		// planner and the draws, so a face is signed by exactly what it draws.
+		lsms, culls := pointShadowFaces(pl)
 		// What to redraw, if anything: nothing when no caster in reach has
-		// changed, the moving casters over a copy of the static layer when
-		// only they have, everything when the static world has. See
-		// point_shadow_cache.go.
-		plan := planPointShadow(mapIdx, level, pl, pm)
-		if plan == pointShadowKeep {
+		// changed, the moving casters over a copy of the static layer in just
+		// the faces whose casters have, everything when the static world has.
+		// See point_shadow_cache.go.
+		plan := planPointShadowIn(mapIdx, level, pl, pm, &culls)
+		if plan.keep() {
 			mapIdx++
 			continue
 		}
 		DebugStats.PointShadowRenders++
 		farPlane := pl.Radius
-		proj := mgl32.Perspective(mgl32.DegToRad(90.0), 1.0, 0.1, farPlane)
-		views := cubeFaceViews(pl.Position)
 
 		gl.Uniform3f(Shadows.CubeLightPos, pl.Position[0], pl.Position[1], pl.Position[2])
 		gl.Uniform1f(Shadows.CubeFarPlane, farPlane)
 
-		if plan == pointShadowStaticAndMoving {
+		if plan.static {
 			// The static layer into its own cube, to be copied from until
 			// the static world next changes.
 			gl.BindFramebuffer(gl.FRAMEBUFFER, pm.StaticFBO)
@@ -709,20 +726,21 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 				gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,
 					uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+face), pm.StaticCubemap, 0)
 				gl.Clear(gl.DEPTH_BUFFER_BIT)
-				lsm := proj.Mul4(views[face])
-				gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsm[0])
-				cull := ExtractFrustum(lsm)
+				gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsms[face][0])
 				renderSceneShadowLayers(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms,
-					Shadows.CubeModelUniform, &cull, shadowStaticLayer)
+					Shadows.CubeModelUniform, &culls[face], shadowStaticLayer)
 			}
 		}
 
-		layers := shadowAllLayers
-		if plan != pointShadowEverything {
-			layers = shadowMovingLayer
+		layers := shadowMovingLayer
+		if plan.all {
+			layers = shadowAllLayers
 		}
 		gl.BindFramebuffer(gl.FRAMEBUFFER, pm.FBO)
 		for face := 0; face < 6; face++ {
+			if plan.faces&(1<<face) == 0 {
+				continue // nothing this face sees has changed
+			}
 			target := uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face)
 			if layers == shadowAllLayers {
 				gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, target, pm.Cubemap, 0)
@@ -738,22 +756,22 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 				gl.BindFramebuffer(gl.FRAMEBUFFER, pm.FBO)
 			}
 
-			lsm := proj.Mul4(views[face])
+			lsm := lsms[face]
 			gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsm[0])
 
-			cull := ExtractFrustum(lsm)
+			cull := &culls[face]
 			renderSceneShadowLayers(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms,
-				Shadows.CubeModelUniform, &cull, layers)
+				Shadows.CubeModelUniform, cull, layers)
 			// Sprites into this cube face. A point light has a position, so the
 			// quads converge on it exactly as they converge on the eye in the
 			// colour pass. Restores Shadows.CubeProgram.
 			ProfileBegin("sprites")
-			RenderSpriteCubeShadow(level, lsm, pl.Position, farPlane, &cull)
+			RenderSpriteCubeShadow(level, lsm, pl.Position, farPlane, cull)
 			ProfileEnd()
 			// Scatter into this cube face, with the light's own far plane as
 			// the cast cap. Restores Shadows.CubeProgram.
 			ProfileBegin("scatter")
-			RenderScatterCubeShadow(level, lsm, pl.Position, farPlane, gfx.Cam.Position, BiomeWindTime, &cull)
+			RenderScatterCubeShadow(level, lsm, pl.Position, farPlane, gfx.Cam.Position, BiomeWindTime, cull)
 			ProfileEnd()
 		}
 		mapIdx++
@@ -904,36 +922,70 @@ func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 // All directional shadows share it; point-light cubemaps start after it.
 const CascadeTexUnit = 1
 
+// shadowUniformNames are the per-program sampler uniforms' names,
+// NUL-terminated and built once: the eight cubemap samplers are set on every
+// lit program every frame.
+var shadowUniformNames = func() (n struct {
+	pointMap [world.MaxPointLights]string
+}) {
+	for i := range n.pointMap {
+		n.pointMap[i] = fmt.Sprintf("pointShadowMap[%d]\x00", i)
+	}
+	return n
+}()
+
 // UploadShadowUniforms sends directional shadow data to the main shader.
 func UploadShadowUniforms(lights world.LightSet, frame ShadowFrame) {
 	UploadShadowUniformsTo(gfx.Program, lights, frame)
 }
 
-// UploadShadowUniformsTo sends directional shadow data (cascade matrices, split
-// distances, per-cascade biases, cast flags, strengths and the cascade array
-// sampler) to prog. Binds prog as active.
+// UploadShadowUniformsTo hands the directional shadow state — cascade
+// matrices, split distances, per-cascade biases, cast flags, strengths, the
+// baked sun, and the clouds' shadow — to the scene block prog reads
+// (gfx/scene_block.go), and binds prog's own samplers: the cascade array, the
+// cloud map, GI's atlases and the virtual shadow map. Binds prog as active.
+//
+// The block is shared, so for the second and later program in a frame the
+// first half finds nothing changed and costs a comparison; the samplers are
+// the part that is still per program, because a sampler cannot live in a
+// block.
 func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFrame) {
 	gl.UseProgram(prog)
-	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
-
-	for c := 0; c < ShadowCascades; c++ {
-		splitName := fmt.Sprintf("cascadeSplit[%d]\x00", c)
-		gl.Uniform1f(uniformLoc(splitName), frame.Splits[c])
-	}
+	s := gfx.SceneFor(prog)
+	packDirShadows(&s.Block, lights, frame)
+	// The clouds' shadow rides here because every program that can read it
+	// already makes this call — see cloud_shadow.go. So does live GI, for the
+	// same reason (gi.go).
+	packCloudShadow(&s.Block)
+	s.Flush()
 
 	// The array texture is always bound, even with no casting lights: an
 	// unassigned sampler2DArray defaults to unit 0, which holds the albedo
 	// sampler2D — a type collision the driver is free to handle badly.
 	gl.ActiveTexture(gl.TEXTURE0 + CascadeTexUnit)
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, Shadows.CascadeArray)
-	gl.Uniform1i(uniformLoc("shadowMapArray\x00"), CascadeTexUnit)
+	gl.Uniform1i(world.ProgUniformLoc(prog, "shadowMapArray\x00"), CascadeTexUnit)
+
+	bindCloudShadowTo(prog)
+	uploadGITo(prog)
+	// And the sun's virtual shadow map, or word that there is none (vsm.go).
+	uploadVSMTo(prog, frame)
+	gl.ActiveTexture(gl.TEXTURE0)
+}
+
+// packDirShadows writes frame's cascades for lights into the scene block b.
+// No GL.
+func packDirShadows(b *gfx.SceneBlock, lights world.LightSet, frame ShadowFrame) {
+	for c := 0; c < ShadowCascades; c++ {
+		b.CascadeSplit[c] = [4]float32{frame.Splits[c]}
+	}
 
 	// Which light's baked share the cascades re-shadow; -1 for none.
 	sun := int32(-1)
 	if frame.BakedSunCast {
 		sun = int32(frame.BakedSun)
 	}
-	gl.Uniform1i(uniformLoc("bakedSunLight\x00"), sun)
+	b.BakedSunLight = sun
 
 	for i := 0; i < world.MaxDirLights; i++ {
 		layer := int32(-1)
@@ -950,13 +1002,9 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 				cast = 1
 			}
 		}
-
-		castName := fmt.Sprintf("dirLightCastShadows[%d]\x00", i)
-		gl.Uniform1i(uniformLoc(castName), cast)
-		strengthName := fmt.Sprintf("dirLightShadowStrength[%d]\x00", i)
-		gl.Uniform1f(uniformLoc(strengthName), strength)
-		layerName := fmt.Sprintf("dirLightShadowLayer[%d]\x00", i)
-		gl.Uniform1i(uniformLoc(layerName), layer)
+		b.DirLightCastShadows[i] = [4]int32{cast}
+		b.DirLightShadowStrength[i] = [4]float32{strength}
+		b.DirLightShadowLayer[i] = [4]int32{layer}
 
 		for c := 0; c < ShadowCascades; c++ {
 			idx := i*ShadowCascades + c
@@ -964,22 +1012,11 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 			if m.Matrix == (mgl32.Mat4{}) {
 				m.Matrix = mgl32.Ident4()
 			}
-			matName := fmt.Sprintf("cascadeMatrix[%d]\x00", idx)
-			gl.UniformMatrix4fv(uniformLoc(matName), 1, false, &m.Matrix[0])
-			biasName := fmt.Sprintf("cascadeBias[%d]\x00", idx)
-			gl.Uniform1f(uniformLoc(biasName), m.Bias)
-			texelName := fmt.Sprintf("cascadeTexel[%d]\x00", idx)
-			gl.Uniform1f(uniformLoc(texelName), m.Texel)
+			b.CascadeMatrix[idx] = m.Matrix
+			b.CascadeBias[idx] = [4]float32{m.Bias}
+			b.CascadeTexel[idx] = [4]float32{m.Texel}
 		}
 	}
-	// The clouds' shadow rides here because every program that can read it
-	// already makes this call — see cloud_shadow.go. So does live GI, for the
-	// same reason (gi.go).
-	uploadCloudShadowTo(prog)
-	uploadGITo(prog)
-	// And the sun's virtual shadow map, or word that there is none (vsm.go).
-	uploadVSMTo(prog, frame)
-	gl.ActiveTexture(gl.TEXTURE0)
 }
 
 // UploadPointShadowUniforms sends point light shadow cubemaps to the main shader.
@@ -988,12 +1025,18 @@ func UploadPointShadowUniforms(lights world.LightSet) {
 	UploadPointShadowUniformsTo(gfx.Program, lights)
 }
 
-// UploadPointShadowUniformsTo sends point-light cubemap shadow data to prog.
+// UploadPointShadowUniformsTo hands the point lights' shadow switches,
+// strengths and far planes to the scene block prog reads, and binds prog's
+// eight cubemap samplers.
 func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 	gl.UseProgram(prog)
-	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
+	s := gfx.SceneFor(prog)
+	packPointShadows(&s.Block, lights)
+	s.Flush()
 
+	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
 	baseUnit := int32(CascadeTexUnit + 1) // unit 0 = albedo, unit 1 = dir cascade array
+	n := &shadowUniformNames
 
 	// Bind the dummy cubemap to ALL pointShadowMap slots (not just active
 	// lights) so that every samplerCube uniform references a unit with a valid
@@ -1003,31 +1046,13 @@ func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 		texUnit := baseUnit + int32(i)
 		gl.ActiveTexture(uint32(gl.TEXTURE0 + texUnit))
 		gl.BindTexture(gl.TEXTURE_CUBE_MAP, Shadows.DummyCubemap)
-		smName := fmt.Sprintf("pointShadowMap[%d]\x00", i)
-		gl.Uniform1i(uniformLoc(smName), texUnit)
+		gl.Uniform1i(uniformLoc(n.pointMap[i]), texUnit)
 	}
 
-	numPt := len(lights.Points)
-	if numPt > world.MaxPointLights {
-		numPt = world.MaxPointLights
-	}
+	numPt := min(len(lights.Points), world.MaxPointLights)
 	mapIdx := 0
 	for i := 0; i < numPt; i++ {
-		pl := lights.Points[i]
-		castName := fmt.Sprintf("pointLightCastShadows[%d]\x00", i)
-		castVal := int32(0)
-		if pl.CastsShadows() {
-			castVal = 1
-		}
-		gl.Uniform1i(uniformLoc(castName), castVal)
-
-		strengthName := fmt.Sprintf("pointLightShadowStrength[%d]\x00", i)
-		gl.Uniform1f(uniformLoc(strengthName), pl.ShadowStrength)
-
-		farName := fmt.Sprintf("pointLightFarPlane[%d]\x00", i)
-		gl.Uniform1f(uniformLoc(farName), pl.Radius)
-
-		if pl.CastsShadows() && mapIdx < len(Shadows.PointMaps) {
+		if lights.Points[i].CastsShadows() && mapIdx < len(Shadows.PointMaps) {
 			texUnit := baseUnit + int32(i)
 			gl.ActiveTexture(uint32(gl.TEXTURE0 + texUnit))
 			gl.BindTexture(gl.TEXTURE_CUBE_MAP, Shadows.PointMaps[mapIdx].Cubemap)
@@ -1035,4 +1060,27 @@ func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 		}
 	}
 	gl.ActiveTexture(gl.TEXTURE0)
+}
+
+// packPointShadows writes the point lights' shadow parameters into the scene
+// block b. No GL. Slots past the light count are zeroed, as PackLights does.
+func packPointShadows(b *gfx.SceneBlock, lights world.LightSet) {
+	// The taps' turn (point_shadow.glsl): a new one each TAA frame, so the
+	// history resolves eight taps into many; held still otherwise.
+	b.ShadowNoiseFrame = coverageDither()
+	numPt := min(len(lights.Points), world.MaxPointLights)
+	for i := 0; i < world.MaxPointLights; i++ {
+		if i >= numPt {
+			b.PointLightCastShadows[i], b.PointLightShadowStrength[i], b.PointLightFarPlane[i] = [4]int32{}, [4]float32{}, [4]float32{}
+			continue
+		}
+		pl := &lights.Points[i]
+		cast := int32(0)
+		if pl.CastsShadows() {
+			cast = 1
+		}
+		b.PointLightCastShadows[i] = [4]int32{cast}
+		b.PointLightShadowStrength[i] = [4]float32{pl.ShadowStrength}
+		b.PointLightFarPlane[i] = [4]float32{pl.Radius}
+	}
 }

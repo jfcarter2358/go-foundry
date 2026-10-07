@@ -136,51 +136,8 @@ func OrderClauses(g *FuncGroup) ([]*Clause, ErrorList) {
 	return out, errs
 }
 
-// matchClause tries to bind args to c's parameters, returning the bindings when
-// every parameter matches.
-//
-// The guard is *not* evaluated here: it needs an environment built from these
-// bindings, and it can call functions, so running it belongs to the interpreter.
-func matchClause(c *Clause, args []Value) (map[string]Value, bool) {
-	if len(args) != len(c.Params) {
-		return nil, false
-	}
-	var binds map[string]Value
-	for i, p := range c.Params {
-		switch p.Kind {
-		case ParamAtom:
-			a, ok := args[i].(AtomVal)
-			if !ok || string(a) != p.Atom {
-				return nil, false
-			}
-
-		case ParamLiteral:
-			want, ok := literalValue(p.Lit)
-			if !ok || !Equal(want, args[i]) {
-				return nil, false
-			}
-
-		case ParamTyped:
-			if !TypeMatches(args[i], p.Type) {
-				return nil, false
-			}
-			if binds == nil {
-				binds = make(map[string]Value, len(c.Params))
-			}
-			binds[p.Name] = args[i]
-
-		default: // ParamBind
-			if binds == nil {
-				binds = make(map[string]Value, len(c.Params))
-			}
-			binds[p.Name] = args[i]
-		}
-	}
-	if binds == nil {
-		binds = map[string]Value{}
-	}
-	return binds, true
-}
+// Matching a call against a clause's head lives in interp.go (matchHead and
+// bindParams), against the values resolve.go worked out from each parameter.
 
 // literalValue evaluates a literal parameter's expression. Literals are closed
 // forms — the parser rejects anything else in that position — so this needs no

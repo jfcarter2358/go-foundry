@@ -95,13 +95,13 @@ func TestLayeredPointShadowMatchesAFullRedraw(t *testing.T) {
 		pointShadowStates = nil
 		return readCube(t, Shadows.PointMaps[0].Cubemap)
 	}
-	cached := func(what string, want pointShadowPlan) []float32 {
+	cached := func(what string, want func(pointShadowPlan) bool) []float32 {
 		t.Helper()
 		// The plan is re-derived here only to check the scene exercised the
 		// path it was meant to; the pass makes its own.
 		saved := append([]pointShadowState(nil), pointShadowStates...)
-		if got := planPointShadow(0, lvl, lights.Points[0], &Shadows.PointMaps[0]); got != want {
-			t.Fatalf("%s: the scene planned %d, want %d", what, got, want)
+		if got := planPointShadow(0, lvl, lights.Points[0], &Shadows.PointMaps[0]); !want(got) {
+			t.Fatalf("%s: the scene planned %+v, not the path this case is for", what, got)
 		}
 		pointShadowStates = saved
 		RenderPointShadowPass(lights, lvl)
@@ -126,13 +126,19 @@ func TestLayeredPointShadowMatchesAFullRedraw(t *testing.T) {
 	gl.GetError()
 	EnsurePointShadowMaps(1)
 	want := full()
-	same("first render, static layer and walker", cached("first render", pointShadowStaticAndMoving), want)
-	same("kept", cached("nothing changed", pointShadowKeep), want)
+	same("first render, static layer and walker", cached("first render", func(p pointShadowPlan) bool {
+		return p.static && p.faces == allPointShadowFaces
+	}), want)
+	same("kept", cached("nothing changed", pointShadowPlan.keep), want)
 
 	// The walker moves: only the moving layer redraws, over the kept static
-	// cube — which must still hold the room, not the walker's old position.
+	// cube — which must still hold the room, not the walker's old position —
+	// and only in the faces that see the walker, then or now. The faces that
+	// do not are kept from before, and have to match a full redraw too.
 	lvl.Entities[0].Position = mgl32.Vec3{0, 0, 2}
-	moved := cached("walker moved", pointShadowMoving)
+	moved := cached("walker moved", func(p pointShadowPlan) bool {
+		return !p.static && !p.all && !p.keep() && p.faces != allPointShadowFaces
+	})
 	pointShadowStates = nil
-	same("walker moved, drawn over the kept static layer", moved, full())
+	same("walker moved, drawn over the kept static layer in its faces alone", moved, full())
 }

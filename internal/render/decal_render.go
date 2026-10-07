@@ -28,6 +28,18 @@ package render
 // Culling is the decal's own box against the frustum, tested once for the whole
 // decal rather than per piece: a decal is a few centimetres across, so its pieces
 // are all in the same place and testing them apart would cost more than it saves.
+//
+// Pieces are drawn in RUNS. A firefight leaves a wall of bullet holes that are
+// all one texture, one tint, one blend, and a decal's piece used to be a whole
+// surface draw of its own — every uniform the world program's surface takes, a
+// texture, a VAO. Consecutive pieces in the draw order whose draw state is the
+// same, and whose vertices are already where they are drawn (a compiled
+// surface's, or an unmoved chunk's: an identity matrix), are one draw out of a
+// buffer holding all their triangles, kept from frame to frame and rebuilt only
+// when the run's pieces change. Drawing them as one is drawing them in the
+// same order with the same state, so nothing on screen changes; a piece that
+// needs a matrix still draws alone, so no vertex is carried through a
+// different sum than the GPU would have done.
 
 import (
 	"sort"
@@ -36,6 +48,7 @@ import (
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // DecalRebuildBudget is how many decals SyncDecals may re-clip in one frame.
@@ -86,9 +99,13 @@ func RenderDecals(lvl *world.Level, cull *Frustum) {
 	// none of them can stand in for "not yet applied".
 	var blend gfx.DecalBlend
 	set := false
+	runs := &decalRuns
+	runs.begin()
 	for _, i := range order {
 		d := &lvl.Decals[i]
 		if !set || d.Blend != blend {
+			// A run never crosses a change of blend function.
+			runs.flush()
 			applyDecalBlend(d.Blend)
 			blend, set = d.Blend, true
 		}
@@ -98,16 +115,152 @@ func RenderDecals(lvl *world.Level, cull *Frustum) {
 			if !ok {
 				continue
 			}
-			p.Geometry.DrawWithTransform(m)
+			runs.add(&p.Geometry, m)
 		}
 		DebugStats.Decals++
 	}
+	runs.flush()
+	runs.end()
 
 	gl.Disable(gl.POLYGON_OFFSET_FILL)
 	gl.PolygonOffset(0, 0)
 	gl.DepthMask(true)
 	gl.Disable(gl.BLEND)
 	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+}
+
+// decalBatching switches the runs off, for the test that checks they draw
+// what the pieces drawn one at a time do.
+var decalBatching = true
+
+// decalRunPiece is what a run holds of one piece: the arrays its buffers were
+// made from, kept so their memory cannot pass to another piece while the run
+// remembers them — which is what lets the run know its pieces by the arrays'
+// addresses alone.
+type decalRunPiece struct {
+	verts, normals, light []float32
+}
+
+// decalRun is one run's merged buffers and what they were made from.
+type decalRun struct {
+	pieces []decalRunPiece
+	batch  gfx.Batch
+	verts  []float32
+}
+
+// decalRunner gathers the frame's pieces into runs and draws them.
+type decalRunner struct {
+	// pending is the run being gathered: its first piece, whose draw state
+	// the run draws with, that state, and the pieces.
+	first   *gfx.Geometry
+	firstM  mgl32.Mat4
+	state   gfx.SurfaceState
+	baked   int32
+	pending []*gfx.Geometry
+	// runs are the merged runs drawn this frame, in order, and kept for the
+	// next; used is how many this frame has drawn.
+	runs []decalRun
+	used int
+}
+
+var decalRuns decalRunner
+
+func (r *decalRunner) begin() { r.used, r.pending, r.first = 0, r.pending[:0], nil }
+
+// end lets go of the runs this frame did not draw.
+func (r *decalRunner) end() {
+	for i := r.used; i < len(r.runs); i++ {
+		r.runs[i].batch.Delete()
+		r.runs[i] = decalRun{}
+	}
+	r.runs = r.runs[:r.used]
+}
+
+// add draws g under model, or holds it to be drawn with the pieces before it.
+func (r *decalRunner) add(g *gfx.Geometry, model mgl32.Mat4) {
+	if len(g.Vertices) == 0 {
+		return
+	}
+	identity := model == mgl32.Ident4()
+	mergeable := decalBatching && identity && g.Ebo == 0 && len(g.BonePalette) == 0 && !g.IsSkinned()
+	if !mergeable {
+		r.flush()
+		g.DrawWithTransform(model)
+		return
+	}
+	st := g.SurfaceState()
+	baked := g.BakedLightFlag()
+	if r.first != nil && (st != r.state || baked != r.baked ||
+		(len(g.Normals) > 0) != (len(r.first.Normals) > 0)) {
+		r.flush()
+	}
+	if r.first == nil {
+		r.first, r.firstM, r.state, r.baked = g, model, st, baked
+	}
+	r.pending = append(r.pending, g)
+}
+
+// flush draws the run gathered so far: a single piece as it always was, more
+// than one out of the run's merged buffers.
+func (r *decalRunner) flush() {
+	defer func() { r.pending, r.first = r.pending[:0], nil }()
+	switch len(r.pending) {
+	case 0:
+		return
+	case 1:
+		r.first.DrawWithTransform(r.firstM)
+		return
+	}
+	if r.used == len(r.runs) {
+		r.runs = append(r.runs, decalRun{})
+	}
+	run := &r.runs[r.used]
+	r.used++
+	run.sync(r.pending, r.baked != 0)
+	// The first piece's every uniform and texture, drawn from the run's
+	// buffers: a copy of it pointed at them.
+	g := *r.first
+	g.Vao, g.Lbo, g.Ebo, g.Indices = run.batch.Vao, run.batch.Lbo, 0, nil
+	g.Vertices = run.verts
+	if g.Vao == 0 {
+		return
+	}
+	g.DrawWithTransform(r.firstM)
+}
+
+// sync makes the run's buffers hold pieces' triangles, unless they already do.
+func (run *decalRun) sync(pieces []*gfx.Geometry, baked bool) {
+	same := len(run.pieces) == len(pieces)
+	for i := 0; same && i < len(pieces); i++ {
+		g, k := pieces[i], &run.pieces[i]
+		same = sameFloats(k.verts, g.Vertices) && sameFloats(k.normals, g.Normals) &&
+			(!baked || sameFloats(k.light, g.BakedLightData()))
+	}
+	if same && (run.batch.Vao != 0 || !gfx.GeometryUploadsEnabled) {
+		return
+	}
+	run.pieces = run.pieces[:0]
+	run.verts = run.verts[:0]
+	var normals, light []float32
+	for _, g := range pieces {
+		k := decalRunPiece{verts: g.Vertices, normals: g.Normals}
+		run.verts = append(run.verts, g.Vertices...)
+		normals = append(normals, g.Normals...)
+		if baked {
+			k.light = g.BakedLightData()
+			light = append(light, k.light...)
+		}
+		run.pieces = append(run.pieces, k)
+	}
+	run.batch.Upload(run.verts, normals, light)
+}
+
+// sameFloats is whether a and b are the same array, not merely equal.
+func sameFloats(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return len(a) == 0 || &a[0] == &b[0]
 }
 
 // applyDecalBlend sets the blend function for one decal blend mode.

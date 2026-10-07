@@ -142,11 +142,28 @@ func InvalidateScenery() {
 	sceneryState.Unlock()
 }
 
+// frozenScenery is the index a parallel phase reads (freezeScenery): checked
+// and published once before the workers start, so a query from any of them is
+// one pointer compare instead of a lock — and, for a level of a few props, a
+// fingerprint pass — every probe. Scenery is not addressable by scripts and
+// nothing edits it inside a physics pass, so the index the phase starts with
+// is the one every query in it would have found.
+var frozenScenery *sceneryIndex
+
+// freezeScenery brings lvl's index up to date and publishes it for the
+// parallel phase; thawScenery ends that. Both on the frame loop's goroutine,
+// before the workers start and after they have finished.
+func freezeScenery(lvl *world.Level) { frozenScenery = sceneryIndexFor(lvl) }
+func thawScenery()                    { frozenScenery = nil }
+
 // sceneryIndexFor is lvl's index, rebuilt if it is stale. Never nil for a
 // level with scenery; nil otherwise.
 func sceneryIndexFor(lvl *world.Level) *sceneryIndex {
 	if lvl == nil || len(lvl.Scenery) == 0 {
 		return nil
+	}
+	if ix := frozenScenery; ix != nil && ix.lvl == lvl {
+		return ix
 	}
 	sceneryState.Lock()
 	defer sceneryState.Unlock()

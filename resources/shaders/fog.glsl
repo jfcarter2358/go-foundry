@@ -24,16 +24,12 @@
 // fog would use. Planar depth makes the fog on a fixed object change as the
 // camera turns its head, which reads as the world breathing.
 
-// 0 = off, 1 = linear, 2 = exponential, 3 = exponential-squared. Must match
-// world.FogMode's values (fog.go).
-uniform int   fogMode;
-uniform vec3  fogColor;
-uniform float fogStart;      // where fog begins, in world units, for every mode
-uniform float fogEnd;        // linear only: where it reaches fogMaxOpacity
-uniform float fogDensity;    // exp/exp2 only
-uniform float fogMaxOpacity; // ceiling on the blend, so distant geometry can be
-                             // left legible rather than erased
-uniform vec3  fogCamPos;     // the eye the radial distance is measured from
+// The fog's parameters — fogMode (0 = off, 1 = linear, 2 = exponential, 3 =
+// exponential-squared; world.FogMode's values), fogColor, fogStart, fogEnd,
+// fogDensity, fogMaxOpacity, fogCamPos — and the volumes' below are members
+// of the scene block (scene_block.glsl), which is what "one declaration of the
+// names, driven by one upload" has become.
+#include "scene_block.glsl"
 
 // fogFactor is how much of fogColor this point has turned into: 0 = untouched,
 // 1 = the fog and nothing else.
@@ -79,20 +75,13 @@ float fogFactor(vec3 worldPos) {
 // in metres, not in half-extents, or a wide volume would fog less than a narrow
 // one at the same density.
 
-#define MAX_FOG_VOLUMES 8
+// The volumes (numFogVolumes, fogVol*[MAX_FOG_VOLUMES]) are scene-block
+// members too.
 
 // Shape values match world.VolumeShape (volume.go): 0 box, 1 sphere, 2 cylinder.
 #define FOG_VOL_BOX      0
 #define FOG_VOL_SPHERE   1
 #define FOG_VOL_CYLINDER 2
-
-uniform int   numFogVolumes;
-uniform mat3  fogVolBasis[MAX_FOG_VOLUMES];  // world offset -> normalized shape space
-uniform vec3  fogVolCenter[MAX_FOG_VOLUMES];
-uniform int   fogVolShape[MAX_FOG_VOLUMES];
-uniform vec3  fogVolColor[MAX_FOG_VOLUMES];
-uniform float fogVolDensity[MAX_FOG_VOLUMES];    // per world unit travelled inside
-uniform float fogVolMaxOpacity[MAX_FOG_VOLUMES];
 
 // fogShapeInterval narrows [t0, t1] to the part of the ray ro + t*dir that lies
 // inside a volume shape, and reports whether anything is left. dir must be a

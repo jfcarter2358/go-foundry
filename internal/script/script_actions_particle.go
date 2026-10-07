@@ -130,7 +130,7 @@ var particleVerbs = map[string]scriptVerb{
 		}
 		rt.lvl.Emitters = append(rt.lvl.Emitters, e)
 		// The cache is indexed by name and the new emitter is not in it yet.
-		rt.cacheAdded(func(c *refCache) { c.emitter[e.ID] = len(rt.lvl.Emitters) - 1 })
+		rt.cacheAdded(flang.RefEmitter)
 		return flang.RefVal{Kind: flang.RefEmitter, A: e.ID}, nil
 	},
 }

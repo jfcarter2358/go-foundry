@@ -163,7 +163,7 @@ type camPose struct{ pos, dir, up mgl32.Vec3 }
 
 func (p camPose) write() {
 	Cam.Position, Cam.Direction, Cam.Up = p.pos, p.dir, p.up
-	UpdateCamMatrix()
+	RebuildCamMatrix()
 }
 
 // Rig is the one script camera.
@@ -570,7 +570,7 @@ func writeRig() {
 	Cam.Position = Rig.Pos
 	Cam.Direction = dir
 	Cam.Up = rolledUp(dir, Rig.Roll)
-	UpdateCamMatrix()
+	RebuildCamMatrix()
 }
 
 // rolledUp is the world's up turned about the view direction by roll. Positive

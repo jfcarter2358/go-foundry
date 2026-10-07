@@ -404,14 +404,10 @@ uniform vec3 volSunColor;
 uniform vec3 volAmbientTop;
 uniform vec3 volAmbientBottom;
 
-// Point lights, under fragment.glsl's own names so world.UploadLightsTo drives
-// them — a torch lights the smoke rising past it.
-#define VOL_MAX_POINT_LIGHTS 8
-uniform int   numPointLights;
-uniform vec3  pointLightPos[VOL_MAX_POINT_LIGHTS];
-uniform vec3  pointLightColor[VOL_MAX_POINT_LIGHTS];
-uniform float pointLightBrightness[VOL_MAX_POINT_LIGHTS];
-uniform float pointLightRadius[VOL_MAX_POINT_LIGHTS];
+// Point lights: the scene block's, the same ones the surfaces are lit by
+// (world.UploadLightsTo) — a torch lights the smoke rising past it.
+#include "scene_block.glsl"
+#define VOL_MAX_POINT_LIGHTS MAX_POINT_LIGHTS
 
 // volHG is the Henyey-Greenstein phase function scaled by 4 pi, so an
 // isotropic medium (g = 0) scatters exactly 1.

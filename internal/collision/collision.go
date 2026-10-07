@@ -206,7 +206,9 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 	// list is asked for again from the next brush on, so the walk still
 	// visits exactly the brushes, in exactly the order, a whole-list walk
 	// would have found touching.
-	cand := boxes.near(body.C, body.Half, -1)
+	sc := nearScratchPool.Get().(*nearScratch)
+	defer nearScratchPool.Put(sc)
+	cand := boxes.near(sc, body.C, body.Half, -1)
 	for ci := 0; ci < len(cand); ci++ {
 		bi := int(cand[ci])
 		b := &chunk.Brushes[bi]
@@ -282,7 +284,7 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 		if moved {
 			// The body is somewhere else now; the brushes after this one are
 			// the ones near where it went.
-			cand = boxes.near(body.C, body.Half, bi)
+			cand = boxes.near(sc, body.C, body.Half, bi)
 			ci = -1
 		}
 	}

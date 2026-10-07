@@ -60,6 +60,11 @@ type treeUnit struct {
 	errs     []aitree.Diagnostic
 	failures int
 	disabled bool
+
+	// runner is reused delivery to delivery, and firing says it is in use —
+	// see fireTree.
+	runner aitree.Runner
+	firing bool
 }
 
 // loadTrees reads every decision tree the level names, before any script is
@@ -198,45 +203,25 @@ func (rt *ScriptRuntime) aiTreeFor(r flang.RefVal) string {
 	return ""
 }
 
-// runnerFor returns what will run an object's tree for one message, or nil when
-// it has none.
+// fireTree runs one message through a tree, on the interpreter resolveTarget
+// chose for it.
 //
-// Built per delivery rather than held: it is four fields, and the alternative
-// is a cache that has to be invalidated every time an entity is re-stamped,
-// spawned, or replaced by an undo.
-func (rt *ScriptRuntime) runnerFor(r flang.RefVal) (*aitree.Runner, *treeUnit) {
-	name := rt.aiTreeFor(r)
-	if name == "" {
-		return nil, nil
+// The Runner is four fields, and it used to be allocated for every message an
+// object with a tree was sent — :tick: included. It is kept on the tree unit
+// and refilled instead. A run cannot re-enter its own tree today — a tree only
+// ever posts, and delivery never happens inside a delivery — but a second
+// Runner is made for one that somehow does, rather than overwriting the one
+// whose walk is still on the stack.
+func (rt *ScriptRuntime) fireTree(tu *treeUnit, in *flang.Interp, m queuedMsg) (bool, error) {
+	r := &tu.runner
+	if tu.firing {
+		r = &aitree.Runner{}
+	} else {
+		tu.firing = true
+		defer func() { tu.firing = false }()
 	}
-	tu := rt.loadTree(name)
-	if tu == nil || tu.disabled || tu.prog == nil {
-		return nil, nil
-	}
-	in := tu.interp
-	backing := (*scriptUnit)(nil)
-	if path := rt.scriptFor(r); path != "" {
-		if u := rt.units[path]; u != nil && !u.disabled && u.interp != nil {
-			in, backing = u.interp, u
-		}
-	}
-	if in == nil {
-		return nil, nil
-	}
-	_ = backing
-	return &aitree.Runner{Prog: tu.prog, Interp: in, Host: rt.host, Self: r}, tu
-}
-
-// backingUnit is the script unit whose interpreter a tree on this object runs
-// on, or nil. It is what rt.running is set to while the tree runs, so a verb
-// that draws at random draws from the same generator the script would.
-func (rt *ScriptRuntime) backingUnit(r flang.RefVal) *scriptUnit {
-	if path := rt.scriptFor(r); path != "" {
-		if u := rt.units[path]; u != nil && !u.disabled && u.interp != nil {
-			return u
-		}
-	}
-	return nil
+	*r = aitree.Runner{Prog: tu.prog, Interp: in, Host: rt.host, Self: m.to}
+	return r.Fire(m.atom, m.args)
 }
 
 // recordTreeFailure logs a failed run and switches the document off if it keeps

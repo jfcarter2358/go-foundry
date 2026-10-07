@@ -11,7 +11,8 @@ package render
 import (
 	"fmt"
 	"os"
-	"runtime"
+	"runtime/metrics"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,9 +123,29 @@ func DebugToggle() {
 	DebugOverlayVisible = !DebugOverlayVisible
 }
 
-// DebugUpdateCPU samples process CPU usage. Call once per frame.
+// debugSampleEvery is how often the process numbers (CPU share, memory) are
+// re-read. They are read for a person looking at the overlay, who cannot take
+// in more than a couple of updates a second anyway, and neither read is free:
+// the CPU figure is a file read and a parse, and the memory one used to be
+// runtime.ReadMemStats, which stops the world to take its count.
+const debugSampleEvery = 500 * time.Millisecond
+
+// debugLastCPUSample and debugLastMemSample are when DebugUpdateCPU and
+// DebugUpdateMemory last did any work.
+var (
+	debugLastCPUSample time.Time
+	debugLastMemSample time.Time
+)
+
+// DebugUpdateCPU samples process CPU usage. Call once per frame; it reads the
+// process clock at most every debugSampleEvery and keeps the last figure in
+// between. The caller only calls it while the overlay is showing.
 func DebugUpdateCPU() {
 	now := time.Now()
+	if now.Sub(debugLastCPUSample) < debugSampleEvery {
+		return
+	}
+	debugLastCPUSample = now
 	cpuSec := processCPUSeconds()
 
 	if !cpuTracker.initialized {
@@ -142,12 +163,35 @@ func DebugUpdateCPU() {
 	cpuTracker.lastCPU = cpuSec
 }
 
-// DebugUpdateMemory reads Go runtime memory stats.
+// debugMemSamples are the runtime/metrics readings behind the two memory rows:
+// live heap objects (what MemStats.Alloc reported) and everything the runtime
+// has mapped (MemStats.Sys). Read through runtime/metrics rather than
+// ReadMemStats because these do not stop the world.
+var debugMemSamples = []metrics.Sample{
+	{Name: "/memory/classes/heap/objects:bytes"},
+	{Name: "/memory/classes/total:bytes"},
+}
+
+// DebugUpdateMemory reads Go runtime memory stats, at most every
+// debugSampleEvery.
 func DebugUpdateMemory() {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	DebugStats.MemAllocMB = float32(m.Alloc) / (1024 * 1024)
-	DebugStats.MemSysMB = float32(m.Sys) / (1024 * 1024)
+	now := time.Now()
+	if now.Sub(debugLastMemSample) < debugSampleEvery {
+		return
+	}
+	debugLastMemSample = now
+	metrics.Read(debugMemSamples)
+	DebugStats.MemAllocMB = float32(metricBytes(debugMemSamples[0])) / (1024 * 1024)
+	DebugStats.MemSysMB = float32(metricBytes(debugMemSamples[1])) / (1024 * 1024)
+}
+
+// metricBytes is a runtime/metrics byte count, or 0 if this runtime does not
+// know the metric.
+func metricBytes(s metrics.Sample) uint64 {
+	if s.Value.Kind() != metrics.KindUint64 {
+		return 0
+	}
+	return s.Value.Uint64()
 }
 
 // processCPUSeconds returns the cumulative CPU time used by this process.
@@ -161,9 +205,8 @@ func processCPUSeconds() float64 {
 	if len(fields) < 15 {
 		return 0
 	}
-	var utime, stime int64
-	fmt.Sscanf(fields[13], "%d", &utime)
-	fmt.Sscanf(fields[14], "%d", &stime)
+	utime, _ := strconv.ParseInt(fields[13], 10, 64)
+	stime, _ := strconv.ParseInt(fields[14], 10, 64)
 	clkTck := 100.0 // sysconf(_SC_CLK_TCK) is almost always 100 on Linux
 	return float64(utime+stime) / clkTck
 }

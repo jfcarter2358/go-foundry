@@ -16,9 +16,11 @@ package render
 // streams a real instance buffer, with glVertexAttribDivisor, which GL 3.3
 // added and the engine's GL target has had all along.
 //
-// Buffer handling is gizmo.GizmoFlush's: one STREAM_DRAW buffer, orphaned with
-// a nil BufferData and refilled each frame, so the driver never stalls waiting
-// for the previous frame's draw to finish reading it.
+// Buffer handling is sprite_stream.go's: a pass writes all its batches'
+// instances at once — into a persistently mapped ring where the driver has
+// buffer storage, into a freshly orphaned store where it has not — and draws
+// each batch from its own stretch with a base instance, so the driver never
+// stalls waiting for an earlier draw to finish reading what it overwrites.
 //
 // Three programs are built from the same vertex source (sprite_common.glsl,
 // injected into all three) for the reason biome_scatter_common.glsl states: a
@@ -93,16 +95,16 @@ type spriteRenderer struct {
 
 	vao uint32 // quad + instance attribute bindings
 	qbo uint32 // the static unit quad
-	ibo uint32 // the streamed instance buffer
+	ibo uint32 // the streamed instance buffer (sprite_stream.go)
+	// stream is how ibo is written: a mapped ring, or orphaned per pass.
+	stream spriteStream
 
 	color spriteProgram
 	dir   spriteProgram
 	cube  spriteProgram
 
-	// scratch is the CPU side of the instance buffer, reused every frame so a
-	// level full of sprites allocates nothing per frame.
-	scratch []float32
-	// batches and pass are reused for the same reason.
+	// batches and pass are reused every frame so a level full of sprites
+	// allocates nothing per frame.
 	batches []spriteBatch
 	pass    []spriteBatch
 	// warmed records which blend modes have had their first draw; see
@@ -181,9 +183,7 @@ func SpriteInit() {
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, 2*4, nil)
 
-	gl.GenBuffers(1, &sprites.ibo)
-	gl.BindBuffer(gl.ARRAY_BUFFER, sprites.ibo)
-	gl.BufferData(gl.ARRAY_BUFFER, spriteMaxInstances*spriteInstanceFloats*4, nil, gl.STREAM_DRAW)
+	initSpriteStream()
 
 	specifySpriteAttribs()
 
@@ -320,9 +320,20 @@ func mustSpriteProgram(vertPath, fragPath, vertSnippet, fragSnippet string, colo
 // until the next call, which is what keeps a level of sprites allocation-free
 // per frame.
 func SpriteBatches(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOnly bool) []spriteBatch {
-	sprites.batches = sprites.batches[:0]
+	// The frame's sprite state is the camera gather's while it runs.
+	joinSprites()
+	gatherSprites(&sprites.batches, lvl, cull, camPos, castersOnly)
+	return sprites.batches
+}
+
+// gatherSprites is SpriteBatches into dst. The batches it finds there are
+// reused, instance storage and all: a batch list is rebuilt every pass of
+// every frame, and growing each batch's instances from nothing every time was
+// most of what a frame of particles allocated.
+func gatherSprites(dst *[]spriteBatch, lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOnly bool) {
+	*dst = (*dst)[:0]
 	if lvl == nil {
-		return nil
+		return
 	}
 	// Reset here rather than in app.go: the colour pass gathers once a frame,
 	// and the shadow passes gather again with castersOnly set. Counting the
@@ -374,11 +385,10 @@ func SpriteBatches(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOn
 			key.Blend = gfx.SpriteBlendAlpha
 			key.FadingCutout = true
 		}
-		appendSpriteInstance(&sprites.batches, key, inst, camPos)
+		appendSpriteInstance(dst, key, inst, camPos)
 	}
 
-	gatherEmitters(lvl, cull, camPos, castersOnly)
-	return sprites.batches
+	gatherEmitters(dst, lvl, cull, camPos, castersOnly)
 }
 
 // gatherEmitters adds every live particle to the batches, one layer at a time.
@@ -387,14 +397,25 @@ func SpriteBatches(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOn
 // blend mode and a billboard mode, which is exactly the batch key. So a level
 // of a hundred torches sharing one effect is one draw call per layer per
 // texture, not one per torch.
-func gatherEmitters(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOnly bool) {
+func gatherEmitters(dst *[]spriteBatch, lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOnly bool) {
+	shared := spriteFrameLive()
 	for ei := range lvl.Emitters {
 		e := &lvl.Emitters[ei]
 		if !e.Enabled || !e.Loaded() {
 			continue
 		}
+		var ef *spriteEmitterFrame
+		if shared {
+			ef = spriteFrame.emitterFrame(ei, e)
+		}
 		if cull != nil {
-			min, max, ok := e.WorldAABB(lvl)
+			var min, max mgl32.Vec3
+			var ok bool
+			if ef != nil {
+				min, max, ok = ef.bounds(lvl)
+			} else {
+				min, max, ok = e.WorldAABB(lvl)
+			}
 			if ok && !AABBInFrustum(*cull, min, max) {
 				continue
 			}
@@ -416,16 +437,37 @@ func gatherEmitters(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersO
 			// Sorted here, inside the layer, rather than by the pass: the pass
 			// orders whole batches, and a cloud of alpha particles has to be
 			// ordered particle by particle or it composites wrong against
-			// itself. Additive and cutout skip it — neither needs an order.
-			sortIt := sys.Layer.DrawBlend() == gfx.SpriteBlendAlpha
-			n := sys.Fill(spriteFillBuf(sys.Count()), camPos, sortIt)
-			if n == 0 {
+			// itself. Additive and cutout skip it — neither needs an order —
+			// and so does every casters' gather: a depth-only pass keeps the
+			// nearest depth whatever order its quads come in.
+			sortIt := !castersOnly && sys.Layer.DrawBlend() == gfx.SpriteBlendAlpha
+			var insts []particle.Instance
+			// Depth orders the camera's alpha batches; a casters' gather has
+			// no use for it.
+			depth := float32(-1)
+			if castersOnly {
+				depth = 0
+			}
+			if ef != nil {
+				lf := ef.layer(li, sys)
+				if sortIt {
+					lf.sortFrom(sys, camPos)
+				}
+				insts = lf.insts
+				if !castersOnly {
+					depth = lf.maxDepth(camPos)
+				}
+			} else {
+				insts = spriteFillBuf(sys.Count())
+				insts = insts[:sys.Fill(insts, camPos, sortIt)]
+			}
+			if len(insts) == 0 {
 				continue
 			}
 			if !castersOnly {
-				DebugStats.Particles += n
+				DebugStats.Particles += len(insts)
 			}
-			appendEmitterBatch(sys.Layer, sprites.fill[:n], camPos)
+			appendEmitterBatch(dst, &sys.Layer, insts, camPos, depth)
 		}
 	}
 }
@@ -440,12 +482,13 @@ func spriteFillBuf(n int) []particle.Instance {
 }
 
 // appendEmitterBatch files a layer's filled instances into the batch matching
-// its appearance.
+// its appearance. depth is the farthest instance's squared distance from
+// camPos when the caller already knows it, or negative to measure it here.
 //
 // Whole-slice rather than one at a time: the batch key is fixed for the layer,
 // so the per-instance search appendSpriteInstance does would be the same answer
 // several thousand times.
-func appendEmitterBatch(l particle.Layer, insts []particle.Instance, camPos mgl32.Vec3) {
+func appendEmitterBatch(dst *[]spriteBatch, l *particle.Layer, insts []particle.Instance, camPos mgl32.Vec3, depth float32) {
 	// Through the Draw* accessors, never the fields: a layer wearing a
 	// material takes its blend, billboard and texture from there, and the
 	// batch key has to be the thing actually drawn or two layers that look
@@ -457,19 +500,17 @@ func appendEmitterBatch(l particle.Layer, insts []particle.Instance, camPos mgl3
 		Billboard: l.DrawBillboard(),
 		Lit:       l.DrawLit(),
 	}
-	b := findSpriteBatch(&sprites.batches, key)
-	for i := range insts {
-		in := &insts[i]
-		b.Instances = append(b.Instances, SpriteInstance{
-			Pos:   in.Pos,
-			Size:  in.Size,
-			Rot:   in.Rot,
-			Color: in.Color,
-			UV:    in.UV,
-		})
-		if d := in.Pos.Sub(camPos).LenSqr(); d > b.Depth {
-			b.Depth = d
+	b := findSpriteBatch(dst, key)
+	b.Instances = append(b.Instances, asSpriteInstances(insts)...)
+	if depth < 0 {
+		for i := range insts {
+			if d := insts[i].Pos.Sub(camPos).LenSqr(); d > depth {
+				depth = d
+			}
 		}
+	}
+	if depth > b.Depth {
+		b.Depth = depth
 	}
 }
 
@@ -483,8 +524,19 @@ func findSpriteBatch(batches *[]spriteBatch, key spriteBatch) *spriteBatch {
 			return b
 		}
 	}
+	return pushSpriteBatch(batches, key)
+}
+
+// pushSpriteBatch appends a new batch keyed by key, empty, taking over the
+// instance storage of whatever batch last stood at that place in the list.
+func pushSpriteBatch(batches *[]spriteBatch, key spriteBatch) *spriteBatch {
+	n := len(*batches)
+	key.Instances = nil
+	if n < cap(*batches) {
+		key.Instances = (*batches)[:n+1][n].Instances[:0]
+	}
 	*batches = append(*batches, key)
-	return &(*batches)[len(*batches)-1]
+	return &(*batches)[n]
 }
 
 // fixedBasis derives the quad's authored basis from a sprite's Euler rotation,
@@ -522,9 +574,9 @@ func appendSpriteInstance(batches *[]spriteBatch, key spriteBatch, inst SpriteIn
 		}
 		return
 	}
-	key.Instances = []SpriteInstance{inst}
-	key.Depth = d
-	*batches = append(*batches, key)
+	b := pushSpriteBatch(batches, key)
+	b.Instances = append(b.Instances, inst)
+	b.Depth = d
 }
 
 // ---------- drawing ----------
@@ -536,9 +588,14 @@ func RenderSpritesOpaque(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec
 	if !spritePassLive(lvl) {
 		return
 	}
+	// The camera's gather, if it was started on a goroutine (frame_prep.go).
+	joinSprites()
 	warmSpriteMode(lvl, projView, camPos, frame, gfx.SpriteBlendCutout)
-	batches := SpriteBatches(lvl, cull, camPos, false)
-	drawSpritePass(lvl, batches, projView, camPos, frame, gfx.SpriteBlendCutout)
+	batches := cameraSpriteBatches(lvl, cull, camPos)
+	if spriteModeSelect(batches, gfx.SpriteBlendCutout) {
+		uploadSpriteLighting(sprites.color.prog, lvl, frame)
+		drawSpritePass(sprites.pass, projView, camPos, gfx.SpriteBlendCutout)
+	}
 }
 
 // warmSpriteMode draws one invisible, zero-sized sprite in a blend mode the
@@ -557,24 +614,37 @@ func warmSpriteMode(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, fr
 	}
 	sprites.warmed[mode] = true
 	warm := []spriteBatch{{Blend: mode, Instances: []SpriteInstance{{Pos: camPos}}}}
-	drawSpritePass(lvl, warm, projView, camPos, frame, mode)
+	uploadSpriteLighting(sprites.color.prog, lvl, frame)
+	drawSpritePass(warm, projView, camPos, mode)
 }
 
 // RenderSpritesTransparent draws the alpha and additive batches, in that order.
 // Called after the world's own transparent pass, so a sprite sorts against
 // water and glass rather than in a pass that ignores them.
 //
-// One gather feeds both modes: walking the level twice would cost twice for an
-// answer that cannot have changed between the two calls.
+// It draws from the gather the cutout pass made (cameraSpriteBatches), which
+// nothing since can have changed; and the two modes take one lighting upload
+// between them, since nothing but their own draws comes between them either.
 func RenderSpritesTransparent(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, cull *Frustum, frame ShadowFrame) {
 	if !spritePassLive(lvl) {
 		return
 	}
+	// The camera's gather, if it was started on a goroutine (frame_prep.go).
+	joinSprites()
 	warmSpriteMode(lvl, projView, camPos, frame, gfx.SpriteBlendAlpha)
 	warmSpriteMode(lvl, projView, camPos, frame, gfx.SpriteBlendAdditive)
-	batches := SpriteBatches(lvl, cull, camPos, false)
-	drawSpritePass(lvl, batches, projView, camPos, frame, gfx.SpriteBlendAlpha)
-	drawSpritePass(lvl, batches, projView, camPos, frame, gfx.SpriteBlendAdditive)
+	batches := cameraSpriteBatches(lvl, cull, camPos)
+	lit := false
+	for _, mode := range []gfx.SpriteBlend{gfx.SpriteBlendAlpha, gfx.SpriteBlendAdditive} {
+		if !spriteModeSelect(batches, mode) {
+			continue
+		}
+		if !lit {
+			uploadSpriteLighting(sprites.color.prog, lvl, frame)
+			lit = true
+		}
+		drawSpritePass(sprites.pass, projView, camPos, mode)
+	}
 }
 
 // spritePassLive is the cheap "is there anything to do" test both entry points
@@ -583,9 +653,9 @@ func spritePassLive(lvl *world.Level) bool {
 	return sprites.ready && lvl != nil && (len(lvl.Sprites) > 0 || len(lvl.Emitters) > 0)
 }
 
-// drawSpritePass draws every batch of one blend mode, setting exactly the GL
-// state that mode needs and putting it all back afterwards.
-func drawSpritePass(lvl *world.Level, batches []spriteBatch, projView mgl32.Mat4, camPos mgl32.Vec3, frame ShadowFrame, mode gfx.SpriteBlend) {
+// spriteModeSelect leaves the batches of one blend mode with anything in them
+// in sprites.pass, and reports whether there were any.
+func spriteModeSelect(batches []spriteBatch, mode gfx.SpriteBlend) bool {
 	sel := sprites.pass[:0]
 	for i := range batches {
 		if batches[i].Blend == mode && len(batches[i].Instances) > 0 {
@@ -593,13 +663,17 @@ func drawSpritePass(lvl *world.Level, batches []spriteBatch, projView mgl32.Mat4
 		}
 	}
 	sprites.pass = sel
+	return len(sel) > 0
+}
+
+// drawSpritePass draws the batches of one blend mode, setting exactly the GL
+// state that mode needs and putting it all back afterwards. The colour
+// program's lighting is the caller's to have uploaded.
+func drawSpritePass(sel []spriteBatch, projView mgl32.Mat4, camPos mgl32.Vec3, mode gfx.SpriteBlend) {
 	if len(sel) == 0 {
 		return
 	}
-
 	p := &sprites.color
-	uploadSpriteLighting(p.prog, lvl, frame)
-
 	gl.UseProgram(p.prog)
 	gl.UniformMatrix4fv(p.projView, 1, false, &projView[0])
 	gl.Uniform3f(p.viewPos, camPos.X(), camPos.Y(), camPos.Z())
@@ -633,10 +707,7 @@ func drawSpritePass(lvl *world.Level, batches []spriteBatch, projView mgl32.Mat4
 	}
 
 	bindSpriteVAO()
-	for i := range sel {
-		drawSpriteBatch(p, &sel[i])
-		DebugStats.SpriteDraws++
-	}
+	drawSpriteBatches(p, sel, true)
 	gl.BindVertexArray(0)
 
 	if mode != gfx.SpriteBlendCutout {
@@ -647,19 +718,45 @@ func drawSpritePass(lvl *world.Level, batches []spriteBatch, projView mgl32.Mat4
 	gl.UseProgram(gfx.Program)
 }
 
-// drawSpriteBatch uploads one batch's instances and issues its draw.
-func drawSpriteBatch(p *spriteProgram, b *spriteBatch) {
-	n := len(b.Instances)
-	if n == 0 {
-		return
+// drawSpriteBatches uploads the batches' instances — all of them at once, or
+// as many at a time as one store holds — and draws each from its own stretch
+// of the buffer. count adds the draws to DebugStats.SpriteDraws.
+func drawSpriteBatches(p *spriteProgram, batches []spriteBatch, count bool) {
+	for start := 0; start < len(batches); {
+		end, total := start, 0
+		for end < len(batches) {
+			n := min(len(batches[end].Instances), spriteMaxInstances)
+			if end > start && total+n > spriteMaxInstances {
+				break
+			}
+			total += n
+			end++
+		}
+		if total > 0 {
+			base := uploadSpriteBatches(batches[start:end], total)
+			for i := start; i < end; i++ {
+				n := min(len(batches[i].Instances), spriteMaxInstances)
+				if n == 0 {
+					continue
+				}
+				drawSpriteBatch(p, &batches[i], n, base)
+				base += n
+				if count {
+					DebugStats.SpriteDraws++
+				}
+			}
+		}
+		start = end
 	}
-	if n > spriteMaxInstances {
-		// Truncate rather than grow: the cap is far above what a level reaches,
-		// and silently reallocating a stream buffer mid-frame is worse than
-		// dropping the tail of one effect.
-		n = spriteMaxInstances
-	}
+}
 
+// drawSpriteBatch issues one batch's draw, its n instances starting at base in
+// the instance buffer.
+//
+// A batch past spriteMaxInstances has been truncated rather than drawn in
+// pieces: the cap is far above what a level reaches, and dropping the tail of
+// one effect is better than a frame that grows without limit.
+func drawSpriteBatch(p *spriteProgram, b *spriteBatch, n, base int) {
 	if p.lit >= 0 {
 		gl.Uniform1i(p.lit, boolToInt32(b.Lit))
 	}
@@ -680,34 +777,7 @@ func drawSpriteBatch(p *spriteProgram, b *spriteBatch) {
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[b.Texture])
 	}
-
-	uploadSpriteInstances(b.Instances[:n])
-	gl.DrawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, int32(n))
-}
-
-// uploadSpriteInstances packs the batch into the stream buffer.
-//
-// The nil BufferData first is buffer orphaning: it tells the driver the old
-// contents are dead, so it can hand back fresh storage instead of stalling
-// until the previous frame's draw has finished reading the old. Same reasoning
-// as gizmo.GizmoFlush.
-func uploadSpriteInstances(insts []SpriteInstance) {
-	need := len(insts) * spriteInstanceFloats
-	if cap(sprites.scratch) < need {
-		sprites.scratch = make([]float32, need)
-	}
-	buf := sprites.scratch[:need]
-	for i, s := range insts {
-		o := i * spriteInstanceFloats
-		buf[o+0], buf[o+1], buf[o+2] = s.Pos.X(), s.Pos.Y(), s.Pos.Z()
-		buf[o+3], buf[o+4] = s.Size.X(), s.Size.Y()
-		buf[o+5] = s.Rot
-		buf[o+6], buf[o+7], buf[o+8], buf[o+9] = s.Color.X(), s.Color.Y(), s.Color.Z(), s.Color.W()
-		buf[o+10], buf[o+11], buf[o+12], buf[o+13] = s.UV.X(), s.UV.Y(), s.UV.Z(), s.UV.W()
-	}
-	gl.BindBuffer(gl.ARRAY_BUFFER, sprites.ibo)
-	gl.BufferData(gl.ARRAY_BUFFER, spriteMaxInstances*spriteInstanceFloats*4, nil, gl.STREAM_DRAW)
-	gl.BufferSubData(gl.ARRAY_BUFFER, 0, need*4, gl.Ptr(buf))
+	gl.DrawArraysInstancedBaseInstance(gl.TRIANGLE_STRIP, 0, 4, int32(n), uint32(base))
 }
 
 // uploadSpriteLighting sends the scene lighting and shadow state to the colour
@@ -715,10 +785,11 @@ func uploadSpriteInstances(insts []SpriteInstance) {
 // biome_light.glsl declares fragment.glsl's own uniform names, so there is no
 // sprite-specific light path to keep in step with the main shader's.
 func uploadSpriteLighting(prog uint32, lvl *world.Level, frame ShadowFrame) {
-	world.UploadLightsTo(prog, world.SceneLights(lvl), false)
+	lights := world.SceneLights(lvl)
+	world.UploadLightsTo(prog, lights, false)
 	world.UploadFogTo(prog, lvl.Fog, lvl.Volumes, lvl)
 	UploadShadowUniformsTo(prog, lvl.Lights, frame)
-	UploadPointShadowUniformsTo(prog, world.SceneLights(lvl))
+	UploadPointShadowUniformsTo(prog, lights)
 
 	gl.UseProgram(prog)
 	cam := gfx.Cam.Matrix
@@ -773,12 +844,10 @@ func drawSpriteShadow(lvl *world.Level, p *spriteProgram, lsm mgl32.Mat4, viewPo
 	gl.Uniform3f(p.viewPos, viewPos.X(), viewPos.Y(), viewPos.Z())
 	setup(p)
 
+	// A depth pass has no texture and no blend, so a batch's only remaining
+	// uniform is its billboard mode and basis.
 	bindSpriteVAO()
-	for i := range batches {
-		// A depth pass has no texture and no blend, so a batch's only remaining
-		// uniform is its billboard mode and basis.
-		drawSpriteBatch(p, &batches[i])
-	}
+	drawSpriteBatches(p, batches, false)
 	gl.BindVertexArray(0)
 
 	// Hand the interrupted pass its program back, exactly as endBiomePass does.
@@ -794,6 +863,7 @@ func DeleteSprites() {
 	if !sprites.ready {
 		return
 	}
+	releaseSpriteStream()
 	gl.DeleteVertexArrays(1, &sprites.vao)
 	gl.DeleteBuffers(1, &sprites.qbo)
 	gl.DeleteBuffers(1, &sprites.ibo)
@@ -878,7 +948,7 @@ func DrawSpriteInstances(insts []particle.Instance, texture string, blend gfx.Sp
 	}
 
 	bindSpriteVAO()
-	drawSpriteBatch(p, &b)
+	drawSpriteBatches(p, []spriteBatch{b}, false)
 	gl.BindVertexArray(0)
 
 	gl.DepthMask(true)

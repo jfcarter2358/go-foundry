@@ -148,6 +148,12 @@ type Geometry struct {
 	// dense prop's shadow (world.Scenery.loadNanite, docs/nanite/PHASE_4.md).
 	// Its own buffers; Delete and Unload release them with this mesh's.
 	ShadowLOD *Geometry
+
+	// share, when set, is the set of buffers this geometry draws from and
+	// does not own alone: other instances of the same model draw from them
+	// too (UploadShared). Delete gives up this geometry's claim and frees the
+	// buffers only when it was the last.
+	share *MeshShare
 }
 
 // ShadowCaster is the mesh the shadow passes draw for g: its ShadowLOD when
@@ -295,7 +301,9 @@ var GeometryUploadsEnabled = true
 // vertices: slice of [X,Y,Z,U,V] vertex definitions.
 // indices: triangle list referencing vertices.
 func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, position mgl32.Vec3) error {
-	verts := []float32{}
+	// Sized for the usual 5-float record up front: growing it by append was
+	// a measurable share of building a large compiled level's surfaces.
+	verts := make([]float32, 0, len(indices)*5)
 	for _, idx := range indices {
 		if idx < 0 || idx >= len(vertices) {
 			return fmt.Errorf("Geometry.Load: index %d out of bounds (len=%d)", idx, len(vertices))
@@ -377,7 +385,13 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	if !GeometryUploadsEnabled || g.CPUOnly {
 		return nil
 	}
+	g.upload()
+	return nil
+}
 
+// upload hands a mesh Load has built to the GPU: a VAO and a buffer per
+// attribute it has.
+func (g *Geometry) upload() {
 	// No uniform is written here and no location is looked up by name: a
 	// load is not a draw, no program need be bound, and on a translated driver
 	// the name lookups per face were most of the cost of building a big chunk.
@@ -429,8 +443,165 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 		gl.BufferData(gl.ARRAY_BUFFER, len(light)*4, gl.Ptr(light), gl.STATIC_DRAW)
 		BindLightLayout()
 	}
+}
 
-	return nil
+// ---------- shared meshes ----------
+//
+// A level full of soldiers is dozens of entities wearing the same three
+// models. Each used to build its own copy of the mesh — weld, smooth normals,
+// a VAO and four buffers — out of the same document, so twenty marines were
+// twenty identical uploads. A model's mesh is a function of the file and of
+// the few settings that change what is built (world.modelMeshKey); everything
+// else that varies per instance — the model matrix, alpha, the texture name,
+// the material, the pose palette, the UV scroll — is a uniform or a field
+// read at draw time, never the buffers. So instances of one mesh share them.
+//
+// Sharing is by REFERENCE COUNT on the buffers, kept here because Delete is
+// the one place every owner already gives a geometry up: an instance's Delete
+// drops its claim, and the buffers go back to the driver with the last one.
+// Nothing else holds a claim, so a mesh no instance uses is freed, not cached
+// forever.
+//
+// Each instance still has a VAO of its own, pointing at the shared buffers.
+// A VAO is the one GL object a shared context does not share (uiwin's
+// windows), so a shared one would draw in the context that happened to make
+// it and nowhere else; buffers are shared between them, and a VAO is a dozen
+// calls with no data behind it.
+//
+// The CPU arrays (Vertices, Indices, Normals, the skin and light records) are
+// shared too and are READ-ONLY to every instance, which is what they already
+// are for a model: nothing writes into an entity model's mesh in place; an
+// edit reloads it.
+
+// MeshShare is one uploaded mesh's buffers, drawn from by several geometries.
+// Opaque: the caller keeps a *MeshShare per mesh it can share and passes its
+// address to UploadShared, which keeps it current.
+type MeshShare struct {
+	refs                         int
+	vbo, nbo, ebo, ibo, wbo, lbo uint32
+}
+
+// Live is whether s still holds buffers some geometry draws from.
+func (s *MeshShare) Live() bool { return s != nil && s.refs > 0 }
+
+// UploadShared puts g — a mesh Load built with CPUOnly set, or a value copy
+// of one — on the GPU: drawing from *live's buffers when *live still has
+// some, or uploading its own, which become *live. Either way g gets a VAO of
+// its own. With uploads disabled it only clears CPUOnly; the CPU arrays are
+// shared regardless.
+func (g *Geometry) UploadShared(live **MeshShare) {
+	g.CPUOnly = false
+	g.share = nil
+	g.Vao, g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo = 0, 0, 0, 0, 0, 0, 0
+	if !GeometryUploadsEnabled || len(g.Vertices) == 0 {
+		return
+	}
+	s := *live
+	if s == nil || s.refs <= 0 {
+		s = &MeshShare{}
+		s.vbo = newBuffer(g.Vertices)
+		if len(g.Indices) > 0 {
+			s.ebo = newIndexBuffer(g.Indices)
+		}
+		if len(g.Normals) > 0 {
+			s.nbo = newBuffer(g.Normals)
+		}
+		if len(g.skinIdx) > 0 {
+			s.ibo, s.wbo = newBuffer(g.skinIdx), newBuffer(g.skinWt)
+		}
+		if light := g.BakedLightData(); len(light) > 0 {
+			s.lbo = newBuffer(light)
+		}
+		*live = s
+	}
+	s.refs++
+	g.share = s
+	g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo = s.vbo, s.nbo, s.ebo, s.ibo, s.wbo, s.lbo
+
+	// The same VAO upload makes, over buffers that already hold the data.
+	g.ModelUniform = WorldModelUniform()
+	g.VertexAttribute = AttribVert
+	g.TextureCoordinateAttribute = AttribTexCoord
+	gl.GenVertexArrays(1, &g.Vao)
+	gl.BindVertexArray(g.Vao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, g.Vbo)
+	BindVertexLayout()
+	if g.Ebo != 0 {
+		gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, g.Ebo)
+	}
+	if g.Nbo != 0 {
+		g.NormalAttribute = AttribNormal
+		gl.BindBuffer(gl.ARRAY_BUFFER, g.Nbo)
+		gl.EnableVertexAttribArray(AttribNormal)
+		gl.VertexAttribPointerWithOffset(AttribNormal, 3, gl.FLOAT, false, 3*4, 0)
+	}
+	if g.Ibo != 0 {
+		bindVec4Buffer(g.Ibo, AttribBoneIdx)
+		bindVec4Buffer(g.Wbo, AttribBoneWt)
+	}
+	if g.Lbo != 0 {
+		gl.BindBuffer(gl.ARRAY_BUFFER, g.Lbo)
+		BindLightLayout()
+	}
+}
+
+// newBuffer uploads data to a new buffer object and returns its name. Through
+// the ARRAY_BUFFER target whatever the buffer is for: a buffer has no type,
+// and binding an index buffer with no VAO bound is not core-profile GL.
+func newBuffer(data []float32) uint32 {
+	var b uint32
+	gl.GenBuffers(1, &b)
+	gl.BindBuffer(gl.ARRAY_BUFFER, b)
+	gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.STATIC_DRAW)
+	return b
+}
+
+func newIndexBuffer(data []uint32) uint32 {
+	var b uint32
+	gl.GenBuffers(1, &b)
+	gl.BindBuffer(gl.ARRAY_BUFFER, b)
+	gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.STATIC_DRAW)
+	return b
+}
+
+// bindVec4Buffer is loadVec4Buffer for a buffer that already holds its data.
+func bindVec4Buffer(buf uint32, loc uint32) {
+	gl.BindBuffer(gl.ARRAY_BUFFER, buf)
+	gl.EnableVertexAttribArray(loc)
+	gl.VertexAttribPointerWithOffset(loc, 4, gl.FLOAT, false, 4*4, 0)
+}
+
+// SharedWith reports how many geometries draw from g's buffers, counting g:
+// 0 for one with none, 1 for one that owns its buffers alone.
+func (g *Geometry) SharedWith() int {
+	if g.share != nil {
+		return g.share.refs
+	}
+	if g.Vbo != 0 {
+		return 1
+	}
+	return 0
+}
+
+// releaseShare frees g's own VAO and gives up its claim on the shared
+// buffers, freeing those too when it was the last.
+func (g *Geometry) releaseShare() {
+	s := g.share
+	g.share = nil
+	if g.Vao != 0 {
+		gl.DeleteVertexArrays(1, &g.Vao)
+	}
+	g.Vao, g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo = 0, 0, 0, 0, 0, 0, 0
+	s.refs--
+	if s.refs > 0 {
+		return
+	}
+	for _, b := range []*uint32{&s.vbo, &s.nbo, &s.ebo, &s.ibo, &s.wbo, &s.lbo} {
+		if *b != 0 {
+			gl.DeleteBuffers(1, b)
+			*b = 0
+		}
+	}
 }
 
 // Vertex attribute locations of the world program, pinned by layout qualifiers
@@ -589,8 +760,25 @@ func (g *Geometry) deleteSkinBuffers() {
 // IsSkinned reports whether this submesh carries bone attributes.
 func (g *Geometry) IsSkinned() bool { return g.Ibo != 0 && g.Wbo != 0 }
 
-// Delete releases the GPU resources (VAO and VBO) held by this geometry.
+// Delete releases the GPU resources (VAO and VBO) held by this geometry — or,
+// for one sharing its buffers with other instances (UploadShared), its claim
+// on them, which frees them only when it was the last.
 func (g *Geometry) Delete() {
+	if g.share != nil {
+		g.releaseShare()
+		if g.ShadowLOD != nil {
+			g.ShadowLOD.Delete()
+		}
+		return
+	}
+	g.deleteOwned()
+	if g.ShadowLOD != nil {
+		g.ShadowLOD.Delete()
+	}
+}
+
+// deleteOwned frees the handles g holds, as their only owner.
+func (g *Geometry) deleteOwned() {
 	if g.Vao != 0 {
 		gl.DeleteVertexArrays(1, &g.Vao)
 		g.Vao = 0
@@ -609,9 +797,6 @@ func (g *Geometry) Delete() {
 	}
 	g.deleteSkinBuffers()
 	g.deleteBakedLightBuffer()
-	if g.ShadowLOD != nil {
-		g.ShadowLOD.Delete()
-	}
 }
 
 // Unload releases the GPU handles AND drops the CPU-side vertex data, leaving

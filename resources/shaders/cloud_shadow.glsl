@@ -19,15 +19,16 @@
 // it alike; comparing the receiver's own light depth against where the mass is
 // puts the shadow below the cloud and nowhere above it.
 //
-// The uniforms are uploaded by UploadShadowUniformsTo, which every program
-// that includes this already calls, and cloudShadowMap is always bound to a
-// real texture (a white dummy when there are no clouds) on its own unit — see
+// cloudShadowOn (0 = no map this frame), cloudShadowLight (the directional
+// light the map was baked for) and cloudShadowMatrix (world -> [0,1]^3 in the
+// bake's light space) are in the scene block, written by
+// UploadShadowUniformsTo. cloudShadowMap is always bound to a real texture (a
+// white dummy when there are no clouds) on its own unit — see
 // CloudShadowTexUnit — so a program never samples an unbound unit.
 
-uniform int       cloudShadowOn;     // 0 = no map this frame
-uniform int       cloudShadowLight;  // the directional light the map was baked for
+#include "scene_block.glsl"
+
 uniform sampler2D cloudShadowMap;
-uniform mat4      cloudShadowMatrix; // world -> [0,1]^3 in the bake's light space
 
 // How much of a compiled level's BAKED light the cloud shadow takes away.
 // Baked light is the sun and everything else summed offline, and which share

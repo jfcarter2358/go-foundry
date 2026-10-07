@@ -47,3 +47,14 @@ func BenchmarkSignature(b *testing.B) {
 		Signature(lvl)
 	}
 }
+
+// BenchmarkBuildHeightfield rasterises bigLevel's heightfield from nothing:
+// every tile, no cache — a level's first build.
+func BenchmarkBuildHeightfield(b *testing.B) {
+	solids := gatherSolids(bigLevel())
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetTiles()
+		buildHeightfield(solids, DefaultCellSize, MaxSlopeCos)
+	}
+}

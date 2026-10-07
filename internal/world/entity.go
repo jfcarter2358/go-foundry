@@ -632,10 +632,23 @@ func (e *Entity) HasGeometry() bool {
 
 // FindEntity returns the level entity with the given ID, or nil. This is what
 // a script's `@id` resolves through.
+//
+// It answers from the level's ID index (entity_index.go) when that is still
+// valid for the Entities slice as it stands, and otherwise — or on any miss —
+// from the scan below, so it never answers differently from the scan.
 func FindEntity(lvl *Level, id string) *Entity {
 	if lvl == nil || id == "" {
 		return nil
 	}
+	if e, ok := lvl.entityIndex.find(lvl, id); ok {
+		return e
+	}
+	return findEntityScan(lvl, id)
+}
+
+// findEntityScan is FindEntity's definition: the first entity carrying id, in
+// level order.
+func findEntityScan(lvl *Level, id string) *Entity {
 	for i := range lvl.Entities {
 		if lvl.Entities[i].ID == id {
 			return &lvl.Entities[i]

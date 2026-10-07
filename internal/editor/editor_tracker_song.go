@@ -90,16 +90,27 @@ func trkSongTab() {
 		s.FXColumns = int(fx)
 		trkEd.clampCursor()
 	}
-	chans := int32(len(s.Channels))
-	if imgui.InputIntV("Channels##trkschans", &chans, 1, 4, imgui.InputTextFlagsEnterReturnsTrue) {
-		n := clampI(int(chans), 1, tracker.MaxChannels)
+	// Applied by the - and + buttons at once, and a typed number on Enter or
+	// on clicking away (it used to need Enter, and was lost otherwise).
+	// Channels come and go at the right-hand end; Edit or a channel's popup
+	// inserts one anywhere.
+	if !trkChansActive {
+		trkChansBuf = int32(len(s.Channels))
+	}
+	stepped := imgui.InputIntV("Channels##trkschans", &trkChansBuf, 1, 4, 0)
+	trkChansActive = imgui.IsItemActive()
+	if (stepped && !trkChansActive) || imgui.IsItemDeactivatedAfterEdit() {
+		n := clampI(int(trkChansBuf), 1, tracker.MaxChannels)
 		if n != len(s.Channels) {
 			trkEd.pushUndo("")
 			s.SetChannelCount(n)
 			trkEd.touch()
 			trkAfterStructural()
+			trkChannelsShifted()
 		}
+		trkChansBuf = int32(len(s.Channels))
 	}
+	editorMenuTooltip("How many channels the song has. To insert one between others, use Edit or right-click a channel.")
 	g := s.Gain
 	if trkEdited(imgui.SliderFloatV("Gain##trksgain", &g, 0, 2, "%.2f", 0)) {
 		s.Gain = g
@@ -169,6 +180,12 @@ func trkSongTab() {
 // ---------- params, bindings, markers ----------
 
 // trkParamLive is each param's live slider value, by name.
+// trkChansBuf is the Song tab's Channels field while it is being edited.
+var (
+	trkChansBuf    int32
+	trkChansActive bool
+)
+
 var trkParamLive = map[string]float32{}
 
 var trkBindTargets = []tracker.BindTarget{tracker.BindVolume, tracker.BindPan, tracker.BindSendA, tracker.BindSendB, tracker.BindCutoff}

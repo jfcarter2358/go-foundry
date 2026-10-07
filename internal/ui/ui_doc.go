@@ -364,6 +364,8 @@ type TextSpec struct {
 	// than leaving whatever the level last said.
 	bound    string
 	hasBound bool
+	// boundFrom is what bound was formatted from — see bindText.
+	boundFrom boundMemo
 }
 
 // DefaultTextSpec is left-aligned, middle-aligned, opaque white, theme-sized.

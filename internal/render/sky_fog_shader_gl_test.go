@@ -74,7 +74,7 @@ func TestSkyAndFogShadersCompile(t *testing.T) {
 	// fogColor being present is what proves the splice happened rather than
 	// the file merely existing.
 	for _, name := range []string{"fogMode", "fogColor"} {
-		if loc := skyRender.prog.U(name); loc < 0 {
+		if !sceneMember(skyRender.prog.prog, name) {
 			t.Errorf("sky program: fog uniform %q not found; the horizon blend is dead", name)
 		}
 	}
@@ -84,7 +84,7 @@ func TestSkyAndFogShadersCompile(t *testing.T) {
 	// fog bank under a crisp sky is the most obvious way for one to stop reading
 	// as fog, and these uniforms going missing is how that happens.
 	for _, name := range []string{"numFogVolumes", "fogVolBasis[0]", "fogVolColor[0]"} {
-		if loc := skyRender.prog.U(name); loc < 0 {
+		if !sceneMember(skyRender.prog.prog, name) {
 			t.Errorf("sky program: fog volume uniform %q not found; the sky would stay clear inside a bank", name)
 		}
 	}
@@ -115,7 +115,7 @@ func TestEveryShadingProgramGotTheFog(t *testing.T) {
 			continue
 		}
 		for _, name := range fogUniformNames {
-			if world.ProgUniformLoc(p.prog, name+"\x00") < 0 {
+			if !sceneMember(p.prog, name) {
 				t.Errorf("%s program: fog uniform %q missing — this pass would not fade with the rest of the scene", p.name, name)
 			}
 		}
@@ -134,7 +134,7 @@ func TestTheWorldShaderGotTheFog(t *testing.T) {
 		t.Fatalf("LoadProgram: %v", err)
 	}
 	for _, name := range fogUniformNames {
-		if world.ProgUniformLoc(gfx.Program, name+"\x00") < 0 {
+		if !sceneMember(gfx.Program, name) {
 			t.Errorf("world shader: fog uniform %q missing — nothing in the level would fade", name)
 		}
 	}
@@ -158,7 +158,7 @@ func TestDepthOnlyProgramsHaveNoFog(t *testing.T) {
 		{"scatter cascade shadow", scatters.shadow.prog},
 		{"scatter cube shadow", scatters.cube.prog},
 	} {
-		if loc := world.ProgUniformLoc(p.prog, "fogColor\x00"); loc >= 0 {
+		if sceneMember(p.prog, "fogColor") {
 			t.Errorf("%s program exposes fogColor; a depth pass has no colour to fog", p.name)
 		}
 	}

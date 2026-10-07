@@ -1050,17 +1050,43 @@ func (b *cullBatch) drawGroup(gi int) {
 	if g.count == 0 || !b.groupLive(gi) {
 		return
 	}
+	b.bindIndirect()
+	b.drawGroupBound(gi)
+	b.unbindIndirect()
+}
+
+// bindIndirect binds the buffers this pass's draws read their commands (and,
+// compacted, their counts) from, for a run of drawGroupBound calls.
+func (b *cullBatch) bindIndirect() {
 	if b.compacted {
 		gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, b.packedBuf)
 		gl.BindBuffer(glext.ParameterBuffer, b.countBuf)
-		glext.MultiDrawElementsIndirectCount(gl.TRIANGLES, gl.UNSIGNED_INT, uintptr(g.first)*20, uintptr(gi)*4, g.count, 20)
-		gl.BindBuffer(glext.ParameterBuffer, 0)
-		gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, 0)
 		return
 	}
 	gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, b.cmdBuf)
-	gl.MultiDrawElementsIndirect(gl.TRIANGLES, gl.UNSIGNED_INT, gl.PtrOffset(int(g.first)*20), g.count, 0)
+}
+
+// unbindIndirect undoes bindIndirect.
+func (b *cullBatch) unbindIndirect() {
+	if b.compacted {
+		gl.BindBuffer(glext.ParameterBuffer, 0)
+	}
 	gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, 0)
+}
+
+// drawGroupBound is drawGroup between a bindIndirect and an unbindIndirect:
+// what a pass drawing many groups calls, so the buffers are bound once for
+// all of them rather than once a group.
+func (b *cullBatch) drawGroupBound(gi int) {
+	g := b.groups[gi]
+	if g.count == 0 || !b.groupLive(gi) {
+		return
+	}
+	if b.compacted {
+		glext.MultiDrawElementsIndirectCount(gl.TRIANGLES, gl.UNSIGNED_INT, uintptr(g.first)*20, uintptr(gi)*4, g.count, 20)
+		return
+	}
+	gl.MultiDrawElementsIndirect(gl.TRIANGLES, gl.UNSIGNED_INT, gl.PtrOffset(int(g.first)*20), g.count, 0)
 }
 
 // countDrawn adds this pass's triangles to DebugStats.NaniteTriangles: a

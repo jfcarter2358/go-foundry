@@ -316,13 +316,22 @@ func trkDrawGrid(origin, size imgui.Vec2) {
 	trkKeepCursorInView = false
 	trkScrollRow = clampI(trkScrollRow, 0, max(0, pat.Rows()-visible))
 
-	// The mouse.
-	imgui.SetCursorScreenPos(origin)
-	imgui.InvisibleButtonV("##trkgridbtn", imgui.Vec2{X: viewW, Y: size.Y - sbW},
+	// The mouse. The button covers the rows only, not the channel headers:
+	// pressed, it becomes the active item, and an active item makes
+	// IsWindowHovered false for the rest of the frame — which is what
+	// trkDrawHeaders hit-tests its M/S/R/mixer buttons with, so a button over
+	// the headers swallowed every click on them.
+	imgui.SetCursorScreenPos(imgui.Vec2{X: origin.X, Y: rowsTop})
+	imgui.InvisibleButtonV("##trkgridbtn", imgui.Vec2{X: max32(viewW, 1), Y: max32(rowsH, 1)},
 		imgui.ButtonFlagsMouseButtonLeft|imgui.ButtonFlagsMouseButtonRight)
 	hovered := imgui.IsItemHovered()
 	mouse := imgui.MousePos()
 	trkGridMouse(m, origin, rowsTop, viewW, hovered, mouse, pat)
+	// Again: the wheel and a drag past the edge scroll inside trkGridMouse,
+	// after the clamps above, and a wheel up on the first row would otherwise
+	// leave the rows below indexing a negative row.
+	trkScrollRow = clampI(trkScrollRow, 0, max(0, pat.Rows()-visible))
+	trkScrollX = clampF32(trkScrollX, 0, max32(0, contentW-viewW))
 
 	// Rows.
 	dl.PushClipRect(imgui.Vec2{X: origin.X, Y: rowsTop}, imgui.Vec2{X: origin.X + viewW, Y: rowsTop + rowsH})
@@ -462,7 +471,7 @@ func trkGridMouse(m trkGridMetrics, origin imgui.Vec2, rowsTop, viewW float32, h
 		}
 	}
 	row, ch, field, ok := trkCellAt(m, origin, rowsTop, mouse)
-	inRange := ok && row < pat.Rows() && ch < len(s.Channels)
+	inRange := ok && row >= 0 && row < pat.Rows() && ch >= 0 && ch < len(s.Channels)
 	if hovered && imgui.IsMouseClicked(0) {
 		trkGridFocus = true
 		if inRange {
@@ -546,6 +555,9 @@ var (
 	trkOpenMixer   bool
 	trkSoloCh      = -1
 	trkHeaderHover = -1
+	// The mixer popup's Name field while it is being typed in.
+	trkMixNameBuf    string
+	trkMixNameActive bool
 )
 
 // trkDrawHeaders is each channel's name, mute and solo, piano-roll and mixer
@@ -707,9 +719,19 @@ func trkChannelPopups() {
 		imgui.Text(ch.Name)
 		imgui.Separator()
 		imgui.PushItemWidth(180)
-		name := ch.Name
-		if imgui.InputTextV("Name##trkmixname", &name, imgui.InputTextFlagsEnterReturnsTrue, nil) && strings.TrimSpace(name) != "" {
-			trkRenameChannel(trkPopupCh, strings.TrimSpace(name))
+		// Kept on Enter or on clicking away, like the instrument name.
+		// Reloaded whenever the popup opens too: a popup closed mid-edit
+		// never reports the field ending, which would leave the last
+		// channel's text in it.
+		if !trkMixNameActive || imgui.IsWindowAppearing() {
+			trkMixNameBuf = ch.Name
+		}
+		imgui.InputTextV("Name##trkmixname", &trkMixNameBuf, 0, nil)
+		trkMixNameActive = imgui.IsItemActive()
+		if imgui.IsItemDeactivatedAfterEdit() {
+			if t := strings.TrimSpace(trkMixNameBuf); t != "" && t != ch.Name {
+				trkRenameChannel(trkPopupCh, t)
+			}
 		}
 		v := ch.Volume
 		if trkEdited(imgui.SliderFloatV("Volume##trkmixvol", &v, 0, 1, "%.2f", 0)) {
@@ -742,6 +764,10 @@ func trkChannelPopups() {
 			ch.Mute = mute
 		}
 		imgui.PopItemWidth()
+		imgui.Separator()
+		// Menu items close the popup they are clicked in, so it is gone
+		// before the channel it was opened for moves or disappears.
+		trkChannelMenuItems(trkPopupCh)
 		imgui.EndPopup()
 	}
 }
@@ -752,6 +778,35 @@ func trkCrushFormat(bits int) string {
 		return "off"
 	}
 	return "%d bits"
+}
+
+// trkChannelsShifted forgets the view state that names a channel by index —
+// solo and the piano roll — after channels were inserted or deleted, since the
+// index now means another channel. (The channel popup closes itself when it
+// runs a channel command; see trkChannelPopups.)
+func trkChannelsShifted() {
+	trkSoloCh, trkRollCh = -1, -1
+	if trkPlayer != nil {
+		trkPlayer.Solo(-1)
+	}
+}
+
+// trkChannelMenuItems are the channel commands, for channel c: shared by the
+// Edit menu, the grid's context menu and the channel popup.
+func trkChannelMenuItems(c int) {
+	full := len(trkEd.Song.Channels) >= tracker.MaxChannels
+	if imgui.MenuItemV("Insert Channel Left", "", false, !full) {
+		trkEd.insertChannel(c)
+	}
+	if imgui.MenuItemV("Insert Channel Right", "", false, !full) {
+		trkEd.insertChannel(c + 1)
+	}
+	if imgui.MenuItemV("Add Channel at End", "", false, !full) {
+		trkEd.insertChannel(len(trkEd.Song.Channels))
+	}
+	if imgui.MenuItemV("Delete Channel", "", false, len(trkEd.Song.Channels) > 1) {
+		trkEd.deleteChannel(c)
+	}
 }
 
 // trkRenameChannel renames a channel and the bindings that name it, so a
@@ -845,6 +900,8 @@ func trkGridContextMenu() {
 		}
 		imgui.Separator()
 		trkSelectionToolsMenu()
+		imgui.Separator()
+		trkChannelMenuItems(trkEd.Cur.Ch)
 		imgui.EndPopup()
 	}
 }

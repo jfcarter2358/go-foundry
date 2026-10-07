@@ -411,7 +411,9 @@ func DrawChunkBrushes(lvl *world.Level, ch *world.Chunk, frustum Frustum, chunkM
 		for _, ref := range cb.byBrush[bi] {
 			g := cb.groups[ref.group]
 			first, count := g.firsts[ref.index:ref.index+1], g.counts[ref.index:ref.index+1]
-			if g.batch.IsTransparent() {
+			// Once a frame per group, not once per brush that has faces in
+			// it: the answer is the material library's, behind its lock.
+			if frameSurface(&g.batch.Material).transparent {
 				queue(BatchDraw{Batch: &g.batch, Model: model, First: first, Count: count,
 					DoubleSided: g.key.doubleSided}, c.Dot(c))
 				continue

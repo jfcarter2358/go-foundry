@@ -20,7 +20,7 @@ package render
 // bound to a real texture — a white dummy on a frame with no clouds.
 
 import (
-	"fmt"
+	"foundry/internal/gfx"
 	"foundry/internal/world"
 	"log"
 	"math"
@@ -139,7 +139,7 @@ func RenderCloudShadowMap(lvl *world.Level, camPos mgl32.Vec3) {
 	gl.Uniform1i(b.U("volFullscreen"), 1)
 	gl.Uniform1i(b.U("numShadowClouds"), int32(len(params)))
 	for i := range params {
-		uploadCloudParams(b, fmt.Sprintf("shadowClouds[%d]", i), &params[i])
+		uploadCloudParams(b, &shadowCloudNames[i], &params[i])
 	}
 	gl.DrawArrays(gl.TRIANGLES, 0, 3)
 
@@ -227,11 +227,37 @@ func (t *VolumeTargets) ensureVAO() uint32 {
 	return t.vao
 }
 
-// uploadCloudShadowTo binds the cloud shadow uniforms on prog, which must be
-// bound. A program without the lookup is left alone.
+// uploadCloudShadowTo hands the cloud shadow state to the scene block prog
+// reads and binds prog's cloud map, leaving prog bound. UploadShadowUniformsTo
+// does both halves itself; this is for a caller that wants the clouds alone.
 func uploadCloudShadowTo(prog uint32) {
-	loc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
-	sampler := loc("cloudShadowMap\x00")
+	gl.UseProgram(prog)
+	s := gfx.SceneFor(prog)
+	packCloudShadow(&s.Block)
+	s.Flush()
+	bindCloudShadowTo(prog)
+}
+
+// packCloudShadow writes this frame's cloud shadow state into the scene block
+// b. No GL.
+func packCloudShadow(b *gfx.SceneBlock) {
+	b.CloudShadowOn = 0
+	if cloudShadow.on {
+		b.CloudShadowOn = 1
+	}
+	b.CloudShadowLight = cloudShadow.light
+	m := cloudShadow.matrix
+	if m == (mgl32.Mat4{}) {
+		m = mgl32.Ident4()
+	}
+	b.CloudShadowMatrix = m
+}
+
+// bindCloudShadowTo binds the cloud map (or the white dummy) to prog's
+// cloudShadowMap, which must be bound. A program without the lookup is left
+// alone.
+func bindCloudShadowTo(prog uint32) {
+	sampler := world.ProgUniformLoc(prog, "cloudShadowMap\x00")
 	if sampler < 0 {
 		return
 	}
@@ -244,19 +270,10 @@ func uploadCloudShadowTo(prog uint32) {
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
 	}
 	gl.ActiveTexture(gl.TEXTURE0 + CloudShadowTexUnit)
-	on := int32(0)
 	if cloudShadow.on {
-		on = 1
 		gl.BindTexture(gl.TEXTURE_2D, cloudShadow.tex)
 	} else {
 		gl.BindTexture(gl.TEXTURE_2D, cloudShadow.dummy)
 	}
 	gl.Uniform1i(sampler, CloudShadowTexUnit)
-	gl.Uniform1i(loc("cloudShadowOn\x00"), on)
-	gl.Uniform1i(loc("cloudShadowLight\x00"), cloudShadow.light)
-	m := cloudShadow.matrix
-	if m == (mgl32.Mat4{}) {
-		m = mgl32.Ident4()
-	}
-	gl.UniformMatrix4fv(loc("cloudShadowMatrix\x00"), 1, false, &m[0])
 }

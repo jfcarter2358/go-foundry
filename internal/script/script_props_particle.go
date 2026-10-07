@@ -330,7 +330,7 @@ func carrierValue(c *refCache, a world.Attach) flang.Value {
 	if a.Entity == "" {
 		return flang.NullVal{}
 	}
-	if _, ok := c.entity[a.Entity]; !ok {
+	if !c.ix(ixEntity).has(a.Entity) {
 		return flang.NullVal{}
 	}
 	return flang.RefVal{Kind: flang.RefEntity, A: a.Entity}

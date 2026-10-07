@@ -5,6 +5,7 @@ package nav
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	"foundry/internal/world"
@@ -88,6 +89,31 @@ func TestSwitchingAChunkOffRebuildsOnlyTheTilesItTouches(t *testing.T) {
 	for _, sp := range hf.column(c) {
 		if sp.max > 2 {
 			t.Error("the switched-off deck is still in the heightfield")
+		}
+	}
+}
+
+// Rasterising the tiles across CPUs gives the serial build's heightfield,
+// span for span.
+func TestParallelTilesMatchSerial(t *testing.T) {
+	t.Cleanup(Invalidate)
+	t.Cleanup(func() { parallelTiles = true })
+	for _, lvl := range []*world.Level{tiledLevel(), bigLevel()} {
+		solids := gatherSolids(lvl)
+		build := func(par bool) *Heightfield {
+			parallelTiles = par
+			resetTiles()
+			return buildHeightfield(solids, DefaultCellSize, MaxSlopeCos)
+		}
+		ser, par := build(false), build(true)
+		if ser.W != par.W || ser.D != par.D || ser.Origin != par.Origin || ser.Cell != par.Cell {
+			t.Fatalf("shape differs: serial %dx%d at %v, parallel %dx%d at %v", ser.W, ser.D, ser.Origin, par.W, par.D, par.Origin)
+		}
+		if !reflect.DeepEqual(ser.colStart, par.colStart) || !reflect.DeepEqual(ser.spans, par.spans) {
+			t.Fatal("parallel tiles rasterised a different heightfield")
+		}
+		if len(ser.spans) == 0 {
+			t.Fatal("nothing was rasterised")
 		}
 	}
 }

@@ -76,52 +76,24 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 	// Collision meshes near a body are read ahead of its first touch
 	// (Phase 3): a cooked cliff's triangles are on disk until one comes near.
 	prefetchNear(lvl, player)
+	// Entity solids, once for the whole pass rather than once per probe of
+	// every body (entity_brushes.go).
+	beginEntityGeometryPass(lvl)
+	defer endEntityGeometryPass()
 	viewer := gfx.Cam.Position
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		if motion && !e.IsVehicle() {
-			easeStepOffset(e, dt)
-			old := e.Position
-			// Whether the ground this entity is drawn from is the same ground
-			// as last tick's, read before gravity or the resolve can touch it —
-			// see noteLanding.
-			wasGrounded := e.Collision.OnGround
-			// An entity being eased somewhere (`move_to`) or sent along a
-			// waypoint animation does not fall on the way. Its position is the
-			// tween's or the path's, so gravity would only pile up a fall speed
-			// that nothing spends — and then release all of it the instant the
-			// tween or the path let go.
-			//
-			// The pull is asked for per body rather than taken from a
-			// constant: the level sets it, a volume may override it where this
-			// entity is standing, and the entity scales whatever comes back
-			// (world/gravity.go). noteLanding below needs the same number to
-			// turn a landing speed back into a drop, so it is resolved once.
-			g := world.GravityFor(lvl, e)
-			if !e.Tweens.Easing(world.TweenMove) && e.Waypoints == nil {
-				e.ApplyGravity(dt, g)
+	// Bodies lying still are not solved again (entity_sleep.go).
+	sp := beginSleepPass(lvl, motion)
+	if ids, ok := parallelEntityPass(lvl); ok {
+		entityUpdateParallel(lvl, dt, motion, viewer, ids, sp)
+	} else {
+		for i := range lvl.Entities {
+			e := &lvl.Entities[i]
+			if motion && !e.IsVehicle() {
+				stepEntityMotionMemo(lvl, e, i, dt, sp)
+				crossEntityFrames(lvl, e)
 			}
-			// The speed gravity had built up the instant before the resolve can
-			// touch the ground and zero it back out — see noteLanding.
-			fallSpeed := -e.Velocity.Y()
-			e.Integrate(dt)
-			// After Integrate, so an eased channel overwrites what its rate did
-			// this frame; before the resolve, so a colliding entity eased into a
-			// wall is stopped by it (world/tween.go). A path writes every
-			// channel on the same terms, and the two never both run: starting
-			// either drops the other.
-			e.AdvanceTweens(lvl.Frames, dt)
-			e.AdvanceWaypoints(lvl, dt)
-			if e.CollidesWithWorld() && resolveEntityWorld(lvl, e, old) {
-				e.Collision.GroundedNext = true
-			}
-			if !wasGrounded && e.Collision.GroundedNext {
-				noteLanding(e, fallSpeed, g)
-			}
-			e.UpdateLocation(lvl)
-			crossEntityFrames(lvl, e)
+			e.UpdateAnimationsPose(dt, world.AnimPoseDue(e, i, animFrame, viewer))
 		}
-		e.UpdateAnimationsPose(dt, world.AnimPoseDue(e, i, animFrame, viewer))
 	}
 	if !motion {
 		return
@@ -166,6 +138,54 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 	if player != nil {
 		player.CommitGrounded()
 	}
+}
+
+// stepEntityMotion is one entity's own motion for the frame: fall, integrate,
+// ease and follow its path, resolve against the world, and find where that
+// left it. Everything it reads and writes is the entity's own, the level's
+// static structure, or state the pass holds still (frames, chunks, the entity
+// solids) — which is what lets the parallel pass run it for every entity at
+// once (entity_update_parallel.go).
+func stepEntityMotion(lvl *world.Level, e *world.Entity, dt float32) {
+	easeStepOffset(e, dt)
+	old := e.Position
+	// Whether the ground this entity is drawn from is the same ground
+	// as last tick's, read before gravity or the resolve can touch it —
+	// see noteLanding.
+	wasGrounded := e.Collision.OnGround
+	// An entity being eased somewhere (`move_to`) or sent along a
+	// waypoint animation does not fall on the way. Its position is the
+	// tween's or the path's, so gravity would only pile up a fall speed
+	// that nothing spends — and then release all of it the instant the
+	// tween or the path let go.
+	//
+	// The pull is asked for per body rather than taken from a
+	// constant: the level sets it, a volume may override it where this
+	// entity is standing, and the entity scales whatever comes back
+	// (world/gravity.go). noteLanding below needs the same number to
+	// turn a landing speed back into a drop, so it is resolved once.
+	g := world.GravityFor(lvl, e)
+	if !e.Tweens.Easing(world.TweenMove) && e.Waypoints == nil {
+		e.ApplyGravity(dt, g)
+	}
+	// The speed gravity had built up the instant before the resolve can
+	// touch the ground and zero it back out — see noteLanding.
+	fallSpeed := -e.Velocity.Y()
+	e.Integrate(dt)
+	// After Integrate, so an eased channel overwrites what its rate did
+	// this frame; before the resolve, so a colliding entity eased into a
+	// wall is stopped by it (world/tween.go). A path writes every
+	// channel on the same terms, and the two never both run: starting
+	// either drops the other.
+	e.AdvanceTweens(lvl.Frames, dt)
+	e.AdvanceWaypoints(lvl, dt)
+	if e.CollidesWithWorld() && resolveEntityWorld(lvl, e, old) {
+		e.Collision.GroundedNext = true
+	}
+	if !wasGrounded && e.Collision.GroundedNext {
+		noteLanding(e, fallSpeed, g)
+	}
+	e.UpdateLocation(lvl)
 }
 
 // easeStepOffset closes the gap between a walker's drawn body and its real one

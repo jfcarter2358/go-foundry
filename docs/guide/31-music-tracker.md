@@ -31,21 +31,26 @@ All** saves the song with everything else.
 | --- | --- |
 | **Toolbar** | Play song (`F5`), play pattern (`F6`), play from cursor (`F7`), stop (`F8`); BPM, rows per beat, octave, edit step, follow playback, edit mode, live voices and a scope |
 | **Order** (left) | The order list, coloured by section, with brackets beside it. Insert, repeat, duplicate, make unique, move, delete. Below it, the selected section's name, range, loop and next. |
-| **Pattern** (centre) | The grid. Beats and bars are shaded and the playing row follows. Channel headers rename on double-click and have mute, solo, a piano-roll toggle, a meter, and a mixer popup (volume, pan, sends, drive, crush). A strip above shows how busy each pattern is; click it to jump. |
+| **Pattern** (centre) | The grid. Beats and bars are shaded and the playing row follows. Channel headers rename on double-click and have mute, solo, a piano-roll toggle, a meter, and a mixer popup (volume, pan, sends, drive, crush). A strip above shows how busy each pattern is; click it to jump. **Edit**, the grid's right-click menu and the mixer popup insert a channel left or right of one, add one at the end, or delete one; double-click an instrument (or use **Name** above its settings) to rename it. |
 | **Instruments** (right) | The list (click a name to hear C-4) and the selected instrument: samples, keymap zones on a piano strip, levels, four envelopes, filter, auto-vibrato, polyphony, interpolation. |
 | **Bottom tabs** | **Sample**: waveform, loop points that snap to zero crossings (hold `Alt` to place them exactly), normalize, fade, reverse, trim, base note with pitch detect, and **Generate…** from the built-in recipes. **Song**: tempo, ticks, beats per bar, effect columns, gain, loop, beat events, interpolation, channel count, reverb, delay, compressor. **Params & markers**: live sliders, bindings, marker names. |
 
 Effects read as words ("Vibrato 4/4"). The **hex** toggle shows the raw
-`V44`, and hovering any effect explains it. In an effect column, `Enter` (or
-`Ctrl+Space`) opens a searchable list of every command.
+`V44`, and hovering any effect explains it. In an effect column,
+`Ctrl+Space` opens a searchable list of every command.
 
 ### Entering notes
 
 Click the grid to give it the keyboard. The keys are laid out like a piano:
 `Z S X D C V G B H N J M` is the lower octave and `Q 2 W 3 E R 5 T 6 Y 7 U I`
 the upper; `[` and `]` move the octave. `1` is note off and `` ` `` is note
-cut. Hex digits fill the instrument, volume and effect columns. After each
-entry the cursor moves on by the edit step (`Ctrl+0`–`9`).
+cut. A note moves the cursor down by the edit step (`Ctrl+0`–`9`).
+
+Hex digits fill the instrument, volume and effect columns, and a code is typed
+along its row the way a word is: `V`, `4`, `4` puts the cursor on each
+character in turn and leaves it on the last. `Enter` goes to the next line —
+down by the edit step (at least one row) and back to the start of the code —
+ready for the next one.
 
 `Space` toggles edit mode. With it off, the keys only play notes, for trying
 ideas. A held key holds its note until you let go.
@@ -57,6 +62,15 @@ like the file. `Ctrl+Shift+V` pastes only into empty fields.
 interpolates volumes and effect values across the selection. Right-click for
 humanise, fill every N rows, chord stamp and scale lock (typed notes snap to a
 key).
+
+**Keys** on the toolbar (or **View > Keyboard Display**) pops out a window
+with the QWERTY piano drawn as a piano: every key shows its note and the
+computer key that plays it, and lights while held. Typing with that window
+focused works as it does in the grid, so it can sit on another monitor.
+Clicking or dragging across its keys auditions them without writing anything.
+Above the piano, **Hex code key** explains a cell field by field and lists
+every effect command with what its hex digits mean, grouped as the picker
+groups them; the command under the grid's cursor is highlighted.
 
 `F1` lists every key.
 

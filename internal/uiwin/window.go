@@ -17,6 +17,7 @@ package uiwin
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
@@ -159,6 +160,12 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 	gl.GenVertexArrays(1, &uw.GizmoVAO)
 	gl.GenVertexArrays(1, &uw.SpriteVAO)
 	gl.GenVertexArrays(1, &uw.UIVAO)
+
+	// The scene's lighting/fog uniform blocks, bound in this context once and
+	// for its life: the buffers are shared between contexts, a binding point
+	// is not (gfx/scene_block.go). A level program drawing in here reads the
+	// level's state, as it did when that state was the program's uniforms.
+	gfx.BindSceneBlocks()
 
 	uiWindows[uw.ID] = uw
 

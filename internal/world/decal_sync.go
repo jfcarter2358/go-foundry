@@ -9,6 +9,15 @@ package world
 // already bumps (brush_generation.go). Nothing has to be told to invalidate
 // anything, which is the same trade the chunk batches and the raycast BVHs make.
 //
+// Terrain is the exception, because it is edited in play: every block mined
+// moves TerrainGeneration, and when that was in the fingerprint every decal in
+// the level re-clipped for every swing of a pick. A decal instead remembers the
+// terrain generation it was built at, and when that has moved it asks each
+// terrain edited since where its surface changed (Terrain.SurfaceChangedSince):
+// only a decal whose projection box reaches one of those boxes is rebuilt, and
+// the rest just move their remembered generation on. A terrain that cannot
+// say (a whole Touch, an edit too long ago) rebuilds every decal, as before.
+//
 // The fields that do NOT change a vertex — texture, material, tint, alpha, unlit
 // — are pushed onto the built pieces instead of rebuilding them. That is what
 // lets a script fade a decal out, or swap its texture for a burnt version, at no
@@ -45,10 +54,21 @@ func SyncDecals(lvl *Level, budget int) {
 		return
 	}
 	gen := decalWorldGeneration()
+	tgen := TerrainGeneration()
 	rebuilt := 0
 	for i := range lvl.Decals {
 		d := &lvl.Decals[i]
-		if !d.builtOK || d.built != decalFingerprintAt(d, gen) {
+		stale := !d.builtOK || d.built != decalFingerprintAt(d, gen)
+		if !stale && d.builtTerrain != tgen {
+			if decalTerrainChanged(lvl, d) {
+				stale = true
+			} else {
+				// Nothing it lies on moved: the build stands for the terrain
+				// as it is now.
+				d.builtTerrain = tgen
+			}
+		}
+		if stale {
 			if budget > 0 && rebuilt >= budget {
 				// Left stale on purpose: the fingerprint has not been written, so
 				// the next call picks it up. A decal not yet built draws nothing,
@@ -127,11 +147,86 @@ func decalFingerprint(d *Decal) uint64 {
 	return decalFingerprintAt(d, decalWorldGeneration())
 }
 
-// decalWorldGeneration moves whenever anything a decal projects onto is
-// edited: a brush mesh, or a terrain (a mined block reshapes the ground a bullet
-// hole lies on as surely as a vertex drag reshapes a wall).
+// decalWorldGeneration moves whenever a brush mesh a decal could project onto
+// is edited. A terrain edit (a mined block reshapes the ground a bullet hole
+// lies on as surely as a vertex drag reshapes a wall) is followed separately,
+// by where it happened: see decalTerrainChanged.
 func decalWorldGeneration() uint64 {
-	return BrushMeshGeneration()*1099511628211 ^ TerrainGeneration()
+	return BrushMeshGeneration()
+}
+
+// markDecalBuilt records that d's Pieces are now built from the world as it
+// is: its fingerprint, and the terrain generation (decalTerrainChanged).
+func markDecalBuilt(d *Decal) {
+	d.builtOK = true
+	d.built = decalFingerprint(d)
+	d.builtTerrain = TerrainGeneration()
+}
+
+// decalTerrainChanged reports whether any terrain d could have been clipped
+// from has changed, since d was built, inside d's projection box — the same
+// box, carried into the chunk the same way, that gatherTerrain hands
+// EachFaceIn. Every face that edits added, removed or changed lies inside the
+// terrain's reported box, so when the boxes do not meet, the faces d would be
+// clipped from now are the very faces it was clipped from, in the same order,
+// and a rebuild would give the mesh it has. A terrain that cannot say where
+// it changed counts as changed everywhere.
+func decalTerrainChanged(lvl *Level, d *Decal) bool {
+	var lo, hi mgl32.Vec3
+	sized := false
+	for ci := range lvl.Chunks {
+		ch := &lvl.Chunks[ci]
+		t := ch.Terrain
+		if t == nil || t.Generation <= d.builtTerrain {
+			continue
+		}
+		tlo, thi, changed, ok := t.SurfaceChangedSince(d.builtTerrain)
+		if !ok {
+			return true
+		}
+		if !changed {
+			continue
+		}
+		if !sized {
+			var has bool
+			lo, hi, has = d.WorldAABB()
+			if !has || !d.HasSize() {
+				// BuildDecal clips nothing for it whatever the world holds.
+				return false
+			}
+			sized = true
+		}
+		llo, lhi := worldBoxToChunk(ch.ModelMatrix().Inv(), lo, hi)
+		if boxesOverlap(llo, lhi, tlo, thi) {
+			return true
+		}
+	}
+	return false
+}
+
+// worldBoxToChunk is the chunk-space box round world box [lo, hi]'s corners
+// carried by inv — gatherTerrain's broad phase, exactly.
+func worldBoxToChunk(inv mgl32.Mat4, lo, hi mgl32.Vec3) (llo, lhi mgl32.Vec3) {
+	llo = mgl32.Vec3{float32(math.Inf(1)), float32(math.Inf(1)), float32(math.Inf(1))}
+	lhi = llo.Mul(-1)
+	for i := 0; i < 8; i++ {
+		c := lo
+		if i&1 != 0 {
+			c[0] = hi[0]
+		}
+		if i&2 != 0 {
+			c[1] = hi[1]
+		}
+		if i&4 != 0 {
+			c[2] = hi[2]
+		}
+		p := inv.Mul4x1(c.Vec4(1)).Vec3()
+		for k := 0; k < 3; k++ {
+			llo[k] = min(llo[k], p[k])
+			lhi[k] = max(lhi[k], p[k])
+		}
+	}
+	return llo, lhi
 }
 
 // decalFingerprintAt is decalFingerprint with the generation passed in, so a
@@ -242,8 +337,10 @@ func StepDecals(lvl *Level, dt float32) bool {
 	if lvl == nil || dt <= 0 {
 		return false
 	}
-	changed := false
-	kept := lvl.Decals[:0]
+	// Compacted in place, but only from the first decal that expires: the
+	// common tick expires nothing, and copying every decal over itself by
+	// value (pieces, strings and all) every tick was most of what aging cost.
+	w := -1
 	for i := range lvl.Decals {
 		d := &lvl.Decals[i]
 		if d.Lifetime > 0 {
@@ -252,14 +349,22 @@ func StepDecals(lvl *Level, dt float32) bool {
 				for j := range d.Pieces {
 					d.Pieces[j].Geometry.Delete()
 				}
-				changed = true
+				if w < 0 {
+					w = i
+				}
 				continue
 			}
 		}
-		kept = append(kept, *d)
+		if w >= 0 {
+			lvl.Decals[w] = *d
+			w++
+		}
 	}
-	lvl.Decals = kept
-	return changed
+	if w < 0 {
+		return false
+	}
+	lvl.Decals = lvl.Decals[:w]
+	return true
 }
 
 // CapTransientDecals drops the oldest script-spawned decals until no more than

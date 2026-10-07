@@ -16,6 +16,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -112,17 +113,46 @@ func trimNum(f float64) string {
 // Clearing rather than leaving the last value is what makes the editor's
 // "literal" preview mode work, and what stops a HUD from freezing on the last
 // number it saw when the thing it was watching is destroyed.
+//
+// The string is only re-formatted when the value or the format changed since
+// the frame before. Every bound label went through fmt.Sprintf every frame —
+// an allocation and a format parse apiece, for a HUD whose numbers mostly sit
+// still.
 func bindText(resolve func(string) (Value, bool), n *Node) {
 	if n.Text.Bind == "" || resolve == nil {
 		n.Text.bound, n.Text.hasBound = "", false
+		n.Text.boundFrom = boundMemo{}
 		return
 	}
 	v, ok := resolve(n.Text.Bind)
 	if !ok {
 		n.Text.bound, n.Text.hasBound = "", false
+		n.Text.boundFrom = boundMemo{}
+		return
+	}
+	if n.Text.hasBound && n.Text.boundFrom.same(n.Text.Format, v) {
 		return
 	}
 	n.Text.bound, n.Text.hasBound = FormatBound(n.Text.Format, v), true
+	n.Text.boundFrom = boundMemo{ok: true, format: n.Text.Format, v: v}
+}
+
+// boundMemo is the value and format a bound label's string was made from.
+type boundMemo struct {
+	ok     bool
+	format string
+	v      Value
+}
+
+// same reports whether formatting v with format would give back the string
+// already made. A number is compared by its bits rather than with ==, which
+// would call 0 and -0 the same value when "%.0f" spells them differently, and
+// would never call NaN the same as itself — merely a missed reuse, but bits
+// are no dearer.
+func (m boundMemo) same(format string, v Value) bool {
+	return m.ok && m.format == format && m.v.Kind == v.Kind &&
+		math.Float64bits(m.v.Num) == math.Float64bits(v.Num) &&
+		m.v.Str == v.Str && m.v.Bool == v.Bool
 }
 
 // bindValue does the same for a bar's or slider's number and its ceiling.

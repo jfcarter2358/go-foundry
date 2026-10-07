@@ -19,8 +19,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"foundry/internal/cliflag"
@@ -97,25 +100,130 @@ func cookMain(root string, args []string, out io.Writer) int {
 		usage(out)
 		return 2
 	}
-	failed := 0
-	for _, src := range sources {
-		start := time.Now()
-		res, err := CookFile(src, *dest, *force, ProjectOptions())
-		if err != nil {
-			fmt.Fprintf(out, "%s: %v\n", src, err)
-			failed++
-			continue
-		}
-		if res.Skipped {
-			fmt.Fprintf(out, "%s: up to date\n", res.Out)
-			continue
-		}
-		fmt.Fprintf(out, "%s: %s (%.2fs)\n", res.Out, Describe(res.Mesh), time.Since(start).Seconds())
-	}
-	if failed > 0 {
+	if failed := cookAll(sources, *dest, *force, ProjectOptions(), out); failed > 0 {
 		return 1
 	}
 	return 0
+}
+
+// cookAll cooks each of sources (CookFile), writing a line for each to out
+// in the order given, and returns how many failed.
+//
+// The files are cooked side by side, a file a worker (at most GOMAXPROCS of
+// them, so at most that many meshes in memory at once), biggest file first.
+// Each cooks with its slots and DAGs serial (Options.serial): the cook's
+// longest steps, the collision hulls and the distance grid, fan out over the
+// cores on their own whatever the cook does, and a big file kept on a lane
+// of its own (as BuildJobs would) only made it the one still cooking long
+// after the rest. A lone file cooks fully fanned out, as before. Each
+// cook's line is held until every line before it is out, so the log reads
+// exactly as one at a time. Two sources that cook to the same file (models/x.fmdl
+// and models/x.obj both make models/x.fnm) are one job, cooked in the order
+// given, so the file ends up the later one's as it always did.
+func cookAll(sources []string, dest string, force bool, opt Options, out io.Writer) int {
+	// The jobs: sources by the file they cook to, in first-named order.
+	var jobs [][]int
+	jobOf := map[string]int{}
+	for i, src := range sources {
+		o := dest
+		if o == "" {
+			o = CookedPath(src)
+		}
+		if abs, err := filepath.Abs(o); err == nil {
+			o = abs
+		}
+		j, ok := jobOf[o]
+		if !ok {
+			j = len(jobs)
+			jobOf[o] = j
+			jobs = append(jobs, nil)
+		}
+		jobs[j] = append(jobs[j], i)
+	}
+	sizes := make([]int, len(jobs))
+	for j, srcs := range jobs {
+		for _, i := range srcs {
+			if st, err := os.Stat(sources[i]); err == nil {
+				sizes[j] += int(st.Size())
+			}
+		}
+	}
+
+	lines := make([]string, len(sources))
+	bad := make([]bool, len(sources))
+	// done[i] closes when line i is written; the writer below prints them
+	// in order as they come in, so a long run shows its progress.
+	done := make([]chan struct{}, len(sources))
+	for i := range done {
+		done[i] = make(chan struct{})
+	}
+	printed := make(chan struct{})
+	go func() {
+		defer close(printed)
+		for i := range sources {
+			<-done[i]
+			io.WriteString(out, lines[i])
+		}
+	}()
+	cook := func(j int, inner bool) {
+		o := opt
+		o.serial = !inner
+		for _, i := range jobs[j] {
+			lines[i], bad[i] = cookLine(sources[i], dest, force, o)
+			close(done[i])
+		}
+	}
+	if !parallelCook || len(jobs) == 1 {
+		for j := range jobs {
+			cook(j, true)
+		}
+	} else {
+		// Biggest first, so the longest cook is not the one left running
+		// alone at the end; ties in the order given.
+		order := make([]int, len(jobs))
+		for j := range order {
+			order[j] = j
+		}
+		sort.SliceStable(order, func(a, b int) bool { return sizes[order[a]] > sizes[order[b]] })
+		var next atomic.Int64
+		var wg sync.WaitGroup
+		for w := 0; w < min(runtime.GOMAXPROCS(0), len(jobs)); w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					k := int(next.Add(1) - 1)
+					if k >= len(order) {
+						return
+					}
+					cook(order[k], false)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	<-printed
+	failed := 0
+	for _, b := range bad {
+		if b {
+			failed++
+		}
+	}
+	return failed
+}
+
+// cookLine cooks one source and says how it went, as `nanite cook` prints
+// it; failed is whether it did not cook.
+func cookLine(src, dest string, force bool, opt Options) (line string, failed bool) {
+	start := time.Now()
+	res, err := CookFile(src, dest, force, opt)
+	if err != nil {
+		return fmt.Sprintf("%s: %v\n", src, err), true
+	}
+	if res.Skipped {
+		return fmt.Sprintf("%s: up to date\n", res.Out), false
+	}
+	return fmt.Sprintf("%s: %s (%.2fs)\n", res.Out, Describe(res.Mesh), time.Since(start).Seconds()), false
 }
 
 // FindSources is every glTF file under dir, sorted — what `cook -all` and

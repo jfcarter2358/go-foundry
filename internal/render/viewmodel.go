@@ -85,6 +85,7 @@ func RenderViewmodel() {
 	gfx.UploadProjection(gfx.ViewmodelProjection())
 	defer gfx.UploadProjection(gfx.Projection)
 
+	list := viewmodelDraws[:0]
 	for mi := range e.Models {
 		m := &e.Models[mi]
 		if !entityDrawable(e, m) {
@@ -92,10 +93,29 @@ func RenderViewmodel() {
 		}
 		model := base.Mul4(e.AttachmentMatrix(m))
 		for si := range m.Submeshes {
-			// Single-sided, on RenderEntities' own reasoning: a viewmodel is a
-			// closed solid too, and its back faces are never the ones toward
-			// the eye.
-			m.Submeshes[si].DrawWithTransform(model)
+			list = append(list, entityDraw{&m.Submeshes[si], model})
 		}
 	}
+	viewmodelDraws = list
+
+	// Its depth first, through the viewmodel's own lens (entity_prepass.go):
+	// the hands, the gun in them and its sights cover each other a great deal
+	// at a large share of the screen, and this way each pixel of them is
+	// shaded once.
+	if pp := &entityPrepassProg; pp.begin() {
+		for i := range list {
+			pp.draw(list[i].g, list[i].model)
+		}
+		pp.end()
+	}
+	for i := range list {
+		// Single-sided, on RenderEntities' own reasoning: a viewmodel is a
+		// closed solid too, and its back faces are never the ones toward
+		// the eye.
+		list[i].g.DrawWithTransform(list[i].model)
+	}
 }
+
+// viewmodelDraws is RenderViewmodel's list, kept between frames for its
+// storage.
+var viewmodelDraws []entityDraw

@@ -245,7 +245,8 @@ func FogToRaw(f *Fog) *RawFog {
 // UploadFog sends the fog uniforms to the main world shader.
 func UploadFog(f *Fog, vols []Volume, lvl *Level) { UploadFogTo(gfx.Program, f, vols, lvl) }
 
-// UploadFogTo sends them to prog, and leaves prog bound.
+// UploadFogTo hands the fog to the scene block prog reads (gfx/scene_block.go),
+// and leaves prog bound.
 //
 // It takes the level's volumes as well as its fog because both halves of the
 // fog model live in one shader file and one call has to drive all of it: a pass
@@ -254,11 +255,12 @@ func UploadFog(f *Fog, vols []Volume, lvl *Level) { UploadFogTo(gfx.Program, f, 
 // functions is what turns "remember to call the other one in five places" into
 // a compile error.
 //
-// Called once per frame per program rather than on change, because fogCamPos
-// moves every frame anyway — the fog is measured from the eye, so there is no
-// "unchanged" state to skip. A nil or switched-off fog is uploaded as mode 0
-// rather than skipped: the program may be holding last level's fog, and a
-// shader-side early-out is what makes that cost nothing.
+// Called once per frame rather than on change, because fogCamPos moves every
+// frame anyway — the fog is measured from the eye, so there is no "unchanged"
+// state to skip. A nil or switched-off fog is written as mode 0 rather than
+// skipped: the block may be holding last level's fog, and a shader-side
+// early-out is what makes that cost nothing. Every program reads the one
+// block, so after the frame's first call the others find it unchanged.
 //
 // lvl resolves what each volume rides (Volume.Attach), so a fog bank bolted to
 // a ship moves with it; nil reads them all as world-space.
@@ -270,27 +272,27 @@ func UploadFogTo(prog uint32, f *Fog, vols []Volume, lvl *Level) {
 		return
 	}
 	gl.UseProgram(prog)
+	s := gfx.SceneFor(prog)
+	PackFog(&s.Block, f, vols, lvl, gfx.Cam.Position)
+	s.Flush()
+}
 
-	// Volumes first, and unconditionally: they are placed rather than
-	// distance-based, so a level whose distance fog is off or absent can still
-	// be full of fog banks. The early-out below is about the distance term
-	// alone.
-	UploadFogVolumesTo(prog, vols, lvl)
+// PackFog writes the distance fog f, the fog volumes among vols and the eye
+// camPos into the scene block b. No GL.
+//
+// Volumes first, and unconditionally: they are placed rather than
+// distance-based, so a level whose distance fog is off or absent can still be
+// full of fog banks.
+func PackFog(b *gfx.SceneBlock, f *Fog, vols []Volume, lvl *Level, camPos mgl32.Vec3) {
+	PackFogVolumes(b, vols, lvl)
 
-	mode := f.EffectiveMode()
-	gl.Uniform1i(ProgUniformLoc(prog, "fogMode\x00"), int32(mode))
-
-	cam := gfx.Cam.Position
-	gl.Uniform3f(ProgUniformLoc(prog, "fogCamPos\x00"), cam.X(), cam.Y(), cam.Z())
-	if mode == fogModeOff {
-		// The rest is unread behind the early-out. Skipping it keeps a level
-		// with no fog at four uniform writes a frame per program instead of ten.
+	b.FogMode = int32(f.EffectiveMode())
+	b.FogCamPos = camPos
+	if f == nil {
+		b.FogColor, b.FogStart, b.FogEnd, b.FogDensity, b.FogMaxOpacity = [3]float32{}, 0, 0, 0, 0
 		return
 	}
-
-	gl.Uniform3f(ProgUniformLoc(prog, "fogColor\x00"), f.Color.X(), f.Color.Y(), f.Color.Z())
-	gl.Uniform1f(ProgUniformLoc(prog, "fogStart\x00"), f.Start)
-	gl.Uniform1f(ProgUniformLoc(prog, "fogEnd\x00"), f.End)
-	gl.Uniform1f(ProgUniformLoc(prog, "fogDensity\x00"), f.Density)
-	gl.Uniform1f(ProgUniformLoc(prog, "fogMaxOpacity\x00"), f.MaxOpacity)
+	b.FogColor = f.Color
+	b.FogStart, b.FogEnd = f.Start, f.End
+	b.FogDensity, b.FogMaxOpacity = f.Density, f.MaxOpacity
 }

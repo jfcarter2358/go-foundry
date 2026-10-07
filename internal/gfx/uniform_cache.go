@@ -37,7 +37,45 @@ func UniformLoc(prog uint32, name string) int32 {
 	return loc
 }
 
+// linkGeneration counts ForgetUniformLocations calls — one per program link —
+// so a cache of locations kept outside uniformLocs (gfx.SkinUniforms) can tell
+// that some program has been relinked since it last looked.
+var linkGeneration uint64
+
 // ForgetUniformLocations drops what UniformLoc remembers of prog. Called
 // wherever a program is linked, because the name it links under may be one a
 // deleted program had.
-func ForgetUniformLocations(prog uint32) { delete(uniformLocs, prog) }
+//
+// It also forgets that prog was pointed at the preview scene block
+// (UsePreviewScene): a fresh link takes the binding the shader declares.
+//
+// And it ends what ApplySkinUniforms remembers of every program's skinning
+// uniforms (model_skin_gpu.go): a fresh link starts them at zero, and the name
+// it links under may be one a remembered program had.
+func ForgetUniformLocations(prog uint32) {
+	linkGeneration++
+	delete(uniformLocs, prog)
+	delete(previewScenePrograms, prog)
+	BeginSkinFrame()
+}
+
+// UniformLocName is UniformLoc for a name WITHOUT the trailing NUL, for the
+// callers that build their names from bare strings shared with other lookups
+// (render's progUniforms.U spells them that way). The terminator is appended
+// only on a miss, so a hit costs a map lookup and no allocation — where
+// UniformLoc(prog, name+"\x00") paid a concatenation on every call. Both
+// spellings live in the one per-program map: "x" and "x\x00" are different
+// keys, so they cannot collide, and ForgetUniformLocations drops both.
+func UniformLocName(prog uint32, name string) int32 {
+	m := uniformLocs[prog]
+	if m == nil {
+		m = map[string]int32{}
+		uniformLocs[prog] = m
+	}
+	if loc, ok := m[name]; ok {
+		return loc
+	}
+	loc := gl.GetUniformLocation(prog, gl.Str(name+"\x00"))
+	m[name] = loc
+	return loc
+}

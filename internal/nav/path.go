@@ -147,6 +147,13 @@ func (gr *Grid) Reachable(from, to mgl32.Vec3) bool {
 	return ok && gr.Nodes[a].Region == gr.Nodes[b].Region
 }
 
+// searchOpen is A*'s open list, kept between searches so a search does not
+// grow a fresh heap from nothing — on a long route, thousands of pushes and a
+// dozen reallocations. Searches run on the frame loop's thread only, the same
+// rule the Grid's own A* scratch follows; the heap's contents are reset per
+// search and pushed and popped in exactly the order a fresh one would be.
+var searchOpen nodeHeap
+
 // search runs A* and returns the node chain, and whether it ends at goal.
 func (gr *Grid) search(start, goal int32) ([]int32, bool) {
 	n := len(gr.Nodes)
@@ -183,7 +190,8 @@ func (gr *Grid) search(start, goal int32) ([]int32, bool) {
 		return hi + (math.Sqrt2-1)*lo + abs32(p.Y()-goalPos.Y())/hf.Cell
 	}
 
-	open := &nodeHeap{}
+	open := &searchOpen
+	open.items = open.items[:0]
 	gr.stamp[start], gr.g[start], gr.parent[start] = gen, 0, -1
 	open.push(start, heur(start))
 	best, bestH := start, heur(start)

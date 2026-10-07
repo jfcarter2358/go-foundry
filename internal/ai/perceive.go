@@ -14,7 +14,9 @@ package ai
 // forgot someone the instant they stepped behind a pillar would not be a guard.
 
 import (
+	"cmp"
 	"math"
+	"slices"
 	"strings"
 
 	"foundry/internal/collision"
@@ -103,11 +105,48 @@ func loseTarget(e *world.Entity, st *world.AIState) {
 
 // nearestPerceived is the closest entity on the agent's Targets list it can
 // notice right now, skipping except.
+//
+// The answer is the perceived candidate nearest the eye, the earliest listed on
+// a tie. Perceiving can cost a line-of-sight cast, so the candidates are taken
+// nearest first (stably, so ties keep their listed order) and the first one
+// noticed is the answer — the same one the listed-order walk keeps, after
+// asking only about the candidates nearer than it.
 func nearestPerceived(lvl *world.Level, e *world.Entity, player, except *world.Entity) *world.Entity {
+	eye := eyeOf(lvl, e)
+	cands := Candidates(lvl, e, player)
+	type near struct {
+		c *world.Entity
+		d float32
+	}
+	ranked := make([]near, 0, len(cands))
+	for _, c := range cands {
+		if c == except {
+			continue
+		}
+		d := chestOf(lvl, c).Sub(eye).Len()
+		if d != d || d >= math.MaxFloat32 {
+			// Out of any order (NaN) or at the walk's own starting bound:
+			// the plain walk defines the answer then.
+			return nearestPerceivedWalk(lvl, e, cands, eye, except)
+		}
+		ranked = append(ranked, near{c, d})
+	}
+	slices.SortStableFunc(ranked, func(a, b near) int { return cmp.Compare(a.d, b.d) })
+	for _, n := range ranked {
+		if Perceives(lvl, e, n.c) {
+			return n.c
+		}
+	}
+	return nil
+}
+
+// nearestPerceivedWalk is nearestPerceived's definition: the candidates in
+// listed order, keeping one noticed only when it is strictly nearer than the
+// best so far.
+func nearestPerceivedWalk(lvl *world.Level, e *world.Entity, cands []*world.Entity, eye mgl32.Vec3, except *world.Entity) *world.Entity {
 	var best *world.Entity
 	bestD := float32(math.MaxFloat32)
-	eye := eyeOf(lvl, e)
-	for _, c := range Candidates(lvl, e, player) {
+	for _, c := range cands {
 		if c == except {
 			continue
 		}

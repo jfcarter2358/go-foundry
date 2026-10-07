@@ -107,35 +107,24 @@ uniform vec3  camPos;
 // disabled vertex attribute reads a driver default, not zero, so an unlit
 // surface would read as "baked to black" rather than as "not baked".
 uniform int   bakedLight;
-// bakedSunLight is the directional light whose share of a baked surface's
-// light is carried per vertex (fragBakedLight.w; world.LightSet.BakedSun), or
-// -1. Within its cascades' reach a baked surface takes that share back off and
-// lights itself with the sun shadowed by the cascades instead — exactly what
-// an uncompiled level does — because the bake's shadow is a per-vertex ramp a
-// grid step wide, which washes a small caster's shadow out to nothing beside a
-// face its own normal turns dark at full resolution. Past the cascades the
-// bake's sun stands: it is the only shadow there is out there.
-uniform int   bakedSunLight;
 
-// Global ambient light
+// The scene's lights, their shadows and the fog — globalLight*, dirLight*,
+// pointLight*, cascade*, bakedSunLight and the rest — are one uniform block
+// shared by every program that shades, filled once a frame (gfx/scene_block.go).
+// bakedSunLight, among them, is the directional light whose share of a baked
+// surface's light is carried per vertex (fragBakedLight.w;
+// world.LightSet.BakedSun), or -1. Within its cascades' reach a baked surface
+// takes that share back off and lights itself with the sun shadowed by the
+// cascades instead — exactly what an uncompiled level does — because the
+// bake's shadow is a per-vertex ramp a grid step wide, which washes a small
+// caster's shadow out to nothing beside a face its own normal turns dark at
+// full resolution. Past the cascades the bake's sun stands: it is the only
+// shadow there is out there.
+#include "scene_block.glsl"
 
-uniform vec3  globalLightColor;
-uniform float globalLightBrightness;
-
-// Directional lights (e.g. sun)
-#define MAX_DIR_LIGHTS 4
-uniform int   numDirLights;
-uniform vec3  dirLightDir[MAX_DIR_LIGHTS];
-uniform vec3  dirLightColor[MAX_DIR_LIGHTS];
-uniform float dirLightBrightness[MAX_DIR_LIGHTS];
-// 1 for a light left out of the bake — see PointLight.Dynamic in light.go.
-uniform int   dirLightDynamic[MAX_DIR_LIGHTS];
-
-// Directional cascaded shadow maps.
-//
-// SHADOW_CASCADES, SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION must match
-// ShadowCascades / ShadowCascadeBlend / shadowFadeFraction in shadow.go.
-#define SHADOW_CASCADES       3
+// Directional cascaded shadows: SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION
+// must match ShadowCascadeBlend / shadowFadeFraction in shadow.go
+// (SHADOW_CASCADES is scene_block.glsl's).
 #define SHADOW_CASCADE_BLEND  0.25
 #define SHADOW_FADE_FRACTION  0.15
 
@@ -147,29 +136,10 @@ uniform int   dirLightDynamic[MAX_DIR_LIGHTS];
 // front of, so a tap is a smooth 0..1 rather than a per-texel yes/no. The
 // compare mode lives on the texture (EnsureCascadeArray in shadow.go).
 uniform sampler2DArrayShadow shadowMapArray;
-uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
-uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
-// One texel of each cascade in world units (render.DirCascade.Texel).
-uniform float cascadeTexel[MAX_DIR_LIGHTS * SHADOW_CASCADES];
-uniform float cascadeSplit[SHADOW_CASCADES]; // view-space distance each cascade ends at
-uniform int   dirLightShadowLayer[MAX_DIR_LIGHTS]; // first array layer, -1 = light doesn't cast
-uniform bool  dirLightCastShadows[MAX_DIR_LIGHTS];
-uniform float dirLightShadowStrength[MAX_DIR_LIGHTS];
 
-// Point lights
-#define MAX_POINT_LIGHTS 8
-uniform int   numPointLights;
-uniform vec3  pointLightPos[MAX_POINT_LIGHTS];
-uniform vec3  pointLightColor[MAX_POINT_LIGHTS];
-uniform float pointLightBrightness[MAX_POINT_LIGHTS];
-uniform float pointLightRadius[MAX_POINT_LIGHTS];
-uniform int   pointLightDynamic[MAX_POINT_LIGHTS];
-
-// Point light cubemap shadow maps
-uniform samplerCube pointShadowMap[MAX_POINT_LIGHTS];
-uniform bool        pointLightCastShadows[MAX_POINT_LIGHTS];
-uniform float       pointLightShadowStrength[MAX_POINT_LIGHTS];
-uniform float       pointLightFarPlane[MAX_POINT_LIGHTS];
+// Point light cubemap shadow maps, and the lookup (pointShadow) the biome
+// passes share.
+#include "point_shadow.glsl"
 
 // Smooth shading. When set, the surface normal is the interpolated per-vertex
 // normal supplied by the vertex/tessellation stage instead of the flat facet
@@ -376,39 +346,6 @@ float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
         * dirShadowReach();
 }
 
-// Sample offsets for soft point light shadows (20 directions).
-const int NUM_POINT_SAMPLES = 20;
-const vec3 sampleOffsets[20] = vec3[](
-    vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
-    vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
-    vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
-    vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
-    vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
-);
-
-// Point light cubemap shadow sampling with PCF-like disk.
-float calcPointShadow(int lightIdx, vec3 fragPos) {
-    vec3 fragToLight = fragPos - pointLightPos[lightIdx];
-    float currentDist = length(fragToLight);
-    float farPlane = pointLightFarPlane[lightIdx];
-
-    // Disk radius scales with distance for consistent softness
-    float diskRadius = (1.0 + currentDist / farPlane) * 0.02;
-    float bias = 0.05;
-
-    float shadow = 0.0;
-    for (int i = 0; i < NUM_POINT_SAMPLES; i++) {
-        float closestDist = texture(pointShadowMap[lightIdx], fragToLight + sampleOffsets[i] * diskRadius).r;
-        closestDist *= farPlane; // stored as dist/farPlane, convert back
-        if (currentDist - bias > closestDist) {
-            shadow += 1.0;
-        }
-    }
-    shadow /= float(NUM_POINT_SAMPLES);
-
-    return shadow;
-}
-
 // dirLightContrib is directional light i's share of this fragment: wrapped
 // Lambert on the side facing the viewer (light_model.glsl), then its cascade
 // shadow and the clouds'. geoNormal is the unbumped normal the shadow bias
@@ -450,7 +387,7 @@ vec3 pointLightContrib(int i, vec3 normal) {
     vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
 
     if (pointLightCastShadows[i]) {
-        float shadow = calcPointShadow(i, fragWorldPos);
+        float shadow = pointShadow(i, fragWorldPos); // point_shadow.glsl
         contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
     }
     return contrib;

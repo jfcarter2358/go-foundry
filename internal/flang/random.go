@@ -42,9 +42,20 @@ import (
 // a test file makes.
 var randomSeedCounter atomic.Uint64
 
+// TestSeeds, when set, replaces the clock as the source of fresh seeds: a test
+// that needs two runs of a level to roll the same dice (harness's
+// sim_digest_test.go) hands out seeds from a counter. Nil in every build that
+// is not such a test.
+var TestSeeds func() uint64
+
 // newRandomSeed returns a starting state that is neither zero nor equal to the
 // last one handed out. Zero is the one state xorshift cannot leave.
 func newRandomSeed() uint64 {
+	if TestSeeds != nil {
+		if n := TestSeeds(); n != 0 {
+			return n
+		}
+	}
 	n := uint64(time.Now().UnixNano()) ^ (randomSeedCounter.Add(1) * 0x9E3779B97F4A7C15)
 	if n == 0 {
 		n = 0x2545F4914F6CDD1D

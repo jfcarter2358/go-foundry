@@ -287,7 +287,16 @@ func (m *EntityModel) Load(ownerID string) error {
 	if m.Path == "" {
 		return nil
 	}
-	doc, err := loadModelDocument(fileutil.ResolveAssetPath(m.Path))
+	path := fileutil.ResolveAssetPath(m.Path)
+	if shareModelMeshes {
+		if err := m.loadShared(ownerID, path); err != nil {
+			return err
+		}
+		m.bindPalette()
+		m.startAutoplay()
+		return nil
+	}
+	doc, err := loadModelDocument(path)
 	if err != nil {
 		return fmt.Errorf("entity %q model %q: %w", ownerID, m.Name, err)
 	}
@@ -331,6 +340,63 @@ func (m *EntityModel) Load(ownerID string) error {
 
 	m.bindPalette()
 	m.startAutoplay()
+	return nil
+}
+
+// loadShared is Load's body with the mesh shared between every instance of the
+// model (model_mesh_cache.go): the built submeshes are copied from the cache
+// and their buffers shared, and only what is the instance's own is set here.
+// What comes out is the attachment the unshared path builds, field for field
+// (TestASharedModelMeshIsTheUnsharedOne).
+func (m *EntityModel) loadShared(ownerID, path string) error {
+	doc, err := pristineModelDocument(path)
+	if err != nil {
+		return fmt.Errorf("entity %q model %q: %w", ownerID, m.Name, err)
+	}
+	// The pristine document is shared and read-only. An instance that keeps
+	// one — a rigged model, which it poses — keeps its own copy, wearing its
+	// texture override as the unshared path's does.
+	if len(doc.Bones) > 0 {
+		doc = doc.Clone()
+		if m.Texture != "" {
+			doc.Texture = m.Texture
+		}
+	}
+	texture := doc.Texture
+	if m.Texture != "" {
+		texture = m.Texture
+	}
+	m.initAnimation(doc)
+
+	skinned := m.Anim != nil
+	var mm *modelMesh
+	if key, ok := modelMeshKeyFor(path, doc, skinned); ok {
+		mm, err = sharedModelMesh(key, doc)
+	} else {
+		mm, err = buildModelMesh(doc, skinned)
+	}
+	if err != nil {
+		return fmt.Errorf("entity %q model %q: %w", ownerID, m.Name, err)
+	}
+	for i := range mm.subs {
+		// Every texture the model reaches for is ensured here: nothing else
+		// loads it. The level loader only walks chunk geometry, so a model
+		// placed with a texture no wall happens to use would otherwise draw
+		// untextured.
+		if err := gfx.EnsureTextureLoaded(texture); err != nil {
+			log.Printf("entity %s: model %s: texture %q: %v", ownerID, m.Name, texture, err)
+		}
+		g := mm.subs[i]
+		g.Texture = texture
+		// Position is the geometry's own origin for the transparent sort; the
+		// mesh is model-space, so that origin is the attachment's offset.
+		g.Position = m.Offset
+		g.UploadShared(&mm.shares[i])
+		g.Alpha = m.EffectiveAlpha()
+		g.Unlit = m.Unlit
+		g.MaterialName = m.Material
+		m.Submeshes = append(m.Submeshes, g)
+	}
 	return nil
 }
 
@@ -548,6 +614,20 @@ func wrapUV(v mgl32.Vec2) mgl32.Vec2 {
 // covers both. Without the skeleton's, re-saving a walk cycle would leave every
 // character playing the old one until something happened to touch their meshes.
 func loadModelDocument(path string) (*model.ModelDoc, error) {
+	doc, err := pristineModelDocument(path)
+	if err != nil || doc == nil {
+		return doc, err
+	}
+	return doc.Clone(), nil
+}
+
+// pristineModelDocument is path's parsed document as the cache holds it —
+// shared, and so READ-ONLY to the caller, which is what lets the entity loop
+// skip an 800 KB clone per static instance. loadModelDocument is the same with
+// a copy the caller may change. Safe on any goroutine: the parse runs outside
+// the lock, and two goroutines parsing one file at once both store the same
+// thing.
+func pristineModelDocument(path string) (*model.ModelDoc, error) {
 	info, statErr := os.Stat(path)
 	if statErr == nil {
 		if doc := cachedModelDocument(path, info); doc != nil {
@@ -566,7 +646,7 @@ func loadModelDocument(path string) (*model.ModelDoc, error) {
 	}
 	modelDocCache.Lock()
 	modelDocCache.docs[path] = modelDocEntry{
-		doc:      doc.Clone(),
+		doc:      doc,
 		size:     info.Size(),
 		mod:      info.ModTime(),
 		skeleton: skeletonStamp(path, doc.Skeleton),
@@ -595,7 +675,8 @@ func skeletonStamp(modelPath, name string) int64 {
 	return info.Size() ^ info.ModTime().UnixNano()
 }
 
-// modelDocCache holds the pristine parsed documents loadModelDocument clones.
+// modelDocCache holds the pristine parsed documents loadModelDocument clones
+// and pristineModelDocument shares.
 // Locked because an entity can be spawned from a script as well as loaded.
 var modelDocCache = struct {
 	sync.Mutex
@@ -610,8 +691,8 @@ type modelDocEntry struct {
 	skeleton int64
 }
 
-// cachedModelDocument is a clone of path's cached document, or nil when there
-// is none or the file has changed since it was parsed.
+// cachedModelDocument is path's cached (pristine, shared) document, or nil
+// when there is none or the file has changed since it was parsed.
 func cachedModelDocument(path string, info os.FileInfo) *model.ModelDoc {
 	modelDocCache.Lock()
 	defer modelDocCache.Unlock()
@@ -622,7 +703,7 @@ func cachedModelDocument(path string, info os.FileInfo) *model.ModelDoc {
 	if e.skeleton != skeletonStamp(path, e.doc.Skeleton) {
 		return nil
 	}
-	return e.doc.Clone()
+	return e.doc
 }
 
 // UniqueModelName returns base, or base with a numeric suffix no attachment on

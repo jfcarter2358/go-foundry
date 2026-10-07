@@ -263,6 +263,65 @@ func (s *Song) SetChannelCount(n int) {
 	}
 }
 
+// InsertChannel adds an empty channel at index at (0..len, len appends),
+// shifting the channels from at onward one to the right in every pattern.
+// Its name is "Ch N", made unique among the song's channels, since bindings
+// and scripts find a channel by name. False when the song is at MaxChannels.
+func (s *Song) InsertChannel(at int) bool {
+	if len(s.Channels) >= MaxChannels {
+		return false
+	}
+	at = clampInt(at, 0, len(s.Channels))
+	taken := map[string]bool{}
+	for _, c := range s.Channels {
+		taken[c.Name] = true
+	}
+	name := ""
+	for n := len(s.Channels) + 1; ; n++ {
+		if name = fmt.Sprintf("Ch %d", n); !taken[name] {
+			break
+		}
+	}
+	s.Channels = append(s.Channels, Channel{})
+	copy(s.Channels[at+1:], s.Channels[at:])
+	s.Channels[at] = Channel{Name: name, Volume: 1}
+	for _, p := range s.Patterns {
+		for r, row := range p.Cells {
+			row = append(row, EmptyCell)
+			copy(row[at+1:], row[at:])
+			row[at] = EmptyCell
+			p.Cells[r] = row
+		}
+	}
+	return true
+}
+
+// DeleteChannel removes channel c and its column from every pattern, along
+// with any param bindings that named it. False for the song's last channel or
+// an index out of range.
+func (s *Song) DeleteChannel(c int) bool {
+	if len(s.Channels) <= 1 || c < 0 || c >= len(s.Channels) {
+		return false
+	}
+	name := s.Channels[c].Name
+	s.Channels = append(s.Channels[:c], s.Channels[c+1:]...)
+	for _, p := range s.Patterns {
+		for r, row := range p.Cells {
+			if c < len(row) {
+				p.Cells[r] = append(row[:c], row[c+1:]...)
+			}
+		}
+	}
+	kept := s.Bindings[:0]
+	for _, b := range s.Bindings {
+		if b.Channel != name {
+			kept = append(kept, b)
+		}
+	}
+	s.Bindings = kept
+	return true
+}
+
 // Clone deep-copies the song. Instruments share their decoded sample data,
 // which is immutable once loaded.
 func (s *Song) Clone() *Song {

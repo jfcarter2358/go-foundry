@@ -96,6 +96,80 @@ type groundChunk struct {
 	// brushes are the solid brushes, each with the box around its drawn mesh
 	// in chunk space.
 	brushes []groundBrush
+	// grid bins brushes by their boxes' XZ extent (chunk space) when there
+	// are enough of them to be worth it; nil tests every brush.
+	grid *groundGrid
+}
+
+// groundGridMin is how many brushes a chunk needs before its column test
+// goes through a grid: below it, the per-brush box test is cheaper than the
+// binning.
+const groundGridMin = 32
+
+// groundGrid is a uniform XZ grid over a chunk's brush boxes. Cell c's
+// brushes are idx[start[c]:start[c+1]], in ascending brush order — the
+// order the column visits them in without a grid — so a column meets the
+// same brushes in the same order and ties between equally near faces break
+// the same way.
+type groundGrid struct {
+	x0, z0     float32
+	invX, invZ float32
+	nx, nz     int
+	start, idx []int32
+}
+
+// cellX is the grid column holding chunk-space x, clamped into the grid.
+// Monotonic in x, so a box [lo, hi] binned by cellX(lo)..cellX(hi) is found
+// from every x inside it.
+func (g *groundGrid) cellX(x float32) int {
+	return min(max(int(math.Floor(float64((x-g.x0)*g.invX))), 0), g.nx-1)
+}
+
+func (g *groundGrid) cellZ(z float32) int {
+	return min(max(int(math.Floor(float64((z-g.z0)*g.invZ))), 0), g.nz-1)
+}
+
+// newGroundGrid bins brushes into about two per cell.
+func newGroundGrid(brushes []groundBrush) *groundGrid {
+	lo, hi := brushes[0].lo, brushes[0].hi
+	for _, b := range brushes[1:] {
+		lo, hi = geom.VecMin(lo, b.lo), geom.VecMax(hi, b.hi)
+	}
+	n := min(max(int(math.Sqrt(float64(len(brushes))/2)), 1), 128)
+	g := &groundGrid{x0: lo.X(), z0: lo.Z(), nx: n, nz: n}
+	if w := hi.X() - lo.X(); w > 0 {
+		g.invX = float32(n) / w
+	} else {
+		g.nx = 1
+	}
+	if d := hi.Z() - lo.Z(); d > 0 {
+		g.invZ = float32(n) / d
+	} else {
+		g.nz = 1
+	}
+	g.start = make([]int32, g.nx*g.nz+1)
+	for _, b := range brushes {
+		for cz := g.cellZ(b.lo.Z()); cz <= g.cellZ(b.hi.Z()); cz++ {
+			for cx := g.cellX(b.lo.X()); cx <= g.cellX(b.hi.X()); cx++ {
+				g.start[cz*g.nx+cx+1]++
+			}
+		}
+	}
+	for c := 1; c < len(g.start); c++ {
+		g.start[c] += g.start[c-1]
+	}
+	g.idx = make([]int32, g.start[len(g.start)-1])
+	fill := append([]int32(nil), g.start[:len(g.start)-1]...)
+	for bi, b := range brushes {
+		for cz := g.cellZ(b.lo.Z()); cz <= g.cellZ(b.hi.Z()); cz++ {
+			for cx := g.cellX(b.lo.X()); cx <= g.cellX(b.hi.X()); cx++ {
+				c := cz*g.nx + cx
+				g.idx[fill[c]] = int32(bi)
+				fill[c]++
+			}
+		}
+	}
+	return g
 }
 
 type groundBrush struct {
@@ -146,6 +220,9 @@ func NewGroundQuery(lvl *world.Level, frame string) *GroundQuery {
 			}
 			gc.brushes = append(gc.brushes, gb)
 		}
+		if len(gc.brushes) >= groundGridMin {
+			gc.grid = newGroundGrid(gc.brushes)
+		}
 		q.chunks = append(q.chunks, gc)
 	}
 	return q
@@ -185,7 +262,20 @@ func (q *GroundQuery) SurfaceUnder(wx, topY, wz, maxDrop float32) Surface {
 		}
 		localBottom := localOrigin.Y() + localDir.Y()*maxDrop
 
-		for bi := range gc.brushes {
+		// Only the brushes binned where the column stands, when the chunk
+		// has a grid; a column off the grid is off every brush's box.
+		cand := []int32(nil)
+		nb := len(gc.brushes)
+		if g := gc.grid; g != nil {
+			c := g.cellZ(localOrigin.Z())*g.nx + g.cellX(localOrigin.X())
+			cand = g.idx[g.start[c]:g.start[c+1]]
+			nb = len(cand)
+		}
+		for k := 0; k < nb; k++ {
+			bi := k
+			if cand != nil {
+				bi = int(cand[k])
+			}
 			gb := &gc.brushes[bi]
 			// Reject the brush on its own box before touching a face. The
 			// chunk reject above is not enough on its own: a chunk is one box

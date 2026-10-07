@@ -49,6 +49,10 @@ uniform vec3      volCamPos;
 uniform vec2      volTargetSize;
 uniform sampler2D volSceneDist;
 uniform int       volSteps;
+// How far this frame turns every pixel's step offset (render/volumetric.go's
+// cheap march): 0 — what a program nobody told holds — leaves it where it
+// always was.
+uniform float     volJitterTurn;
 uniform int       volLightSteps;
 uniform float     volLightReach;     // how far toward the sun a sample looks
 uniform float     volDeckRange;
@@ -177,7 +181,7 @@ void main() {
 
     int n = clamp(volSteps, 1, VOL_MAX_STEPS);
     float dt = (t1 - t0) / float(n);
-    float jitter = volIGN(gl_FragCoord.xy);
+    float jitter = fract(volIGN(gl_FragCoord.xy) + volJitterTurn);
 
     bool sun = dot(volSunColor, volSunColor) > 0.0;
     float phase = volPhase(dot(rd, volSunDir));

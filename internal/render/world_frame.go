@@ -36,9 +36,11 @@ import (
 // Collected during the opaque pass and drawn back-to-front afterward.
 type TransparentDraw struct {
 	Geom *gfx.Geometry
-	// Batch, when set, is drawn instead of Geom: a batched brush's ranges of
-	// one chunk batch (render/chunk_batch.go), which carries its own model.
-	Batch       *BatchDraw
+	// Batch, when its Batch is set, is drawn instead of Geom: a batched
+	// brush's ranges of one chunk batch (render/chunk_batch.go), which
+	// carries its own model. Held by value, so queueing one allocates
+	// nothing: the queue itself is kept from frame to frame.
+	Batch       BatchDraw
 	Model       mgl32.Mat4
 	Distance    float32
 	DoubleSided bool
@@ -47,7 +49,7 @@ type TransparentDraw struct {
 // draw issues the deferred draw.
 func (td *TransparentDraw) draw() {
 	switch {
-	case td.Batch != nil:
+	case td.Batch.Batch != nil:
 		td.Batch.Draw()
 	case td.Model == mgl32.Ident4():
 		td.Geom.Draw()
@@ -119,6 +121,15 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	if ForceWireframe {
 		o.Wireframe = true
 	}
+	// The frame's number, for what the passes share within one frame and
+	// must not carry into the next (sprite_frame.go).
+	drawFrameNo++
+	drawFrameOpen = true
+	defer func() {
+		endFramePrep()
+		drawFrameOpen = false
+	}()
+	DebugStats.SpriteDraws = 0
 	// The editor's view draws chunk brushes the CPU way: a brush edit
 	// rebuilds a group every frame of a drag (chunk_nanite.go).
 	naniteChunksActive = !o.Editor
@@ -145,12 +156,39 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	// known before the draw — see gfx.MaterialScrollTime.
 	gfx.MaterialScrollTime = float32(o.Now)
 
+	// What the simulation half of the frame left for the GL (gfx/sim_gl.go):
+	// the view matrix it placed the camera with, and any texture something it
+	// spawned asked for. Before anything draws, so this frame's picture has
+	// both, exactly as when the sim uploaded them itself.
+	gfx.UploadCamMatrix()
+	gfx.DrainDeferredTextures()
+	// A new frame for the skinning uploads' memory of what each program holds
+	// (gfx.ApplySkinUniforms): the poses moved since the last.
+	gfx.BeginSkinFrame()
+
+	// The scene block — the lights, their shadows and the fog every lit
+	// program reads (gfx/scene_block.go) — bound for the frame. Once, here:
+	// nothing in the frame binds anything else at its binding point, and a
+	// block written by a preview window's context is bound in that context.
+	gfx.Scene.Bind()
+
 	// Fog, for the same reason and on the same schedule: the distance fog is
 	// measured radially from the eye and the volumes are intersected against
 	// a ray from it, so there is no "unchanged" frame to skip either way.
-	// The other four programs that shade world geometry get theirs from
-	// their own per-frame lighting upload — see world.UploadFogTo.
+	// Every program that shades world geometry reads it from the scene block
+	// this fills — see world.UploadFogTo.
 	world.UploadFog(lvl.Fog, lvl.Volumes, lvl)
+
+	// And the lights, every frame, before anything draws or traces with them.
+	// The scene's lights rather than the level's: an attached light carried to
+	// where its carrier now is, the effects' and the emitters' flashes in.
+	// They used to go up only when something announced a change — the sim on
+	// a waypoint, an emitter or an effect moving one, which made the sim a GL
+	// caller — and every frame only while a light rode something. One block
+	// write a frame, skipped by Flush when nothing changed, is cheaper than
+	// keeping that bookkeeping right.
+	sceneLights := world.SceneLights(lvl)
+	world.UploadLightsTo(gfx.Program, sceneLights, false)
 
 	{
 		// Chunks a script switched on or off last tick are reconciled
@@ -172,6 +210,10 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// them.
 		SyncTerrainMeshes(lvl)
 
+		// What the level holds is settled for the frame: GI's diff of it
+		// starts on a goroutine while the shadows draw (frame_prep.go).
+		prepareGI(lvl, o)
+
 		// TODO(brush migration, Phase 5): the Water-kind biome sector's
 		// companion water surface was synced here before anything read it
 		// this frame. It comes back with scatter volumes.
@@ -184,16 +226,6 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// below and the volumetric pass after the transparent pass must see
 		// one cloud, or its shadow slides off it.
 		VolumeTime = o.Now
-
-		// A light riding an entity or a bone moves whenever its carrier
-		// does, which is not a change anything else announces — so while
-		// any light is attached, the main program's lights go up every
-		// frame. Here, after every tick that can move a carrier and
-		// before anything is drawn. The other programs already take
-		// SceneLights per frame.
-		if world.HasAttachedLights(lvl) {
-			world.UploadLightsTo(gfx.Program, world.SceneLights(lvl), false)
-		}
 
 		// --- Shadow pass: render depth from each shadow-casting light ---
 		ProfileBegin("shadows: sun")
@@ -219,13 +251,13 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// where its carrier has taken it rather than from its offset.
 		ProfileBegin("shadows: point")
 		if !o.skip("shadows: point") {
-			RenderPointShadowPass(world.SceneLights(lvl), lvl)
+			RenderPointShadowPass(sceneLights, lvl)
 		}
 		ProfileEnd()
 		// The scene's lights rather than the level's, so the shadow flags
 		// at an effect flash's index are written (off) rather than left at
 		// whatever a light that once had that slot set them to.
-		UploadPointShadowUniforms(world.SceneLights(lvl))
+		UploadPointShadowUniforms(sceneLights)
 
 		// --- Render ---
 		// What is behind everything: the sky's own horizon, the fog colour
@@ -279,6 +311,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// Build frustum from current projection × camera matrices
 		projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 		frustum := ExtractFrustum(projView)
+		// The camera's sprites are gathered on a goroutine while the opaque
+		// world draws, for the cutout pass after it (frame_prep.go).
+		prepareSprites(lvl, o, frustum, gfx.Cam.Position)
 
 		// Draw world geometry: chunks → sectors → floor/ceiling/walls
 		// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
@@ -286,7 +321,12 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		brushesDrawn := 0
 		brushDrawCalls := 0
 		staticDrawn := 0
-		var transparentDraws []TransparentDraw
+		transparentDraws := transparentQueue[:0]
+		defer func() {
+			// Kept for the next frame, emptied of what it pointed at.
+			clear(transparentDraws)
+			transparentQueue = transparentDraws[:0]
+		}()
 
 		// Helper to queue or draw a geometry object based on its alpha.
 		identity := mgl32.Ident4()
@@ -348,11 +388,13 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		DebugStats.NaniteFoliage = false
 		ProfileBegin("world: compiled")
 		if lvl.Static != nil {
-			staticDrawScratch = lvl.Static.VisibleSurfaces(gfx.Cam.Position, staticDrawScratch)
-			n, calls := DrawStaticSurfaces(lvl, staticDrawScratch, frustum, gfx.Cam.Position,
+			// Borrowed, not copied: the geometry's own cached answer, which
+			// nothing below writes to.
+			visible := lvl.Static.VisibleSurfacesView(gfx.Cam.Position)
+			n, calls := DrawStaticSurfaces(lvl, visible, frustum, gfx.Cam.Position,
 				func(d BatchDraw, distance float32) {
 					transparentDraws = append(transparentDraws, TransparentDraw{
-						Batch:       &d,
+						Batch:       d,
 						Distance:    distance,
 						DoubleSided: d.DoubleSided,
 					})
@@ -408,7 +450,7 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 			st := DrawChunkBrushes(lvl, chunk, frustum, chunkModel, gfx.Cam.Position,
 				func(d BatchDraw, distance float32) {
 					transparentDraws = append(transparentDraws, TransparentDraw{
-						Batch:       &d,
+						Batch:       d,
 						Distance:    distance,
 						DoubleSided: d.DoubleSided,
 					})
@@ -675,11 +717,18 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	}
 }
 
-// staticDrawScratch is the list of compiled surfaces to draw this frame, reused
-// across frames so the world pass allocates nothing for it. Package-level
-// rather than a local because DrawWorld is the only writer and a fresh slice
-// every frame is a few thousand ints of garbage per second.
-var staticDrawScratch []int
+// transparentQueue is the frame's sorted transparent queue, kept from frame
+// to frame so a frame of glass and water queues without allocating.
+var transparentQueue []TransparentDraw
+
+// drawFrameNo counts DrawWorld's frames, and drawFrameOpen is set while one
+// is being drawn. A cache that is good for one frame's passes and no longer
+// keys on the number, and is not consulted at all outside a frame — a test or
+// the editor's preview calling a pass directly has no frame to share.
+var (
+	drawFrameNo   uint64
+	drawFrameOpen bool
+)
 
 // staticSurfaceCount is how many compiled surfaces the level has at all, for
 // the debug overlay to show the drawn count against.

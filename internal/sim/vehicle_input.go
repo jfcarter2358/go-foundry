@@ -97,7 +97,7 @@ func SeatedCamera(lvl *world.Level) bool {
 	gfx.Cam.Position = f.ToWorld(local)
 	gfx.Cam.Direction = f.DirToWorld(gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch))
 	gfx.Cam.Up = f.DirToWorld(gfx.WorldUp)
-	gfx.UpdateCamMatrix()
+	gfx.RebuildCamMatrix()
 	return true
 }
 
@@ -126,7 +126,7 @@ func PlacePlayerCamera(lvl *world.Level) {
 	gfx.Cam.Up = gfx.WorldUp
 	gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
 	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.PlayerEyeHeight(), 0})
-	gfx.UpdateCamMatrix()
+	gfx.RebuildCamMatrix()
 }
 
 // clampLookToSeat holds the view inside a seat's cone. A zero limit means

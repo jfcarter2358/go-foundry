@@ -92,6 +92,13 @@ type DAGOptions struct {
 	// Options.MaxTriangles of them). Foliage's assemblies cut level 0 by part
 	// (render/foliage_assembly.go). Nil cuts it with Build.
 	Base [][]uint32
+	// Serial builds on the calling goroutine alone, instead of simplifying a
+	// level's groups over the machine's cores. For a caller that is already
+	// building several DAGs side by side (BuildJobs): one worker a DAG keeps
+	// the cores busy without a goroutine per group per DAG fighting over
+	// them. The DAG is the same either way — the groups' results are
+	// committed in group order whatever ran them.
+	Serial bool
 }
 
 // The kinds of DAG node.
@@ -329,9 +336,14 @@ func BuildDAG(m Mesh, opt DAGOptions) DAG {
 		// results are committed in group order, so the DAG is the same
 		// whatever the scheduling.
 		results := make([]groupResult, len(groups))
-		parallelFor(len(groups), func(gi int) {
-			results[gi] = b.simplifyGroup(groups[gi], locked)
-		})
+		simplify := func(gi int) { results[gi] = b.simplifyGroup(groups[gi], locked) }
+		if opt.Serial {
+			for gi := range groups {
+				simplify(gi)
+			}
+		} else {
+			parallelFor(len(groups), simplify)
+		}
 		var next []int32
 		progress := false
 		for gi, g := range groups {
@@ -559,6 +571,86 @@ func parallelFor(n int, f func(i int)) {
 				}
 				f(i)
 			}
+		}()
+	}
+	wg.Wait()
+}
+
+// BuildJobs runs job(i) for every i in 0..len(sizes)-1 over the machine's
+// cores — for a caller with several DAGs to build (a level's draw groups, a
+// cooked mesh's slots), where one at a time leaves most of the cores idle
+// between the levels of each. sizes is each job's work, roughly (its
+// triangles); it only steers the scheduling, never what a job does.
+//
+// A job bigger than a worker's fair share of the whole (total/workers) would,
+// on one worker, be the job still running long after the rest finished. So
+// the big ones run one after another on a lane of their own, each told it
+// may fan out itself (inner true: build with DAGOptions.Serial off), while
+// the other workers take the rest a job each, biggest first so no big one is
+// left for last, told to stay on their worker (inner false:
+// DAGOptions.Serial on). A DAG fanned out over the cores still leaves most
+// of them idle at the barrier between its levels; the small jobs fill them.
+// The big lane joins the others when it runs out. At most one DAG at a time
+// fans out, so the goroutines are bounded by twice GOMAXPROCS, never a
+// goroutine per group per DAG on top of a goroutine per DAG.
+//
+// Each job must write only its own result (out[i]); the caller reads them
+// in index order afterwards, so what it assembles is the same whatever ran
+// first. With parallel false everything runs in order on the calling
+// goroutine with inner true — exactly a plain loop over BuildDAG.
+func BuildJobs(sizes []int, parallel bool, job func(i int, inner bool)) {
+	n := len(sizes)
+	workers := min(runtime.GOMAXPROCS(0), n)
+	if !parallel || workers <= 1 {
+		for i := 0; i < n; i++ {
+			job(i, true)
+		}
+		return
+	}
+	total := 0
+	for _, s := range sizes {
+		total += s
+	}
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	// Biggest first; ties by index, so the order is a function of sizes.
+	sort.SliceStable(order, func(a, b int) bool { return sizes[order[a]] > sizes[order[b]] })
+	share := total / workers
+	big := 0
+	for big < n && sizes[order[big]] > share {
+		big++
+	}
+	bigJobs, rest := order[:big], order[big:]
+	var next atomic.Int64
+	small := func() {
+		for {
+			k := int(next.Add(1) - 1)
+			if k >= len(rest) {
+				return
+			}
+			job(rest[k], false)
+		}
+	}
+	var wg sync.WaitGroup
+	lanes := workers
+	if len(bigJobs) > 0 {
+		lanes-- // the big lane is a worker too, once it is done with them
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, i := range bigJobs {
+				job(i, true)
+			}
+			small()
+		}()
+	}
+	for w := 0; w < lanes; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			small()
 		}()
 	}
 	wg.Wait()

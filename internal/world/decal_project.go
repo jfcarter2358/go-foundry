@@ -90,8 +90,7 @@ func BuildDecal(lvl *Level, d *Decal) {
 	// floating in mid-air finds no geometry at all, and without this it would be
 	// rebuilt every frame for ever, since an empty Pieces is indistinguishable
 	// from an unbuilt one.
-	d.builtOK = true
-	d.built = decalFingerprint(d)
+	markDecalBuilt(d)
 	if lvl == nil || !d.HasSize() {
 		return
 	}
@@ -265,27 +264,9 @@ func (bs *decalBuilders) gatherBrushes(lvl *Level, bx *decalBox, lo, hi mgl32.Ve
 // ground rides with its chunk, and streams out with it, like one on a wall.
 func (bs *decalBuilders) gatherTerrain(ch *Chunk, model mgl32.Mat4, bx *decalBox, lo, hi mgl32.Vec3) {
 	t := ch.Terrain
-	// The box's corners carried into the chunk, for the faces to take.
-	inv := model.Inv()
-	llo := mgl32.Vec3{float32(math.Inf(1)), float32(math.Inf(1)), float32(math.Inf(1))}
-	lhi := llo.Mul(-1)
-	for i := 0; i < 8; i++ {
-		c := lo
-		if i&1 != 0 {
-			c[0] = hi[0]
-		}
-		if i&2 != 0 {
-			c[1] = hi[1]
-		}
-		if i&4 != 0 {
-			c[2] = hi[2]
-		}
-		p := inv.Mul4x1(c.Vec4(1)).Vec3()
-		for k := 0; k < 3; k++ {
-			llo[k] = min(llo[k], p[k])
-			lhi[k] = max(lhi[k], p[k])
-		}
-	}
+	// The box's corners carried into the chunk, for the faces to take
+	// (decalTerrainChanged tests an edit against the same box).
+	llo, lhi := worldBoxToChunk(model.Inv(), lo, hi)
 	var g gfx.Geometry
 	t.EachFaceIn(llo, lhi, func(f *TerrainFace) {
 		for k := 0; k < 2; k++ {

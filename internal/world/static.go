@@ -114,8 +114,12 @@ type StaticGeometry struct {
 	// splitting plane cut through the space in front of it, so the same index
 	// arrives from several rows.
 	seen []bool
-	// all is the everything-visible answer, built once.
-	all []int
+	// all is the everything-visible answer, built once; allHidden the same
+	// with some chunks hidden, for the hidden state allHiddenVer counts.
+	all          []int
+	allHidden    []int
+	allHiddenVer uint64
+	allHiddenN   int
 	// covers lists the surfaces with a CoveredBy, which VisibleSurfaces adds
 	// past the PVS; coversFor is the surface count it was built for.
 	covers    []int
@@ -205,13 +209,25 @@ func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
 	if s == nil {
 		return out[:0]
 	}
-	out, answer := s.visibleSurfaces(eye, out)
+	return append(out[:0], s.VisibleSurfacesView(eye)...)
+}
+
+// VisibleSurfacesView is VisibleSurfaces without the copy: the list it
+// returns is the geometry's own cached answer, BORROWED — valid until the next
+// call of either, and never to be written to. A level's cell sees tens of
+// thousands of surfaces, and the frame loop copied them all every frame only
+// to read them.
+func (s *StaticGeometry) VisibleSurfacesView(eye mgl32.Vec3) []int {
+	if s == nil {
+		return nil
+	}
+	view, answer := s.visibleView(eye)
 	key := visibleAnswer{answer: answer, hidden: s.hiddenVersion, count: len(s.HiddenChunks), surfaces: len(s.Surfaces)}
 	if key != s.lastAnswer || s.visibleSerial == 0 {
 		s.lastAnswer = key
 		s.visibleSerial++
 	}
-	return out
+	return view
 }
 
 // VisibleSerial changes whenever VisibleSurfaces' answer has: a new cell, a
@@ -237,26 +253,26 @@ type visibleAnswer struct {
 	count, surfaces int
 }
 
-// visibleSurfaces is VisibleSurfaces, also saying which answer it gave: the
+// visibleView is VisibleSurfacesView, also saying which answer it gave: the
 // camera's leaf, or answerEverything / answerNothing.
-func (s *StaticGeometry) visibleSurfaces(eye mgl32.Vec3, out []int) ([]int, int) {
-	out = out[:0]
+func (s *StaticGeometry) visibleView(eye mgl32.Vec3) ([]int, int) {
 	if len(s.Surfaces) == 0 {
-		return out, answerNothing
+		return nil, answerNothing
 	}
 	if s.Tree == nil || s.Vis == nil {
-		return append(out, s.everything()...), answerEverything
+		return s.everything(), answerEverything
 	}
 	leaf := s.Tree.FindLeaf(eye)
 	if !s.Tree.Interior(leaf) {
 		// The camera is in material or in the void. Nothing was computed for
 		// there, so draw the level rather than a hole in it.
-		return append(out, s.everything()...), answerEverything
+		return s.everything(), answerEverything
 	}
 	if s.visibleValid && s.visibleLeaf == leaf && s.visibleVersion == s.hiddenVersion &&
 		s.visibleCount == len(s.HiddenChunks) {
-		return append(out, s.visible...), leaf
+		return s.visible, leaf
 	}
+	out := s.visible[:0]
 
 	if len(s.seen) != len(s.Surfaces) {
 		s.seen = make([]bool, len(s.Surfaces))
@@ -287,7 +303,7 @@ func (s *StaticGeometry) visibleSurfaces(eye mgl32.Vec3, out []int) ([]int, int)
 			}
 		}
 	}
-	s.visible = append(s.visible[:0], out...)
+	s.visible = out
 	s.visibleLeaf, s.visibleVersion, s.visibleCount, s.visibleValid = leaf, s.hiddenVersion, len(s.HiddenChunks), true
 	return out, leaf
 }
@@ -295,16 +311,21 @@ func (s *StaticGeometry) visibleSurfaces(eye mgl32.Vec3, out []int) ([]int, int)
 // everything is every surface index that is not hidden, for the fallbacks
 // above.
 //
-// Cached while nothing is hidden, which is every level that does not stream;
-// rebuilt each call otherwise, since the fallback is already the slow path.
+// Cached while nothing is hidden, which is every level that does not stream,
+// and for the hidden state it was last built for otherwise. Callers only read
+// it: it is handed out as VisibleSurfacesView's borrowed answer.
 func (s *StaticGeometry) everything() []int {
 	if len(s.HiddenChunks) > 0 {
+		if s.allHidden != nil && s.allHiddenVer == s.hiddenVersion && s.allHiddenN == len(s.HiddenChunks) {
+			return s.allHidden
+		}
 		out := make([]int, 0, len(s.Surfaces))
 		for i := range s.Surfaces {
 			if !s.Hidden(i) {
 				out = append(out, i)
 			}
 		}
+		s.allHidden, s.allHiddenVer, s.allHiddenN = out, s.hiddenVersion, len(s.HiddenChunks)
 		return out
 	}
 	if len(s.all) != len(s.Surfaces)-len(s.coverSurfaces()) {

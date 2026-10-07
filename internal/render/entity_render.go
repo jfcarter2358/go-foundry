@@ -55,6 +55,15 @@ func EntityInFrustumOf(f *world.Frame, e *world.Entity, cull *Frustum) bool {
 	return AABBInFrustum(*cull, min, max)
 }
 
+// entityDraw is one attachment submesh the colour pass draws, and where.
+type entityDraw struct {
+	g     *gfx.Geometry
+	model mgl32.Mat4
+}
+
+// entityDraws is RenderEntities' list, kept between frames for its storage.
+var entityDraws []entityDraw
+
 // RenderEntities walks the level's entities for the colour pass, handing each
 // attachment's submeshes to draw with the matrix that places them.
 //
@@ -62,10 +71,15 @@ func EntityInFrustumOf(f *world.Frame, e *world.Entity, cull *Frustum) bool {
 // back-to-front queue and draws the rest immediately, so an entity with a
 // translucent attachment sorts against the level's own transparent surfaces
 // rather than in a pass of its own.
+//
+// The opaque ones go through the depth prepass first (entity_prepass.go), all
+// of them, before any is shaded — so one entity's nearer parts hide its own
+// farther ones, and an entity standing in front of another hides it too.
 func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool)) {
 	if lvl == nil {
 		return
 	}
+	list := entityDraws[:0]
 	for ei := range lvl.Entities {
 		e := &lvl.Entities[ei]
 		frame := lvl.Frames.FrameFor(e)
@@ -89,12 +103,27 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 			model := world.Mul4(e.AttachmentMatrix(m))
 			for si := range m.Submeshes {
 				m.Submeshes[si].UVOffset = m.UVOffset
-				// Single-sided: a model is a closed solid, and drawing its back
-				// faces would double every draw call to show what the front
-				// faces already cover.
-				draw(&m.Submeshes[si], model, false)
+				list = append(list, entityDraw{&m.Submeshes[si], model})
 			}
 		}
+	}
+	entityDraws = list
+
+	if len(list) > 0 {
+		pp := &entityPrepassProg
+		if pp.begin() {
+			pp.warm(lvl)
+			for i := range list {
+				pp.draw(list[i].g, list[i].model)
+			}
+			pp.end()
+		}
+	}
+	for i := range list {
+		// Single-sided: a model is a closed solid, and drawing its back
+		// faces would double every draw call to show what the front faces
+		// already cover.
+		draw(list[i].g, list[i].model, false)
 	}
 }
 

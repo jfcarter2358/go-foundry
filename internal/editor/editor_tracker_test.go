@@ -207,8 +207,9 @@ func TestTrackerEffectEntry(t *testing.T) {
 		t.Fatal("a parameter with no effect letter should be refused")
 	}
 	e.Cur.Field = trkFieldsFixed
-	e.typeKey(sdl.SCANCODE_Q) // Q is retrigger
-	e.typeKey(sdl.SCANCODE_K) // K is pattern break, also valid
+	e.typeKey(sdl.SCANCODE_Q)    // Q is retrigger
+	e.Cur.Field = trkFieldsFixed // the letter moved the cursor on; go back
+	e.typeKey(sdl.SCANCODE_K)    // K is pattern break, also valid
 	if got := trkCellAtT(e, 0, 0).FX[0].Cmd; got != 'K' {
 		t.Fatalf("effect letter = %c", got)
 	}
@@ -603,5 +604,86 @@ func TestTrackerPitchDetect(t *testing.T) {
 	}
 	if n, _ := trkHzToNote(261.63); tracker.NoteName(n) != "C-4" {
 		t.Fatalf("middle C reads as %s", tracker.NoteName(n))
+	}
+}
+
+func TestTrackerCodesTypeAlongTheRowAndEnterTakesTheNextLine(t *testing.T) {
+	e := trkTestState()
+	e.Step = 2
+	e.Cur.Field = trkFieldsFixed // effect 0's letter
+	for _, sc := range []sdl.Scancode{sdl.SCANCODE_V, sdl.SCANCODE_4, sdl.SCANCODE_8} {
+		e.typeKey(sc)
+		if e.Cur.Row != 0 {
+			t.Fatalf("typing a code moved the cursor to row %d", e.Cur.Row)
+		}
+	}
+	if got := trkCellAtT(e, 0, 0).FX[0]; got != (tracker.Effect{Cmd: 'V', Param: 0x48}) {
+		t.Fatalf("effect = %s, want V48", tracker.FormatEffect(got))
+	}
+	if e.Cur.Field != trkFieldsFixed+2 {
+		t.Fatalf("cursor on field %d after the code, want its last digit %d", e.Cur.Field, trkFieldsFixed+2)
+	}
+	e.nextLine()
+	if e.Cur.Row != 2 || e.Cur.Field != trkFieldsFixed {
+		t.Fatalf("Enter went to row %d field %d, want row 2 at the effect letter", e.Cur.Row, e.Cur.Field)
+	}
+
+	// Volume: two digits along, then Enter; a zero step still moves a row.
+	e.Step = 0
+	e.Cur.Field = 3
+	e.typeKey(sdl.SCANCODE_3)
+	e.typeKey(sdl.SCANCODE_0)
+	if got := trkCellAtT(e, 2, 0).Vol; got != 0x30 || e.Cur.Field != 4 || e.Cur.Row != 2 {
+		t.Fatalf("volume %02X, cursor row %d field %d", got, e.Cur.Row, e.Cur.Field)
+	}
+	e.nextLine()
+	if e.Cur.Row != 3 || e.Cur.Field != 3 {
+		t.Fatalf("Enter with step 0 went to row %d field %d, want row 3 field 3", e.Cur.Row, e.Cur.Field)
+	}
+}
+
+func TestTrackerRenameInstrument(t *testing.T) {
+	e := trkTestState()
+	defer func(old *trackerState) { trkEd = old }(trkEd)
+	trkEd = e
+	if !trkRenameInstrument(1, "  Lead  ") {
+		t.Fatal("rename refused")
+	}
+	if got := e.Song.Instruments[0].Name; got != "Lead" {
+		t.Fatalf("name %q, want Lead (trimmed)", got)
+	}
+	if trkRenameInstrument(1, "   ") || trkRenameInstrument(1, "Lead") || trkRenameInstrument(99, "X") {
+		t.Fatal("a blank name, the same name or a missing instrument should change nothing")
+	}
+	e.undoStep()
+	if got := e.Song.Instruments[0].Name; got == "Lead" {
+		t.Fatal("undo did not put the old name back")
+	}
+}
+
+func TestTrackerInsertAndDeleteChannelFromTheEditor(t *testing.T) {
+	e := trkTestState()
+	defer func(old *trackerState) { trkEd = old }(trkEd)
+	trkEd = e
+	n := len(e.Song.Channels)
+	e.Cur.Ch = 1
+	e.insertChannel(1)
+	if len(e.Song.Channels) != n+1 || e.Cur.Ch != 1 {
+		t.Fatalf("after insert: %d channels, cursor on %d", len(e.Song.Channels), e.Cur.Ch)
+	}
+	e.deleteChannel(len(e.Song.Channels) - 1)
+	if len(e.Song.Channels) != n || e.Cur.Ch >= len(e.Song.Channels) {
+		t.Fatalf("after delete: %d channels, cursor on %d", len(e.Song.Channels), e.Cur.Ch)
+	}
+	e.undoStep()
+	if len(e.Song.Channels) != n+1 {
+		t.Fatal("undo did not bring the deleted channel back")
+	}
+	for len(e.Song.Channels) > 1 {
+		e.deleteChannel(0)
+	}
+	e.deleteChannel(0)
+	if len(e.Song.Channels) != 1 {
+		t.Fatal("the last channel was deleted")
 	}
 }

@@ -33,6 +33,8 @@ package ai
 // taking cover is for.
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 
 	"foundry/internal/hooks"
@@ -312,19 +314,13 @@ func HiddenFrom(lvl *world.Level, e *world.Entity, spot, threat mgl32.Vec3, thre
 func hiddenAt(lvl *world.Level, e *world.Entity, spot, threat mgl32.Vec3, threatID string, duck float32) bool {
 	h := ProfileFor(lvl, e).Height * duck
 	for _, up := range [2]float32{0.55, 0.9} {
-		if LineOfSight(lvl, threat, spot.Add(mgl32.Vec3{0, h * up, 0}), coverIgnores(e, threatID)...) {
+		// The agent and the threat pass straight through: an empty threatID
+		// names nothing, so it ignores nothing, exactly as leaving it out did.
+		if LineOfSight(lvl, threat, spot.Add(mgl32.Vec3{0, h * up, 0}), e.ID, threatID) {
 			return false
 		}
 	}
 	return true
-}
-
-func coverIgnores(e *world.Entity, threatID string) []string {
-	ids := []string{e.ID}
-	if threatID != "" {
-		ids = append(ids, threatID)
-	}
-	return ids
 }
 
 // CoverOpts shapes a cover search beyond where to look.
@@ -377,16 +373,66 @@ func FindCoverWith(lvl *world.Level, e *world.Entity, centre mgl32.Vec3, radius 
 		accept = func(p mgl32.Vec3) bool { return distXZ(p, centre) <= radius }
 	}
 
+	// The best spot is the passing sample with the lowest score, the earliest
+	// sampled on a tie. Every candidate costs up to three line-of-sight casts,
+	// so rather than test them in sampled order — which tests every sample
+	// that beats the best so far, and early ones rarely are the best — they
+	// are ordered by score first, stably so ties keep their sampled order, and
+	// the first that passes is the answer: the same spot, after testing only
+	// the ones that score better than it.
+	samples := grid.SamplePoints(lo, hi, region, accept, coverSamples, rng)
+	return pickCover(lvl, e, samples, feet, centre, threat, threatID, duck, standEye, opts)
+}
+
+// pickCover is FindCoverWith's choice among the sampled spots.
+func pickCover(lvl *world.Level, e *world.Entity, samples []mgl32.Vec3, feet, centre, threat mgl32.Vec3, threatID string, duck, standEye float32, opts CoverOpts) (mgl32.Vec3, bool) {
+	ranked := make([]scoredSpot, 0, len(samples))
+	for _, p := range samples {
+		score := distXZ(feet, p) + 0.35*distXZ(centre, p)
+		if score != score {
+			// A NaN score has no place in an order; the plain walk is what
+			// defines the answer then.
+			return findCoverWalk(lvl, e, samples, feet, centre, threat, threatID, duck, standEye, opts)
+		}
+		ranked = append(ranked, scoredSpot{p, score})
+	}
+	slices.SortStableFunc(ranked, func(a, b scoredSpot) int { return cmp.Compare(a.score, b.score) })
+	for _, c := range ranked {
+		if coverPasses(lvl, e, c.p, threat, threatID, duck, standEye, opts) {
+			return c.p, true
+		}
+	}
+	return mgl32.Vec3{}, false
+}
+
+// scoredSpot is a cover sample and its score: lower is better.
+type scoredSpot struct {
+	p     mgl32.Vec3
+	score float32
+}
+
+// coverPasses reports whether spot p hides the agent from threat — and, for a
+// firing position, lets it see threat from its standing eye.
+func coverPasses(lvl *world.Level, e *world.Entity, p, threat mgl32.Vec3, threatID string, duck, standEye float32, opts CoverOpts) bool {
+	if !hiddenAt(lvl, e, p, threat, threatID, duck) {
+		return false
+	}
+	if opts.Peek && !LineOfSight(lvl, p.Add(mgl32.Vec3{0, standEye, 0}), threat, e.ID, threatID) {
+		return false
+	}
+	return true
+}
+
+// findCoverWalk is FindCoverWith's definition: the samples in order, keeping
+// a passing one only when it scores strictly better than the best so far.
+func findCoverWalk(lvl *world.Level, e *world.Entity, samples []mgl32.Vec3, feet, centre, threat mgl32.Vec3, threatID string, duck, standEye float32, opts CoverOpts) (mgl32.Vec3, bool) {
 	best, bestScore, found := mgl32.Vec3{}, float32(0), false
-	for _, p := range grid.SamplePoints(lo, hi, region, accept, coverSamples, rng) {
+	for _, p := range samples {
 		score := distXZ(feet, p) + 0.35*distXZ(centre, p)
 		if found && score >= bestScore {
 			continue
 		}
-		if !hiddenAt(lvl, e, p, threat, threatID, duck) {
-			continue
-		}
-		if opts.Peek && !LineOfSight(lvl, p.Add(mgl32.Vec3{0, standEye, 0}), threat, coverIgnores(e, threatID)...) {
+		if !coverPasses(lvl, e, p, threat, threatID, duck, standEye, opts) {
 			continue
 		}
 		best, bestScore, found = p, score, true

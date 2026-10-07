@@ -738,7 +738,7 @@ func LoadModel(path string) (*ModelDoc, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var raw RawModel
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	if err := decodeYAMLCached(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	// Resolved before validation, because the weights are checked against it: a

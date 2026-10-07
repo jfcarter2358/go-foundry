@@ -85,6 +85,28 @@ type Host interface {
 	Log(msg string)
 }
 
+// PropResolver is an optional extension of Host: a handle for one property of
+// one kind of object, looked up once and used for every read and write of it.
+//
+// A host's Prop and SetProp find the property by kind and by name on every
+// access. A member expression always names the same property, and nearly
+// always of the same kind of object, so the interpreter asks once per site and
+// keeps the answer (propSite). A nil handle means "no such property", and the
+// interpreter goes through Prop and SetProp as before, which is where the
+// diagnostics for an unknown name live.
+//
+// A handle must behave exactly as Prop and SetProp would for that kind and
+// name, side effects included.
+type PropResolver interface {
+	PropHandle(kind Kind_, name string) PropHandle
+}
+
+// PropHandle reads and writes one property of objects of one kind.
+type PropHandle interface {
+	GetProp(r RefVal) (Value, bool)
+	SetProp(r RefVal, v Value) error
+}
+
 // ---------- programs ----------
 
 // Program is everything in scope for one script: its own functions plus every

@@ -17,7 +17,9 @@ package flang
 // rather than by threading a status through every return value. Go's error
 // channel is already there, the sentinels are checked by identity, and the
 // alternative makes every eval method three-valued for the benefit of three
-// statements.
+// statements. They are three values made once, not one allocated per `return`:
+// what a return carries waits on the interpreter (retVal) for the call it ends
+// to collect.
 //
 // Call depth is counted rather than left to the host stack. A Go stack overflow
 // is a fatal runtime error that `recover` cannot catch, so a runaway recursive
@@ -79,11 +81,19 @@ const (
 )
 
 type control struct {
-	kind  controlKind
-	value Value
+	kind controlKind
 }
 
 func (c *control) Error() string { return "control flow" }
+
+// The three control signals. A `return`'s value travels separately, on
+// Interp.retVal, and is picked up by callClauses as the signal arrives — before
+// anything else can run and overwrite it.
+var (
+	errReturn   error = &control{kind: ctrlReturn}
+	errBreak    error = &control{kind: ctrlBreak}
+	errContinue error = &control{kind: ctrlContinue}
+)
 
 // Interp evaluates a program.
 //
@@ -126,6 +136,24 @@ type Interp struct {
 	// out receives everything `log` prints. Nil sends it nowhere, which is what
 	// tests want by default.
 	out func(string)
+
+	// Call frames, reused rather than allocated per call — see pushFrame.
+	// frames are the Env headers by depth, slots the values they view.
+	frames   []*Env
+	frameTop int
+	slots    []Value
+	// argStack holds the arguments of script-to-script calls while they are
+	// being evaluated and bound; the callee copies them into its own frame, so
+	// they need not outlive the call.
+	argStack []Value
+	// retVal is what the `return` being unwound carries.
+	retVal Value
+	// atoms holds an atom boxed as a Value, by name, for the rare clause
+	// that binds a message's atom rather than matching it.
+	atoms map[string]Value
+	// refBoxKey and refBoxed are the last ref boxed as a Value — see boxRef.
+	refBoxKey RefVal
+	refBoxed  Value
 }
 
 // NewInterp returns an interpreter over the given program.
@@ -144,6 +172,8 @@ func NewInterp(prog *Program, host Host, limits Limits) (*Interp, ErrorList) {
 	}
 	var errs ErrorList
 	if prog != nil {
+		// Frame layouts and constants, once per program — see resolve.go.
+		resolveProgram(prog)
 		for name, d := range prog.Params {
 			in.params[name] = d
 		}
@@ -223,6 +253,15 @@ func (in *Interp) Globals() *Env { return in.globals }
 // Has reports whether the program defines a function by that name.
 func (in *Interp) Has(name string) bool { return len(in.funcs[name]) > 0 }
 
+// Answers reports whether any clause in the program takes atom as its first
+// parameter — whether CallAtom could match it at all. A host uses it to skip
+// posting an engine event to an object that has no handler for it: `:tick:`
+// goes to every scripted object every frame, and most of them do not care.
+//
+// Arity is not considered, so a yes can still come to nothing at delivery;
+// a no is final.
+func (in *Interp) Answers(atom string) bool { return len(in.handlers[atom]) > 0 }
+
 // ResetSteps clears the per-call step budget. The runtime calls this between
 // messages so one long handler does not starve the next.
 func (in *Interp) ResetSteps() { in.steps = 0 }
@@ -240,7 +279,7 @@ func (in *Interp) Call(name string, args []Value, pos Pos) (Value, error) {
 	if len(clauses) == 0 {
 		return nil, in.errorf(pos, "no function named %q", name)
 	}
-	v, matched, err := in.callClauses(name, clauses, args, pos)
+	v, matched, err := in.callClauses(name, clauses, callArgs{rest: args}, pos)
 	if err != nil {
 		return nil, err
 	}
@@ -268,12 +307,22 @@ func (in *Interp) Call(name string, args []Value, pos Pos) (Value, error) {
 // -errors rule within a second — and would have forced every guarded handler to
 // carry a do-nothing catch-all clause beside it.
 func (in *Interp) CallAtom(atom string, args []Value, pos Pos) (Value, bool, error) {
-	full := append([]Value{AtomVal(atom)}, args...)
-	for _, h := range in.handlers[atom] {
-		if h.arity != len(full) {
+	// Looked up before anything is built: most deliveries are broadcasts to
+	// objects with no clause for the atom, and those should cost a map lookup
+	// and nothing else.
+	hs := in.handlers[atom]
+	if len(hs) == 0 {
+		return NullVal{}, false, nil
+	}
+	// The message is the atom followed by its arguments. Not built as one
+	// slice: matching compares the atom as a string, and only a clause that
+	// binds the atom to a name ever needs it as a Value.
+	a := callArgs{atom: atom, hasAtom: true, rest: args}
+	for _, h := range hs {
+		if h.arity != a.n() {
 			continue
 		}
-		v, matched, err := in.callClauses(h.name, h.clauses, full, pos)
+		v, matched, err := in.callClauses(h.name, h.clauses, a, pos)
 		if err != nil {
 			return nil, true, err
 		}
@@ -284,48 +333,112 @@ func (in *Interp) CallAtom(atom string, args []Value, pos Pos) (Value, bool, err
 	return NullVal{}, false, nil
 }
 
+// callArgs is one call's arguments: rest, behind the message's atom when the
+// call is a delivery.
+type callArgs struct {
+	atom    string
+	hasAtom bool
+	rest    []Value
+}
+
+// n is how many arguments the call has, the atom included.
+func (a callArgs) n() int {
+	if a.hasAtom {
+		return len(a.rest) + 1
+	}
+	return len(a.rest)
+}
+
+// argAt is the i-th argument as a Value.
+func (in *Interp) argAt(a callArgs, i int) Value {
+	if a.hasAtom {
+		if i == 0 {
+			return in.atomVal(a.atom)
+		}
+		return a.rest[i-1]
+	}
+	return a.rest[i]
+}
+
+// atomVal is an atom boxed as a Value, made once per name.
+func (in *Interp) atomVal(name string) Value {
+	if v, ok := in.atoms[name]; ok {
+		return v
+	}
+	if in.atoms == nil {
+		in.atoms = map[string]Value{}
+	}
+	v := Value(AtomVal(name))
+	in.atoms[name] = v
+	return v
+}
+
 // callClauses tries each clause in dispatch order, running the first whose head
 // matches and whose guard holds.
 //
 // matched is false when every clause declined — no head fitted, or the ones that
 // did were guarded and their guards said no. What that means is the caller's to
 // decide: an error for a direct Call, an unhandled message for CallAtom.
-func (in *Interp) callClauses(name string, clauses []*Clause, args []Value, pos Pos) (Value, bool, error) {
+//
+// The depth count is unwound by hand on every way out rather than by a defer.
+// Nothing between here and the returns can panic short of a bug in a builtin,
+// and the engine recovers from none of those.
+func (in *Interp) callClauses(name string, clauses []*Clause, a callArgs, pos Pos) (Value, bool, error) {
 	if in.depth >= in.limits.MaxCallDepth {
 		return nil, false, in.errorf(pos, "call depth limit of %d reached calling %q; this is usually runaway recursion",
 			in.limits.MaxCallDepth, name)
 	}
 	in.depth++
-	defer func() { in.depth-- }()
 
 	for _, c := range clauses {
-		binds, ok := matchClause(c, args)
-		if !ok {
+		if !in.matchHead(c, a) {
 			continue
 		}
-		env := NewEnv(in.globals)
-		for k, v := range binds {
-			env.Declare(k, v)
-		}
+		env := in.pushFrame(c)
+		in.bindParams(c, a, env)
+		compiled := c.compiled && useCompiled
 		if c.Guard != nil {
-			g, err := in.evalExpr(c.Guard, env)
+			var ok bool
+			var err error
+			if compiled {
+				ok, err = c.guardFn(in, env)
+			} else {
+				var g Value
+				g, err = in.evalExpr(c.Guard, env)
+				ok = err == nil && Truthy(g)
+			}
 			if err != nil {
+				in.popFrame(env)
+				in.depth--
 				return nil, false, err
 			}
-			if !Truthy(g) {
+			if !ok {
+				in.popFrame(env)
 				continue
 			}
 		}
-		if err := in.execBlock(c.Body, env); err != nil {
-			if ctl, isCtl := err.(*control); isCtl {
-				if ctl.kind == ctrlReturn {
-					if ctl.value == nil {
-						return NullVal{}, true, nil
-					}
-					return ctl.value, true, nil
+		var err error
+		if compiled {
+			err = in.runBlock(c.body, env)
+		} else {
+			err = in.execBlock(c.Body, env)
+		}
+		in.popFrame(env)
+		in.depth--
+		if err != nil {
+			switch err {
+			case errReturn:
+				v := in.retVal
+				in.retVal = nil
+				if v == nil {
+					return NullVal{}, true, nil
 				}
+				return v, true, nil
+			case errBreak:
 				// break or continue outside a loop unwound all the way here.
-				return nil, true, in.errorf(c.Pos_, "`%s` outside a loop", ctlName(ctl.kind))
+				return nil, true, in.errorf(c.Pos_, "`%s` outside a loop", ctlName(ctrlBreak))
+			case errContinue:
+				return nil, true, in.errorf(c.Pos_, "`%s` outside a loop", ctlName(ctrlContinue))
 			}
 			return nil, true, err
 		}
@@ -333,7 +446,139 @@ func (in *Interp) callClauses(name string, clauses []*Clause, args []Value, pos 
 		// `return` just to finish.
 		return NullVal{}, true, nil
 	}
+	in.depth--
 	return NullVal{}, false, nil
+}
+
+// pushFrame takes a frame for one call of c off the interpreter's stack, every
+// local unset. The Env header is reused by depth and the values are a window on
+// one growing slice, so a call allocates nothing once the stack has grown to
+// the program's deepest call.
+//
+// The Env handed to the debug hook is therefore valid for the statement it is
+// handed with, and is reused once its call returns.
+func (in *Interp) pushFrame(c *Clause) *Env {
+	if in.frameTop == len(in.frames) {
+		in.frames = append(in.frames, &Env{})
+	}
+	e := in.frames[in.frameTop]
+	in.frameTop++
+	base := len(in.slots)
+	for i := 0; i < c.nslots; i++ {
+		in.slots = append(in.slots, unset)
+	}
+	// Clipped, so a name declared outside the clause's table (Env.Declare)
+	// moves this frame's values off the stack rather than over the next
+	// frame's.
+	e.vals = in.slots[base : base+c.nslots : base+c.nslots]
+	e.names = c.slotNames
+	e.parent = in.globals
+	e.base = base
+	return e
+}
+
+// popFrame returns the frame pushFrame took, letting go of its values.
+func (in *Interp) popFrame(e *Env) {
+	clear(in.slots[e.base:])
+	in.slots = in.slots[:e.base]
+	e.vals, e.names, e.parent = nil, nil, nil
+	in.frameTop--
+}
+
+// matchHead reports whether a call's arguments fit c's parameters — every
+// literal and atom equal, every typed parameter of its type. It binds nothing:
+// a head that fails half-way must leave no trace, and a frame is only taken
+// for a clause whose head fitted.
+func (in *Interp) matchHead(c *Clause, a callArgs) bool {
+	if a.n() != len(c.Params) {
+		return false
+	}
+	for i := range c.checks {
+		ck := &c.checks[i]
+		switch ck.kind {
+		case ParamAtom:
+			if ck.arg == 0 && a.hasAtom {
+				if a.atom != ck.atom {
+					return false
+				}
+				continue
+			}
+			at, ok := in.argAt(a, ck.arg).(AtomVal)
+			if !ok || string(at) != ck.atom {
+				return false
+			}
+		case ParamLiteral:
+			if !ck.litOK {
+				return false
+			}
+			v := in.argAt(a, ck.arg)
+			// An int literal against an int — `fib(0)` — without Equal's
+			// trip through the numeric tower. Compared as float64, as Equal
+			// compares them, so the answer cannot differ.
+			if ck.litIsInt {
+				if vi, ok := v.(IntVal); ok {
+					if float64(ck.litInt) != float64(vi) {
+						return false
+					}
+					continue
+				}
+			}
+			if !Equal(ck.lit, v) {
+				return false
+			}
+		case ParamTyped:
+			if !typeMatches(in.argAt(a, ck.arg), ck.typ) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// bindParams writes a matched call's arguments into the frame's parameter
+// slots, left to right — so a name bound twice holds the later argument, as it
+// did when the bindings were a map filled in order.
+func (in *Interp) bindParams(c *Clause, a callArgs, env *Env) {
+	for _, b := range c.binds {
+		env.vals[b.slot] = in.argAt(a, b.arg)
+	}
+}
+
+// smallInts are the ints a script counts with, boxed once: converting an
+// IntVal to a Value allocates for anything Go's own cache (0..255) misses, and
+// arithmetic produces a fresh one per operation. Loop counters, indices and
+// scores mostly land in here.
+const (
+	smallIntMin = -1024
+	smallIntMax = 4096
+)
+
+var smallInts = func() []Value {
+	out := make([]Value, smallIntMax-smallIntMin)
+	for i := range out {
+		out[i] = IntVal(i + smallIntMin)
+	}
+	return out
+}()
+
+// BoxInt is an int as a Value, without an allocation when it is small — for a
+// host converting its own numbers, as attributes are, on every read.
+func BoxInt(n int64) Value { return boxInt(n) }
+
+// boxInt is an int as a Value, from smallInts when it is in range.
+func boxInt(n int64) Value {
+	if n >= smallIntMin && n < smallIntMax {
+		return smallInts[n-smallIntMin]
+	}
+	return IntVal(n)
+}
+
+// typeMatches is TypeMatches against a resolved Type.
+func typeMatches(v Value, t Type) bool {
+	if v == nil {
+		return t == TypeNull
+	}
+	return v.Type() == t
 }
 
 func ctlName(k controlKind) string {
@@ -382,13 +627,24 @@ func (in *Interp) execBlock(stmts []Stmt, env *Env) error {
 func (in *Interp) execStmt(s Stmt, env *Env) error {
 	in.steps++
 	if in.steps > in.limits.MaxSteps {
-		return in.errorf(s.Position(), "step limit of %d reached; this is usually a loop that never ends",
-			in.limits.MaxSteps)
+		return in.stepLimit(s)
 	}
 	if in.debugHook != nil {
 		in.debugHook(s, env)
 	}
+	return in.execStmtBody(s, env)
+}
 
+// stepLimit is the error a statement past the step budget gets.
+func (in *Interp) stepLimit(s Stmt) error {
+	return in.errorf(s.Position(), "step limit of %d reached; this is usually a loop that never ends",
+		in.limits.MaxSteps)
+}
+
+// execStmtBody is what a statement does, without execStmt's step count and
+// debug hook — which a compiled block (compile.go) runs itself, around this or
+// around its own closure.
+func (in *Interp) execStmtBody(s Stmt, env *Env) error {
 	switch st := s.(type) {
 	case *ExprStmt:
 		_, err := in.evalExpr(st.X, env)
@@ -403,13 +659,14 @@ func (in *Interp) execStmt(s Stmt, env *Env) error {
 			}
 			v = got
 		}
-		return &control{kind: ctrlReturn, value: v}
+		in.retVal = v
+		return errReturn
 
 	case *BreakStmt:
-		return &control{kind: ctrlBreak}
+		return errBreak
 
 	case *ContinueStmt:
-		return &control{kind: ctrlContinue}
+		return errContinue
 
 	case *AssignStmt:
 		return in.execAssign(st, env)
@@ -462,18 +719,13 @@ func (in *Interp) execLoopBody(body []Stmt, env *Env) error {
 // loopSignal interprets an error coming out of a loop body. It reports the error
 // to propagate and whether the loop should stop.
 func loopSignal(err error) (error, bool) {
-	ctl, ok := err.(*control)
-	if !ok {
-		return err, true // a real error, or a return: unwind
-	}
-	switch ctl.kind {
-	case ctrlBreak:
+	switch err {
+	case errBreak:
 		return nil, true
-	case ctrlContinue:
+	case errContinue:
 		return nil, false
-	default: // ctrlReturn
-		return ctl, true
 	}
+	return err, true // a real error, or a return: unwind
 }
 
 func (in *Interp) execFor(st *ForStmt, env *Env) error {
@@ -488,7 +740,11 @@ func (in *Interp) execFor(st *ForStmt, env *Env) error {
 	for _, item := range items {
 		// The loop variable shadows rather than assigns, so a name reused from
 		// an outer scope is not clobbered by the loop.
-		env.Declare(st.Name, item)
+		if st.slot > 0 && st.slot <= len(env.vals) {
+			env.vals[st.slot-1] = item
+		} else {
+			env.Declare(st.Name, item)
+		}
 		if err := in.execLoopBody(st.Body, env); err != nil {
 			if stop, done := loopSignal(err); done {
 				return stop
@@ -579,6 +835,24 @@ func compoundOp(k Kind) Kind {
 func (in *Interp) assignTo(target Expr, val Value, env *Env) error {
 	switch t := target.(type) {
 	case *IdentExpr:
+		if t.slot > 0 && t.slot <= len(env.vals) {
+			i := t.slot - 1
+			if env.vals[i] != unset {
+				env.vals[i] = val
+				return nil
+			}
+			// The first assignment this call: Set's rule — an enclosing scope
+			// that already holds the name takes the write — and otherwise the
+			// local is declared here.
+			for s := env.parent; s != nil; s = s.parent {
+				if j := s.index(t.Name); j >= 0 && s.vals[j] != unset {
+					s.vals[j] = val
+					return nil
+				}
+			}
+			env.vals[i] = val
+			return nil
+		}
 		env.Set(t.Name, val)
 		return nil
 
@@ -649,19 +923,36 @@ func (in *Interp) setIndex(container, idx, val Value, pos Pos) error {
 func (in *Interp) evalExpr(e Expr, env *Env) (Value, error) {
 	switch x := e.(type) {
 	case *IntLit:
+		if x.val != nil {
+			return x.val, nil
+		}
 		return IntVal(x.Value), nil
 	case *FloatLit:
+		if x.val != nil {
+			return x.val, nil
+		}
 		return FloatVal(x.Value), nil
 	case *StringLit:
+		if x.val != nil {
+			return x.val, nil
+		}
 		return StrVal(x.Value), nil
 	case *BoolLit:
 		return BoolVal(x.Value), nil
 	case *NullLit:
 		return NullVal{}, nil
 	case *AtomLit:
+		if x.val != nil {
+			return x.val, nil
+		}
 		return AtomVal(x.Name), nil
 
 	case *IdentExpr:
+		if x.slot > 0 && x.slot <= len(env.vals) {
+			if v := env.vals[x.slot-1]; v != unset {
+				return v, nil
+			}
+		}
 		if v, ok := env.Get(x.Name); ok {
 			return v, nil
 		}
@@ -736,6 +1027,9 @@ func (in *Interp) evalExpr(e Expr, env *Env) (Value, error) {
 }
 
 func (in *Interp) evalVec(x *VecLit, env *Env) (Value, error) {
+	if x.cval != nil {
+		return x.cval, nil
+	}
 	var out VecVal
 	for i, comp := range []Expr{x.X, x.Y, x.Z} {
 		v, err := in.evalExpr(comp, env)
@@ -779,10 +1073,18 @@ func vecAxis(name string) int {
 }
 
 func (in *Interp) evalUnary(x *UnaryExpr, env *Env) (Value, error) {
+	if x.cval != nil {
+		return x.cval, nil
+	}
 	v, err := in.evalExpr(x.X, env)
 	if err != nil {
 		return nil, err
 	}
+	return in.unaryOp(x, v)
+}
+
+// unaryOp applies a unary operator to its evaluated operand.
+func (in *Interp) unaryOp(x *UnaryExpr, v Value) (Value, error) {
 	switch x.Op {
 	case KwNot:
 		return BoolVal(!Truthy(v)), nil
@@ -915,21 +1217,21 @@ func (in *Interp) arithmetic(op Kind, l, r Value, pos Pos) (Value, error) {
 		a, b := int64(li), int64(ri)
 		switch op {
 		case Plus:
-			return IntVal(a + b), nil
+			return boxInt(a + b), nil
 		case Minus:
-			return IntVal(a - b), nil
+			return boxInt(a - b), nil
 		case Star:
-			return IntVal(a * b), nil
+			return boxInt(a * b), nil
 		case Slash:
 			if b == 0 {
 				return nil, in.errorf(pos, "division by zero")
 			}
-			return IntVal(a / b), nil
+			return boxInt(a / b), nil
 		case Percent:
 			if b == 0 {
 				return nil, in.errorf(pos, "division by zero")
 			}
-			return IntVal(a % b), nil
+			return boxInt(a % b), nil
 		}
 		return nil, in.errorf(pos, "unknown operator %s", op)
 	}
@@ -1010,6 +1312,12 @@ func (in *Interp) evalIndex(x *IndexExpr, env *Env) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	return in.indexValue(x, container, idx)
+}
+
+// indexValue reads container[idx], for an index expression whose two halves
+// are evaluated.
+func (in *Interp) indexValue(x *IndexExpr, container, idx Value) (Value, error) {
 	switch c := container.(type) {
 	case *ListVal:
 		n, ok := idx.(IntVal)
@@ -1061,12 +1369,81 @@ func (in *Interp) evalIndex(x *IndexExpr, env *Env) (Value, error) {
 	return nil, in.errorf(x.Pos_, "cannot index %s", typeName(container))
 }
 
+// callSite is what a call's name resolved to, remembered on the call so the
+// lookups run once per site rather than once per call.
+//
+// Which interpreter resolved it is part of the memory: the answer depends on
+// the program (its own functions shadow the builtins), and a tree's expression
+// can be evaluated by several. A site asked by a different interpreter than
+// last time resolves again.
+type callSite struct {
+	owner   *Interp
+	kind    uint8
+	clauses []*Clause
+	builtin builtinFn
+}
+
+const (
+	siteNone uint8 = iota
+	siteScript
+	siteBuiltin
+)
+
+// resolveCall fills a call site for this interpreter.
+func (in *Interp) resolveCall(site *callSite, name string) {
+	*site = callSite{owner: in}
+	// A script's own definitions shadow the builtins, so a game can define its
+	// own `distance` without the engine's getting in the way.
+	if clauses := in.funcs[name]; len(clauses) > 0 {
+		site.kind, site.clauses = siteScript, clauses
+		return
+	}
+	if fn, ok := builtins[name]; ok {
+		site.kind, site.builtin = siteBuiltin, fn
+	}
+}
+
 func (in *Interp) evalCall(x *CallExpr, env *Env) (Value, error) {
 	name, ok := x.Fn.(*IdentExpr)
 	if !ok {
 		// There are no first-class functions: everything callable is named.
 		return nil, in.errorf(x.Pos_, "only a named function can be called")
 	}
+	site := &x.site
+	if site.owner != in {
+		in.resolveCall(site, name.Name)
+	}
+
+	if site.kind == siteScript {
+		// The arguments of a call into the script go on the interpreter's
+		// argument stack rather than into a slice of their own: the callee
+		// copies them into its frame as it binds them. Appended one by one and
+		// read back only once all are in, since evaluating one may itself
+		// call, push and pop.
+		base := len(in.argStack)
+		for _, a := range x.Args {
+			v, err := in.evalExpr(a, env)
+			if err != nil {
+				in.dropArgs(base)
+				return nil, err
+			}
+			in.argStack = append(in.argStack, v)
+		}
+		args := in.argStack[base:len(in.argStack):len(in.argStack)]
+		v, matched, err := in.callClauses(name.Name, site.clauses, callArgs{rest: args}, x.Pos_)
+		if err == nil && !matched {
+			err = in.errorf(x.Pos_, "no clause of %q matches %s", name.Name, argTypes(args))
+		}
+		in.dropArgs(base)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	}
+
+	// A builtin or a world verb may keep what it is handed — a list built
+	// from its arguments, a message posted with them — so these get a slice
+	// of their own.
 	args := make([]Value, 0, len(x.Args))
 	for _, a := range x.Args {
 		v, err := in.evalExpr(a, env)
@@ -1075,16 +1452,16 @@ func (in *Interp) evalCall(x *CallExpr, env *Env) (Value, error) {
 		}
 		args = append(args, v)
 	}
-
-	// A script's own definitions shadow the builtins, so a game can define its
-	// own `distance` without the engine's getting in the way.
-	if in.Has(name.Name) {
-		return in.Call(name.Name, args, x.Pos_)
-	}
-	if fn, ok := builtins[name.Name]; ok {
-		return fn(in, args, x.Pos_)
+	if site.kind == siteBuiltin {
+		return site.builtin(in, args, x.Pos_)
 	}
 	return nil, in.errorf(x.Pos_, "no function named %q", name.Name)
+}
+
+// dropArgs pops the argument stack back to base, letting go of the values.
+func (in *Interp) dropArgs(base int) {
+	clear(in.argStack[base:])
+	in.argStack = in.argStack[:base]
 }
 
 // sortStrings is a tiny insertion sort, used where pulling in sort would be the

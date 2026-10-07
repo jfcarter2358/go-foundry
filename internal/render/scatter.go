@@ -41,6 +41,9 @@ package render
 
 import (
 	"math"
+	"runtime"
+	"sync"
+	"sync/atomic"
 
 	"foundry/internal/biome"
 	"foundry/internal/geom"
@@ -146,6 +149,11 @@ type scatterHeightEntry struct {
 	// or been re-tuned re-uses the texture; anything else re-bakes, which is a
 	// few thousand ray casts and is not something to do per frame.
 	key scatterHeightKey
+	// base and terrains are the rest of the scatterGeom the bake was made
+	// from: when only terrain generations moved since, the bake is patched
+	// where the terrains say their surfaces changed (scatterDirtyTexels).
+	base     uint64
+	terrains []scatterTerrainStamp
 }
 
 // scatterHeightKey is everything about a volume that changes where its
@@ -342,6 +350,13 @@ func uploadRG32F(tex uint32, w, h int, data []float32, linear bool) {
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RG32F, int32(w), int32(h), 0, gl.RG, gl.FLOAT, gl.Ptr(data))
 }
 
+// uploadRG32FRect replaces texels [x, x+w) x [y, y+h) of a texture
+// uploadRG32F made.
+func uploadRG32FRect(tex uint32, x, y, w, h int, data []float32) {
+	gl.BindTexture(gl.TEXTURE_2D, tex)
+	gl.TexSubImage2D(gl.TEXTURE_2D, 0, int32(x), int32(y), int32(w), int32(h), gl.RG, gl.FLOAT, gl.Ptr(data))
+}
+
 // scatterHeightTexDims picks a resolution covering [min,max] at roughly
 // scatterHeightTexelSize world units per texel, capped.
 func scatterHeightTexDims(min, max mgl32.Vec2) (w, h int, size mgl32.Vec2) {
@@ -412,8 +427,34 @@ func scatterFootprint(v *world.Volume) (mgl32.Vec2, mgl32.Vec2) {
 // crossing into or out of the column still changes the hash, on the frame it
 // crosses, because that is the edit that changes the ground.
 func scatterGeometryFingerprint(lvl *world.Level, v *world.Volume) uint64 {
-	h := uint64(14695981039346656037)
-	mix := func(x uint64) { h ^= x; h *= 1099511628211 }
+	return scatterGeometry(lvl, v).full
+}
+
+// scatterGeom is scatterGeometryFingerprint with what an incremental re-bake
+// needs beside it: the same hash with the terrains' generations left out,
+// and those terrains as they were.
+type scatterGeom struct {
+	// full is scatterGeometryFingerprint; base is the same walk without the
+	// terrain generations, so two bakes whose base matches differ in nothing
+	// but how the terrains under them have been sculpted.
+	full, base uint64
+	terrains   []scatterTerrainStamp
+}
+
+// scatterTerrainStamp is one terrain a bake could see, as it was.
+type scatterTerrainStamp struct {
+	chunk int
+	t     *world.Terrain
+	gen   uint64
+	// place is the chunk's LocalPlacementMatrix, which carries the
+	// terrain's own dirty box into the volume's frame.
+	place mgl32.Mat4
+}
+
+func scatterGeometry(lvl *world.Level, v *world.Volume) scatterGeom {
+	var g scatterGeom
+	h, base := uint64(14695981039346656037), uint64(14695981039346656037)
+	mix := func(x uint64) { h ^= x; h *= 1099511628211; base ^= x; base *= 1099511628211 }
 	frame := world.FrameID(v.Frame())
 	fpMin, fpMax := scatterFootprint(v)
 	_, _, size := scatterHeightTexDims(fpMin, fpMax) // the bake samples [min, min+size]
@@ -433,13 +474,16 @@ func scatterGeometryFingerprint(lvl *world.Level, v *world.Volume) uint64 {
 		mix(uint64(len(ch.Brushes)))
 		if ch.Terrain != nil {
 			// Sculpting reshapes the ground without moving the bounds.
-			mix(ch.Terrain.Generation)
+			h ^= ch.Terrain.Generation
+			h *= 1099511628211
+			g.terrains = append(g.terrains, scatterTerrainStamp{chunk: ci, t: ch.Terrain, gen: ch.Terrain.Generation, place: ch.LocalPlacementMatrix()})
 		}
 		for _, f := range []float32{lo.X(), lo.Y(), lo.Z(), hi.X(), hi.Y(), hi.Z()} {
 			mix(uint64(math.Float32bits(f)))
 		}
 	}
-	return h
+	g.full, g.base = h, base
+	return g
 }
 
 // ensureScatterHeight returns the cached height/coverage texture for volume v,
@@ -450,16 +494,8 @@ func scatterGeometryFingerprint(lvl *world.Level, v *world.Volume) uint64 {
 // instances thin out and vanish past the authored slope range instead of
 // standing on a cliff face. A column that finds no ground at all bakes a
 // coverage of 0, which is what grows nothing under an overhang.
-func (sr *scatterRenderer) ensureScatterHeight(lvl *world.Level, v *world.Volume, geomFP uint64) scatterHeightEntry {
-	key := scatterHeightKey{
-		pos:      v.Position,
-		half:     v.HalfExtents(),
-		rot:      v.Rotation,
-		shape:    v.Shape,
-		minSlope: world.ResolvedMinSlope(v.Scatter),
-		maxSlp:   world.ResolvedMaxSlope(v.Scatter),
-		geom:     geomFP,
-	}
+func (sr *scatterRenderer) ensureScatterHeight(lvl *world.Level, v *world.Volume, sig *scatterGeom) scatterHeightEntry {
+	key := scatterHeightKeyFor(v, sig)
 	e, ok := sr.heightCache[v.ID]
 	if ok && e.key == key {
 		return e
@@ -470,21 +506,167 @@ func (sr *scatterRenderer) ensureScatterHeight(lvl *world.Level, v *world.Volume
 	min, max := scatterFootprint(v)
 	w, h, size := scatterHeightTexDims(min, max)
 
+	// Mining a block under a grass field moves only the terrain's generation:
+	// re-bake just the texels over where its surface can have changed, and
+	// patch them into the texture, rather than the whole field.
+	if ok && scatterIncrementalBake {
+		if x0, y0, x1, y1, can := scatterDirtyTexels(e, key, sig, w, h, min, size); can {
+			if x1 > x0 && y1 > y0 {
+				data := make([]float32, (x1-x0)*(y1-y0)*2)
+				bakeScatterHeightRect(lvl, v, data, w, h, x0, y0, x1, y1)
+				uploadRG32FRect(e.tex, x0, y0, x1-x0, y1-y0, data)
+			}
+			e.key, e.base, e.terrains = key, sig.base, sig.terrains
+			sr.heightCache[v.ID] = e
+			return e
+		}
+	}
+
+	data := make([]float32, w*h*2)
+	bakeScatterHeight(lvl, v, data, w, h)
+	uploadRG32F(e.tex, w, h, data, true)
+	e.origin, e.size, e.key = min, size, key
+	e.base, e.terrains = sig.base, sig.terrains
+	sr.heightCache[v.ID] = e
+	return e
+}
+
+// scatterHeightKeyFor is the key volume v's bake over geometry sig is made
+// from.
+func scatterHeightKeyFor(v *world.Volume, sig *scatterGeom) scatterHeightKey {
+	return scatterHeightKey{
+		pos:      v.Position,
+		half:     v.HalfExtents(),
+		rot:      v.Rotation,
+		shape:    v.Shape,
+		minSlope: world.ResolvedMinSlope(v.Scatter),
+		maxSlp:   world.ResolvedMaxSlope(v.Scatter),
+		geom:     sig.full,
+	}
+}
+
+// scatterIncrementalBake lets a terrain edit patch a volume's height bake
+// instead of re-baking it whole; tests switch it off to compare.
+var scatterIncrementalBake = true
+
+// scatterParallelBake splits a bake's rows across CPUs; tests switch it off
+// to compare.
+var scatterParallelBake = true
+
+// scatterDirtyTexels is the texel rectangle [x0,x1) x [y0,y1) of entry e's
+// texture that a re-bake for key and geom must redo, when everything that
+// differs between them is terrain sculpting the terrains can box
+// (Terrain.SurfaceChangedSince). can is false when anything else changed —
+// the volume, a brush, a chunk's placement, a terrain that cannot say where
+// it changed — and the whole texture must be re-baked.
+//
+// A texel's bake is one vertical column through the volume's frame, which a
+// chunk's placement (a Y rotation, a uniform scale and a move) keeps
+// vertical in the chunk's own space; the column meets the terrain only
+// through faces it passes through, so a column outside every changed face's
+// box finds exactly what it found before. The rectangle is the box carried
+// into the volume's frame, grown by a texel each way so that rounding can
+// only take in a column too many.
+func scatterDirtyTexels(e scatterHeightEntry, key scatterHeightKey, sig *scatterGeom, w, h int, fpMin, size mgl32.Vec2) (x0, y0, x1, y1 int, can bool) {
+	oldKey := e.key
+	oldKey.geom = key.geom
+	if oldKey != key || e.base != sig.base || len(e.terrains) != len(sig.terrains) {
+		return 0, 0, 0, 0, false
+	}
+	seen := false
+	var lo, hi mgl32.Vec2
+	for i, was := range e.terrains {
+		now := sig.terrains[i]
+		if was.chunk != now.chunk || was.t != now.t || was.place != now.place {
+			return 0, 0, 0, 0, false
+		}
+		if was.gen == now.gen {
+			continue
+		}
+		blo, bhi, changed, ok := now.t.SurfaceChangedSince(was.gen)
+		if !ok {
+			return 0, 0, 0, 0, false
+		}
+		if !changed {
+			continue
+		}
+		for c := 0; c < 8; c++ {
+			p := mgl32.Vec3{blo.X(), blo.Y(), blo.Z()}
+			if c&1 != 0 {
+				p[0] = bhi.X()
+			}
+			if c&2 != 0 {
+				p[1] = bhi.Y()
+			}
+			if c&4 != 0 {
+				p[2] = bhi.Z()
+			}
+			q := now.place.Mul4x1(p.Vec4(1))
+			xz := mgl32.Vec2{q.X(), q.Z()}
+			if !seen {
+				lo, hi = xz, xz
+				seen = true
+				continue
+			}
+			lo = mgl32.Vec2{min(lo.X(), xz.X()), min(lo.Y(), xz.Y())}
+			hi = mgl32.Vec2{max(hi.X(), xz.X()), max(hi.Y(), xz.Y())}
+		}
+	}
+	if !seen {
+		return 0, 0, 0, 0, true
+	}
+	// Texel t samples fpMin + t/(n-1)*size (bakeScatterHeightRect).
+	toTexel := func(v, origin, span float32, n int) float64 {
+		return float64((v - origin) / span * float32(n-1))
+	}
+	x0 = max(int(math.Floor(toTexel(lo.X(), fpMin.X(), size.X(), w)))-1, 0)
+	x1 = min(int(math.Ceil(toTexel(hi.X(), fpMin.X(), size.X(), w)))+2, w)
+	y0 = max(int(math.Floor(toTexel(lo.Y(), fpMin.Y(), size.Y(), h)))-1, 0)
+	y1 = min(int(math.Ceil(toTexel(hi.Y(), fpMin.Y(), size.Y(), h)))+2, h)
+	if x0 >= x1 || y0 >= y1 {
+		return 0, 0, 0, 0, true
+	}
+	return x0, y0, x1, y1, true
+}
+
+// bakeScatterHeight fills data (w*h texels, two floats each) with volume v's
+// height/coverage bake: one column down from the volume's top per texel. See
+// ensureScatterHeight.
+func bakeScatterHeight(lvl *world.Level, v *world.Volume, data []float32, w, h int) {
+	bakeScatterHeightRect(lvl, v, data, w, h, 0, 0, w, h)
+}
+
+// bakeScatterHeightRect bakes texels [x0,x1) x [y0,y1) of volume v's w*h
+// texture into data, row after row of x1-x0 texels.
+//
+// Every texel is its own column, so rows bake in parallel and come out the
+// same bits as baked one after another. The one thing a column writes is a
+// terrain's lazily rebuilt surface (Terrain.Raycast asks for it), so every
+// terrain is brought up to date here, on the calling thread, before any
+// worker casts.
+func bakeScatterHeightRect(lvl *world.Level, v *world.Volume, data []float32, w, h, x0, y0, x1, y1 int) {
+	fpMin, fpMax := scatterFootprint(v)
+	_, _, size := scatterHeightTexDims(fpMin, fpMax)
 	topY, drop := scatterColumn(v)
+	for ci := range lvl.Chunks {
+		if tr := lvl.Chunks[ci].Terrain; tr != nil {
+			tr.Sections()
+		}
+	}
 
 	// The ray is cast in the volume's frame, so a volume riding a ship finds
 	// that ship's own decks — and a world-space one never finds a ship's.
 	// SurfaceUnder only walks chunks placed in the frame it is given.
-	data := make([]float32, w*h*2)
 	ground := biome.NewGroundQuery(lvl, v.Frame())
-	for ty := 0; ty < h; ty++ {
+	rw := x1 - x0
+	row := func(ty int) {
 		tv := float32(ty) / float32(h-1)
-		wz := min.Y() + tv*size.Y()
-		for tx := 0; tx < w; tx++ {
+		wz := fpMin.Y() + tv*size.Y()
+		for tx := x0; tx < x1; tx++ {
 			tu := float32(tx) / float32(w-1)
-			wx := min.X() + tu*size.X()
+			wx := fpMin.X() + tu*size.X()
 			s := ground.SurfaceUnder(wx, topY, wz, drop)
-			i := (ty*w + tx) * 2
+			i := ((ty-y0)*rw + tx - x0) * 2
 			if !s.Found {
 				data[i], data[i+1] = topY, 0
 				continue
@@ -493,10 +675,33 @@ func (sr *scatterRenderer) ensureScatterHeight(lvl *world.Level, v *world.Volume
 			data[i+1] = biome.SlopeCoverage(v.Scatter, s.Normal)
 		}
 	}
-	uploadRG32F(e.tex, w, h, data, true)
-	e.origin, e.size, e.key = min, size, key
-	sr.heightCache[v.ID] = e
-	return e
+	workers := 1
+	if scatterParallelBake {
+		workers = min(runtime.NumCPU(), y1-y0)
+	}
+	if workers <= 1 {
+		for ty := y0; ty < y1; ty++ {
+			row(ty)
+		}
+		return
+	}
+	var next atomic.Int64
+	next.Store(int64(y0))
+	var wg sync.WaitGroup
+	for k := 0; k < workers; k++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				ty := int(next.Add(1)) - 1
+				if ty >= y1 {
+					return
+				}
+				row(ty)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // ---------- lattice and bounds ----------
@@ -660,9 +865,9 @@ func RenderScatterVolumes(level *world.Level, projView mgl32.Mat4, camPos mgl32.
 			started = true
 		}
 		uploadScatterFrame(p, &frameM, level, v, camPos)
-		geomFP := scatterGeometryFingerprint(level, v)
+		sig := scatterGeometry(level, v)
 		for tier := 0; tier < world.ScatterLODTierCount(v.Scatter.Kind); tier++ {
-			renderScatterVolume(level, v, p, tier, false, 0, geomFP)
+			renderScatterVolume(level, v, p, tier, false, 0, &sig)
 		}
 	})
 
@@ -700,9 +905,9 @@ func RenderScatterDirShadow(level *world.Level, lsm mgl32.Mat4, cascade int, cas
 			started = true
 		}
 		uploadScatterFrame(p, &frameM, level, v, camPos)
-		geomFP := scatterGeometryFingerprint(level, v)
+		sig := scatterGeometry(level, v)
 		for tier := 0; tier < castTiersFor(v.Scatter); tier++ {
-			renderScatterVolume(level, v, p, tier, true, cascadeSplit, geomFP)
+			renderScatterVolume(level, v, p, tier, true, cascadeSplit, &sig)
 		}
 	})
 
@@ -737,9 +942,9 @@ func RenderScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.
 			started = true
 		}
 		uploadScatterFrame(p, &frameM, level, v, camPos)
-		geomFP := scatterGeometryFingerprint(level, v)
+		sig := scatterGeometry(level, v)
 		for tier := 0; tier < castTiersFor(v.Scatter); tier++ {
-			renderScatterVolume(level, v, p, tier, true, farPlane, geomFP)
+			renderScatterVolume(level, v, p, tier, true, farPlane, &sig)
 		}
 	})
 
@@ -814,9 +1019,9 @@ func uploadScatterFrame(p *progUniforms, current *mgl32.Mat4, lvl *world.Level, 
 // identical between the color and depth passes, which is the point — the three
 // programs share their placement code and must be fed identically for a blade's
 // shadow to land on the blade.
-func renderScatterVolume(lvl *world.Level, v *world.Volume, p *progUniforms, tier int, shadowPass bool, castCap float32, geomFP uint64) {
+func renderScatterVolume(lvl *world.Level, v *world.Volume, p *progUniforms, tier int, shadowPass bool, castCap float32, sig *scatterGeom) {
 	s := v.Scatter
-	entry := scatters.ensureScatterHeight(lvl, v, geomFP)
+	entry := scatters.ensureScatterHeight(lvl, v, sig)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, entry.tex)
 	gl.Uniform2f(p.U("heightOrigin"), entry.origin.X(), entry.origin.Y())

@@ -350,3 +350,42 @@ func TestChannelInserts(t *testing.T) {
 		t.Fatal("drive changed nothing")
 	}
 }
+
+func TestInsertAndDeleteChannel(t *testing.T) {
+	s := NewSong("x")
+	s.SetChannelCount(2)
+	s.Channels[0].Name, s.Channels[1].Name = "Ch 3", "Bass"
+	p := s.Patterns[0]
+	p.Cells[0][0] = Cell{Note: NoteC4, Instr: 1, Vol: VolNone}
+	p.Cells[0][1] = Cell{Note: NoteC4 + 2, Instr: 1, Vol: VolNone}
+	s.Bindings = []Binding{{Param: "i", Channel: "Bass", Target: BindVolume}}
+
+	if !s.InsertChannel(1) {
+		t.Fatal("insert refused")
+	}
+	if len(s.Channels) != 3 || s.Channels[1].Name == "Ch 3" || s.Channels[1].Name == "" || s.Channels[2].Name != "Bass" {
+		t.Fatalf("channels after insert: %+v", s.Channels)
+	}
+	if p.Cells[0][0].Note != NoteC4 || p.Cells[0][1] != EmptyCell || p.Cells[0][2].Note != NoteC4+2 {
+		t.Fatalf("row 0 after insert: %+v", p.Cells[0])
+	}
+	for r := range p.Cells {
+		if len(p.Cells[r]) != 3 {
+			t.Fatalf("row %d is %d wide", r, len(p.Cells[r]))
+		}
+	}
+
+	if !s.DeleteChannel(2) {
+		t.Fatal("delete refused")
+	}
+	if len(s.Channels) != 2 || len(p.Cells[0]) != 2 || p.Cells[0][0].Note != NoteC4 {
+		t.Fatalf("after delete: %+v / %+v", s.Channels, p.Cells[0])
+	}
+	if len(s.Bindings) != 0 {
+		t.Fatal("a binding on the deleted channel survived")
+	}
+	s.DeleteChannel(0)
+	if s.DeleteChannel(0) {
+		t.Fatal("the last channel was deleted")
+	}
+}

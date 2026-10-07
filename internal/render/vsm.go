@@ -815,7 +815,7 @@ func vsmMarkReceivers() {
 // none: every program with vsm.glsl in it is told one way or the other, and
 // its two samplers always point at textures of their own types.
 func uploadVSMTo(prog uint32, frame ShadowFrame) {
-	loc := func(name string) int32 { return world.ProgUniformLoc(prog, name+"\x00") }
+	loc := func(name string) int32 { return gfx.UniformLocName(prog, name) }
 	if loc("vsmLightSlot") < 0 {
 		return
 	}

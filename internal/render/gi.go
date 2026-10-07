@@ -72,6 +72,10 @@ const (
 	// GIProbeSurfaceUnit holds each probe's nearest surface, where it has one
 	// close by (gi_probe_update_comp.glsl).
 	GIProbeSurfaceUnit = 23
+	// GIProbePackedUnit holds the last two packed into one texel, which is
+	// what the shading reads (light_model.glsl's giProbePacked). Past
+	// nfoliage's units, the highest anything else takes.
+	GIProbePackedUnit = 44
 	// giSdfUnitBase is where the GI compute programs find the field's eight
 	// textures: units 24..31.
 	giSdfUnitBase = 24
@@ -170,8 +174,16 @@ type giRenderer struct {
 	// the probe and the distance to it — where one is within half a
 	// spacing, zero where none is. The shading ignores a probe for any point
 	// on the far side of it: see giSampleCascade.
-	surf  uint32
-	dummy uint32
+	surf uint32
+	// packed is probes and surf in one RGBA32UI texel, half floats two to a
+	// word: one fetch a probe in the shading instead of two.
+	packed uint32
+	dummy  uint32
+	// probeList is the probes the trace takes this frame, listed by the
+	// placement pass a cascade at a time (giProbesPerCascade words each), and
+	// probeDispatch the trace's indirect dispatch for each cascade, its
+	// count of them: see updateProbes.
+	probeList, probeDispatch uint32
 
 	field   *giField
 	sources *giSourceSet
@@ -242,14 +254,15 @@ func (g *giRenderer) build(t giTier) (err error) {
 		}
 	}()
 	shared := []string{"gi_sdf_common.glsl", "light_model.glsl"}
+	perCascade := fmt.Sprintf("#define GI_PROBES_PER_CASCADE %d\n", giProbesPerCascade)
 	if g.sdfProg, err = giComputeProgram(giShaderSource("gi_sdf_comp.glsl", "")); err != nil {
 		return fmt.Errorf("field shader: %w", err)
 	}
-	if g.update, err = giComputeProgram(giShaderSource("gi_probe_update_comp.glsl", "", shared...)); err != nil {
+	if g.update, err = giComputeProgram(giShaderSource("gi_probe_update_comp.glsl", perCascade, shared...)); err != nil {
 		return fmt.Errorf("probe update shader: %w", err)
 	}
 	if g.trace, err = giComputeProgram(giShaderSource("gi_probe_trace_comp.glsl",
-		fmt.Sprintf("#define GI_RAYS %d\n", t.rays), shared...)); err != nil {
+		fmt.Sprintf("#define GI_RAYS %d\n", t.rays)+perCascade, shared...)); err != nil {
 		return fmt.Errorf("probe trace shader: %w", err)
 	}
 	if g.debugProg, err = giComputeProgram(giShaderSource("gi_debug_comp.glsl", "", "gi_sdf_common.glsl")); err != nil {
@@ -261,6 +274,14 @@ func (g *giRenderer) build(t giTier) (err error) {
 	g.vis = newGITexture2D(gl.RG16F, tilesX*giVisTile, tilesY*giVisTile, gl.LINEAR)
 	g.probes = newGITexture2D(gl.RGBA16F, tilesX, tilesY, gl.NEAREST)
 	g.surf = newGITexture2D(gl.RGBA16F, tilesX, tilesY, gl.NEAREST)
+	g.packed = newGITexture2D(gl.RGBA32UI, tilesX, tilesY, gl.NEAREST)
+	gl.GenBuffers(1, &g.probeList)
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, g.probeList)
+	gl.BufferData(gl.SHADER_STORAGE_BUFFER, GIMaxCascades*giProbesPerCascade*4, nil, gl.DYNAMIC_COPY)
+	gl.GenBuffers(1, &g.probeDispatch)
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, g.probeDispatch)
+	gl.BufferData(gl.SHADER_STORAGE_BUFFER, len(giProbeDispatchReset)*4, gl.Ptr(&giProbeDispatchReset[0]), gl.DYNAMIC_COPY)
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
 
 	g.field = newGIField(t.sdfLevels, 0, g.sdfProg) // voxel size set per level in start
 	g.sources = newGISourceSet()
@@ -286,10 +307,16 @@ func (g *giRenderer) release() {
 		g.field.release()
 		g.field = nil
 	}
-	for _, t := range []*uint32{&g.irr, &g.vis, &g.probes, &g.surf} {
+	for _, t := range []*uint32{&g.irr, &g.vis, &g.probes, &g.surf, &g.packed} {
 		if *t != 0 {
 			gl.DeleteTextures(1, t)
 			*t = 0
+		}
+	}
+	for _, b := range []*uint32{&g.probeList, &g.probeDispatch} {
+		if *b != 0 {
+			gl.DeleteBuffers(1, b)
+			*b = 0
 		}
 	}
 	for _, p := range []*progUniforms{&g.update, &g.trace, &g.sdfProg, &g.debugProg} {
@@ -338,9 +365,10 @@ func UpdateGI(lvl *world.Level, o WorldDraw) {
 
 	// The field: what changed, then the bricks that need it.
 	ProfileBegin("gi: field")
-	g.sources.minModel = g.spacing * 0.5
-	g.sources.collect(lvl)
-	if g.warm == 0 && g.sources.churn > max(64, len(g.sources.groups)/2) {
+	// Started on a goroutine at the top of the frame where it could be
+	// (frame_prep.go); giCollect sets the smallest model traced.
+	giCollect(lvl)
+	if g.warm == 0 && g.sources.churn > max(64, g.sources.count/2) {
 		// Most of the level changed at once: as good as a new one, so the
 		// probes start over rather than fading from the old one's light.
 		g.reset = true
@@ -421,29 +449,61 @@ func (g *giRenderer) placeCascades() {
 	}
 }
 
+// giProbesPerCascade is the probes in one cascade, and the room each
+// cascade has in the trace's list.
+const giProbesPerCascade = giDimX * giDimY * giDimZ
+
+// giProbeDispatchReset is the trace's indirect dispatches before the
+// placement pass counts into them: no probes, one by one.
+var giProbeDispatchReset = [GIMaxCascades * 3]uint32{0, 1, 1, 0, 1, 1, 0, 1, 1}
+
 // updateProbes runs the placement and the trace for every cascade, and
 // returns how many probes it traced.
+//
+// The placement pass lists the probes the trace takes (a live probe one frame
+// in its cascade's period, a resting one in period × restMul), and the trace
+// is dispatched indirectly over that list: a workgroup a probe it traces,
+// where it used to be one for every probe of every cascade — 6912 a cascade,
+// most of them only to read the probe's state and stop.
 func (g *giRenderer) updateProbes(lvl *world.Level, hysteresis float32, warm bool) int {
-	// Placement.
+	periods := func(c int) (int, int) {
+		if warm {
+			return 1, 1
+		}
+		return g.t.period[c], g.t.period[c] * g.t.restMul
+	}
+
+	// Placement, and the trace's list.
 	u := &g.update
 	g.uploadProbeUniformsTo(u)
 	g.field.uploadSdfUniformsTo(u, giSdfUnitBase)
 	gl.UseProgram(u.prog)
 	gl.BindImageTexture(0, g.probes, 0, false, 0, gl.READ_WRITE, gl.RGBA16F)
 	gl.BindImageTexture(1, g.surf, 0, false, 0, gl.WRITE_ONLY, gl.RGBA16F)
+	gl.BindImageTexture(2, g.packed, 0, false, 0, gl.WRITE_ONLY, gl.RGBA32UI)
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, g.probeDispatch)
+	gl.BufferSubData(gl.SHADER_STORAGE_BUFFER, 0, len(giProbeDispatchReset)*4, gl.Ptr(&giProbeDispatchReset[0]))
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, g.probeList)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, g.probeDispatch)
 	reset := int32(0)
 	if g.reset {
 		reset = 1
 	}
 	gl.Uniform1i(u.U("resetAll"), reset)
-	total := giDimX * giDimY * giDimZ
+	gl.Uniform1i(u.U("frameIndex"), int32(g.frame))
+	total := giProbesPerCascade
 	for c := 0; c < g.t.cascades; c++ {
+		period, rest := periods(c)
 		gl.Uniform1i(u.U("cascade"), int32(c))
+		gl.Uniform1i(u.U("period"), int32(period))
+		gl.Uniform1i(u.U("restPeriod"), int32(rest))
 		pm := g.prevMin[c]
 		gl.Uniform3i(u.U("prevMin"), pm[0], pm[1], pm[2])
 		gl.DispatchCompute(uint32((total+63)/64), 1, 1)
 	}
-	gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT | gl.TEXTURE_FETCH_BARRIER_BIT)
+	gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT | gl.TEXTURE_FETCH_BARRIER_BIT |
+		gl.SHADER_STORAGE_BARRIER_BIT | gl.COMMAND_BARRIER_BIT)
 	g.reset = false
 
 	// Trace.
@@ -456,23 +516,23 @@ func (g *giRenderer) updateProbes(lvl *world.Level, hysteresis float32, warm boo
 	gl.BindImageTexture(0, g.irr, 0, false, 0, gl.READ_WRITE, gl.R11F_G11F_B10F)
 	gl.BindImageTexture(1, g.vis, 0, false, 0, gl.READ_WRITE, gl.RG16F)
 	gl.BindImageTexture(2, g.probes, 0, false, 0, gl.READ_WRITE, gl.RGBA16F)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, g.probeList)
+	gl.BindBuffer(gl.DISPATCH_INDIRECT_BUFFER, g.probeDispatch)
 	gl.Uniform1i(t.U("frameIndex"), int32(g.frame))
 	gl.Uniform1f(t.U("hysteresis"), hysteresis)
 	rot := giRayRotation(g.frame)
 	gl.UniformMatrix3fv(t.U("rayRotation"), 1, false, &rot[0])
 	traced := 0
 	for c := 0; c < g.t.cascades; c++ {
-		period, rest := g.t.period[c], g.t.period[c]*g.t.restMul
-		if warm {
-			period, rest = 1, 1
-		}
+		period, _ := periods(c)
 		gl.Uniform1i(t.U("cascade"), int32(c))
-		gl.Uniform1i(t.U("period"), int32(period))
-		gl.Uniform1i(t.U("restPeriod"), int32(rest))
 		gl.Uniform1f(t.U("maxDistance"), g.cascadeSpacing(c)*16)
-		gl.DispatchCompute(giDimX*giDimZ, giDimY, 1)
+		gl.DispatchComputeIndirect(c * 12)
 		traced += total / period
 	}
+	gl.BindBuffer(gl.DISPATCH_INDIRECT_BUFFER, 0)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, 0)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, 0)
 	gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT | gl.TEXTURE_FETCH_BARRIER_BIT)
 	return traced
 }
@@ -535,10 +595,14 @@ func (g *giRenderer) bindAtlases(loc func(string) int32) {
 		{GIVisibilityUnit, g.vis, "giVisibilityAtlas"},
 		{GIProbeDataUnit, g.probes, "giProbeData"},
 		{GIProbeSurfaceUnit, g.surf, "giProbeSurface"},
+		{GIProbePackedUnit, g.packed, "giProbePacked"},
 	} {
 		tex := b.tex
 		if tex == 0 {
 			tex = giDummyTexture()
+			if b.unit == GIProbePackedUnit {
+				tex = giDummyUintTexture()
+			}
 		}
 		gl.ActiveTexture(gl.TEXTURE0 + b.unit)
 		gl.BindTexture(gl.TEXTURE_2D, tex)
@@ -563,8 +627,8 @@ func (g *giRenderer) uploadTraceLights(p *progUniforms, ls world.LightSet) {
 				cast = 1
 			}
 		}
-		gl.Uniform1i(p.U(fmt.Sprintf("giDirLightOn[%d]", i)), on)
-		gl.Uniform1i(p.U(fmt.Sprintf("dirLightCastShadows[%d]", i)), cast)
+		gl.Uniform1i(p.U(giTraceLightNames.dirOn[i]), on)
+		gl.Uniform1i(p.U(giTraceLightNames.dirCast[i]), cast)
 	}
 	for i := 0; i < world.MaxPointLights; i++ {
 		on, cast := int32(0), int32(0)
@@ -577,10 +641,27 @@ func (g *giRenderer) uploadTraceLights(p *progUniforms, ls world.LightSet) {
 				cast = 1
 			}
 		}
-		gl.Uniform1i(p.U(fmt.Sprintf("giPointLightOn[%d]", i)), on)
-		gl.Uniform1i(p.U(fmt.Sprintf("pointLightCastShadows[%d]", i)), cast)
+		gl.Uniform1i(p.U(giTraceLightNames.pointOn[i]), on)
+		gl.Uniform1i(p.U(giTraceLightNames.pointCast[i]), cast)
 	}
 }
+
+// giTraceLightNames are uploadTraceLights' element names, built once for the
+// reason giCascadeNames is. Bare (no NUL): progUniforms.U adds it on a miss.
+var giTraceLightNames = func() (n struct {
+	dirOn, dirCast     [world.MaxDirLights]string
+	pointOn, pointCast [world.MaxPointLights]string
+}) {
+	for i := range n.dirOn {
+		n.dirOn[i] = fmt.Sprintf("giDirLightOn[%d]", i)
+		n.dirCast[i] = fmt.Sprintf("giDirLightCasts[%d]", i)
+	}
+	for i := range n.pointOn {
+		n.pointOn[i] = fmt.Sprintf("giPointLightOn[%d]", i)
+		n.pointCast[i] = fmt.Sprintf("giPointLightCasts[%d]", i)
+	}
+	return n
+}()
 
 var giDummy uint32
 
@@ -600,13 +681,30 @@ func giDummyTexture() uint32 {
 	return giDummy
 }
 
+var giDummyUint uint32
+
+// giDummyUintTexture is giDummyTexture for an unsigned-integer sampler
+// (giProbePacked), which a float texture would make incomplete.
+func giDummyUintTexture() uint32 {
+	if giDummyUint == 0 {
+		gl.GenTextures(1, &giDummyUint)
+		gl.BindTexture(gl.TEXTURE_2D, giDummyUint)
+		px := [4]uint32{}
+		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, gl.Ptr(&px[0]))
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+		gl.BindTexture(gl.TEXTURE_2D, 0)
+	}
+	return giDummyUint
+}
+
 // uploadGITo sends GI's state to a world program: on, with the probes, when
 // GI ran this frame; off otherwise. Called from UploadShadowUniformsTo, which
 // every program that lights a surface already calls — the clouds ride the
 // same call for the same reason.
 func uploadGITo(prog uint32) {
 	g := &gi
-	loc := func(n string) int32 { return world.ProgUniformLoc(prog, n+"\x00") }
+	loc := func(n string) int32 { return gfx.UniformLocName(prog, n) }
 	gl.UseProgram(prog)
 	debug := int32(0)
 	if GIDebug == GIDebugLighting {

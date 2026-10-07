@@ -22,7 +22,8 @@
 //                     the full 5x5 so its shadow edges match the structural
 //                     floor it drapes over exactly.
 //
-//   BIOME_LIGHT_POINT_SHADOWS  gates the 20-tap cubemap lookup. Left undefined
+//   BIOME_LIGHT_POINT_SHADOWS  gates the cubemap lookup (point_shadow.glsl, the
+//                     world shader's own). Left undefined
 //                     for the vertex stage: foliage takes point-light diffuse
 //                     but not point-light shadows.
 //
@@ -41,11 +42,12 @@
 // ShadowCascades, ShadowCascadeBlend and shadowFadeFraction in shadow.go,
 // exactly as fragment.glsl's copies do.
 
-#define SHADOW_CASCADES       3
-#define SHADOW_FADE_FRACTION  0.15
+// The lights, the cascades and the point shadows' parameters are the scene
+// block's members, under fragment.glsl's names — it also defines
+// SHADOW_CASCADES, MAX_DIR_LIGHTS and MAX_POINT_LIGHTS.
+#include "scene_block.glsl"
 
-#define MAX_DIR_LIGHTS   4
-#define MAX_POINT_LIGHTS 8
+#define SHADOW_FADE_FRACTION  0.15
 
 #ifndef BIOME_LIGHT_PCF
 #define BIOME_LIGHT_PCF 0
@@ -61,37 +63,12 @@
 // biome passes land in the same cascade as the geometry they sit on.
 uniform mat4 camera;
 
-uniform vec3  globalLightColor;
-uniform float globalLightBrightness;
-
-uniform int   numDirLights;
-uniform vec3  dirLightDir[MAX_DIR_LIGHTS];
-uniform vec3  dirLightColor[MAX_DIR_LIGHTS];
-uniform float dirLightBrightness[MAX_DIR_LIGHTS];
-
 // Comparison sampler, matching fragment.glsl's — see EnsureCascadeArray in
 // shadow.go for why the cascade array is sampled this way.
 uniform sampler2DArrayShadow shadowMapArray;
-uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
-uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
-// One texel of each cascade in world units (render.DirCascade.Texel).
-uniform float cascadeTexel[MAX_DIR_LIGHTS * SHADOW_CASCADES];
-uniform float cascadeSplit[SHADOW_CASCADES];
-uniform int   dirLightShadowLayer[MAX_DIR_LIGHTS];
-uniform bool  dirLightCastShadows[MAX_DIR_LIGHTS];
-uniform float dirLightShadowStrength[MAX_DIR_LIGHTS];
-
-uniform int   numPointLights;
-uniform vec3  pointLightPos[MAX_POINT_LIGHTS];
-uniform vec3  pointLightColor[MAX_POINT_LIGHTS];
-uniform float pointLightBrightness[MAX_POINT_LIGHTS];
-uniform float pointLightRadius[MAX_POINT_LIGHTS];
 
 #ifdef BIOME_LIGHT_POINT_SHADOWS
-uniform samplerCube pointShadowMap[MAX_POINT_LIGHTS];
-uniform bool        pointLightCastShadows[MAX_POINT_LIGHTS];
-uniform float       pointLightShadowStrength[MAX_POINT_LIGHTS];
-uniform float       pointLightFarPlane[MAX_POINT_LIGHTS];
+#include "point_shadow.glsl"
 #endif
 
 // Distance along the view axis, for cascade selection.
@@ -225,38 +202,6 @@ float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, 
     return shadow;
 }
 
-#ifdef BIOME_LIGHT_POINT_SHADOWS
-const int BIOME_POINT_SAMPLES = 20;
-const vec3 biomePointOffsets[20] = vec3[](
-    vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
-    vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
-    vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
-    vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
-    vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
-);
-
-// Point-light cubemap lookup, matching fragment.glsl's calcPointShadow.
-float biomePointShadow(int lightIdx, vec3 worldPos) {
-    vec3 fragToLight = worldPos - pointLightPos[lightIdx];
-    float currentDist = length(fragToLight);
-    float farPlane = pointLightFarPlane[lightIdx];
-
-    float diskRadius = (1.0 + currentDist / farPlane) * 0.02;
-    float bias = 0.05;
-
-    float shadow = 0.0;
-    for (int i = 0; i < BIOME_POINT_SAMPLES; i++) {
-        float closestDist = texture(pointShadowMap[lightIdx],
-            fragToLight + biomePointOffsets[i] * diskRadius).r;
-        closestDist *= farPlane; // stored as dist/farPlane, convert back
-        if (currentDist - bias > closestDist) {
-            shadow += 1.0;
-        }
-    }
-    return shadow / float(BIOME_POINT_SAMPLES);
-}
-#endif
-
 // Full lighting multiplier at worldPos — global ambient, every directional
 // light (shadowed), every point light in range. Mirrors fragment.glsl's main()
 // so a blade, a pebble and the floor under them agree about how lit they are.
@@ -301,7 +246,7 @@ vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShad
 
 #ifdef BIOME_LIGHT_POINT_SHADOWS
             if (receiveShadow && pointLightCastShadows[i]) {
-                float shadow = biomePointShadow(i, worldPos);
+                float shadow = pointShadow(i, worldPos); // point_shadow.glsl
                 contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
             }
 #endif

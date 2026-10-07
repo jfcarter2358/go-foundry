@@ -484,9 +484,86 @@ func TestBuildDecalLandsOnTerrain(t *testing.T) {
 	if n > 64 {
 		t.Fatalf("a 2x2 decal took %d triangles — more than the faces under it", n)
 	}
-	before := decalFingerprint(&d)
+	// Mining well away from it leaves it be; mining under it re-clips it.
+	tr.SetBlock(2, 3, 37, 0)
+	if decalTerrainChanged(lvl, &d) {
+		t.Fatal("mining the far corner of the field marked a decal stale")
+	}
 	tr.SetBlock(20, 3, 20, 0)
-	if decalFingerprint(&d) == before {
+	if !decalTerrainChanged(lvl, &d) {
 		t.Fatal("mining the ground under a decal did not mark it stale")
+	}
+}
+
+// After any run of edits, SyncDecals leaves every decal exactly as a rebuild
+// from scratch would have it — the ones it skipped because no edit reached
+// them as much as the ones it re-clipped — and it does skip most of them.
+func TestSyncDecalsAfterTerrainEditsMatchesARebuild(t *testing.T) {
+	for _, smooth := range []bool{false, true} {
+		lvl := decalField(t)
+		tr := lvl.Chunks[0].Terrain
+		if smooth {
+			tr.Smooth = true
+			tr.Touch()
+			lvl.Chunks[0].Rotation, lvl.Chunks[0].Scale = 0.3, 1.2
+			lvl.Chunks[0].RecomputeBounds()
+			SyncDecals(lvl, 0)
+		}
+		edits := [][4]int{{48, 7, 48, 0}, {10, 7, 80, 0}, {11, 8, 80, 1}, {70, 6, 20, 0}}
+		for k, e := range edits {
+			tr.SetBlock(e[0], e[1], e[2], uint8(e[3]))
+			if k == 1 {
+				continue // two edits between syncs
+			}
+			builds := 0
+			for i := range lvl.Decals {
+				if decalTerrainChanged(lvl, &lvl.Decals[i]) {
+					builds++
+				}
+			}
+			SyncDecals(lvl, 0)
+			if builds == 0 || builds > len(lvl.Decals)/4 {
+				t.Errorf("smooth=%v edit %d: %d of %d decals rebuilt", smooth, k, builds, len(lvl.Decals))
+			}
+			for i := range lvl.Decals {
+				d := &lvl.Decals[i]
+				fresh := *d
+				fresh.Pieces = nil
+				BuildDecal(lvl, &fresh)
+				if len(fresh.Pieces) != len(d.Pieces) {
+					t.Fatalf("smooth=%v edit %d: decal %s has %d pieces, a rebuild %d", smooth, k, d.ID, len(d.Pieces), len(fresh.Pieces))
+				}
+				for p := range d.Pieces {
+					a, b := d.Pieces[p].Geometry, fresh.Pieces[p].Geometry
+					if !reflect.DeepEqual(a.Vertices, b.Vertices) || !reflect.DeepEqual(a.Normals, b.Normals) {
+						t.Fatalf("smooth=%v edit %d: decal %s piece %d differs from a rebuild", smooth, k, d.ID, p)
+					}
+				}
+			}
+		}
+	}
+}
+
+// Aging without an expiry leaves the list alone; an expiry drops exactly the
+// expired decals and keeps the rest in order.
+func TestStepDecalsKeepsOrder(t *testing.T) {
+	lvl := &Level{}
+	for i := 0; i < 6; i++ {
+		d := NewDecal(itoa(i), mgl32.Vec3{}, mgl32.Vec3{0, 1, 0})
+		d.Lifetime = []float32{0, 5, 0.5, 0, 0.5, -1}[i]
+		lvl.Decals = append(lvl.Decals, d)
+	}
+	if StepDecals(lvl, 0.25) || len(lvl.Decals) != 6 {
+		t.Fatalf("nothing expired, yet changed (len %d)", len(lvl.Decals))
+	}
+	if !StepDecals(lvl, 0.25) {
+		t.Fatal("two decals expired and nothing changed")
+	}
+	var ids []string
+	for _, d := range lvl.Decals {
+		ids = append(ids, d.ID)
+	}
+	if want := []string{"0", "1", "3", "5"}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("kept %v, want %v", ids, want)
 	}
 }

@@ -11,10 +11,10 @@ package render
 // lit the floor but not the grass standing on it.
 //
 // The fix is deliberately not a second lighting model. resources/shaders/
-// biome_light.glsl declares uniforms with the SAME NAMES fragment.glsl uses, so
-// UploadLightsTo (light.go), UploadShadowUniformsTo and
-// UploadPointShadowUniformsTo (shadow.go) drive the biome programs unchanged.
-// Adding a light type to the scene shader reaches the biome passes for free.
+// biome_light.glsl reads the same scene block (scene_block.glsl) fragment.glsl
+// does, under the same names, so the one upload of the lights, the shadows and
+// the fog each frame drives the biome programs unchanged. Adding a light type
+// to the scene shader reaches the biome passes for free.
 //
 // What is tuned per call site is the COST, via the three defines below — see the
 // header of biome_light.glsl for what each one buys.
@@ -244,16 +244,17 @@ func mustBiomeProgram(vertPath, fragPath, vertSnippet, fragSnippet string) uint3
 
 // ---------- per-frame uniform upload ----------
 
-// uploadBiomeLighting sends the whole scene lighting + shadow state to a biome
-// program and leaves it bound. frame carries the directional cascade setup from
-// RenderShadowPass.
+// uploadBiomeLighting readies a biome program to shade with the scene's
+// lighting and shadow state, and leaves it bound. frame carries the
+// directional cascade setup from RenderShadowPass.
 //
-// The three Upload*To calls are the same ones the world pass makes; nothing
-// here is biome-specific except the view matrix (for cascade selection, which
-// fragment.glsl gets as a varying from vertex.glsl) and the Receive toggle.
+// The lights, the fog and the shadow parameters themselves are the scene
+// block's (gfx/scene_block.go), which DrawWorld has filled for the frame
+// before any pass that calls this runs; what is left per program is its
+// samplers (the two shadow uploads bind them) and the view matrix (for cascade
+// selection, which fragment.glsl gets as a varying from vertex.glsl) and the
+// Receive toggle.
 func uploadBiomeLighting(prog uint32, level *world.Level, frame ShadowFrame) {
-	world.UploadLightsTo(prog, world.SceneLights(level), false)
-	world.UploadFogTo(prog, level.Fog, level.Volumes, level)
 	UploadShadowUniformsTo(prog, level.Lights, frame)
 	UploadPointShadowUniformsTo(prog, world.SceneLights(level))
 

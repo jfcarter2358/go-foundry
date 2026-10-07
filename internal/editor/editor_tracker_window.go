@@ -158,6 +158,8 @@ func CloseTrackerEditorWindow() {
 func onTrackerEditorClose() {
 	trkStopPlayer()
 	trackerEditorWindow = nil
+	// The keyboard window closes itself on its next frame (it plays nothing
+	// without the tracker), so nothing else to do for it here.
 }
 
 // trackerEditorFocused reports whether this window owns keyboard input.
@@ -669,6 +671,11 @@ func trkTransportRow() {
 	}
 	editorMenuTooltip("Rows the cursor moves after each entry (Ctrl+0..9).")
 	imgui.SameLine()
+	if editorActiveToggleButtonColor("Keys##trkkb", TrackerKeyboardOpen(), trkColActiveButton) {
+		ToggleTrackerKeyboardWindow()
+	}
+	editorMenuTooltip("Pop out a keyboard that shows the notes your keys play, lit while held.")
+	imgui.SameLine()
 	editorToolbarGroupSep()
 	imgui.SameLine()
 	imgui.Checkbox("Follow##trkfollow", &trkFollow)
@@ -822,6 +829,8 @@ func trackerMenus() {
 		}
 		imgui.Separator()
 		trkSelectionToolsMenu()
+		imgui.Separator()
+		trkChannelMenuItems(trkEd.Cur.Ch)
 		imgui.EndMenu()
 	}
 
@@ -829,6 +838,9 @@ func trackerMenus() {
 		editorMenuToggle("Follow Playback", "", &trkFollow)
 		editorMenuToggle("Effects as Hex", "", &trkHexFX)
 		editorMenuToggle("Pattern Overview", "", &trkShowMap)
+		if imgui.MenuItemV("Keyboard Display", "", TrackerKeyboardOpen(), true) {
+			ToggleTrackerKeyboardWindow()
+		}
 		imgui.Separator()
 		if imgui.MenuItemV("Piano Roll for This Channel", "", trkRollCh == trkEd.Cur.Ch, true) {
 			if trkRollCh == trkEd.Cur.Ch {

@@ -18,6 +18,11 @@ package world
 // explosion goes here, not where its four hundred sparks currently are.
 
 import (
+	"fmt"
+	"runtime"
+	"sync"
+	"sync/atomic"
+
 	"foundry/internal/particle"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -348,18 +353,18 @@ func EmitterUpdate(lvl *Level, dt float32, motion bool) (lightsChanged bool) {
 		return false
 	}
 	_ = motion
+	if !stepEmittersParallel(lvl, dt) {
+		for i := range lvl.Emitters {
+			stepEmitter(lvl, &lvl.Emitters[i], dt)
+		}
+	}
+	// Whether a one-shot has run its course is its own systems' business, so
+	// it is asked after every emitter has stepped rather than as each does.
 	reap := false
 	for i := range lvl.Emitters {
-		e := &lvl.Emitters[i]
-		if !e.Enabled || !e.Loaded() {
-			continue
-		}
-		origin := e.OriginMatrix(lvl)
-		for _, s := range e.Systems {
-			s.Step(dt, origin)
-		}
-		if e.OneShot && e.finished() {
+		if e := &lvl.Emitters[i]; e.Enabled && e.Loaded() && e.OneShot && e.finished() {
 			reap = true
+			break
 		}
 	}
 	if reap {
@@ -371,6 +376,95 @@ func EmitterUpdate(lvl *Level, dt float32, motion bool) (lightsChanged bool) {
 	changed := lit || emitterFlashesWereLit
 	emitterFlashesWereLit = lit
 	return changed
+}
+
+// stepEmitter advances one emitter's systems by dt.
+func stepEmitter(lvl *Level, e *Emitter, dt float32) {
+	if !e.Enabled || !e.Loaded() {
+		return
+	}
+	origin := e.OriginMatrix(lvl)
+	for _, s := range e.Systems {
+		s.Step(dt, origin)
+	}
+}
+
+// ---------- stepping on every core ----------
+//
+// Every particle system carries its own seeded generator and touches nothing
+// but its own pool, so the emitters of a level are independent of one another
+// and can step at once: the result is the serial loop's to the bit. The two
+// things they share are read-only while they step — the level (an attached
+// emitter reads where its carrier is) and the collision seam, particle.Collide,
+// which reads the level's geometry through caches that collision fills ahead
+// of time when told a parallel step is coming (EmitterParallelBegin).
+
+// ParallelEmitters switches the parallel step on; a test turns it off to
+// compare against the serial loop.
+var ParallelEmitters = true
+
+// EmitterParallelBegin and EmitterParallelEnd bracket a parallel step. The
+// collision package installs them (it sits above this one) so that the
+// particle collision seam's lazily built caches are filled and frozen before
+// several goroutines query them; nil, nothing needs bracketing.
+var EmitterParallelBegin func(lvl *Level)
+var EmitterParallelEnd func()
+
+// parallelEmitterMin is how many live particles a frame needs before stepping
+// emitters on several goroutines pays for starting them.
+const parallelEmitterMin = 512
+
+// stepEmittersParallel steps every emitter on a pool of workers, each taking
+// the next unstepped emitter (one emitter's cost ranges from nothing to
+// thousands of colliding particles, so a fixed split would leave workers
+// idle). It reports false, having done nothing, when the frame is too small to
+// be worth it.
+func stepEmittersParallel(lvl *Level, dt float32) bool {
+	if !ParallelEmitters || len(lvl.Emitters) < 2 || runtime.GOMAXPROCS(0) < 2 {
+		return false
+	}
+	live := 0
+	for i := range lvl.Emitters {
+		if e := &lvl.Emitters[i]; e.Enabled && e.Loaded() {
+			live += e.LiveCount()
+		}
+	}
+	if live < parallelEmitterMin {
+		return false
+	}
+	if EmitterParallelBegin != nil {
+		EmitterParallelBegin(lvl)
+	}
+	if EmitterParallelEnd != nil {
+		defer EmitterParallelEnd()
+	}
+	workers := min(runtime.GOMAXPROCS(0), len(lvl.Emitters))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	var failure atomic.Value
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					failure.CompareAndSwap(nil, fmt.Sprint(r))
+				}
+			}()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(lvl.Emitters) {
+					return
+				}
+				stepEmitter(lvl, &lvl.Emitters[i], dt)
+			}
+		}()
+	}
+	wg.Wait()
+	if r := failure.Load(); r != nil {
+		panic(fmt.Sprintf("world: parallel emitter step: %v", r))
+	}
+	return true
 }
 
 // emitterFlashesWereLit remembers whether last frame's upload carried an

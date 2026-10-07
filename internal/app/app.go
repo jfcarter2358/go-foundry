@@ -102,6 +102,7 @@ func Run() {
 	// reads its manifest here — before the log is opened, because the manifest
 	// is what says where the log belongs — and holds any failure until
 	// startupVerify below has somewhere to report it. See startup_release.go.
+	tuneGC()
 	startupConfigure()
 	// FOUNDRY_BENCH — after the manifest, whose window size it may override,
 	// and before the log, which a benchmark run keeps apart from the game's.
@@ -395,6 +396,10 @@ func Run() {
 	// bench.go.
 	benchStart(&level)
 
+	// The startup level is in; collect what building it left and size the
+	// memory limit from what it keeps (gc_tuning.go).
+	retuneGCAfterLoad()
+
 	// Drain any events that accumulated during startup (level load, window creation,
 	// etc.) so the first game-loop poll doesn't see a huge mouse-motion delta.
 	sdl.PumpEvents()
@@ -402,7 +407,7 @@ func Run() {
 	}
 	// The drain took the controllers' "added" events with it.
 	startPads()
-	platform.LastFrameTick = sdl.GetTicks()
+	platform.LastFrameCounter = sdl.GetPerformanceCounter()
 
 	for platform.Running {
 		// The frame's profile sections (render/profile.go). Off unless the F3
@@ -412,10 +417,21 @@ func Run() {
 		render.ProfileBegin("frame")
 		render.ProfileBegin("update")
 
-		// Compute delta time (seconds), clamped to avoid spiral-of-death
+		// Compute delta time (seconds), clamped to avoid spiral-of-death.
+		//
+		// From the performance counter rather than sdl.GetTicks: whole
+		// milliseconds made a 60 Hz frame alternate between 16 and 17 ms (a 6%
+		// swing in everything integrated against dt) and a 144 Hz one between
+		// 6 and 7 ms.
+		//
+		// dt only: the free-running clocks below (animated textures, the wind
+		// and water) read `now`, milliseconds since SDL started, which stays
+		// small enough for the float32 a shader gets. The counter's raw ticks
+		// are billions a second and would make those clocks jump.
+		counter := sdl.GetPerformanceCounter()
+		platform.DeltaTime = float32(float64(counter-platform.LastFrameCounter) / float64(sdl.GetPerformanceFrequency()))
+		platform.LastFrameCounter = counter
 		now := sdl.GetTicks()
-		platform.DeltaTime = float32(now-platform.LastFrameTick) / 1000.0
-		platform.LastFrameTick = now
 		if platform.DeltaTime < 0.001 {
 			platform.DeltaTime = 0.001
 		}
@@ -617,8 +633,12 @@ func Run() {
 
 		// --- Debug stats: update CPU & memory ---
 		render.ProfileBegin("debug stats")
-		render.DebugUpdateCPU()
-		render.DebugUpdateMemory()
+		// Only while someone can see them: both are throttled anyway, but a
+		// read nobody looks at is still a file read and a parse.
+		if render.DebugOverlayVisible {
+			render.DebugUpdateCPU()
+			render.DebugUpdateMemory()
+		}
 		render.DebugStats.FPS = 1.0 / platform.DeltaTime
 		render.DebugStats.FrameTimeMs = platform.DeltaTime * 1000.0
 		// Counted per frame rather than cached at load: a chunk switched off by

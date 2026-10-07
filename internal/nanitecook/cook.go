@@ -85,7 +85,19 @@ type Options struct {
 	// Collision is the collision cook's settings; zero fields take
 	// meshcollide's defaults. ProjectOptions fills them from game.yaml.
 	Collision meshcollide.Settings
+
+	// serial cooks on the calling goroutine alone: the slots one at a
+	// time, each DAG unfanned (cluster.DAGOptions.Serial). Set by a caller
+	// already cooking several files side by side (cookAll). It changes how
+	// long a cook takes, never what it makes, so it is not in the hash.
+	serial bool
 }
+
+// parallelCook cooks side by side what can be: a mesh's slots (cookSource)
+// and the files of one `foundry nanite cook` (cookAll). Off, everything is
+// one at a time, in order, as it always was; a test switches it off to show
+// both cook the same bytes.
+var parallelCook = true
 
 // ProjectOptions is the options a cook in the current project uses: the
 // defaults, with game.yaml's nanite block over them. A manifest that cannot
@@ -370,20 +382,39 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 	}
 	locked := func(v uint32) bool { return sharedPos[key(v)] }
 
+	// Each slot's DAG. The slots simplify alone (that is what the locks
+	// above are for) and read only the pool, so they are built side by side
+	// (cluster.BuildJobs) and laid out below in slot order, which is all the
+	// file sees of them — the same bytes as one slot at a time.
+	idxs := make([][]uint32, len(src.slots))
+	for _, t := range order {
+		si := int(src.triSlot[t])
+		if si < 0 || si >= len(idxs) {
+			continue // in no slot: never cooked, as when each slot gathered its own
+		}
+		idxs[si] = append(idxs[si], pool.Indices[3*t:3*t+3]...)
+	}
+	sizes := make([]int, len(src.slots))
+	for si := range idxs {
+		sizes[si] = len(idxs[si]) / 3
+	}
+	dags := make([]cluster.DAG, len(src.slots))
+	cluster.BuildJobs(sizes, parallelCook && !opt.serial, func(si int, inner bool) {
+		if len(idxs[si]) == 0 {
+			return
+		}
+		dags[si] = cluster.BuildDAG(cluster.Mesh{Positions: attrs, Stride: 8, Indices: idxs[si]}, cluster.DAGOptions{
+			Cluster: opt.Cluster, GroupSize: opt.GroupSize, AttrWeights: weights, Locked: locked, Serial: opt.serial || !inner})
+	})
+
 	m.Indices = make([]uint32, 0, nt*3*2)
 	var ranges [][2]int32
 	for si := range src.slots {
 		slot := src.slots[si]
-		var idx []uint32
-		for _, t := range order {
-			if int(src.triSlot[t]) == si {
-				idx = append(idx, pool.Indices[3*t:3*t+3]...)
-			}
-		}
+		idx := idxs[si]
 		slot.First = int32(len(m.Clusters))
 		if len(idx) > 0 {
-			d := cluster.BuildDAG(cluster.Mesh{Positions: attrs, Stride: 8, Indices: idx}, cluster.DAGOptions{
-				Cluster: opt.Cluster, GroupSize: opt.GroupSize, AttrWeights: weights, Locked: locked})
+			d := &dags[si]
 			base := uint32(len(m.Indices) / 3)
 			m.Indices = append(m.Indices, d.Indices...)
 			for _, c := range d.Clusters {

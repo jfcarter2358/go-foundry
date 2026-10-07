@@ -232,24 +232,12 @@ func blendBonePose(a, b ModelBonePose, t float32) ModelBonePose {
 // matrix that is not there yet. Entries start as the identity so a hand-edited
 // file containing a cycle — which validation forbids but cannot un-write —
 // degrades to an unposed bone instead of collapsing the mesh to a point.
+//
+// restLocal and the walk order do not depend on the pose and are cached per
+// armature (model_pose_cache.go).
 func (m *ModelDoc) PoseMatrices(p ModelPose) []mgl32.Mat4 {
-	n := len(m.Bones)
-	posed := make([]mgl32.Mat4, n)
-	rest := make([]mgl32.Mat4, n)
-	for i := range m.Bones {
-		posed[i] = mgl32.Ident4()
-		rest[i] = BoneRestBasis(m.Bones[i])
-	}
-	for _, bi := range m.boneOrder() {
-		parent := m.Bones[bi].Parent
-		local := rest[bi]
-		base := mgl32.Ident4()
-		if m.ValidBone(parent) {
-			local = rest[parent].Inv().Mul4(rest[bi])
-			base = posed[parent]
-		}
-		posed[bi] = base.Mul4(local).Mul4(p.Bone(bi).matrix())
-	}
+	posed := make([]mgl32.Mat4, len(m.Bones))
+	m.rig().posedInto(posed, p)
 	return posed
 }
 
@@ -258,13 +246,11 @@ func (m *ModelDoc) PoseMatrices(p ModelPose) []mgl32.Mat4 {
 //
 // This is the same quantity boneDelta produces for a rest-skeleton drag, so it
 // feeds SkinVerts (model_skin.go) through the same door — as that file's header
-// promised it would.
+// promised it would. The per-frame caller (world.EntityAnim) uses
+// PoseDeltasInto instead, which writes into a palette it already owns.
 func (m *ModelDoc) PoseDeltas(p ModelPose) []mgl32.Mat4 {
-	posed := m.PoseMatrices(p)
-	out := make([]mgl32.Mat4, len(posed))
-	for i := range posed {
-		out[i] = posed[i].Mul4(BoneRestBasis(m.Bones[i]).Inv())
-	}
+	out := make([]mgl32.Mat4, len(m.Bones))
+	out, _ = m.PoseDeltasInto(out, nil, p)
 	return out
 }
 

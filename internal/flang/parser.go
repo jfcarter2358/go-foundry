@@ -799,7 +799,7 @@ func (p *parser) parsePrimary() Expr {
 		if err != nil {
 			p.errorf(t.Pos, "%q does not fit in an int", t.Text)
 		}
-		return &IntLit{Value: n, Pos_: t.Pos}
+		return &IntLit{Value: n, Pos_: t.Pos, val: IntVal(n)}
 
 	case Float:
 		p.advance()
@@ -807,15 +807,15 @@ func (p *parser) parsePrimary() Expr {
 		if err != nil {
 			p.errorf(t.Pos, "%q is not a valid float", t.Text)
 		}
-		return &FloatLit{Value: f, Pos_: t.Pos}
+		return &FloatLit{Value: f, Pos_: t.Pos, val: FloatVal(f)}
 
 	case String:
 		p.advance()
-		return &StringLit{Value: t.Text, Pos_: t.Pos}
+		return &StringLit{Value: t.Text, Pos_: t.Pos, val: StrVal(t.Text)}
 
 	case Atom:
 		p.advance()
-		return &AtomLit{Name: t.Text, Pos_: t.Pos}
+		return &AtomLit{Name: t.Text, Pos_: t.Pos, val: AtomVal(t.Text)}
 
 	case KwTrue:
 		p.advance()

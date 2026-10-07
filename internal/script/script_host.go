@@ -160,6 +160,12 @@ func (h *levelHost) SetProp(r flang.RefVal, name string, v flang.Value) error {
 	if !ok {
 		return fmt.Errorf("a %s has no property %q%s", r.Kind, name, didYouMean(name, tbl))
 	}
+	return h.setProp(&acc, r, name, v)
+}
+
+// setProp is the write half of SetProp once the property has been found — the
+// part a cached handle shares with it, side effects and all.
+func (h *levelHost) setProp(acc *propAccess, r flang.RefVal, name string, v flang.Value) error {
 	if acc.Set == nil {
 		return fmt.Errorf("%s.%s is read-only", r.Kind, name)
 	}
@@ -186,6 +192,45 @@ func (h *levelHost) SetProp(r flang.RefVal, name string, v flang.Value) error {
 		}
 	}
 	return nil
+}
+
+// PropHandle implements flang.PropResolver: the property table entry for one
+// kind and name, found once for a member expression rather than on every read
+// and write through it. Nil for a kind or name the tables do not have, which
+// sends the interpreter through Prop and SetProp and their diagnostics.
+//
+// The tables are built at init and never change, so a handle stays valid for
+// as long as the host does.
+func (h *levelHost) PropHandle(kind flang.Kind_, name string) flang.PropHandle {
+	tbl, ok := propTables[kind]
+	if !ok {
+		return nil
+	}
+	acc, ok := tbl[name]
+	if !ok {
+		return nil
+	}
+	return &propHandle{h: h, acc: acc, name: name}
+}
+
+// propHandle is one property of one kind, for one host.
+type propHandle struct {
+	h    *levelHost
+	acc  propAccess
+	name string
+}
+
+// GetProp is Prop, for this property.
+func (p *propHandle) GetProp(r flang.RefVal) (flang.Value, bool) {
+	if p.acc.Get == nil {
+		return nil, false
+	}
+	return p.acc.Get(p.h.cache(), r)
+}
+
+// SetProp is SetProp, for this property.
+func (p *propHandle) SetProp(r flang.RefVal, v flang.Value) error {
+	return p.h.setProp(&p.acc, r, p.name, v)
 }
 
 // didYouMean suggests the closest property name, so a typo names its own fix.

@@ -333,15 +333,25 @@ func newSimplifier(vertices []float32, stride int, indices []uint32, opt Simplif
 		a, b int32 // the local records at its ends, in the triangle's order
 	}
 	edges := map[[2]int32][]edgeUse{}
+	// The edges in the order the triangles first name them. The planes are
+	// summed into each end's quadric in this order, and a float sum depends
+	// on its order: walking the map instead (random order, run to run) made
+	// the same mesh simplify to a last-bit different error, and now and then
+	// a different collapse, on every build.
+	var keys [][2]int32
 	for t, tr := range s.tris {
 		for k := 0; k < 3; k++ {
 			a, b := tr[k], tr[(k+1)%3]
 			pa, pb := s.vpos[a], s.vpos[b]
 			key := [2]int32{min(pa, pb), max(pa, pb)}
+			if _, ok := edges[key]; !ok {
+				keys = append(keys, key)
+			}
 			edges[key] = append(edges[key], edgeUse{int32(t), a, b})
 		}
 	}
-	for key, uses := range edges {
+	for _, key := range keys {
+		uses := edges[key]
 		seam := false
 		if len(uses) == 2 {
 			// The same two records at each end, or not.

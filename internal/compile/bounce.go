@@ -53,6 +53,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/go-gl/mathgl/mgl32"
 
@@ -95,9 +96,19 @@ func (b *baker) bounce(direct []faceSamples, bounces int) []faceSamples {
 		scale:  scale,
 		groups: b.groups(),
 	}
-	smooth := make([][]mgl32.Vec3, len(t.Faces))
-	for fi := range t.Faces {
-		smooth[fi] = t.Faces[fi].VertexNormals()
+	smooth := b.smooth
+
+	// What a flat front or back gather's rays hit — which face, which side of
+	// it, where on its fan — depends on the geometry alone; only the light
+	// they pick up there changes from one bounce to the next. So with more
+	// than one bounce the first pass keeps what each ray found (rayLog) and
+	// the later ones replay it instead of casting the same rays again. A face
+	// whose log would not fit in bounceReplayBudget is simply cast again.
+	var logs [][2]*rayLog
+	var budget atomic.Int64
+	if bounces > 1 && replayBounceRays {
+		logs = make([][2]*rayLog, len(t.Faces))
+		budget.Store(bounceReplayBudget)
 	}
 
 	// emit is what each face hands on: its flat front and back light, per
@@ -118,7 +129,27 @@ func (b *baker) bounce(direct []faceSamples, bounces int) []faceSamples {
 				if !ok {
 					continue
 				}
-				indirect := g.gatherFace(fi, emit, normals, side)
+				var indirect []mgl32.Vec3
+				li := -1 // which of the face's two logs this kind keeps
+				switch {
+				case logs == nil:
+				case k == kindFront:
+					li = 0
+				case k == kindBack:
+					li = 1
+				}
+				switch {
+				case li >= 0 && logs[fi][li] != nil:
+					indirect = g.replayFace(fi, emit, logs[fi][li])
+				case li >= 0 && pass == 1:
+					var log rayLog
+					indirect = g.gatherFace(fi, emit, normals, side, &log)
+					if log.ends != nil && budget.Add(-log.bytes()) >= 0 {
+						logs[fi][li] = &log
+					}
+				default:
+					indirect = g.gatherFace(fi, emit, normals, side, nil)
+				}
 				d := direct[fi].kinds[k]
 				for i := range indirect {
 					indirect[i] = indirect[i].Add(d[i])
@@ -129,6 +160,35 @@ func (b *baker) bounce(direct []faceSamples, bounces int) []faceSamples {
 		emit, out = next, next
 	}
 	return out
+}
+
+// replayBounceRays keeps the first bounce's ray hits for the later ones to
+// replay (see bounce); false casts every pass afresh, which the tests compare
+// against. bounceReplayBudget caps the memory the kept hits may take, in bytes.
+var (
+	replayBounceRays         = true
+	bounceReplayBudget int64 = 1 << 30
+)
+
+// rayLog is what one face's gather found, per point: the rays that landed on
+// something able to send light back, in the order they were cast. Point i's
+// are hits[ends[i-1]:ends[i]].
+type rayLog struct {
+	ends []int32
+	hits []rayHit
+}
+
+func (l *rayLog) bytes() int64 {
+	return int64(len(l.ends))*4 + int64(len(l.hits))*int64(unsafe.Sizeof(rayHit{}))
+}
+
+// rayHit is one ray's landing: face (one's complement when it arrived at the
+// back of a double-sided face) and its fan weights there. The fan's first
+// corner is always the polygon's 0 (fanWeights).
+type rayHit struct {
+	face    int32
+	i1, i2  int32
+	u, v, w float32
 }
 
 // gatherer is everything a gather reads, none of which it writes: faces are
@@ -143,8 +203,10 @@ type gatherer struct {
 }
 
 // gatherFace is the bounced light at every point of face fi facing normals
-// (the plane's when nil) on side, per group, in faceSamples' layout.
-func (g *gatherer) gatherFace(fi int, emit []faceSamples, normals []mgl32.Vec3, side float32) []mgl32.Vec3 {
+// (the plane's when nil) on side, per group, in faceSamples' layout. A non-nil
+// log is filled with what every ray hit, for replayFace; it is left empty when
+// the face gathers nothing at all.
+func (g *gatherer) gatherFace(fi int, emit []faceSamples, normals []mgl32.Vec3, side float32, log *rayLog) []mgl32.Vec3 {
 	f := &g.tree.Faces[fi]
 	np := len(f.Points)
 	out := make([]mgl32.Vec3, g.groups*np)
@@ -156,6 +218,9 @@ func (g *gatherer) gatherFace(fi int, emit []faceSamples, normals []mgl32.Vec3, 
 	}
 	if !any {
 		return out
+	}
+	if log != nil {
+		log.ends = make([]int32, np)
 	}
 	plane := f.Plane.N.Mul(side)
 	acc := make([]mgl32.Vec3, g.groups)
@@ -179,7 +244,17 @@ func (g *gatherer) gatherFace(fi int, emit []faceSamples, normals []mgl32.Vec3, 
 			if d := dir.Dot(plane); d < 0 {
 				dir = dir.Sub(plane.Mul(2 * d))
 			}
-			g.gatherRay(origin, dir, fi, emit, allowed, acc)
+			r, ok := g.traceRay(origin, dir, fi)
+			if !ok {
+				continue
+			}
+			if log != nil {
+				log.hits = append(log.hits, r)
+			}
+			g.addRay(r, emit, allowed, acc)
+		}
+		if log != nil {
+			log.ends[i] = int32(len(log.hits))
 		}
 		inv := g.scale / float32(len(g.fan))
 		for gi := range acc {
@@ -189,43 +264,83 @@ func (g *gatherer) gatherFace(fi int, emit []faceSamples, normals []mgl32.Vec3, 
 	return out
 }
 
-// gatherRay adds into acc, per allowed group, the light the nearest drawn face
-// along the ray sends back down it.
-func (g *gatherer) gatherRay(origin, dir mgl32.Vec3, self int, emit []faceSamples, allowed []bool, acc []mgl32.Vec3) {
+// replayFace is gatherFace for a face whose rays were logged on an earlier
+// pass: the same hits, picking up this pass's emit, added in the same order —
+// so to the bit what casting them again would give.
+func (g *gatherer) replayFace(fi int, emit []faceSamples, log *rayLog) []mgl32.Vec3 {
+	f := &g.tree.Faces[fi]
+	np := len(f.Points)
+	out := make([]mgl32.Vec3, g.groups*np)
+	allowed := make([]bool, g.groups)
+	for gi := range allowed {
+		allowed[gi] = g.groupAllowedIn(gi, f.Chunk)
+	}
+	acc := make([]mgl32.Vec3, g.groups)
+	from := int32(0)
+	for i := 0; i < np; i++ {
+		clear(acc)
+		for _, r := range log.hits[from:log.ends[i]] {
+			g.addRay(r, emit, allowed, acc)
+		}
+		from = log.ends[i]
+		inv := g.scale / float32(len(g.fan))
+		for gi := range acc {
+			out[gi*np+i] = acc[gi].Mul(inv)
+		}
+	}
+	return out
+}
+
+// traceRay is where the ray lands: the nearest drawn face along it and where
+// on that face's fan, or false when it lands on nothing that could send light
+// back down it.
+func (g *gatherer) traceRay(origin, dir mgl32.Vec3, self int) (rayHit, bool) {
 	hit, t, ok := g.bvh.nearest(origin, dir, self)
 	if !ok {
-		return // out to the sky, which the ambient already is
+		return rayHit{}, false // out to the sky, which the ambient already is
 	}
 	h := &g.tree.Faces[hit]
-	k := kindFront
+	code := int32(hit)
 	if h.Plane.N.Dot(dir) > 0 {
 		// Arrived from behind: the far side of a double-sided face, or the
 		// inside of a solid — which blocks the ray and sends nothing back.
 		if !h.DoubleSided {
-			return
+			return rayHit{}, false
 		}
-		k = kindBack
+		code = ^code
+	}
+	_, i1, i2, u, v, w := fanWeights(h.Points, origin.Add(dir.Mul(t)))
+	return rayHit{face: code, i1: int32(i1), i2: int32(i2), u: u, v: v, w: w}, true
+}
+
+// addRay adds into acc, per allowed group, the light a traced ray's landing
+// sends back down it.
+func (g *gatherer) addRay(r rayHit, emit []faceSamples, allowed []bool, acc []mgl32.Vec3) {
+	hit, k := int(r.face), kindFront
+	if r.face < 0 {
+		hit, k = int(^r.face), kindBack
 	}
 	lit := emit[hit].kinds[k]
 	if lit == nil {
 		return
 	}
-	i0, i1, i2, u, v, w := fanWeights(h.Points, origin.Add(dir.Mul(t)))
-	np := len(h.Points)
+	np := len(g.tree.Faces[hit].Points)
 	alb := g.albedo[hit]
+	i1, i2 := int(r.i1), int(r.i2)
 	for gi := range acc {
 		if !allowed[gi] {
 			continue
 		}
 		base := gi * np
-		e := lit[base+i0].Mul(u).Add(lit[base+i1].Mul(v)).Add(lit[base+i2].Mul(w))
+		e := lit[base].Mul(r.u).Add(lit[base+i1].Mul(r.v)).Add(lit[base+i2].Mul(r.w))
 		acc[gi] = acc[gi].Add(mgl32.Vec3{e.X() * alb.X(), e.Y() * alb.Y(), e.Z() * alb.Z()})
 	}
 }
 
 // fanWeights is where p falls on a polygon drawn as the (0,i,i+1) fan the
 // renderer draws it as: the triangle's corners and their weights, so light
-// interpolated this way matches what is on screen at that spot.
+// interpolated this way matches what is on screen at that spot. i0 is always
+// 0, which rayHit relies on.
 func fanWeights(pts []mgl32.Vec3, p mgl32.Vec3) (i0, i1, i2 int, u, v, w float32) {
 	best := float32(-1e30)
 	i0, i1, i2, u = 0, 0, 0, 1
@@ -379,6 +494,48 @@ type faceBVH struct {
 	faces []Face
 	nodes []bvhNode
 	items []int32 // face indices, grouped by leaf
+	// packed is items' faces as the ray tests read them, parallel to items:
+	// a leaf's faces sit side by side and their edges in one array, instead of
+	// a stride across the big Face structs and a heap slice of points apiece.
+	packed []packedFace
+	edges  []packedEdge
+}
+
+// packedFace is what rayHitsFaceWithin reads of a face: its plane, its
+// sidedness and its edges (edges[first : first+count]).
+type packedFace struct {
+	plane        bsp.Plane
+	first, count int32
+	doubleSided  bool
+}
+
+// packedEdge is one edge of a face, from corner a along e to the next corner,
+// with e's length — the very values rayHitsFaceWithin works out per test,
+// worked out once, by the same expressions, so a test of the packed face is
+// the same float arithmetic as a test of the Face and gives the same bits.
+type packedEdge struct {
+	a, e mgl32.Vec3
+	len  float32
+}
+
+// pack fills packed and edges from items, once the tree is built.
+func (bv *faceBVH) pack() {
+	bv.packed = make([]packedFace, len(bv.items))
+	n := 0
+	for _, fi := range bv.items {
+		n += len(bv.faces[fi].Points)
+	}
+	bv.edges = make([]packedEdge, 0, n)
+	for j, fi := range bv.items {
+		f := &bv.faces[fi]
+		pts := f.Points
+		bv.packed[j] = packedFace{plane: f.Plane, first: int32(len(bv.edges)), count: int32(len(pts)), doubleSided: f.DoubleSided}
+		for i := range pts {
+			a, b := pts[i], pts[(i+1)%len(pts)]
+			e := b.Sub(a)
+			bv.edges = append(bv.edges, packedEdge{a: a, e: e, len: e.Len()})
+		}
+	}
 }
 
 // bvhNode is a box and either its two children (count 0: nodes left and
@@ -415,10 +572,12 @@ func buildFaceBVH(t *BSPTree, subdivided bool) *faceBVH {
 		lo, hi := bsp.Bounds(f.Points)
 		es = append(es, entry{fi: int32(fi), lo: lo, hi: hi, c: lo.Add(hi).Mul(0.5)})
 	}
-	var build func(es []entry) int32
-	build = func(es []entry) int32 {
-		ni := int32(len(bv.nodes))
-		bv.nodes = append(bv.nodes, bvhNode{})
+	// A node's two children are made side by side, so the walk, which tests
+	// both boxes together, reads one stretch of memory rather than two. Only
+	// where the nodes sit changes: the tree, and so every walk of it, is the
+	// one a depth-first layout gave.
+	var build func(ni int32, es []entry)
+	build = func(ni int32, es []entry) {
 		lo, hi := es[0].lo, es[0].hi
 		clo, chi := es[0].c, es[0].c
 		for _, e := range es[1:] {
@@ -436,7 +595,7 @@ func buildFaceBVH(t *BSPTree, subdivided bool) *faceBVH {
 			for _, e := range es {
 				bv.items = append(bv.items, e.fi)
 			}
-			return ni
+			return
 		}
 		axis, span := 0, chi[0]-clo[0]
 		for a := 1; a < 3; a++ {
@@ -457,14 +616,17 @@ func buildFaceBVH(t *BSPTree, subdivided bool) *faceBVH {
 			return int(x.fi - y.fi)
 		})
 		mid := len(es) / 2
-		left := build(es[:mid])
-		right := build(es[mid:])
-		bv.nodes[ni].left, bv.nodes[ni].right = left, right
-		return ni
+		left := int32(len(bv.nodes))
+		bv.nodes = append(bv.nodes, bvhNode{}, bvhNode{})
+		bv.nodes[ni].left, bv.nodes[ni].right = left, left+1
+		build(left, es[:mid])
+		build(left+1, es[mid:])
 	}
 	if len(es) > 0 {
-		build(es)
+		bv.nodes = append(bv.nodes, bvhNode{})
+		build(0, es)
 	}
+	bv.pack()
 	return bv
 }
 
@@ -484,22 +646,31 @@ func (bv *faceBVH) nearest(origin, dir mgl32.Vec3, skip int) (int, float32, bool
 		}
 	}
 	best, bestT := -1, float32(math.Inf(1))
-	var stack [64]int32
-	sp := 0
-	stack[sp] = 0
-	sp++
+	// Each node goes on the stack with where the ray enters its box, worked
+	// out as it was pushed. Testing the box again when it comes off, against
+	// the nearer bestT found since, can only fail by that entry now lying past
+	// bestT — the rest of the slab test did not change — so the entry alone
+	// is compared: the walk is the same, at a third fewer box tests.
+	var stack [64]bvhVisit
+	t0, ok := enterBox(origin, inv, bv.nodes[0].lo, bv.nodes[0].hi, bestT)
+	if !ok {
+		return best, bestT, false
+	}
+	stack[0] = bvhVisit{0, t0}
+	sp := 1
 	for sp > 0 {
 		sp--
-		n := &bv.nodes[stack[sp]]
-		if _, ok := enterBox(origin, inv, n.lo, n.hi, bestT); !ok {
+		if stack[sp].enter > bestT {
 			continue
 		}
+		n := &bv.nodes[stack[sp].node]
 		if n.count > 0 {
-			for _, fi := range bv.items[n.left : n.left+n.count] {
+			for j := n.left; j < n.left+n.count; j++ {
+				fi := bv.items[j]
 				if int(fi) == skip {
 					continue
 				}
-				if t, ok := rayHitsFace(&bv.faces[fi], origin, dir); ok && t < bestT {
+				if t, ok := bv.hits(j, origin, dir, 1e-4, rayMinT); ok && t < bestT {
 					best, bestT = int(fi), t
 				}
 			}
@@ -513,20 +684,26 @@ func (bv *faceBVH) nearest(origin, dir mgl32.Vec3, skip int) (int, float32, bool
 		switch {
 		case okl && okr:
 			if tl < tr {
-				stack[sp], stack[sp+1] = n.right, n.left
+				stack[sp], stack[sp+1] = bvhVisit{n.right, tr}, bvhVisit{n.left, tl}
 			} else {
-				stack[sp], stack[sp+1] = n.left, n.right
+				stack[sp], stack[sp+1] = bvhVisit{n.left, tl}, bvhVisit{n.right, tr}
 			}
 			sp += 2
 		case okl:
-			stack[sp] = n.left
+			stack[sp] = bvhVisit{n.left, tl}
 			sp++
 		case okr:
-			stack[sp] = n.right
+			stack[sp] = bvhVisit{n.right, tr}
 			sp++
 		}
 	}
 	return best, bestT, best >= 0
+}
+
+// bvhVisit is a node waiting on nearest's stack, and where the ray enters it.
+type bvhVisit struct {
+	node  int32
+	enter float32
 }
 
 // shadowSlack is how far past a face's edge a shadow ray still counts as
@@ -579,12 +756,12 @@ func (bv *faceBVH) occluded(origin, dir mgl32.Vec3, maxT float32, skip int, buri
 			sp += 2
 			continue
 		}
-		for _, fi := range bv.items[n.left : n.left+n.count] {
-			f := &bv.faces[fi]
-			if int(fi) == skip || (!buried && !f.DoubleSided && f.Plane.N.Dot(dir) >= 0) {
+		for j := n.left; j < n.left+n.count; j++ {
+			pf := &bv.packed[j]
+			if int(bv.items[j]) == skip || (!buried && !pf.doubleSided && pf.plane.N.Dot(dir) >= 0) {
 				continue
 			}
-			if t, ok := rayHitsFaceWithin(f, origin, dir, shadowSlack, -shadowSlack); ok && t < maxT {
+			if t, ok := bv.hits(j, origin, dir, shadowSlack, -shadowSlack); ok && t < maxT {
 				return true
 			}
 		}
@@ -623,6 +800,35 @@ const rayMinT = 1e-3
 // rayHitsFace is where a ray meets a convex face, if it does.
 func rayHitsFace(f *Face, o, d mgl32.Vec3) (float32, bool) {
 	return rayHitsFaceWithin(f, o, d, 1e-4, rayMinT)
+}
+
+// hits is rayHitsFaceWithin for the packed face j (items[j]): the same test in
+// the same arithmetic, read from packed and edges.
+func (bv *faceBVH) hits(j int32, o, d mgl32.Vec3, slack, minT float32) (float32, bool) {
+	pf := &bv.packed[j]
+	den := pf.plane.N.Dot(d)
+	if den > -1e-7 && den < 1e-7 {
+		return 0, false // along the plane
+	}
+	t := -pf.plane.Distance(o) / den
+	if t < minT {
+		return 0, false
+	}
+	p := o.Add(d.Mul(t))
+	pos, neg := false, false
+	for _, ed := range bv.edges[pf.first : pf.first+pf.count] {
+		s := ed.e.Cross(p.Sub(ed.a)).Dot(pf.plane.N)
+		tol := slack * ed.len
+		if s > tol {
+			pos = true
+		} else if s < -tol {
+			neg = true
+		}
+		if pos && neg {
+			return 0, false
+		}
+	}
+	return t, true
 }
 
 // rayHitsFaceWithin is rayHitsFace counting a ray that passes within slack

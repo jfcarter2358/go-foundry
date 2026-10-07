@@ -138,28 +138,42 @@ vec4 giSdfSurface(vec3 p) {
     return vec4(0.5, 0.5, 0.5, 0.0);
 }
 
-// giSdfNormal is the field's gradient at p, from four taps a voxel out on the
-// corners of a tetrahedron — the same first-order estimate as central
+// giSdfNormalFrom is the field's gradient at p, from four taps a voxel out on
+// the corners of a tetrahedron — the same first-order estimate as central
 // differences on the three axes, for four reads of the field instead of six.
-vec3 giSdfNormal(vec3 p, float voxel) {
+//
+// level is where each tap starts looking (see giSdfFrom): the level that
+// answered for p itself, when the caller has it — a trace's hit has — so the
+// four taps, a voxel from a point that level already answered, find their
+// answer in a read or two instead of each climbing out from the finest level.
+vec3 giSdfNormalFrom(vec3 p, float voxel, int level) {
     float h = max(voxel, 1e-3) * 0.5773503; // the corners a voxel from p
     float v;
     const vec2 k = vec2(1.0, -1.0);
-    vec3 g = k.xyy * giSdf(p + k.xyy * h, v)
-           + k.yyx * giSdf(p + k.yyx * h, v)
-           + k.yxy * giSdf(p + k.yxy * h, v)
-           + k.xxx * giSdf(p + k.xxx * h, v);
+    int l0 = level, l1 = level, l2 = level, l3 = level;
+    vec3 g = k.xyy * giSdfFrom(p + k.xyy * h, l0, v)
+           + k.yyx * giSdfFrom(p + k.yyx * h, l1, v)
+           + k.yxy * giSdfFrom(p + k.yxy * h, l2, v)
+           + k.xxx * giSdfFrom(p + k.xxx * h, l3, v);
     float len = length(g);
     return len > 1e-6 ? g / len : vec3(0.0, 1.0, 0.0);
 }
 
-// giSdfTrace sphere-traces from o along unit dir for at most maxT. It returns
-// true on a hit, with t the distance to it.
-bool giSdfTrace(vec3 o, vec3 dir, float maxT, int maxSteps, out float t) {
+// giSdfNormal is giSdfNormalFrom for a lone point: from the finest level out.
+vec3 giSdfNormal(vec3 p, float voxel) {
+    return giSdfNormalFrom(p, voxel, 0);
+}
+
+// giSdfTraceAt sphere-traces from o along unit dir for at most maxT. It
+// returns true on a hit, with t the distance to it, and — for what the caller
+// reads there next — the level that answered at the hit and the voxel size of
+// the finest level holding it: what giSdf would say of the hit point, without
+// asking again.
+bool giSdfTraceAt(vec3 o, vec3 dir, float maxT, int maxSteps, out float t, out int level, out float voxel) {
     t = 0.0;
-    int level = 0;
+    level = 0;
+    voxel = -1.0;
     for (int i = 0; i < maxSteps; i++) {
-        float voxel;
         float d = giSdfFrom(o + dir * t, level, voxel);
         if (voxel < 0.0) {
             return false; // left the field: nothing more it knows of
@@ -173,6 +187,13 @@ bool giSdfTrace(vec3 o, vec3 dir, float maxT, int maxSteps, out float t) {
         }
     }
     return false;
+}
+
+// giSdfTrace is giSdfTraceAt for a caller that wants only the distance.
+bool giSdfTrace(vec3 o, vec3 dir, float maxT, int maxSteps, out float t) {
+    int level;
+    float voxel;
+    return giSdfTraceAt(o, dir, maxT, maxSteps, t, level, voxel);
 }
 
 // giSdfShadow is how much of a light from direction l (unit) reaches p, soft

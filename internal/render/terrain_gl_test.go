@@ -54,6 +54,11 @@ func newTerrainProbe(t *testing.T, tr *world.Terrain) *terrainProbe {
 	ch := world.Chunk{ID: "ground", Terrain: tr}
 	ch.RecomputeBounds()
 	lvl := &world.Level{Chunks: []world.Chunk{ch}, Lights: ls}
+	// The passes read the lights from the scene block, which DrawWorld fills
+	// each frame; a probe drawing them directly fills it itself, or it reads
+	// whatever the test before it left there (nothing, run alone).
+	world.PackLights(&gfx.Scene.Block, world.SceneLights(lvl))
+	gfx.Scene.Flush()
 
 	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45), 1, 0.1, 100)
 	gfx.Cam.Position = mgl32.Vec3{0, 3, 3}

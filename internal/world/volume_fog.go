@@ -26,9 +26,8 @@ package world
 // the range that shader assumes, and gets it there.
 
 import (
-	"fmt"
+	"foundry/internal/gfx"
 
-	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -168,47 +167,47 @@ func (v *Volume) WorldFogBasis(lvl *Level) mgl32.Mat3 {
 	return v.FogBasis().Mul3(v.Attach.Matrix(lvl).Mat3().Inv())
 }
 
-// UploadFogVolumesTo sends the fog volume uniforms to prog, which must already
-// be bound — it is called from UploadFogTo, immediately after that binds.
+// PackFogVolumes writes the fog volumes among vols into the scene block b —
+// the first MaxFogVolumes that draw any fog, in level order, exactly as
+// FogVolumes picks them, without building the list. No GL; PackFog calls it.
 //
 // lvl resolves what each volume rides. nil reads every volume as world-space,
 // which is what a probe handing in loose volumes wants.
 //
-// numFogVolumes is written even when there are none, for the reason UploadFogTo
-// writes mode 0: the program may still be holding the previous level's volumes,
-// and a zero count is what makes the shader's loop cost nothing.
-func UploadFogVolumesTo(prog uint32, vols []Volume, lvl *Level) {
-	if prog == 0 {
-		return
-	}
-	active := FogVolumes(vols)
-	gl.Uniform1i(ProgUniformLoc(prog, "numFogVolumes\x00"), int32(len(active)))
-
-	for i, v := range active {
+// numFogVolumes is written even when there are none, for the reason PackFog
+// writes mode 0: the block may still be holding the previous level's volumes,
+// and a zero count is what makes the shader's loop cost nothing. The slots past
+// the count are zeroed so a block that holds nothing stale compares equal from
+// frame to frame.
+func PackFogVolumes(b *gfx.SceneBlock, vols []Volume, lvl *Level) {
+	n := 0
+	for i := range vols {
+		if n == MaxFogVolumes {
+			break
+		}
+		v := &vols[i]
+		if !v.HasFog() {
+			continue
+		}
 		f := v.Fog
-		// Each Sprintf result is kept in a named variable so the string's
-		// backing array stays alive for the duration of the gl call, the same
-		// way UploadLightsTo does it.
 		basis := v.WorldFogBasis(lvl)
-		basisName := fmt.Sprintf("fogVolBasis[%d]\x00", i)
-		gl.UniformMatrix3fv(ProgUniformLoc(prog, basisName), 1, false, &basis[0])
-
+		for c := 0; c < 3; c++ {
+			b.FogVolBasis[n][c] = [4]float32{basis[3*c], basis[3*c+1], basis[3*c+2], 0}
+		}
 		c := v.WorldPosition(lvl)
-		centerName := fmt.Sprintf("fogVolCenter[%d]\x00", i)
-		gl.Uniform3f(ProgUniformLoc(prog, centerName), c.X(), c.Y(), c.Z())
-
-		shapeName := fmt.Sprintf("fogVolShape[%d]\x00", i)
-		gl.Uniform1i(ProgUniformLoc(prog, shapeName), int32(v.Shape))
-
-		colorName := fmt.Sprintf("fogVolColor[%d]\x00", i)
-		gl.Uniform3f(ProgUniformLoc(prog, colorName),
-			f.Color.X(), f.Color.Y(), f.Color.Z())
-
-		densityName := fmt.Sprintf("fogVolDensity[%d]\x00", i)
-		gl.Uniform1f(ProgUniformLoc(prog, densityName), f.Density)
-
-		maxOpName := fmt.Sprintf("fogVolMaxOpacity[%d]\x00", i)
-		gl.Uniform1f(ProgUniformLoc(prog, maxOpName), f.MaxOpacity)
+		b.FogVolCenter[n] = [4]float32{c[0], c[1], c[2], 0}
+		b.FogVolShape[n] = [4]int32{int32(v.Shape)}
+		b.FogVolColor[n] = [4]float32{f.Color[0], f.Color[1], f.Color[2], 0}
+		b.FogVolDensity[n] = [4]float32{f.Density}
+		b.FogVolMaxOpacity[n] = [4]float32{f.MaxOpacity}
+		n++
+	}
+	b.NumFogVolumes = int32(n)
+	for i := n; i < MaxFogVolumes; i++ {
+		b.FogVolBasis[i] = [3][4]float32{}
+		b.FogVolCenter[i], b.FogVolColor[i] = [4]float32{}, [4]float32{}
+		b.FogVolShape[i] = [4]int32{}
+		b.FogVolDensity[i], b.FogVolMaxOpacity[i] = [4]float32{}, [4]float32{}
 	}
 }
 

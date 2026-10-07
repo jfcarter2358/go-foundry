@@ -40,6 +40,18 @@ package render
 // the far plane instead: volumes then draw unclipped by the scene, which is
 // wrong at the edges but still draws them, rather than drawing nothing.
 //
+// A SCENE-TARGET FRAME (TAA, scene_target.go) has its depth in a texture
+// already, so there is no copy: steps 2 and 4 read scene.depth itself, and the
+// composite draws through a framebuffer of the scene's colour alone, so it
+// never samples the depth attached to what it draws into.
+//
+// THE CHEAP MARCH. Under TAA, below the High tier of the graphics settings'
+// one quality ladder (gfx.GIQuality; see volumeMarchCheap), the march takes
+// half Volumetrics.Steps and turns its per-pixel step offset a little further
+// every frame: each frame samples between the last one's steps, and TAA's
+// history, which averages the frames anyway, puts them back together. High,
+// and any frame without TAA to average it, marches every step as before.
+//
 // PER CONTEXT. Framebuffers and vertex arrays are never shared between GL
 // contexts; programs and textures are. So the render targets live in a
 // VolumeTargets the CALLER owns — MainVolumeTargets for the main window, one
@@ -165,6 +177,9 @@ type volumeRenderer struct {
 	blobs  []particle.Blob
 	flat   []float32
 	clears []cloudClear
+
+	// cheapMarch: the last march was the cheap one (volumeMarchCheap).
+	cheapMarch bool
 }
 
 var volumes volumeRenderer
@@ -258,6 +273,12 @@ type VolumeTargets struct {
 	distFBO, lowDist  uint32
 	lowW, lowH, scale int32
 	lowBroken         bool
+
+	// sceneColourFBO is the scene target's colour alone, for the composite
+	// in a frame that reads scene.depth directly; sceneGen the scene
+	// target's gen it was made for.
+	sceneColourFBO uint32
+	sceneGen       uint64
 }
 
 // MainVolumeTargets are the main window's.
@@ -273,6 +294,9 @@ func (t *VolumeTargets) Delete() {
 	}
 	t.deleteDepth()
 	t.deleteLow()
+	if t.sceneColourFBO != 0 {
+		gl.DeleteFramebuffers(1, &t.sceneColourFBO)
+	}
 	*t = VolumeTargets{}
 }
 
@@ -352,18 +376,19 @@ func depthUpload(internal int32) (format, xtype uint32, attach uint32) {
 	}
 }
 
-// ensure (re)builds the targets for a viewport of w x h drawn into src.
-func (t *VolumeTargets) ensure(w, h, scale int32, src uint32) bool {
+// ensure (re)builds the targets for a viewport of w x h drawn into src. copy
+// is whether the frame needs the depth copy at all (see sceneDepthDirect).
+func (t *VolumeTargets) ensure(w, h, scale int32, src uint32, copy bool) bool {
 	if t.vao == 0 {
 		gl.GenVertexArrays(1, &t.vao)
 	}
-	if !t.srcKnown || t.srcFBO != src {
+	if copy && (!t.srcKnown || t.srcFBO != src) {
 		t.srcFBO, t.srcKnown = src, true
 		t.srcInternal, t.srcHasDepth = sourceDepthFormat(src)
 		t.copyFailed, t.warned, t.copyChecked = false, false, false
 	}
 
-	if t.depthTex == 0 || t.depthW != w || t.depthH != h || t.depthInternal != t.srcInternal {
+	if copy && (t.depthTex == 0 || t.depthW != w || t.depthH != h || t.depthInternal != t.srcInternal) {
 		t.deleteDepth()
 		t.depthW, t.depthH, t.depthInternal = w, h, t.srcInternal
 		t.copyChecked = false
@@ -426,6 +451,55 @@ func colorTarget(internal int32, format uint32, w, h int32) (tex, fbo uint32) {
 		return 0, 0
 	}
 	return tex, fbo
+}
+
+// volumeDepthDirect lets a scene-target frame read scene.depth instead of
+// copying it; off, every frame copies, which a test compares it against.
+var volumeDepthDirect = true
+
+// sceneDepthDirect is whether this pass can read the frame's depth where it
+// already is: the main window's pass, drawing into the whole of the scene
+// target, whose depth is a texture (scene_target.go). The copy is then a
+// blit of a texture into another of the same size for nothing.
+func (t *VolumeTargets) sceneDepthDirect(src uint32, vp [4]int32) bool {
+	return volumeDepthDirect && t == MainVolumeTargets && sceneFrameActive() && scene.fbo != 0 && scene.depth != 0 &&
+		src == scene.fbo && vp == [4]int32{0, 0, scene.w, scene.h}
+}
+
+// sceneColourTarget is a framebuffer of the scene target's colour and
+// nothing else: what the composite draws into when it samples scene.depth,
+// which as an attachment of the framebuffer drawn into would be a feedback
+// loop whether or not anything writes it. 0 if the driver will not make one.
+func (t *VolumeTargets) sceneColourTarget() uint32 {
+	if t.sceneColourFBO != 0 && t.sceneGen == scene.gen {
+		return t.sceneColourFBO
+	}
+	if t.sceneColourFBO == 0 {
+		gl.GenFramebuffers(1, &t.sceneColourFBO)
+	}
+	t.sceneGen = scene.gen
+	gl.BindFramebuffer(gl.FRAMEBUFFER, t.sceneColourFBO)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, scene.colour, 0)
+	gl.DrawBuffer(gl.COLOR_ATTACHMENT0)
+	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {
+		log.Printf("volumetrics: scene colour framebuffer incomplete (0x%x) — copying the depth instead", st)
+		gl.DeleteFramebuffers(1, &t.sceneColourFBO)
+		t.sceneColourFBO = 0
+		return 0
+	}
+	return t.sceneColourFBO
+}
+
+// VolumetricCheapMarch allows the cheap march at all; FOUNDRY_VOLUMETRIC_CHEAP=0
+// keeps every step in every frame, for an A/B.
+var VolumetricCheapMarch = gfx.EnvFlag("FOUNDRY_VOLUMETRIC_CHEAP", true)
+
+// volumeMarchCheap is whether this frame marches half the steps with a
+// jitter that turns each frame (see the file comment): in a TAA frame, below
+// the High tier. gfx.GIQuality is the graphics settings' one quality ladder
+// (graphics.yaml gi_quality), so High keeps every pass at its most.
+func volumeMarchCheap() bool {
+	return VolumetricCheapMarch && taaActive() && gfx.GIQuality != gfx.GIHigh
 }
 
 // copyDepth fills the depth copy from the viewport rect of the source.
@@ -967,6 +1041,11 @@ func DrawVolumeParticlePreview(t *VolumeTargets, systems []*particle.System, pro
 	if len(draws) == 0 {
 		return
 	}
+	// The march's program is the level's, and so is the scene block it reads
+	// the point lights and the fog from: the preview's empty lights and no fog
+	// go into a block of their own, stood in for the scene's for this draw.
+	gfx.PushScene(gfx.BlankScene)
+	defer gfx.PopScene()
 	renderVolumeDraws(t, draws, projView, camPos, previewVolumeLighting, func(prog uint32) {
 		world.UploadLightsTo(prog, world.LightSet{}, false)
 		world.UploadFogTo(prog, nil, nil, nil)
@@ -990,8 +1069,21 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 	state := currentGLState()
 	defer state.restore(src, vp)
 
-	if !t.ensure(w, h, scale, src) {
+	// The frame's depth, and where the composite draws: the scene target's
+	// own where the frame has one, a copy into the bound framebuffer's
+	// otherwise.
+	direct, compositeFBO := false, src
+	if t.sceneDepthDirect(src, vp) {
+		if fbo := t.sceneColourTarget(); fbo != 0 {
+			direct, compositeFBO = true, fbo
+		}
+	}
+	if !t.ensure(w, h, scale, src, !direct) {
 		return
+	}
+	depthTex := t.depthTex
+	if direct {
+		depthTex = scene.depth
 	}
 	gl.BindVertexArray(t.vao)
 	gl.Disable(gl.DEPTH_TEST)
@@ -1000,8 +1092,10 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 
 	invPV := projView.Inv()
 
-	// 1. The depth copy.
-	t.copyDepth(vp[0], vp[1], w, h)
+	// 1. The depth copy, where there is no depth texture to read.
+	if !direct {
+		t.copyDepth(vp[0], vp[1], w, h)
+	}
 
 	// 2. Distances at the march's resolution.
 	gl.BindFramebuffer(gl.FRAMEBUFFER, t.distFBO)
@@ -1010,7 +1104,7 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 	gl.Disable(gl.CULL_FACE)
 	d := &volumes.depth
 	gl.UseProgram(d.prog)
-	bindTex2D(volUnitScene, t.depthTex)
+	bindTex2D(volUnitScene, depthTex)
 	gl.Uniform1i(d.U("volSceneDepth"), volUnitScene)
 	gl.Uniform2i(d.U("volDepthSize"), w, h)
 	gl.Uniform1i(d.U("volScale"), scale)
@@ -1043,7 +1137,15 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 	gl.UniformMatrix4fv(m.U("volInvProjView"), 1, false, &invPV[0])
 	gl.Uniform3f(m.U("volCamPos"), camPos.X(), camPos.Y(), camPos.Z())
 	gl.Uniform2f(m.U("volTargetSize"), float32(t.lowW), float32(t.lowH))
-	gl.Uniform1i(m.U("volSteps"), Volumetrics.Steps)
+	steps, jitterTurn := Volumetrics.Steps, float32(0)
+	volumes.cheapMarch = volumeMarchCheap()
+	if volumes.cheapMarch {
+		// Half the steps, offset a golden-ratio turn further each frame.
+		steps = max(steps/2, 1)
+		jitterTurn = float32(math.Mod(float64(taa.frame)*0.6180339887, 1))
+	}
+	gl.Uniform1i(m.U("volSteps"), steps)
+	gl.Uniform1f(m.U("volJitterTurn"), jitterTurn)
 	gl.Uniform1i(m.U("volLightSteps"), Volumetrics.LightSteps)
 	gl.Uniform1f(m.U("volPixelFootprint"), pixelFootprint(invPV, camPos, t.lowH))
 	uniformVec3(m.U("volSunDir"), light.toSun)
@@ -1068,7 +1170,7 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 				gl.Uniform1i(m.U("volExpOn"), 0)
 			}
 		} else {
-			uploadCloudParams(m, "volCloud", &dr.cloud)
+			uploadCloudParams(m, &volCloudNames, &dr.cloud)
 		}
 		if dr.fullscreen {
 			gl.Disable(gl.CULL_FACE)
@@ -1087,13 +1189,13 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 	gl.Disable(gl.CULL_FACE)
 
 	// 4. Over the frame.
-	gl.BindFramebuffer(gl.FRAMEBUFFER, src)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, compositeFBO)
 	gl.Viewport(vp[0], vp[1], w, h)
 	c := &volumes.composite
 	gl.UseProgram(c.prog)
 	bindTex2D(volUnitScene, t.lowColor)
 	bindTex2D(volUnitShape, t.lowDist)
-	bindTex2D(volUnitDetail, t.depthTex)
+	bindTex2D(volUnitDetail, depthTex)
 	gl.Uniform1i(c.U("volColor"), volUnitScene)
 	gl.Uniform1i(c.U("volDist"), volUnitShape)
 	gl.Uniform1i(c.U("volSceneDepth"), volUnitDetail)
@@ -1205,25 +1307,57 @@ func uploadExplosion(m *progUniforms, x *explosionParams) {
 	uniformVec3(m.U("volExpSmoke"), x.smoke)
 }
 
-// uploadCloudParams writes one CloudParams struct, under prefix ("volCloud",
-// or "shadowClouds[i]").
-func uploadCloudParams(p *progUniforms, prefix string, c *cloudParams) {
-	gl.Uniform1i(p.U(prefix+".shape"), c.shape)
-	gl.UniformMatrix3fv(p.U(prefix+".basis"), 1, false, &c.basis[0])
-	uniformVec3(p.U(prefix+".center"), c.center)
-	gl.Uniform1f(p.U(prefix+".slabBottom"), c.slabBottom)
-	gl.Uniform1f(p.U(prefix+".slabTop"), c.slabTop)
-	gl.Uniform1f(p.U(prefix+".softness"), c.softness)
-	gl.Uniform1f(p.U(prefix+".coverage"), c.coverage)
-	gl.Uniform1f(p.U(prefix+".density"), c.density)
-	gl.Uniform1f(p.U(prefix+".noiseFreq"), c.noiseFreq)
-	gl.Uniform1f(p.U(prefix+".detailFreq"), c.detailFreq)
-	gl.Uniform1f(p.U(prefix+".erosion"), c.erosion)
-	uniformVec3(p.U(prefix+".windOffset"), c.windOffset)
-	uniformVec3(p.U(prefix+".detailOffset"), c.detailOffset)
-	uniformVec3(p.U(prefix+".albedo"), c.albedo)
-	gl.Uniform1f(p.U(prefix+".absorption"), c.absorption)
-	gl.Uniform1f(p.U(prefix+".ambient"), c.ambient)
+// cloudParamNames are one CloudParams struct's member names under a prefix
+// ("volCloud", or "shadowClouds[i]"), joined once: uploadCloudParams runs per
+// cloud draw and per shadow cloud every frame, and used to concatenate all
+// sixteen each time.
+type cloudParamNames struct {
+	shape, basis, center, slabBottom, slabTop, softness, coverage, density string
+	noiseFreq, detailFreq, erosion, windOffset, detailOffset, albedo       string
+	absorption, ambient                                                    string
+}
+
+func newCloudParamNames(prefix string) cloudParamNames {
+	return cloudParamNames{
+		shape: prefix + ".shape", basis: prefix + ".basis", center: prefix + ".center",
+		slabBottom: prefix + ".slabBottom", slabTop: prefix + ".slabTop",
+		softness: prefix + ".softness", coverage: prefix + ".coverage", density: prefix + ".density",
+		noiseFreq: prefix + ".noiseFreq", detailFreq: prefix + ".detailFreq", erosion: prefix + ".erosion",
+		windOffset: prefix + ".windOffset", detailOffset: prefix + ".detailOffset", albedo: prefix + ".albedo",
+		absorption: prefix + ".absorption", ambient: prefix + ".ambient",
+	}
+}
+
+// volCloudNames is the march's own cloud; shadowCloudNames the cloud-shadow
+// bake's array (MaxShadowClouds, cloud_shadow.go).
+var (
+	volCloudNames    = newCloudParamNames("volCloud")
+	shadowCloudNames = func() (n [MaxShadowClouds]cloudParamNames) {
+		for i := range n {
+			n[i] = newCloudParamNames(fmt.Sprintf("shadowClouds[%d]", i))
+		}
+		return n
+	}()
+)
+
+// uploadCloudParams writes one CloudParams struct under the names n.
+func uploadCloudParams(p *progUniforms, n *cloudParamNames, c *cloudParams) {
+	gl.Uniform1i(p.U(n.shape), c.shape)
+	gl.UniformMatrix3fv(p.U(n.basis), 1, false, &c.basis[0])
+	uniformVec3(p.U(n.center), c.center)
+	gl.Uniform1f(p.U(n.slabBottom), c.slabBottom)
+	gl.Uniform1f(p.U(n.slabTop), c.slabTop)
+	gl.Uniform1f(p.U(n.softness), c.softness)
+	gl.Uniform1f(p.U(n.coverage), c.coverage)
+	gl.Uniform1f(p.U(n.density), c.density)
+	gl.Uniform1f(p.U(n.noiseFreq), c.noiseFreq)
+	gl.Uniform1f(p.U(n.detailFreq), c.detailFreq)
+	gl.Uniform1f(p.U(n.erosion), c.erosion)
+	uniformVec3(p.U(n.windOffset), c.windOffset)
+	uniformVec3(p.U(n.detailOffset), c.detailOffset)
+	uniformVec3(p.U(n.albedo), c.albedo)
+	gl.Uniform1f(p.U(n.absorption), c.absorption)
+	gl.Uniform1f(p.U(n.ambient), c.ambient)
 }
 
 func uniformVec3(loc int32, v mgl32.Vec3) { gl.Uniform3f(loc, v.X(), v.Y(), v.Z()) }

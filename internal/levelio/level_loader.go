@@ -412,11 +412,26 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// quietly vanished would take its attributes and its ID with it, and the
 	// first sign of trouble would be a script failing to find something the
 	// level plainly says is there.
+	//
+	// Every entity is resolved from its definition first, so that the models
+	// they all wear — with the props' and the player's — can be parsed on
+	// every core at once before the loop below loads them one by one
+	// (model_prefetch.go). A definition that will not resolve still fails the
+	// load at the same point it did: after the entities before it have
+	// loaded, and only if none of them failed first.
+	world.ForgetUnusedModelMeshes()
+	ents := make([]world.Entity, 0, len(raw.Entities))
+	var resolveErr error
 	for _, re := range raw.Entities {
 		e, err := world.EntityFromRaw(re, world.LoadEntityDef)
 		if err != nil {
-			return err
+			resolveErr = err
+			break
 		}
+		ents = append(ents, e)
+	}
+	prefetchLevelModels(ents, raw.Scenery, raw.Player, raw.Sprites)
+	for _, e := range ents {
 		// IDs address entities from scripts, so a level with two of the same
 		// gets the duplicate renamed rather than made unreachable.
 		e.ID = world.UniqueEntityID(level, e.ID)
@@ -424,6 +439,9 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 			return fmt.Errorf("entity %q load: %w", e.ID, err)
 		}
 		level.Entities = append(level.Entities, e)
+	}
+	if resolveErr != nil {
+		return resolveErr
 	}
 
 	// The geometry those entities carry (world/entity_chunk.go). Materialised

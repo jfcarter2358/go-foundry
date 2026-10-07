@@ -8,10 +8,10 @@
 // bakes with the same one (world.GlobalLight.LightWrap/AmbientAt) — change a
 // term here and change it there, or a baked surface stops matching a live one.
 
-// The level's lighting-model knobs, world.GlobalLight's Wrap and Hemisphere,
-// uploaded with the rest of the lights (world.UploadLightsTo).
-uniform float lightWrap;
-uniform float ambientHemisphere;
+// The level's lighting-model knobs, world.GlobalLight's Wrap and Hemisphere —
+// lightWrap and ambientHemisphere — ride in the scene block with the rest of
+// the lights (world.UploadLightsTo).
+#include "scene_block.glsl"
 
 // Wrapped Lambert: how much of a light a surface at cosine ndl to it takes. At
 // lightWrap 0 it is max(N.L, 0), the hard terminator; above that the light
@@ -66,6 +66,18 @@ uniform sampler2D giProbeData;
 // Each probe's nearest surface where it has one close by (render/gi.go, surf):
 // the normal facing the probe and the distance to it; zero where none is.
 uniform sampler2D giProbeSurface;
+
+// giProbeData and giProbeSurface in one texel (gi_probe_update_comp.glsl
+// writes it): x, y the probe's offset and state as halves, z, w its surface
+// plane. The shading reads a probe's two with one fetch instead of two.
+uniform usampler2D giProbePacked;
+
+// giProbeAt is probe tile's data and surface plane, from giProbePacked.
+void giProbeAt(ivec2 tile, out vec4 data, out vec4 plane) {
+    uvec4 pk = texelFetch(giProbePacked, tile, 0);
+    data = vec4(unpackHalf2x16(pk.x), unpackHalf2x16(pk.y));
+    plane = vec4(unpackHalf2x16(pk.z), unpackHalf2x16(pk.w));
+}
 
 vec2 giOctEncode(vec3 n) {
     n /= abs(n.x) + abs(n.y) + abs(n.z);
@@ -134,7 +146,8 @@ vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
             continue;
         }
         ivec2 tile = giTile(giSlot(wi), c);
-        vec4 pd = texelFetch(giProbeData, tile, 0);
+        vec4 pd, plane;
+        giProbeAt(tile, pd, plane);
         if (mod(pd.w, 2.0) < 0.5) {
             continue; // buried in geometry: it has nothing true to say
         }
@@ -143,7 +156,6 @@ vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
         // floor the point stands on, behind the wall it is lit in front of.
         // Its visibility moments are least to be trusted there (see
         // gi_probe_update_comp.glsl), and the surface is between them.
-        vec4 plane = texelFetch(giProbeSurface, tile, 0);
         if (dot(plane.xyz, plane.xyz) > 0.25 && dot(bp - probe, plane.xyz) < -plane.w) {
             continue;
         }
@@ -206,7 +218,7 @@ vec3 giSampleFar(int c, vec3 p, vec3 n, out float found) {
         ivec3 off = ivec3(i, i >> 1, i >> 2) & ivec3(1);
         ivec3 wi = base + off;
         ivec2 tile = giTile(giSlot(wi), c);
-        if (mod(texelFetch(giProbeData, tile, 0).w, 2.0) < 0.5) {
+        if (mod(unpackHalf2x16(texelFetch(giProbePacked, tile, 0).y).y, 2.0) < 0.5) {
             continue;
         }
         vec3 tri = mix(1.0 - a, a, vec3(off));
@@ -250,6 +262,81 @@ vec3 giIrradiance(vec3 p, vec3 n, out float cover) {
     return total;
 }
 
+#ifdef GI_HALF_RES
+// ---------- The material pass's half-resolution probe light ----------
+//
+// Only the visibility buffer's material pass is built with GI_HALF_RES
+// (render/gi_halfres.go): it has the probes' light worked out at half
+// resolution beforehand (gi_halfres_comp.glsl), from the frame's depth, and
+// reads it back here for the pixel its main (nanite_material_frag.glsl) puts
+// in giHalfResPixel before the shading runs.
+uniform int giHalfResOn;
+uniform sampler2D giHalfResIrr;   // rgb irradiance, a cover
+uniform sampler2D giHalfResGuide; // the sample's normal (oct) and plane
+uniform ivec2 giHalfResOffset;    // the pixel of a 2x2 block each texel sampled
+vec2 giHalfResPixel;              // gl_FragCoord.xy of the pixel being shaded
+
+// giHalfResIrradiance is giIrradiance for a pixel at p facing n, from the four
+// half-resolution samples around it, each weighted by how near it is
+// (bilinear), how alike its facing is, and how near p lies to its surface's
+// plane — so a sample across an edge, on another object or a wall at an
+// angle, gives nothing. False where none of the four is on p's surface (an
+// edge, a thin rail, something smaller than a block): the caller asks the
+// probes itself there.
+bool giHalfResIrradiance(vec3 p, vec3 n, out vec3 irr, out float cover) {
+    ivec2 size = textureSize(giHalfResIrr, 0);
+    vec2 c = (giHalfResPixel - 0.5 - vec2(giHalfResOffset)) * 0.5;
+    ivec2 base = ivec2(floor(c));
+    vec2 f = c - vec2(base);
+    // How far off a sample's plane p may be: a few percent of its distance,
+    // what two pixels of a surface seen edge-on can span.
+    float slack = 0.02 * max(distance(p, giCamPos), 0.05);
+    vec4 sum = vec4(0.0);
+    float wsum = 0.0, best = 0.0;
+    for (int i = 0; i < 4; i++) {
+        ivec2 o = ivec2(i & 1, i >> 1);
+        ivec2 t = clamp(base + o, ivec2(0), size - 1);
+        vec4 g = texelFetch(giHalfResGuide, t, 0);
+        if (g.w < 0.5) {
+            continue;
+        }
+        vec3 gn = giOctDecode(g.xy);
+        float facing = max(dot(n, gn), 0.0);
+        facing *= facing;
+        facing *= facing;
+        float onPlane = max(1.0 - abs(dot(gn, p) - g.z) / slack, 0.0);
+        float match = facing * onPlane;
+        best = max(best, match);
+        // Never quite zero for the farther ones, so a block whose nearest
+        // sample is across an edge still blends the others.
+        vec2 bw = mix(1.0 - f, f, vec2(o));
+        float w = (bw.x * bw.y + 0.05) * match;
+        sum += texelFetch(giHalfResIrr, t, 0) * w;
+        wsum += w;
+    }
+    if (best < 0.4 || wsum <= 0.0) {
+        return false;
+    }
+    irr = sum.rgb / wsum;
+    cover = sum.a / wsum;
+    return true;
+}
+#endif
+
+// giIrradianceShaded is giIrradiance for a pass shading a surface: the
+// material pass's half-resolution answer where it has one.
+vec3 giIrradianceShaded(vec3 p, vec3 n, out float cover) {
+#ifdef GI_HALF_RES
+    if (giHalfResOn != 0) {
+        vec3 irr;
+        if (giHalfResIrradiance(p, n, irr, cover)) {
+            return irr;
+        }
+    }
+#endif
+    return giIrradiance(p, n, cover);
+}
+
 // ambientLight is the light a surface gets from everything but the lights
 // themselves: GI where it is on and reaches, ambientAt where it does not.
 // giDebugAlbedo is a surface's colour as the lighting view (gi_debug lighting,
@@ -266,6 +353,6 @@ vec3 ambientLight(vec3 ambient, vec3 p, vec3 n) {
         return sky;
     }
     float cover;
-    vec3 gi = giIrradiance(p, n, cover) * giIntensity;
+    vec3 gi = giIrradianceShaded(p, n, cover) * giIntensity;
     return gi + sky * mix(1.0, giAmbientFloor, cover);
 }

@@ -80,29 +80,89 @@ type giGroup struct {
 	static bool
 }
 
-// giKey names a group: what kind of thing it is, the chunk or entity it
+// giKey names a group the set keys itself: what kind of thing it is, what it
 // belongs to, and its index there. A struct rather than a formatted string so
-// that looking a group up every frame allocates nothing.
+// that looking a group up every frame allocates nothing. Only the foliage
+// units' groups are kept by key now; the chunks', entities' and placements'
+// are owned by their stamps and slots (giChunkStamp, giEntitySlot).
 type giKey struct {
-	kind  byte // 'b' static brush, 'd' dynamic brush, 't' terrain, 'e' entity model, 'n' Nanite scenery, 'f' a foliage unit's trees
+	kind  byte // 'f' a foliage unit's trees
 	owner string
 	a, b  int
 }
 
-// giChunkStamp is what a chunk's static groups were derived from.
+// giChunkStamp is what a chunk's groups were derived from, and the groups:
+// the static ones (its brushes at rest and its terrain), re-derived only when
+// the stamp changes, and its dynamic brushes', checked every frame.
+//
+// The chunk OWNS its groups rather than naming them in a map shared with
+// everything else, so that a frame in which a chunk has not changed costs one
+// comparison for the whole chunk — not a map lookup (and a hash of its ID)
+// per brush to say each was seen, and another for each in the sweep.
 type giChunkStamp struct {
 	gen, terrainGen uint64
 	model           mgl32.Mat4
-	keys            []giKey
-	seen            uint64
+	// valid is false once forgetStamps has said the chunk may not be the one
+	// these were derived from: its static groups are derived again, and
+	// diffed against these by content.
+	valid  bool
+	static []giOwned
+	dyn    []giOwned
+	seen   uint64
+	// nDynamic is how many of the chunk's nBrushes brushes were dynamic when
+	// the stamp was taken. A brush only turns dynamic (or appears) with the
+	// meshes' generation moving on, so a chunk with none skips the per-frame
+	// walk for them.
+	nDynamic, nBrushes int
+}
+
+// giOwned is one group a chunk, an entity or a placement owns: a brush's
+// (idx its brush), the terrain's, or a model's (idx its model).
+type giOwned struct {
+	idx int
+	g   *giGroup
+}
+
+// giEntitySlot is what entity number ei held at its last collect: its ID,
+// which says it is still the same entity, and its models' groups.
+type giEntitySlot struct {
+	id     string
+	models []giModelSlot
+}
+
+// giModelSlot is one entity model's group, with the hash of its path kept
+// for as long as the path is the one it was taken of.
+type giModelSlot struct {
+	g        *giGroup
+	path     string
+	pathHash uint64
+	seen     uint64
+}
+
+// giScenerySlot is a cooked placement's group, by its place in the level,
+// with the hash of its model and texture names kept while they stand.
+type giScenerySlot struct {
+	id       string
+	g        *giGroup
+	model    string
+	texture  string
+	nameHash uint64
+	seen     uint64
 }
 
 // giSourceSet is the level's sources between frames.
 type giSourceSet struct {
+	// groups holds the groups nothing else owns: the foliage units' trees.
 	groups map[giKey]*giGroup
 	chunks map[string]*giChunkStamp
-	meshes map[string]*giMeshSDF
-	frame  uint64
+	// entities and scenery hold the entities' and the cooked placements'
+	// groups by their place in the level's lists.
+	entities []giEntitySlot
+	scenery  []giScenerySlot
+	meshes   map[string]*giMeshSDF
+	frame    uint64
+	// count is how many groups there are, as of the last collect.
+	count int
 	// dirty is every bound that changed this frame, for the field to rebuild.
 	dirty [][2]mgl32.Vec3
 	// changed is whether flat has to be rebuilt; staticChanged whether its
@@ -117,6 +177,8 @@ type giSourceSet struct {
 	// minModel is the smallest entity model traced, in world units.
 	minModel float32
 	flat     []giSource
+	// finishPending is set between collectWorld and collectFinish.
+	finishPending bool
 }
 
 func newGISourceSet() *giSourceSet {
@@ -129,9 +191,25 @@ func newGISourceSet() *giSourceSet {
 
 // collect brings the set up to date with lvl, filling dirty and changed.
 func (s *giSourceSet) collect(lvl *world.Level) {
+	s.collectWorld(lvl)
+	s.collectFinish(lvl)
+}
+
+// collectWorld is collect's first half: the chunks, the entities and the
+// placements — everything that is the level's own, which is all a frame's
+// passes only read. It may run on a goroutine while the main thread draws the
+// shadows (frame_prep.go); collectFinish, which reads the renderer's foliage,
+// sweeps and flattens, runs on the main thread after it.
+func (s *giSourceSet) collectWorld(lvl *world.Level) {
 	s.frame++
-	s.dirty = s.dirty[:0]
-	s.churn = 0
+	if !s.finishPending {
+		s.dirty = s.dirty[:0]
+		s.churn = 0
+	}
+	// A half collect never finished would have its dirt dropped with the
+	// next one's start; it is carried over instead.
+	s.finishPending = true
+	s.count = 0
 	gen := world.BrushMeshGeneration()
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
@@ -145,157 +223,360 @@ func (s *giSourceSet) collect(lvl *world.Level) {
 		}
 		key := chunkKey(ch, ci)
 		st := s.chunks[key]
-		if st != nil && st.gen == gen && st.terrainGen == tgen && st.model == model {
-			for _, k := range st.keys {
-				if g := s.groups[k]; g != nil {
-					g.seen = s.frame
-				}
-			}
-		} else {
-			st = &giChunkStamp{gen: gen, terrainGen: tgen, model: model}
+		if st == nil {
+			st = &giChunkStamp{}
 			s.chunks[key] = st
-			for bi := range ch.Brushes {
-				b := &ch.Brushes[bi]
-				if b.Dynamic {
-					continue
-				}
-				k := giKey{'b', key, bi, 0}
-				st.keys = append(st.keys, k)
-				s.put(k, true, brushSources(ch, bi, model))
-			}
-			if ch.Terrain != nil {
-				k := giKey{'t', key, 0, 0}
-				st.keys = append(st.keys, k)
-				s.put(k, true, terrainSources(ch.Terrain, model))
-			}
+		}
+		if !st.valid || st.gen != gen || st.terrainGen != tgen || st.model != model {
+			s.deriveChunk(st, ch, model)
+			st.gen, st.terrainGen, st.model, st.valid = gen, tgen, model, true
 		}
 		st.seen = s.frame
 		// Dynamic brushes every frame: a script can move one at any time,
 		// and nothing about the chunk says so.
-		for bi := range ch.Brushes {
-			b := &ch.Brushes[bi]
-			if !b.Dynamic {
-				continue
-			}
-			k := giKey{'d', key, bi, 0}
-			m := model.Mul4(b.Placement())
-			if g := s.groups[k]; g != nil && g.hash == hashMat(m, gen) {
-				g.seen = s.frame
-				continue
-			}
-			srcs := brushSources(ch, bi, model)
-			s.putHashed(k, false, srcs, hashMat(m, gen))
+		if st.nDynamic > 0 || len(st.dyn) > 0 || len(ch.Brushes) != st.nBrushes {
+			s.dynamicBrushes(st, ch, model, gen)
 		}
+		s.count += len(st.static) + len(st.dyn)
 	}
 
-	for ei := range lvl.Entities {
-		e := &lvl.Entities[ei]
-		// The player's own body sits on the camera: traced, it would only
-		// shade the probes round the eye, and it moves every frame.
-		if !e.Visible || e == world.PlayerEntity || e.ID == "player" {
-			continue
-		}
-		frame := lvl.Frames.FrameFor(e)
-		base := e.DrawMatrix()
-		if !frame.IsWorld() {
-			base = frame.World.Mul4(base)
-		}
-		for mi := range e.Models {
-			m := &e.Models[mi]
-			if !giModelTraced(e, m) {
-				continue
-			}
-			k := giKey{'e', e.ID, ei, mi}
-			wm := base.Mul4(e.AttachmentMatrix(m))
-			h := hashMatCoarse(wm) ^ hashString(m.Path)
-			if g := s.groups[k]; g != nil && g.hash == h {
-				g.seen = s.frame
-				continue
-			}
-			s.putHashed(k, false, s.modelSources(m, wm, s.minModel), h)
-		}
-	}
+	s.collectEntities(lvl)
 
 	// Cooked Nanite meshes (internal/nanite), as the distance grid their cook
 	// baked — sized to the mesh rather than a fixed 32 cells — placed by the
 	// placement's matrix. Static props, so re-derived only when one moves or
 	// is re-skinned.
-	for i := range lvl.Scenery {
-		sc := &lvl.Scenery[i]
-		if sc.Nanite == nil || sc.Nanite.SDF == nil {
-			continue
-		}
-		k := giKey{'n', sc.ID, i, 0}
-		wm := sc.ModelMatrix()
-		h := hashMatCoarse(wm) ^ hashString(sc.Model) ^ hashString(sc.SlotTexture(0))
-		if g := s.groups[k]; g != nil && g.hash == h {
-			g.seen = s.frame
-			continue
-		}
-		s.putHashed(k, false, naniteSceneryGISources(sc, wm, s.minModel), h)
-	}
+	s.collectScenery(lvl)
+}
 
+// collectFinish is collect's second half: the foliage's tree crowns, then
+// what went this frame, then the flattened list.
+func (s *giSourceSet) collectFinish(lvl *world.Level) {
+	s.finishPending = false
 	// Tree crowns, from the Nanite foliage's voxels (nfoliage_gi.go).
 	s.foliageCanopySources()
 
 	for k, g := range s.groups {
 		if g.seen != s.frame {
-			s.dirty = append(s.dirty, [2]mgl32.Vec3{g.lo, g.hi})
+			s.drop(g)
 			delete(s.groups, k)
-			s.changed = true
-			s.staticChanged = s.staticChanged || g.static
-			s.churn++
 		}
 	}
+	s.count += len(s.groups)
 	for k, st := range s.chunks {
-		// A chunk that has gone (or been switched off) is re-derived from
-		// scratch if it comes back.
+		// A chunk that has gone (or been switched off) takes its groups with
+		// it, and is derived from scratch if it comes back.
 		if st.seen != s.frame {
+			for _, o := range st.static {
+				s.drop(o.g)
+			}
+			for _, o := range st.dyn {
+				s.drop(o.g)
+			}
 			delete(s.chunks, k)
 		}
 	}
 	if s.changed {
 		if s.staticChanged {
 			s.static = s.static[:0]
-			for _, g := range s.groups {
-				if g.static {
-					s.static = append(s.static, g.srcs...)
+			s.eachChunk(lvl, func(st *giChunkStamp) {
+				for _, o := range st.static {
+					s.static = append(s.static, o.g.srcs...)
 				}
-			}
+			})
 		}
 		s.flat = append(s.flat[:0], s.static...)
 		s.nStatic = len(s.static)
-		for _, g := range s.groups {
-			if !g.static {
+		s.eachChunk(lvl, func(st *giChunkStamp) {
+			for _, o := range st.dyn {
+				s.flat = append(s.flat, o.g.srcs...)
+			}
+		})
+		for ei := range s.entities {
+			for _, m := range s.entities[ei].models {
+				if m.g != nil {
+					s.flat = append(s.flat, m.g.srcs...)
+				}
+			}
+		}
+		for i := range s.scenery {
+			if g := s.scenery[i].g; g != nil {
 				s.flat = append(s.flat, g.srcs...)
 			}
+		}
+		for _, g := range s.groups {
+			s.flat = append(s.flat, g.srcs...)
+		}
+	}
+}
+
+// eachChunk calls fn with the stamp of every chunk of lvl collect saw this
+// frame, in the level's order, so the flattened list comes out the same for
+// the same level.
+func (s *giSourceSet) eachChunk(lvl *world.Level, fn func(st *giChunkStamp)) {
+	for ci := range lvl.Chunks {
+		ch := &lvl.Chunks[ci]
+		if !ch.IsEnabled() {
+			continue
+		}
+		if st := s.chunks[chunkKey(ch, ci)]; st != nil && st.seen == s.frame {
+			fn(st)
+		}
+	}
+}
+
+// deriveChunk re-derives a chunk's static groups — every brush at rest, and
+// the terrain — and diffs them by content against what the stamp held: a
+// group whose hash comes out the same is no change, one that differs or is
+// new dirties its bounds, and one that is gone dirties where it was.
+func (s *giSourceSet) deriveChunk(st *giChunkStamp, ch *world.Chunk, model mgl32.Mat4) {
+	old := st.static
+	st.static = nil
+	o := 0
+	// take is the old group of the same brush (or the terrain, idx -1), if
+	// there was one; old is in the same order the new list is made in.
+	take := func(idx int) *giGroup {
+		for o < len(old) && old[o].idx < idx && old[o].idx >= 0 {
+			s.drop(old[o].g)
+			o++
+		}
+		if o < len(old) && old[o].idx == idx {
+			g := old[o].g
+			o++
+			return g
+		}
+		return nil
+	}
+	st.nDynamic, st.nBrushes = 0, len(ch.Brushes)
+	for bi := range ch.Brushes {
+		if ch.Brushes[bi].Dynamic {
+			st.nDynamic++
+			continue
+		}
+		srcs := brushSources(ch, bi, model)
+		g := take(bi)
+		st.static = append(st.static, giOwned{idx: bi, g: s.update(g, true, srcs, hashSources(srcs))})
+	}
+	// Whatever brushes are left of the old list went with an edit.
+	for o < len(old) && old[o].idx >= 0 {
+		s.drop(old[o].g)
+		o++
+	}
+	if ch.Terrain != nil {
+		srcs := terrainSources(ch.Terrain, model)
+		g := take(-1)
+		st.static = append(st.static, giOwned{idx: -1, g: s.update(g, true, srcs, hashSources(srcs))})
+	}
+	for ; o < len(old); o++ {
+		s.drop(old[o].g)
+	}
+}
+
+// dynamicBrushes brings a chunk's dynamic brushes' groups up to date: each
+// re-derived when its matrix (or the meshes' generation) is not the one its
+// hash was taken of.
+func (s *giSourceSet) dynamicBrushes(st *giChunkStamp, ch *world.Chunk, model mgl32.Mat4, gen uint64) {
+	k := 0
+	for bi := range ch.Brushes {
+		b := &ch.Brushes[bi]
+		if !b.Dynamic {
+			continue
+		}
+		// The list is in brush order: a group for a brush before this one
+		// that is no longer dynamic (or no longer there) goes.
+		for k < len(st.dyn) && st.dyn[k].idx < bi {
+			s.drop(st.dyn[k].g)
+			st.dyn = append(st.dyn[:k], st.dyn[k+1:]...)
+		}
+		var g *giGroup
+		if k < len(st.dyn) && st.dyn[k].idx == bi {
+			g = st.dyn[k].g
+		} else {
+			st.dyn = append(st.dyn, giOwned{})
+			copy(st.dyn[k+1:], st.dyn[k:])
+			st.dyn[k] = giOwned{idx: bi}
+		}
+		m := model.Mul4(b.Placement())
+		if h := hashMat(m, gen); g != nil && g.hash == h {
+			g.seen = s.frame
+		} else {
+			st.dyn[k].g = s.update(g, false, brushSources(ch, bi, model), h)
+		}
+		k++
+	}
+	for _, o := range st.dyn[k:] {
+		s.drop(o.g)
+	}
+	st.dyn = st.dyn[:k]
+}
+
+// collectEntities brings the entities' model groups up to date, by the
+// entities' places in the level: the slot of an entity that is still the
+// same one (its ID) is checked by its matrix's coarse hash and its model's
+// path, kept hashed for as long as the path is the same string.
+func (s *giSourceSet) collectEntities(lvl *world.Level) {
+	n := len(lvl.Entities)
+	for ei := n; ei < len(s.entities); ei++ {
+		s.dropEntity(&s.entities[ei])
+	}
+	if len(s.entities) > n {
+		clear(s.entities[n:])
+		s.entities = s.entities[:n]
+	}
+	for len(s.entities) < n {
+		s.entities = append(s.entities, giEntitySlot{})
+	}
+	for ei := range lvl.Entities {
+		e := &lvl.Entities[ei]
+		slot := &s.entities[ei]
+		if slot.id != e.ID {
+			// Another entity has this place now: the one that had it is
+			// gone, as far as its groups are concerned.
+			s.dropEntity(slot)
+			slot.id = e.ID
+		}
+		// The player's own body sits on the camera: traced, it would only
+		// shade the probes round the eye, and it moves every frame.
+		if !e.Visible || e == world.PlayerEntity || e.ID == "player" {
+			s.sweepEntity(slot)
+			continue
+		}
+		var base mgl32.Mat4
+		based := false
+		if len(slot.models) < len(e.Models) {
+			slot.models = append(slot.models, make([]giModelSlot, len(e.Models)-len(slot.models))...)
+		}
+		for mi := range e.Models {
+			m := &e.Models[mi]
+			if !giModelTraced(e, m) {
+				continue
+			}
+			if !based {
+				frame := lvl.Frames.FrameFor(e)
+				base = e.DrawMatrix()
+				if !frame.IsWorld() {
+					base = frame.World.Mul4(base)
+				}
+				based = true
+			}
+			ms := &slot.models[mi]
+			if ms.path != m.Path || ms.pathHash == 0 {
+				ms.path, ms.pathHash = m.Path, hashString(m.Path)
+			}
+			wm := base.Mul4(e.AttachmentMatrix(m))
+			h := hashMatCoarse(wm) ^ ms.pathHash
+			ms.seen = s.frame
+			if ms.g != nil && ms.g.hash == h {
+				ms.g.seen = s.frame
+				continue
+			}
+			ms.g = s.update(ms.g, false, s.modelSources(m, wm, s.minModel), h)
+		}
+		s.sweepEntity(slot)
+	}
+}
+
+// sweepEntity drops the groups of an entity's models that this frame did
+// not trace, and counts the rest.
+func (s *giSourceSet) sweepEntity(slot *giEntitySlot) {
+	for mi := range slot.models {
+		ms := &slot.models[mi]
+		if ms.g == nil {
+			continue
+		}
+		if ms.seen != s.frame {
+			s.drop(ms.g)
+			ms.g = nil
+			continue
+		}
+		s.count++
+	}
+}
+
+// dropEntity drops every group of a slot's entity.
+func (s *giSourceSet) dropEntity(slot *giEntitySlot) {
+	for mi := range slot.models {
+		if g := slot.models[mi].g; g != nil {
+			s.drop(g)
+		}
+	}
+	slot.models = slot.models[:0]
+	slot.id = ""
+}
+
+// collectScenery is collectEntities for the cooked placements.
+func (s *giSourceSet) collectScenery(lvl *world.Level) {
+	n := len(lvl.Scenery)
+	for i := n; i < len(s.scenery); i++ {
+		if g := s.scenery[i].g; g != nil {
+			s.drop(g)
+		}
+	}
+	if len(s.scenery) > n {
+		clear(s.scenery[n:])
+		s.scenery = s.scenery[:n]
+	}
+	for len(s.scenery) < n {
+		s.scenery = append(s.scenery, giScenerySlot{})
+	}
+	for i := range lvl.Scenery {
+		sc := &lvl.Scenery[i]
+		slot := &s.scenery[i]
+		if slot.id != sc.ID && slot.g != nil {
+			s.drop(slot.g)
+			slot.g = nil
+		}
+		slot.id = sc.ID
+		if sc.Nanite != nil && sc.Nanite.SDF != nil {
+			tex := sc.SlotTexture(0)
+			if slot.nameHash == 0 || slot.model != sc.Model || slot.texture != tex {
+				slot.model, slot.texture = sc.Model, tex
+				slot.nameHash = hashString(sc.Model) ^ hashString(tex)
+			}
+			wm := sc.ModelMatrix()
+			h := hashMatCoarse(wm) ^ slot.nameHash
+			slot.seen = s.frame
+			if slot.g != nil && slot.g.hash == h {
+				slot.g.seen = s.frame
+			} else {
+				slot.g = s.update(slot.g, false, naniteSceneryGISources(sc, wm, s.minModel), h)
+			}
+		}
+		if slot.g != nil {
+			if slot.seen != s.frame {
+				s.drop(slot.g)
+				slot.g = nil
+				continue
+			}
+			s.count++
 		}
 	}
 }
 
 // forgetStamps makes the next collect re-derive every chunk's groups, for a
-// level whose chunks may be new structs with the same IDs.
-func (s *giSourceSet) forgetStamps() { clear(s.chunks) }
-
-// put stores a group under its content's hash.
-func (s *giSourceSet) put(k giKey, static bool, srcs []giSource) {
-	s.putHashed(k, static, srcs, hashSources(srcs))
+// level whose chunks may be new structs with the same IDs. What they held is
+// kept, for the new derivation to be diffed against.
+func (s *giSourceSet) forgetStamps() {
+	for _, st := range s.chunks {
+		st.valid = false
+	}
 }
 
-func (s *giSourceSet) putHashed(k giKey, static bool, srcs []giSource, h uint64) {
+// update is old (nil for none) brought to hold srcs under hash h: the same
+// group when the hash says nothing changed, a new one — its old and new
+// bounds dirtied — when it did.
+func (s *giSourceSet) update(old *giGroup, static bool, srcs []giSource, h uint64) *giGroup {
 	lo, hi := sourcesBounds(srcs)
-	old := s.groups[k]
 	if len(srcs) == 0 && (old == nil || len(old.srcs) == 0) {
 		// Nothing in the field before or after — a model too small to
 		// trace, moving: remembered, so it is not re-derived next frame,
 		// but not a change.
-		s.groups[k] = &giGroup{hash: h, seen: s.frame, static: static}
-		return
+		return &giGroup{hash: h, seen: s.frame, static: static}
 	}
 	if old != nil && old.hash == h {
 		old.seen = s.frame
 		old.srcs, old.lo, old.hi = srcs, lo, hi
-		return
+		return old
 	}
 	s.staticChanged = s.staticChanged || static || (old != nil && old.static)
 	if old != nil {
@@ -304,11 +585,31 @@ func (s *giSourceSet) putHashed(k giKey, static bool, srcs []giSource, h uint64)
 	if len(srcs) > 0 {
 		s.dirty = append(s.dirty, [2]mgl32.Vec3{lo, hi})
 	}
-	s.groups[k] = &giGroup{hash: h, lo: lo, hi: hi, srcs: srcs, seen: s.frame, static: static}
 	s.changed = true
+	s.churn++
+	return &giGroup{hash: h, lo: lo, hi: hi, srcs: srcs, seen: s.frame, static: static}
+}
+
+// drop is a group going: where it was is dirty.
+func (s *giSourceSet) drop(g *giGroup) {
+	if g == nil {
+		return
+	}
+	s.dirty = append(s.dirty, [2]mgl32.Vec3{g.lo, g.hi})
+	s.changed = true
+	s.staticChanged = s.staticChanged || g.static
 	s.churn++
 }
 
+// put stores a group the set itself keys (a foliage unit's) under its
+// content's hash.
+func (s *giSourceSet) put(k giKey, static bool, srcs []giSource) {
+	s.putHashed(k, static, srcs, hashSources(srcs))
+}
+
+func (s *giSourceSet) putHashed(k giKey, static bool, srcs []giSource, h uint64) {
+	s.groups[k] = s.update(s.groups[k], static, srcs, h)
+}
 func chunkKey(ch *world.Chunk, ci int) string {
 	if ch.ID != "" {
 		return ch.ID

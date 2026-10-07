@@ -105,6 +105,7 @@ func stepLevelLoad(level *world.Level) {
 
 	installLevel(level, job.Level())
 	applyPendingRestore(level, restore)
+	retuneGCAfterLoad()
 }
 
 // installLevel replaces the running level with a freshly built one.

@@ -296,8 +296,12 @@ func (t *Terrain) ensureMesh() *terrainMeshCache {
 	// Sections are independent of each other — each reads only the blocks,
 	// which cannot change while this (main-thread) call is running — so a
 	// rebuild of several fans out, a builder and its scratch per worker.
+	// A smooth rebuild shares its field and dual cells between neighbouring
+	// sections instead (terrain_mesh_union.go).
 	workers := min(len(todo), runtime.NumCPU())
-	if workers <= 1 {
+	if t.Smooth && terrainUnionBuild {
+		buildSmoothUnion(t, todo)
+	} else if workers <= 1 {
 		b := newTerrainBuilder(t)
 		for _, s := range todo {
 			b.build(s)
@@ -360,6 +364,9 @@ func (t *Terrain) Face(key int32) (*TerrainFace, bool) {
 // sections.
 type terrainBuilder struct {
 	t *Terrain
+	// workers is how many goroutines each stage of a smooth build splits
+	// across (par); 1 builds serially, as a builder per section does.
+	workers int
 	// Smooth scratch, for the section being built: occupancy and its blur
 	// over the section grown by pad blocks each way.
 	pad    int
@@ -482,19 +489,35 @@ func newTerrainBuilder(t *Terrain) *terrainBuilder {
 
 func (b *terrainBuilder) build(s *TerrainSection) {
 	t := b.t
-	s.Faces = s.Faces[:0]
-	x0, y0, z0 := s.X*TerrainSectionSize, s.Y*TerrainSectionSize, s.Z*TerrainSectionSize
-	x1, y1, z1 := min(x0+TerrainSectionSize, t.SizeX), min(y0+TerrainSectionSize, t.SizeY), min(z0+TerrainSectionSize, t.SizeZ)
+	x0, y0, z0, x1, y1, z1 := t.sectionBlocks(s)
 	if t.Smooth {
 		// The field, the vertices and their relaxation are most of a smooth
 		// build, and most sections of a terrain — solid rock under the
 		// ground, open air over it — have no surface to place them for.
 		if !b.hasFace(x0, y0, z0, x1, y1, z1) {
+			s.Faces = s.Faces[:0]
 			b.finish(s)
 			return
 		}
 		b.prepareSmooth(x0, y0, z0, x1, y1, z1)
 	}
+	b.emit(s)
+}
+
+// sectionBlocks is the block box [x0,x1) x [y0,y1) x [z0,z1) section s owns.
+func (t *Terrain) sectionBlocks(s *TerrainSection) (x0, y0, z0, x1, y1, z1 int) {
+	x0, y0, z0 = s.X*TerrainSectionSize, s.Y*TerrainSectionSize, s.Z*TerrainSectionSize
+	return x0, y0, z0, min(x0+TerrainSectionSize, t.SizeX), min(y0+TerrainSectionSize, t.SizeY), min(z0+TerrainSectionSize, t.SizeZ)
+}
+
+// emit writes section s's faces — read off the dual cells prepareSmooth
+// placed, for a smooth surface, which must cover the section — and its box,
+// index and ray bins. It writes only s, so several sections sharing one
+// prepared builder can be emitted at once.
+func (b *terrainBuilder) emit(s *TerrainSection) {
+	t := b.t
+	s.Faces = s.Faces[:0]
+	x0, y0, z0, x1, y1, z1 := t.sectionBlocks(s)
 	for z := z0; z < z1; z++ {
 		for y := y0; y < y1; y++ {
 			for x := x0; x < x1; x++ {
@@ -608,19 +631,31 @@ func (b *terrainBuilder) prepareSmooth(x0, y0, z0, x1, y1, z1 int) {
 		b.fld = make([]float32, n)
 	}
 	b.occ, b.blur, b.tmp, b.fld = b.occ[:n], b.blur[:n], b.tmp[:n], b.fld[:n]
-	i := 0
-	for z := 0; z < b.rn[2]; z++ {
-		for y := 0; y < b.rn[1]; y++ {
-			for x := 0; x < b.rn[0]; x++ {
-				v := float32(0)
-				if t.Solid(b.r0[0]+x, b.r0[1]+y, b.r0[2]+z) {
-					v = 1
+	// Every stage below writes each sample from the stage before alone, so
+	// it splits into slabs of Z across b.workers with nothing to merge: the
+	// result is the same bytes however it is split (terrain_mesh_union.go).
+	plane := b.rn[0] * b.rn[1]
+	b.par(b.rn[2], func(zlo, zhi int) {
+		// Row by row: a row outside the grid is all air, and inside it the
+		// blocks are read straight, clipped to the grid along X.
+		xlo, xhi := max(-b.r0[0], 0), min(t.SizeX-b.r0[0], b.rn[0])
+		for z := zlo; z < zhi; z++ {
+			for y := 0; y < b.rn[1]; y++ {
+				row := b.occ[z*plane+y*b.rn[0] : z*plane+(y+1)*b.rn[0]]
+				clear(row)
+				gy, gz := b.r0[1]+y, b.r0[2]+z
+				if gy < 0 || gz < 0 || gy >= t.SizeY || gz >= t.SizeZ || xlo >= xhi {
+					continue
 				}
-				b.occ[i] = v
-				i++
+				blocks := t.Blocks[t.Index(b.r0[0]+xlo, gy, gz):]
+				for x := xlo; x < xhi; x++ {
+					if blocks[x-xlo] != 0 {
+						row[x] = 1
+					}
+				}
 			}
 		}
-	}
+	})
 	// A separable Gaussian along each axis. Outside the scratch region the
 	// first pass reads the grid itself; later passes clamp, which only
 	// disturbs samples within the kernel's radius of the region's edge — pad
@@ -636,39 +671,37 @@ func (b *terrainBuilder) prepareSmooth(x0, y0, z0, x1, y1, z1 int) {
 		}
 		st := stride[axis]
 		na := b.rn[axis]
-		for z := 0; z < b.rn[2]; z++ {
-			for y := 0; y < b.rn[1]; y++ {
-				row := y*stride[1] + z*stride[2]
-				for x := 0; x < b.rn[0]; x++ {
-					c := [3]int{x, y, z}
-					i := row + x
-					ca := c[axis]
-					sum := float32(0)
-					if ca >= r && ca < na-r {
+		b.par(b.rn[2], func(zlo, zhi int) {
+			for z := zlo; z < zhi; z++ {
+				for y := 0; y < b.rn[1]; y++ {
+					row := y*stride[1] + z*stride[2]
+					// Whether the whole row is the kernel's radius inside the
+					// region along the pass's axis (X is decided per sample).
+					rowIn := true
+					switch axis {
+					case 1:
+						rowIn = y >= r && y < na-r
+					case 2:
+						rowIn = z >= r && z < na-r
+					}
+					for x := 0; x < b.rn[0]; x++ {
+						i := row + x
+						if !rowIn || (axis == 0 && (x < r || x >= na-r)) {
+							dst[i] = b.blurEdge(axis, [3]int{x, y, z}, i, src)
+							continue
+						}
+						sum := float32(0)
 						j := i - r*st
 						for _, w := range b.kernel {
 							sum += w * src[j]
 							j += st
 						}
-					} else {
-						for k := -r; k <= r; k++ {
-							cc := c
-							cc[axis] += k
-							v := float32(0)
-							if cc[axis] < 0 || cc[axis] >= na {
-								v = b.edgeSample(axis, cc, src)
-							} else {
-								v = src[i+k*st]
-							}
-							sum += b.kernel[k+r] * v
-						}
+						dst[i] = sum
 					}
-					dst[i] = sum
 				}
 			}
-		}
+		})
 	}
-	copy(b.blur, b.tmp)
 	// The field the surface is placed on keeps every block on its own side
 	// of one half: a solid block never reads less than terrainFieldHold
 	// above it, an air block never more than that below. The blur alone
@@ -678,13 +711,16 @@ func (b *terrainBuilder) prepareSmooth(x0, y0, z0, x1, y1, z1 int) {
 	// half, so the surface keeps every feature the blocks have, while on open
 	// ground (where a slope's blur already agrees with the blocks) nothing
 	// changes.
-	for i, o := range b.occ {
-		if o > 0 {
-			b.fld[i] = max(b.blur[i], 0.5+terrainFieldHold)
-		} else {
-			b.fld[i] = min(b.blur[i], 0.5-terrainFieldHold)
+	b.par(n, func(lo, hi int) {
+		copy(b.blur[lo:hi], b.tmp[lo:hi])
+		for i := lo; i < hi; i++ {
+			if b.occ[i] > 0 {
+				b.fld[i] = max(b.blur[i], 0.5+terrainFieldHold)
+			} else {
+				b.fld[i] = min(b.blur[i], 0.5-terrainFieldHold)
+			}
 		}
-	}
+	})
 
 	h := b.halo
 	b.c0 = [3]int{x0 - 1 - h, y0 - 1 - h, z0 - 1 - h}
@@ -696,9 +732,9 @@ func (b *terrainBuilder) prepareSmooth(x0, y0, z0, x1, y1, z1 int) {
 		b.pb = make([]mgl32.Vec3, nc)
 	}
 	b.cells, b.pa, b.pb = b.cells[:nc], b.pa[:nc], b.pb[:nc]
-	for i := range b.cells {
-		b.cells[i] = terrainDualVertex{}
-	}
+	b.par(nc, func(lo, hi int) {
+		clear(b.cells[lo:hi])
+	})
 	b.placeVertices()
 }
 
@@ -722,23 +758,29 @@ func (b *terrainBuilder) placeVertices() {
 	idx := func(cx, cy, cz int) int {
 		return (cx - b.c0[0]) + (cy-b.c0[1])*n[0] + (cz-b.c0[2])*n[0]*n[1]
 	}
-	for cz := b.c0[2]; cz < b.c0[2]+n[2]; cz++ {
-		for cy := b.c0[1]; cy < b.c0[1]+n[1]; cy++ {
-			for cx := b.c0[0]; cx < b.c0[0]+n[0]; cx++ {
-				s0 := t.Solid(cx, cy, cz)
-				mixed := false
-				for c := 1; c < 8 && !mixed; c++ {
-					mixed = t.Solid(cx+c&1, cy+(c>>1)&1, cz+(c>>2)&1) != s0
+	// Each cell's vertex reads only the field and the blocks and is written
+	// by its own cell alone, so slabs of cells place in parallel; so does
+	// every per-cell stage after it, each reading only what the stage before
+	// finished writing.
+	b.par(n[2], func(zlo, zhi int) {
+		for cz := b.c0[2] + zlo; cz < b.c0[2]+zhi; cz++ {
+			for cy := b.c0[1]; cy < b.c0[1]+n[1]; cy++ {
+				for cx := b.c0[0]; cx < b.c0[0]+n[0]; cx++ {
+					s0 := b.solid(cx, cy, cz)
+					mixed := false
+					for c := 1; c < 8 && !mixed; c++ {
+						mixed = b.solid(cx+c&1, cy+(c>>1)&1, cz+(c>>2)&1) != s0
+					}
+					if !mixed {
+						continue
+					}
+					dv := b.dualVertex(cx, cy, cz)
+					dv.surf = true
+					b.pa[idx(cx, cy, cz)] = dv.pos
 				}
-				if !mixed {
-					continue
-				}
-				dv := b.dualVertex(cx, cy, cz)
-				dv.surf = true
-				b.pa[idx(cx, cy, cz)] = dv.pos
 			}
 		}
-	}
+	})
 
 	b.surf = b.surf[:0]
 	for i := range b.cells {
@@ -760,47 +802,53 @@ func (b *terrainBuilder) placeVertices() {
 		b.nbr = make([]int32, len(b.surf)*6)
 	}
 	b.nbr = b.nbr[:len(b.surf)*6]
-	for si, i32 := range b.surf {
-		i := int(i32)
-		c := [3]int{i % n[0], (i / n[0]) % n[1], i / (n[0] * n[1])}
-		ni := b.cells[i].nrm
-		for a := 0; a < 3; a++ {
-			for k, st := range [2]int{-1, 1} {
-				slot := si*6 + a*2 + k
-				b.nbr[slot] = -1
-				if c[a]+st < 0 || c[a]+st >= n[a] {
-					continue
-				}
-				j := i + st*strides[a]
-				if b.cells[j].surf && b.cells[j].nrm.Dot(ni) > 0 {
-					b.nbr[slot] = int32(j)
+	b.par(len(b.surf), func(lo, hi int) {
+		for si := lo; si < hi; si++ {
+			i := int(b.surf[si])
+			c := [3]int{i % n[0], (i / n[0]) % n[1], i / (n[0] * n[1])}
+			ni := b.cells[i].nrm
+			for a := 0; a < 3; a++ {
+				for k, st := range [2]int{-1, 1} {
+					slot := si*6 + a*2 + k
+					b.nbr[slot] = -1
+					if c[a]+st < 0 || c[a]+st >= n[a] {
+						continue
+					}
+					j := i + st*strides[a]
+					if b.cells[j].surf && b.cells[j].nrm.Dot(ni) > 0 {
+						b.nbr[slot] = int32(j)
+					}
 				}
 			}
 		}
-	}
+	})
+	// Jacobi rounds: each reads the last round's positions only, so a round
+	// splits across workers and the rounds are the barriers.
 	src, dst := b.pa, b.pb
 	for it := 0; it < b.iters; it++ {
-		for si, i32 := range b.surf {
-			i := int(i32)
-			var sum mgl32.Vec3
-			k := 0
-			for _, j := range b.nbr[si*6 : si*6+6] {
-				if j >= 0 {
-					sum = sum.Add(src[j])
-					k++
+		b.par(len(b.surf), func(lo, hi int) {
+			for si := lo; si < hi; si++ {
+				i := int(b.surf[si])
+				var sum mgl32.Vec3
+				k := 0
+				for _, j := range b.nbr[si*6 : si*6+6] {
+					if j >= 0 {
+						sum = sum.Add(src[j])
+						k++
+					}
 				}
+				p := src[i]
+				if k > 0 {
+					p = p.Add(sum.Mul(1 / float32(k)).Sub(p).Mul(pull))
+				}
+				c := [3]int{i % n[0], (i / n[0]) % n[1], i / (n[0] * n[1])}
+				for a := 0; a < 3; a++ {
+					lo := t.Origin[a] + (float32(b.c0[a]+c[a])+0.5)*bs
+					p[a] = min(max(p[a], lo+inset*bs), lo+bs-inset*bs)
+				}
+				dst[i] = p
 			}
-			p := src[i]
-			if k > 0 {
-				p = p.Add(sum.Mul(1 / float32(k)).Sub(p).Mul(pull))
-			}
-			c := [3]int{i % n[0], (i / n[0]) % n[1], i / (n[0] * n[1])}
-			for a := 0; a < 3; a++ {
-				lo := t.Origin[a] + (float32(b.c0[a]+c[a])+0.5)*bs
-				p[a] = min(max(p[a], lo+inset*bs), lo+bs-inset*bs)
-			}
-			dst[i] = p
-		}
+		})
 		src, dst = dst, src
 	}
 	for _, i := range b.surf {
@@ -808,43 +856,47 @@ func (b *terrainBuilder) placeVertices() {
 	}
 
 	// Normals of the relaxed surface: the quads round each vertex, summed.
-	for cz := b.c0[2]; cz < b.c0[2]+n[2]; cz++ {
-		for cy := b.c0[1]; cy < b.c0[1]+n[1]; cy++ {
-			for cx := b.c0[0]; cx < b.c0[0]+n[0]; cx++ {
-				dv := &b.cells[idx(cx, cy, cz)]
-				if !dv.surf {
-					continue
-				}
-				var sum mgl32.Vec3
-				for axis := 0; axis < 3; axis++ {
-					for k := 0; k < 4; k++ {
-						a := [3]int{cx, cy, cz}
-						a[(axis+1)%3] += k & 1
-						a[(axis+2)%3] += k >> 1
-						bb := a
-						bb[axis]++
-						sa, sb := t.Solid(a[0], a[1], a[2]), t.Solid(bb[0], bb[1], bb[2])
-						if sa == sb {
-							continue
-						}
-						solid, d := a, axis*2
-						if sb {
-							solid, d = bb, axis*2+1
-						}
-						q, ok := b.quadCells(solid, d)
-						if !ok {
-							continue
-						}
-						p0, p1, p2, p3 := b.cells[q[0]].pos, b.cells[q[1]].pos, b.cells[q[2]].pos, b.cells[q[3]].pos
-						sum = sum.Add(p2.Sub(p0).Cross(p3.Sub(p1)))
+	// Every position is final by now, and each cell writes only its own
+	// normal.
+	b.par(n[2], func(zlo, zhi int) {
+		for cz := b.c0[2] + zlo; cz < b.c0[2]+zhi; cz++ {
+			for cy := b.c0[1]; cy < b.c0[1]+n[1]; cy++ {
+				for cx := b.c0[0]; cx < b.c0[0]+n[0]; cx++ {
+					dv := &b.cells[idx(cx, cy, cz)]
+					if !dv.surf {
+						continue
 					}
-				}
-				if sum.Len() > 1e-9 {
-					dv.nrm = sum.Normalize()
+					var sum mgl32.Vec3
+					for axis := 0; axis < 3; axis++ {
+						for k := 0; k < 4; k++ {
+							a := [3]int{cx, cy, cz}
+							a[(axis+1)%3] += k & 1
+							a[(axis+2)%3] += k >> 1
+							bb := a
+							bb[axis]++
+							sa, sb := b.solid(a[0], a[1], a[2]), b.solid(bb[0], bb[1], bb[2])
+							if sa == sb {
+								continue
+							}
+							solid, d := a, axis*2
+							if sb {
+								solid, d = bb, axis*2+1
+							}
+							q, ok := b.quadCells(solid, d)
+							if !ok {
+								continue
+							}
+							p0, p1, p2, p3 := b.cells[q[0]].pos, b.cells[q[1]].pos, b.cells[q[2]].pos, b.cells[q[3]].pos
+							sum = sum.Add(p2.Sub(p0).Cross(p3.Sub(p1)))
+						}
+					}
+					if sum.Len() > 1e-9 {
+						dv.nrm = sum.Normalize()
+					}
 				}
 			}
 		}
-	}
+	})
 }
 
 // floorSmooth levels the floors. Ground built from blocks is a staircase:
@@ -875,20 +927,22 @@ func (b *terrainBuilder) floorSmooth() {
 		b.floors = make([][]int16, nx*nz)
 	}
 	b.floors = b.floors[:nx*nz]
-	for cz := 0; cz < nz; cz++ {
-		for cx := 0; cx < nx; cx++ {
-			f := b.floors[cz*nx+cx][:0]
-			x, z := x0+cx, z0+cz
-			if x >= 0 && z >= 0 && x < t.SizeX && z < t.SizeZ {
-				for y := max(ylo, 0); y <= min(yhi, t.SizeY-1); y++ {
-					if t.Blocks[t.Index(x, y, z)] != 0 && !t.Solid(x, y+1, z) {
-						f = append(f, int16(y))
+	b.par(nz, func(zlo, zhi int) {
+		for cz := zlo; cz < zhi; cz++ {
+			for cx := 0; cx < nx; cx++ {
+				f := b.floors[cz*nx+cx][:0]
+				x, z := x0+cx, z0+cz
+				if x >= 0 && z >= 0 && x < t.SizeX && z < t.SizeZ {
+					for y := max(ylo, 0); y <= min(yhi, t.SizeY-1); y++ {
+						if t.Blocks[t.Index(x, y, z)] != 0 && !t.Solid(x, y+1, z) {
+							f = append(f, int16(y))
+						}
 					}
 				}
+				b.floors[cz*nx+cx] = f
 			}
-			b.floors[cz*nx+cx] = f
 		}
-	}
+	})
 	// Each column's weight depends only on its offset from the cell: a
 	// table, not an exp per column per vertex. Columns out of reach weigh 0.
 	side := 2*r + 2
@@ -915,54 +969,57 @@ func (b *terrainBuilder) floorSmooth() {
 	n := b.cn
 	bs := t.BlockSize
 	const inset = 0.001
-	for _, i32 := range b.surf {
-		i := int(i32)
-		c := [3]int{b.c0[0] + i%n[0], b.c0[1] + (i/n[0])%n[1], b.c0[2] + i/(n[0]*n[1])}
-		// A floor edge, and no roof, among the cell's four vertical edges.
-		floor, roof := false, false
-		for k := 0; k < 4; k++ {
-			x, z := c[0]+k&1, c[2]+k>>1
-			lo, hi := t.Solid(x, c[1], z), t.Solid(x, c[1]+1, z)
-			floor = floor || (lo && !hi)
-			roof = roof || (!lo && hi)
-		}
-		if !floor || roof {
-			continue
-		}
-		// The cell is centred between four columns; weights by distance
-		// from there, in half-block units squared.
-		var sum, wsum float32
-		for dz := -r; dz <= r+1; dz++ {
-			for dx := -r; dx <= r+1; dx++ {
-				k := (dz+r)*side + dx + r
-				wt := b.fw[k]
-				if wt == 0 {
-					continue
-				}
-				col := b.floors[(c[2]+dz-z0)*nx+(c[0]+dx-x0)]
-				best, bestD := int16(0), int(1<<30)
-				for _, fy := range col {
-					if dd := absInt(int(fy) - c[1]); dd < bestD {
-						best, bestD = fy, dd
-					}
-				}
-				if bestD > b.fd[k] {
-					continue
-				}
-				sum += wt * float32(best+1)
-				wsum += wt
+	// Each floor vertex writes only its own start position.
+	b.par(len(b.surf), func(slo, shi int) {
+		for _, i32 := range b.surf[slo:shi] {
+			i := int(i32)
+			c := [3]int{b.c0[0] + i%n[0], b.c0[1] + (i/n[0])%n[1], b.c0[2] + i/(n[0]*n[1])}
+			// A floor edge, and no roof, among the cell's four vertical edges.
+			floor, roof := false, false
+			for k := 0; k < 4; k++ {
+				x, z := c[0]+k&1, c[2]+k>>1
+				lo, hi := b.solid(x, c[1], z), b.solid(x, c[1]+1, z)
+				floor = floor || (lo && !hi)
+				roof = roof || (!lo && hi)
 			}
+			if !floor || roof {
+				continue
+			}
+			// The cell is centred between four columns; weights by distance
+			// from there, in half-block units squared.
+			var sum, wsum float32
+			for dz := -r; dz <= r+1; dz++ {
+				for dx := -r; dx <= r+1; dx++ {
+					k := (dz+r)*side + dx + r
+					wt := b.fw[k]
+					if wt == 0 {
+						continue
+					}
+					col := b.floors[(c[2]+dz-z0)*nx+(c[0]+dx-x0)]
+					best, bestD := int16(0), int(1<<30)
+					for _, fy := range col {
+						if dd := absInt(int(fy) - c[1]); dd < bestD {
+							best, bestD = fy, dd
+						}
+					}
+					if bestD > b.fd[k] {
+						continue
+					}
+					sum += wt * float32(best+1)
+					wsum += wt
+				}
+			}
+			if wsum <= 0 {
+				continue
+			}
+			top := sum / wsum
+			lo := float32(c[1]) + 0.5
+			top = min(max(top, lo+inset), lo+1-inset)
+			p := b.pa[i]
+			p[1] = t.Origin[1] + top*bs
+			b.pa[i] = p
 		}
-		if wsum <= 0 {
-			continue
-		}
-		top := sum / wsum
-		lo := float32(c[1]) + 0.5
-		top = min(max(top, lo+inset), lo+1-inset)
-		p := b.pa[i]
-		p[1] = t.Origin[1] + top*bs
-		b.pa[i] = p
-	}
+	})
 }
 
 func absInt(v int) int {
@@ -995,6 +1052,40 @@ func (b *terrainBuilder) quadCells(solid [3]int, d int) (q [4]int, ok bool) {
 		q[i] = (c[0] - b.c0[0]) + (c[1]-b.c0[1])*b.cn[0] + (c[2]-b.c0[2])*b.cn[0]*b.cn[1]
 	}
 	return q, true
+}
+
+// solid is t.Solid(x, y, z), read from the occupancy prepareSmooth filled
+// when the block is in the scratch region — everything the dual cells and
+// their normals ask about is — and from the grid otherwise.
+func (b *terrainBuilder) solid(x, y, z int) bool {
+	lx, ly, lz := x-b.r0[0], y-b.r0[1], z-b.r0[2]
+	if lx < 0 || ly < 0 || lz < 0 || lx >= b.rn[0] || ly >= b.rn[1] || lz >= b.rn[2] {
+		return b.t.Solid(x, y, z)
+	}
+	return b.occ[lx+ly*b.rn[0]+lz*b.rn[0]*b.rn[1]] > 0
+}
+
+// blurEdge is the blur pass along axis at sample c (index i) of the scratch
+// region when the kernel reaches past the region's edge. It sums in the same
+// order as the interior's loop, so a sample comes out the same bits either
+// way.
+func (b *terrainBuilder) blurEdge(axis int, c [3]int, i int, src []float32) float32 {
+	r := len(b.kernel) / 2
+	st := [3]int{1, b.rn[0], b.rn[0] * b.rn[1]}[axis]
+	na := b.rn[axis]
+	sum := float32(0)
+	for k := -r; k <= r; k++ {
+		cc := c
+		cc[axis] += k
+		v := float32(0)
+		if cc[axis] < 0 || cc[axis] >= na {
+			v = b.edgeSample(axis, cc, src)
+		} else {
+			v = src[i+k*st]
+		}
+		sum += b.kernel[k+r] * v
+	}
+	return sum
 }
 
 // edgeSample is the partially-blurred value just outside the scratch region
@@ -1066,7 +1157,7 @@ func (b *terrainBuilder) dualVertex(cx, cy, cz int) *terrainDualVertex {
 			a[(axis+2)%3] += k >> 1
 			bb := a
 			bb[axis]++
-			sa, sb := t.Solid(a[0], a[1], a[2]), t.Solid(bb[0], bb[1], bb[2])
+			sa, sb := b.solid(a[0], a[1], a[2]), b.solid(bb[0], bb[1], bb[2])
 			if sa == sb {
 				continue
 			}

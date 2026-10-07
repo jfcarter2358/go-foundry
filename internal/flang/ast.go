@@ -159,6 +159,23 @@ type Clause struct {
 	Guard  Expr // nil when the clause has no `when`
 	Body   []Stmt
 	Pos_   Pos
+
+	// The frame layout resolve.go works out: how many locals a call of this
+	// clause has, and each one's name, by slot. Filled once, when the first
+	// interpreter over the program is built.
+	resolved  bool
+	nslots    int
+	slotNames []string
+	// checks are the parameters a call has to satisfy — every literal, atom
+	// and type — and binds the ones that fill a slot, both in head order;
+	// see matchHead and bindParams.
+	checks []headCheck
+	binds  []headBind
+
+	// The guard and body compiled to closures (compile.go), also once.
+	compiled bool
+	guardFn  condFn
+	body     []cstmt
 }
 
 func (c *Clause) Position() Pos { return c.Pos_ }
@@ -187,6 +204,15 @@ type Param struct {
 	Lit  Expr   // ParamLiteral
 	Atom string // ParamAtom
 	Pos_ Pos
+
+	// Worked out by resolve.go so that matching a call does not: the frame
+	// slot a binding parameter fills, a literal's value, and a typed
+	// parameter's type as a Type rather than a name (badType when the name is
+	// none the language has, which then matches nothing).
+	slot   int
+	litVal Value
+	litOK  bool
+	typ    Type
 }
 
 func (p Param) Position() Pos { return p.Pos_ }
@@ -275,6 +301,8 @@ type ForStmt struct {
 	Seq  Expr
 	Body []Stmt
 	Pos_ Pos
+
+	slot int // the loop variable's frame slot, plus one; 0 before resolve.go
 }
 
 // WhileStmt is `while cond`.
@@ -323,17 +351,26 @@ func (*ExprStmt) stmtNode()     {}
 // ---------- expressions ----------
 
 // IntLit, FloatLit, StringLit, BoolLit, NullLit and AtomLit are the scalars.
+//
+// Each carries its value already boxed as a Value (val), which the parser fills
+// as it makes the node: evaluating a literal is then a load rather than an
+// allocation — converting a float or a string to an interface allocates every
+// time. Scalars are immutable, so one boxed value serves every evaluation. A
+// node built by hand rather than parsed has none, and boxes as it always did.
 type IntLit struct {
 	Value int64
 	Pos_  Pos
+	val   Value
 }
 type FloatLit struct {
 	Value float64
 	Pos_  Pos
+	val   Value
 }
 type StringLit struct {
 	Value string
 	Pos_  Pos
+	val   Value
 }
 type BoolLit struct {
 	Value bool
@@ -343,12 +380,17 @@ type NullLit struct{ Pos_ Pos }
 type AtomLit struct {
 	Name string
 	Pos_ Pos
+	val  Value
 }
 
 // VecLit is `<x, y, z>`, recognised only where an expression is expected.
 type VecLit struct {
 	X, Y, Z Expr
 	Pos_    Pos
+
+	// cval is the vec already boxed when all three components are numeric
+	// literals — `<0.0, 1.0, 0.0>` — filled by resolve.go.
+	cval Value
 }
 
 // ListLit is `[a, b, c]`.
@@ -376,6 +418,12 @@ type TupleLit struct {
 type IdentExpr struct {
 	Name string
 	Pos_ Pos
+
+	// slot is where resolve.go put the name in its clause's frame, plus one,
+	// or -1 for a name the clause never assigns (which only the globals could
+	// answer). 0 means unresolved — an expression a decision tree evaluates
+	// on its own, outside any clause — and is looked up by name.
+	slot int
 }
 
 // AddrExpr is `@name` — one object by ID. `@self` and `@level` are ordinary
@@ -407,6 +455,8 @@ type UnaryExpr struct {
 	Op   Kind
 	X    Expr
 	Pos_ Pos
+
+	cval Value // `-5`, `-0.5`: the negated literal, boxed by resolve.go
 }
 
 // BinaryExpr is any infix operator.
@@ -421,6 +471,9 @@ type CallExpr struct {
 	Fn   Expr
 	Args []Expr
 	Pos_ Pos
+
+	// site remembers what the name resolved to — see callSite.
+	site callSite
 }
 
 // IndexExpr is `x[i]`.
@@ -437,6 +490,9 @@ type MemberExpr struct {
 	X    Expr
 	Name string
 	Pos_ Pos
+
+	// prop caches the host's handle for a `.prop.<name>` step — see propSite.
+	prop propSite
 }
 
 func (e *IntLit) Position() Pos     { return e.Pos_ }

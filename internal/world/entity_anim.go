@@ -61,10 +61,38 @@ type EntityAnim struct {
 	blendDuration float32
 	blended       model.ModelPose
 
+	// posed is PoseDeltasInto's model-space scratch, kept so posing a body
+	// allocates nothing per frame.
+	posed []mgl32.Mat4
+	// deltas is the palette-length scratch a pose is written into before
+	// setPalette compares it with Palette.
+	deltas []mgl32.Mat4
+
 	// Palette is the bone palette every submesh points at. Its backing array is
 	// never reallocated after NewEntityAnim, which is what makes those shared
 	// slice headers safe.
 	Palette []mgl32.Mat4
+
+	// PoseGen counts the times Palette's contents have changed: a reader that
+	// remembers it can tell a new pose from the one it last saw without
+	// comparing every bone — the point-shadow cache (render/
+	// point_shadow_cache.go), which used to hash every matrix of every pose in
+	// reach of every light, every frame. A clip that re-poses to the same
+	// matrices (one finished on its last frame) leaves it alone.
+	PoseGen uint64
+}
+
+// setPalette writes deltas into Palette, stepping PoseGen only when that
+// changes what the palette holds.
+func (a *EntityAnim) setPalette(deltas []mgl32.Mat4) {
+	n := min(len(a.Palette), len(deltas))
+	for i := 0; i < n; i++ {
+		if a.Palette[i] != deltas[i] {
+			copy(a.Palette[i:n], deltas[i:n])
+			a.PoseGen++
+			return
+		}
+	}
 }
 
 // AnimUnavailable explains why doc cannot be animated, or "" when it can.
@@ -111,8 +139,12 @@ func NewEntityAnim(doc *model.ModelDoc) *EntityAnim {
 // restPalette fills the palette with identities — the rest pose, and what an
 // entity shows before any clip is selected.
 func (a *EntityAnim) restPalette() {
+	ident := mgl32.Ident4()
 	for i := range a.Palette {
-		a.Palette[i] = mgl32.Ident4()
+		if a.Palette[i] != ident {
+			a.Palette[i] = ident
+			a.PoseGen++ // once per changed bone: it only has to move
+		}
 	}
 }
 
@@ -148,10 +180,13 @@ func (a *EntityAnim) SetClip(name string, blend float32) bool {
 		// Depart from whatever is actually being shown, mid-blend included: a
 		// second switch before the first crossfade finishes should bend the fade
 		// toward its new target, not snap to wherever the interrupted one had
-		// gotten to. currentPose is cloned because it returns an in-place buffer
+		// gotten to. currentPose is copied because it returns an in-place buffer
 		// (pose or blended) that the very next update would otherwise overwrite
-		// out from under blendFrom.
-		a.blendFrom = a.currentPose().Clone()
+		// out from under blendFrom — into blendFrom's own backing array, which a
+		// soldier switching clips several times a second reuses rather than
+		// allocating a fresh pose per switch.
+		cur := a.currentPose()
+		a.blendFrom.Bones = append(a.blendFrom.Bones[:0], cur.Bones...)
 		a.blendElapsed = 0
 		a.blendDuration = blend
 		a.blending = true
@@ -248,8 +283,18 @@ func (a *EntityAnim) advance(dt float32, pose bool) {
 		}
 	}
 
-	deltas := a.Doc.PoseDeltas(*shown)
-	copy(a.Palette, deltas)
+	// Posed into a scratch the length of the palette, then handed to
+	// setPalette, so PoseGen steps only when a bone actually moved (the point
+	// shadows' cache reads it). The scratch starts as a copy of the palette
+	// because PoseDeltasInto writes only the overlap of the palette and the
+	// armature, and the rest must compare equal.
+	if cap(a.deltas) < len(a.Palette) {
+		a.deltas = make([]mgl32.Mat4, len(a.Palette))
+	}
+	a.deltas = a.deltas[:len(a.Palette)]
+	copy(a.deltas, a.Palette)
+	a.deltas, a.posed = a.Doc.PoseDeltasInto(a.deltas, a.posed, *shown)
+	a.setPalette(a.deltas)
 }
 
 // ClipNames lists the clips the underlying model holds, for the editor's clip

@@ -275,7 +275,7 @@ func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
 	// each one tightened by all before it. Above it, an open level has tens of
 	// thousands of portals and the sequential flood alone took most of an hour.
 	wave := 1
-	if len(portals) >= parallelWavePortals {
+	if len(portals) >= waveFromPortals {
 		wave = len(portals) / flowWaves
 	}
 	leafBytes := v.RowBytes
@@ -295,7 +295,14 @@ func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
 		ws.flowSteps = flowBudget(len(portals))
 		states[w] = &ws
 	}
-	rows := make([]byte, wave*leafBytes)
+	// Each flood in a wave fills its own row of rows. Rows a cache line apart
+	// at least, so floods on different cores are not writing into one line;
+	// the padding is never read.
+	stride := leafBytes
+	if workers > 1 && padWaveRows {
+		stride = (leafBytes + 63) &^ 63
+	}
+	rows := make([]byte, wave*stride)
 	for start := 0; start < len(order); start += wave {
 		end := min(len(order), start+wave)
 		for i := range rows {
@@ -303,7 +310,7 @@ func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
 		}
 		if workers == 1 {
 			for k := start; k < end; k++ {
-				states[0].row = rows[(k-start)*leafBytes : (k-start+1)*leafBytes]
+				states[0].row = rows[(k-start)*stride : (k-start)*stride+leafBytes]
 				states[0].flood(order[k])
 			}
 		} else {
@@ -319,7 +326,7 @@ func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
 						if k >= end {
 							return
 						}
-						ws.row = rows[(k-start)*leafBytes : (k-start+1)*leafBytes]
+						ws.row = rows[(k-start)*stride : (k-start)*stride+leafBytes]
 						ws.flood(order[k])
 					}
 				}(ws)
@@ -329,7 +336,7 @@ func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
 		for k := start; k < end; k++ {
 			pi := order[k]
 			dst := v.Bits[portals[pi].A*leafBytes : (portals[pi].A+1)*leafBytes]
-			for j, b := range rows[(k-start)*leafBytes : (k-start+1)*leafBytes] {
+			for j, b := range rows[(k-start)*stride : (k-start)*stride+leafBytes] {
 				dst[j] |= b
 			}
 			s.done[pi] = true
@@ -353,17 +360,29 @@ func CoarseVisibility(portals int) bool { return portals >= coarseVisPortals }
 // side of every portal that orientation and connectivity leave possible from a
 // portal out of it. Never a hole — every exact answer is a subset of this —
 // just more drawn.
+//
+// A portal only ever sets bits in its own cell's row, so the cells are filled
+// in parallel, each from its own portals (byLeaf): setting bits is the same
+// whatever order it happens in.
 func (s *visState) coarseRows(v *bsp.PVS) {
-	for pi := range s.portals {
-		a := s.portals[pi].A
-		v.Set(a, s.portals[pi].B)
-		row := s.mightSee[pi*s.portalBytes : (pi+1)*s.portalBytes]
-		for j, b := range row {
-			for b != 0 {
-				k := bits.TrailingZeros8(b)
-				b &^= 1 << uint(k)
-				v.Set(a, s.portals[j*8+k].B)
+	cell := func(a int) {
+		for _, pi := range s.byLeaf[a] {
+			v.Set(a, s.portals[pi].B)
+			row := s.mightSee[pi*s.portalBytes : (pi+1)*s.portalBytes]
+			for j, b := range row {
+				for b != 0 {
+					k := bits.TrailingZeros8(b)
+					b &^= 1 << uint(k)
+					v.Set(a, s.portals[j*8+k].B)
+				}
 			}
+		}
+	}
+	if parallelCoarseRows {
+		parallelFor(len(s.byLeaf), cell)
+	} else {
+		for a := range s.byLeaf {
+			cell(a)
 		}
 	}
 }
@@ -375,6 +394,15 @@ func (s *visState) coarseRows(v *bsp.PVS) {
 const (
 	parallelWavePortals = 4096
 	flowWaves           = 512
+)
+
+// waveFromPortals is parallelWavePortals, as a variable only so a test can run
+// the wave path on a level small enough to flood in a test; padWaveRows spaces
+// a wave's rows a cache line apart (BuildPVS), switchable for the test that
+// compares against unpadded rows.
+var (
+	waveFromPortals = parallelWavePortals
+	padWaveRows     = true
 )
 
 // flood fills the visibility row for one source portal.
@@ -494,32 +522,80 @@ func (s *visState) buildMightSee() {
 	}
 	wg.Wait()
 
+	// The connectivity floods: one per portal, each reading only its own
+	// candidate row and writing only its own mightSee row, so they run in
+	// parallel too, each worker with its own seen-set. A row is a set of
+	// bits whoever fills it, so the answer is the serial one exactly. Workers
+	// take runs of rows at least a cache line long, so two of them are not
+	// writing into the same line; and a flood clears only the cells it
+	// marked, rather than the whole level's worth for every portal — on an
+	// open level that reset alone was most of the pass.
 	s.mightSee = make([]byte, n*s.portalBytes)
-	seen := make([]bool, len(s.byLeaf))
-	for i := range s.portals {
-		cand := pairs[i*s.portalBytes : (i+1)*s.portalBytes]
-		out := s.mightSee[i*s.portalBytes : (i+1)*s.portalBytes]
-		for j := range seen {
-			seen[j] = false
+	run := max(1, (64+s.portalBytes-1)/s.portalBytes)
+	floodRows := func(seen []bool, touched []int, first int) []int {
+		for i := first; i < min(n, first+run); i++ {
+			cand := pairs[i*s.portalBytes : (i+1)*s.portalBytes]
+			out := s.mightSee[i*s.portalBytes : (i+1)*s.portalBytes]
+			touched = s.simpleFlood(s.portals[i].B, cand, out, seen, touched[:0])
+			for _, l := range touched {
+				seen[l] = false
+			}
 		}
-		s.simpleFlood(s.portals[i].B, cand, out, seen)
+		return touched
 	}
-}
-
-// simpleFlood marks every candidate portal reachable from a cell, ignoring
-// geometry entirely.
-func (s *visState) simpleFlood(leaf int, cand, out []byte, seen []bool) {
-	if seen[leaf] {
+	runs := (n + run - 1) / run
+	if !parallelMightSee || workers <= 1 {
+		seen := make([]bool, len(s.byLeaf))
+		var touched []int
+		for r := 0; r < runs; r++ {
+			touched = floodRows(seen, touched, r*run)
+		}
 		return
 	}
+	next.Store(0)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			seen := make([]bool, len(s.byLeaf))
+			var touched []int
+			for {
+				r := int(next.Add(1) - 1)
+				if r >= runs {
+					return
+				}
+				touched = floodRows(seen, touched, r*run)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// parallelMightSee runs buildMightSee's connectivity floods across cores, and
+// parallelCoarseRows fills coarseRows' cells across cores. Switches for the
+// tests, which compare against the serial loops.
+var (
+	parallelMightSee   = true
+	parallelCoarseRows = true
+)
+
+// simpleFlood marks every candidate portal reachable from a cell, ignoring
+// geometry entirely. It returns touched with every cell it marked in seen
+// appended, for the caller to clear.
+func (s *visState) simpleFlood(leaf int, cand, out []byte, seen []bool, touched []int) []int {
+	if seen[leaf] {
+		return touched
+	}
 	seen[leaf] = true
+	touched = append(touched, leaf)
 	for _, qi := range s.byLeaf[leaf] {
 		if !bitGet(cand, qi) {
 			continue
 		}
 		bitSet(out, qi)
-		s.simpleFlood(s.portals[qi].B, cand, out, seen)
+		touched = s.simpleFlood(s.portals[qi].B, cand, out, seen, touched)
 	}
+	return touched
 }
 
 // flow walks forward from a source portal, marking what its own cell can see.

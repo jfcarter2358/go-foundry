@@ -38,6 +38,26 @@ const (
 type pathBase struct {
 	refs   []RefVal
 	single bool // true when the chain began at @id rather than #tag
+	// one holds a single object inline, and hasOne says so — rather than a
+	// one-element slice, which `@self.attr.x` allocated on every read.
+	one    RefVal
+	hasOne bool
+}
+
+// count is how many objects the path reaches.
+func (b *pathBase) count() int {
+	if b.hasOne {
+		return 1
+	}
+	return len(b.refs)
+}
+
+// at is the i-th of them.
+func (b *pathBase) at(i int) RefVal {
+	if b.hasOne {
+		return b.one
+	}
+	return b.refs[i]
 }
 
 // evalAddr resolves `@id`.
@@ -45,15 +65,32 @@ type pathBase struct {
 // `@self` and `@level` are resolved by the host like any other name, so a test
 // host can define them and the language needs no special cases.
 func (in *Interp) evalAddr(x *AddrExpr, env *Env) (Value, error) {
+	r, found, err := in.addrRef(x)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return NullVal{}, nil
+	}
+	return in.boxRef(r), nil
+}
+
+// addrRef is evalAddr without the boxing: the ref `@id` names, or found=false
+// for a name the level does not have (which evaluates to null).
+//
+// Kept apart because a RefVal is four words, and converting one to a Value
+// allocates: `@self.attr.x` used to box @self only for the member chain to
+// unbox it again, on every read.
+func (in *Interp) addrRef(x *AddrExpr) (RefVal, bool, error) {
 	if in.host == nil {
-		return nil, in.errorf(x.Pos_, "@%s: there is no world here", x.Name)
+		return RefVal{}, false, in.errorf(x.Pos_, "@%s: there is no world here", x.Name)
 	}
 	if x.Name == "self" {
 		self := in.host.Self()
 		if self.IsNone() {
-			return nil, in.errorf(x.Pos_, "@self: nothing is running this script")
+			return RefVal{}, false, in.errorf(x.Pos_, "@self: nothing is running this script")
 		}
-		return self, nil
+		return self, true, nil
 	}
 	r, ok := in.host.Resolve(x.Name)
 	if !ok {
@@ -62,15 +99,27 @@ func (in *Interp) evalAddr(x *AddrExpr, env *Env) (Value, error) {
 			// message rather than a null: the name is declared, just not with
 			// the sigil that reads it. An object of the same name still wins
 			// above, because `@` asks the level for an object and there is one.
-			return nil, in.errorf(x.Pos_, "@%s names an object, and nothing in the level is called %q; %s is a script parameter, so write ?%s",
+			return RefVal{}, false, in.errorf(x.Pos_, "@%s names an object, and nothing in the level is called %q; %s is a script parameter, so write ?%s",
 				x.Name, x.Name, x.Name, x.Name)
 		}
 		// A missing object is null rather than an error: a script that checks
 		// `if @door == null` is doing the right thing, and making the check
 		// itself throw would leave no way to write it.
-		return NullVal{}, nil
+		return RefVal{}, false, nil
 	}
-	return r, nil
+	return r, true, nil
+}
+
+// boxRef is r as a Value, reusing the last one boxed when it is the same ref
+// — a handler names @self over and over, and each conversion allocated. A ref
+// is a value, so one boxed copy serves every use of it.
+func (in *Interp) boxRef(r RefVal) Value {
+	if in.refBoxed != nil && in.refBoxKey == r {
+		return in.refBoxed
+	}
+	v := Value(r)
+	in.refBoxKey, in.refBoxed = r, v
+	return v
 }
 
 // evalParam resolves `?name` — one declared script parameter.
@@ -183,7 +232,7 @@ func (in *Interp) evalMember(x *MemberExpr, env *Env) (Value, error) {
 			if err != nil {
 				return nil, err
 			}
-			return in.readAccess(base, mode, x.Name, x.Pos_)
+			return in.readAccess(base, mode, x, x.Pos_)
 		}
 	}
 
@@ -217,13 +266,35 @@ func (in *Interp) evalPathBase(e Expr, env *Env) (pathBase, error) {
 		}
 		return pathBase{refs: in.host.ResolveTag(tag.Name)}, nil
 	}
+	if addr, ok := e.(*AddrExpr); ok {
+		return in.addrPathBase(addr)
+	}
 	v, err := in.evalExpr(e, env)
 	if err != nil {
 		return pathBase{}, err
 	}
+	return in.pathBaseFrom(v, e.Position())
+}
+
+// addrPathBase is evalPathBase for an `@id` base, which has no need of a Value.
+func (in *Interp) addrPathBase(x *AddrExpr) (pathBase, error) {
+	r, found, err := in.addrRef(x)
+	if err != nil {
+		return pathBase{}, err
+	}
+	if !found {
+		// Reading through a missing object yields null, as a NullVal base does.
+		return pathBase{single: true}, nil
+	}
+	return pathBase{one: r, hasOne: true, single: true}, nil
+}
+
+// pathBaseFrom is evalPathBase for a base already evaluated, pos being where
+// its expression is.
+func (in *Interp) pathBaseFrom(v Value, pos Pos) (pathBase, error) {
 	switch t := v.(type) {
 	case RefVal:
-		return pathBase{refs: []RefVal{t}, single: true}, nil
+		return pathBase{one: t, hasOne: true, single: true}, nil
 	case NullVal:
 		// Reading through a missing object yields null; writing through one is
 		// caught by the caller, which has a position to complain at.
@@ -235,14 +306,14 @@ func (in *Interp) evalPathBase(e Expr, env *Env) (pathBase, error) {
 		for _, el := range t.Elems {
 			r, ok := el.(RefVal)
 			if !ok {
-				return pathBase{}, in.errorf(e.Position(), "a list used as an object path holds refs, not %s",
+				return pathBase{}, in.errorf(pos, "a list used as an object path holds refs, not %s",
 					typeName(el))
 			}
 			refs = append(refs, r)
 		}
 		return pathBase{refs: refs}, nil
 	}
-	return pathBase{}, in.errorf(e.Position(), "%s is not an object", typeName(v))
+	return pathBase{}, in.errorf(pos, "%s is not an object", typeName(v))
 }
 
 // readAccess reads an attribute or a property.
@@ -251,7 +322,8 @@ func (in *Interp) evalPathBase(e Expr, env *Env) (pathBase, error) {
 // would have to be a list, and then `#lamps.attr.brightness + 1` would silently
 // mean something no one intended. Writing through a tag is the useful direction,
 // and that is what SCRIPTING.md describes.
-func (in *Interp) readAccess(base pathBase, mode accessMode, name string, pos Pos) (Value, error) {
+func (in *Interp) readAccess(base pathBase, mode accessMode, x *MemberExpr, pos Pos) (Value, error) {
+	name := x.Name
 	if in.host == nil {
 		return nil, in.errorf(pos, "there is no world here")
 	}
@@ -259,10 +331,10 @@ func (in *Interp) readAccess(base pathBase, mode accessMode, name string, pos Po
 		return nil, in.errorf(pos,
 			"a tag can be written through but not read from; read one object at a time, or loop over #tag")
 	}
-	if len(base.refs) == 0 {
+	if base.count() == 0 {
 		return NullVal{}, nil
 	}
-	r := base.refs[0]
+	r := base.at(0)
 
 	switch mode {
 	case modeAttr:
@@ -275,13 +347,54 @@ func (in *Interp) readAccess(base pathBase, mode accessMode, name string, pos Po
 		return v, nil
 
 	default: // modeProp
-		v, ok := in.host.Prop(r, name)
+		var v Value
+		var ok bool
+		if h := in.propHandle(x, r.Kind); h != nil {
+			v, ok = h.GetProp(r)
+		} else {
+			v, ok = in.host.Prop(r, name)
+		}
 		if !ok {
 			return nil, in.errorf(pos, "%s has no property %q", r, name)
 		}
 		return v, nil
 	}
 }
+
+// propSite is a member expression's memory of the host's handle for the
+// property it names: for which interpreter, and for which kind of object. A
+// `.prop.x` step reaches objects of one kind nearly always; one that alternates
+// between kinds resolves again on each change, which costs what every access
+// used to.
+type propSite struct {
+	owner *Interp
+	kind  Kind_
+	h     PropHandle
+}
+
+// propHandle returns the host's handle for x's property on objects of this
+// kind, or nil when the host has none to give.
+func (in *Interp) propHandle(x *MemberExpr, kind Kind_) PropHandle {
+	site := &x.prop
+	if site.owner == in && site.kind == kind {
+		return site.h
+	}
+	var h PropHandle
+	if pr, ok := in.host.(PropResolver); ok {
+		h = pr.PropHandle(kind, x.Name)
+	}
+	*site = propSite{owner: in, kind: kind, h: h}
+	return h
+}
+
+// refKindAtoms are `ref.kind`'s answers, boxed once.
+var refKindAtoms = func() [256]Value {
+	var out [256]Value
+	for i := range out {
+		out[i] = AtomVal(Kind_(i).String())
+	}
+	return out
+}()
 
 // readStructural reads a step that is part of an object's shape rather than its
 // data: `ref.id`, `ref.kind`, `@sec.floor`, `@sec.edge`, `v.x`.
@@ -301,7 +414,7 @@ func (in *Interp) readStructural(recv Value, name string, pos Pos) (Value, error
 	case "id":
 		return StrVal(r.ID()), nil
 	case "kind":
-		return AtomVal(r.Kind.String()), nil
+		return refKindAtoms[r.Kind], nil
 	case "state":
 		// The scratch dict itself, so `@self.state["open"]` is an ordinary
 		// index and `@self.state["open"] = v` an ordinary index assignment.
@@ -342,7 +455,7 @@ func (in *Interp) assignMember(x *MemberExpr, val Value, env *Env) error {
 	if in.host == nil {
 		return in.errorf(x.Pos_, "there is no world here")
 	}
-	if base.single && len(base.refs) == 0 {
+	if base.single && base.count() == 0 {
 		return in.errorf(x.Pos_, "cannot write to an object that does not exist")
 	}
 
@@ -351,13 +464,18 @@ func (in *Interp) assignMember(x *MemberExpr, val Value, env *Env) error {
 	// aborted the rest would be far harder to reason about than one that reports
 	// what it could not do.
 	var firstErr error
-	for _, r := range base.refs {
+	for i, n := 0, base.count(); i < n; i++ {
+		r := base.at(i)
 		var werr error
 		switch mode {
 		case modeAttr:
 			werr = in.host.SetAttr(r, x.Name, val)
 		default: // modeProp
-			werr = in.host.SetProp(r, x.Name, val)
+			if h := in.propHandle(x, r.Kind); h != nil {
+				werr = h.SetProp(r, val)
+			} else {
+				werr = in.host.SetProp(r, x.Name, val)
+			}
 		}
 		if werr != nil && firstErr == nil {
 			firstErr = in.errorf(x.Pos_, "%s", werr.Error())

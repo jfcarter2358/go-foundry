@@ -41,11 +41,35 @@ func LoadTexture(name, file string) error {
 		return err
 	}
 
-	// Everything above is the decode, which any tool that only wants to know a
-	// texture's size can do; everything below hands it to the GPU. The split
-	// mirrors Geometry.Load's — see TextureUploadsEnabled.
+	// What the CPU wants to know about it is recorded now, whether the upload
+	// happens now or not.
+	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
+	noteTextureMean(name, rgba)
+	// What was on disk when this was read, so RescanTextures can tell later
+	// whether the file has moved on. See texture_rescan.go.
+	noteTextureStamp(name, file)
+
+	// Asked for during the simulation half of the frame — a spawned entity's
+	// model, a retextured sprite — the upload waits for the frame's GL half,
+	// which drains it before anything draws (sim_gl.go).
+	if TextureUploadsEnabled && inSimStep {
+		deferredTextures = append(deferredTextures, deferredTexture{name: name, rgba: rgba})
+		deferredTextureNames[name] = true
+		return nil
+	}
+	uploadTexture(name, rgba)
+	return nil
+}
+
+// uploadTexture is LoadTexture's GPU half: the texture object, its filtering
+// and mipmaps, its entry in Textures, and its normal map. With uploads off it
+// records the name alone.
+func uploadTexture(name string, rgba *image.RGBA) {
+	// Everything before this is the decode, which any tool that only wants to
+	// know a texture's size can do; everything here hands it to the GPU. The
+	// split mirrors Geometry.Load's — see TextureUploadsEnabled.
 	var texture uint32
-	if TextureUploadsEnabled {
+	if TextureUploadsEnabled && !glBlocked("LoadTexture") {
 		gl.GenTextures(1, &texture)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, texture)
@@ -64,16 +88,11 @@ func LoadTexture(name, file string) error {
 	}
 
 	Textures[name] = texture
-	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
-	noteTextureMean(name, rgba)
-	// What was on disk when this was read, so RescanTextures can tell later
-	// whether the file has moved on. See texture_rescan.go.
-	noteTextureStamp(name, file)
 
-	if !TextureUploadsEnabled {
+	if !TextureUploadsEnabled || glTripwire != nil {
 		// The normal map's own load would upload too, and a headless caller has
 		// no use for one.
-		return nil
+		return
 	}
 
 	// Every path that puts a texture on the GPU comes through here, so this is
@@ -83,7 +102,38 @@ func LoadTexture(name, file string) error {
 	if err := ensureNormalMapLoaded(name); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
-	return nil
+}
+
+// deferredTexture is one upload LoadTexture left for the frame's GL half.
+type deferredTexture struct {
+	name string
+	rgba *image.RGBA
+}
+
+// deferredTextures are the uploads queued during the simulation half of the
+// frame, in the order they were asked for; deferredTextureNames is the same
+// set by name, so asking again before the drain queues nothing more.
+var (
+	deferredTextures     []deferredTexture
+	deferredTextureNames = map[string]bool{}
+)
+
+// DrainDeferredTextures uploads what LoadTexture queued during the simulation
+// half of the frame. Called with the main context current, before the frame
+// draws — by DrainTextureUploads and by render.DrawWorld — so a texture
+// something asked for this frame is resident for this frame's draw, as it was
+// when the upload happened on the spot.
+func DrainDeferredTextures() {
+	if len(deferredTextures) == 0 {
+		return
+	}
+	for i := range deferredTextures {
+		d := &deferredTextures[i]
+		uploadTexture(d.name, d.rgba)
+		delete(deferredTextureNames, d.name)
+		d.rgba = nil
+	}
+	deferredTextures = deferredTextures[:0]
 }
 
 // decodeTextureFile reads a PNG into tightly packed RGBA. Pure CPU and touching
@@ -120,6 +170,12 @@ func EnsureTextureLoaded(name string) error {
 		return nil
 	}
 	if _, ok := Textures[name]; ok {
+		return nil
+	}
+	// Decoded during the simulation half of this frame and waiting for its
+	// upload (DrainDeferredTextures): loaded, as far as anyone asking is
+	// concerned.
+	if deferredTextureNames[name] {
 		return nil
 	}
 	path, ok := TextureNames[name]
@@ -176,6 +232,10 @@ func DrainTextureUploads() {
 	// every frame that happened not to edit a texture — and an atlas that
 	// never reaches the GPU draws as gfx.Textures' zero value, which is the
 	// default texture object: a black box per glyph.
+	//
+	// First the textures the simulation step asked for (sim_gl.go): a
+	// retexture queued below may name one.
+	DrainDeferredTextures()
 	for _, u := range pendingTextureUploads {
 		if err := UpdateTextureFromRGBA(u.Name, u.Img); err != nil {
 			log.Printf("texture upload %q: %v", u.Name, err)

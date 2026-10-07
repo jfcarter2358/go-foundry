@@ -264,6 +264,13 @@ func epa(a, b Shape, simplex []mgl32.Vec3) (mgl32.Vec3, float32, bool) {
 	// strictly inside the starting tetrahedron, and the polytope only grows.
 	interior := verts[0].Add(verts[1]).Add(verts[2]).Add(verts[3]).Mul(0.25)
 
+	// The horizon's edges, in the order the torn-off faces first name them.
+	// A list rather than a map: a map's iteration order is randomised, and the
+	// order the new faces are stitched in decides which of two equally near
+	// faces closestFace picks next — so with a map, two runs over the same
+	// overlap could push a body out along different normals.
+	var edges []horizonEdge
+
 	faces := []epaFace{
 		makeFace(verts, 0, 1, 2, interior),
 		makeFace(verts, 0, 1, 3, interior),
@@ -288,12 +295,12 @@ func epa(a, b Shape, simplex []mgl32.Vec3) (mgl32.Vec3, float32, bool) {
 		// against it. The hole's boundary is exactly the edges that belonged to
 		// one removed face rather than two.
 		var kept []epaFace
-		edges := map[[2]int]int{}
+		edges = edges[:0]
 		for _, g := range faces {
 			if g.normal.Dot(p.Sub(verts[g.a])) > 0 {
-				addHorizonEdge(edges, g.a, g.b)
-				addHorizonEdge(edges, g.b, g.c)
-				addHorizonEdge(edges, g.c, g.a)
+				addHorizonEdge(&edges, g.a, g.b)
+				addHorizonEdge(&edges, g.b, g.c)
+				addHorizonEdge(&edges, g.c, g.a)
 				continue
 			}
 			kept = append(kept, g)
@@ -301,11 +308,11 @@ func epa(a, b Shape, simplex []mgl32.Vec3) (mgl32.Vec3, float32, bool) {
 
 		verts = append(verts, p)
 		pi := len(verts) - 1
-		for e, n := range edges {
-			if n != 1 {
+		for _, e := range edges {
+			if e.n != 1 {
 				continue // interior edge: both its faces went
 			}
-			kept = append(kept, makeFace(verts, e[0], e[1], pi, interior))
+			kept = append(kept, makeFace(verts, e.i, e.j, pi, interior))
 		}
 		if len(kept) == 0 {
 			return mgl32.Vec3{}, 0, false
@@ -364,11 +371,24 @@ func closestFace(faces []epaFace) int {
 	return best
 }
 
+// horizonEdge is one edge of the hole EPA tears in its polytope, and how many
+// of the torn-off faces named it.
+type horizonEdge struct {
+	i, j, n int
+}
+
 // addHorizonEdge counts an edge irrespective of which way round it was walked,
-// so the two faces sharing it agree they share it.
-func addHorizonEdge(edges map[[2]int]int, i, j int) {
+// so the two faces sharing it agree they share it. The horizon is a few dozen
+// edges at most, so the search is a scan.
+func addHorizonEdge(edges *[]horizonEdge, i, j int) {
 	if i > j {
 		i, j = j, i
 	}
-	edges[[2]int{i, j}]++
+	for k := range *edges {
+		if e := &(*edges)[k]; e.i == i && e.j == j {
+			e.n++
+			return
+		}
+	}
+	*edges = append(*edges, horizonEdge{i: i, j: j, n: 1})
 }

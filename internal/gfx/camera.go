@@ -127,8 +127,28 @@ func CamUp() mgl32.Vec3 {
 // uploads it. This is the only place the gameplay/editor view matrix is built —
 // the sites that used to inline LookAtV all route through here, which is what
 // keeps the up vector from silently disagreeing between them.
+//
+// The simulation half of the frame calls RebuildCamMatrix instead, which is the
+// first half of this alone: the frame's draw (render.DrawWorld) uploads the
+// matrix before anything reads it, so the sim makes no GL call (sim_gl.go).
 func UpdateCamMatrix() {
+	RebuildCamMatrix()
+	UploadCamMatrix()
+}
+
+// RebuildCamMatrix rebuilds the view matrix from Cam.Position/Direction/Up, on
+// the CPU only. Everything that reads Cam.Matrix on the CPU — picking, the
+// listener, the culls — sees it at once; the world program sees it at the next
+// UploadCamMatrix.
+func RebuildCamMatrix() {
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), CamUp())
+}
+
+// UploadCamMatrix writes Cam.Matrix into the world program's view matrix.
+func UploadCamMatrix() {
+	if glBlocked("UploadCamMatrix") {
+		return
+	}
 	if Program == 0 {
 		// No world shader, so nowhere to upload to. Only a headless test gets
 		// here — a GL call with no context current segfaults in the driver

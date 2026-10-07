@@ -110,6 +110,10 @@ type Level struct {
 	// Spatial, from the same structural information, and refreshed every tick.
 	// Nil is the world-only case and reads as "no frames", not as an error.
 	Frames *FrameSet
+
+	// entityIndex is FindEntity's ID lookup (entity_index.go): derived, and
+	// self-validating, so nothing that edits Entities has to maintain it.
+	entityIndex entityIndexSlot
 }
 
 // SaveMode is what a save made in a level holds.

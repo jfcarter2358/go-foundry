@@ -68,10 +68,10 @@ func LevelNames(lvl *world.Level) []string {
 	return withLevel(lvl, func(rt *ScriptRuntime) []string {
 		c := rt.cache
 		seen := map[string]bool{}
-		for _, m := range []map[string]int{
-			c.entity, c.volume, c.sprite, c.emitter, c.sound, c.effect, c.chunk, c.dirLight, c.ptLight,
+		for _, k := range []ixKind{
+			ixEntity, ixVolume, ixSprite, ixEmitter, ixSound, ixEffect, ixChunk, ixDirLight, ixPtLight,
 		} {
-			for k := range m {
+			for k := range c.ix(k).m {
 				seen[k] = true
 			}
 		}

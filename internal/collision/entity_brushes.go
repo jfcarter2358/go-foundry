@@ -37,6 +37,8 @@ package collision
 // than a silently wrong push.
 
 import (
+	"math"
+
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -44,10 +46,43 @@ import (
 
 // entityGeometry is one entity's materialised solid, ready to resolve against:
 // the chunk holding its brushes and the frame those brushes live in.
+//
+// The rest is what a pass can work out once instead of per body per probe
+// (see entityGeometryPass): the inverse of the chunk's placement inside its
+// frame, which chunkLocal otherwise inverts on every call, and a box around
+// everything in the chunk a body could be pushed by, in that same chunk-local
+// space, so a body nowhere near it skips the resolve outright.
 type entityGeometry struct {
 	Chunk *world.Chunk
 	Frame *world.Frame
+
+	// placed is false for a chunk at the identity in its frame, where
+	// chunkLocal is the identity too; inv is the placement's inverse when it
+	// is not.
+	placed bool
+	inv    mgl32.Mat4
+	// invStretch bounds how much inv can lengthen a vector (the Frobenius norm
+	// of its 3x3 part, never less than the largest singular value); 1 when the
+	// chunk is not placed.
+	invStretch float32
+	// reach bounds every solid brush the chunk's resolve could push against,
+	// padded; reachOK is false when nothing that cheap can be said (a chunk
+	// with terrain), and the resolve always runs.
+	reach   aabb
+	reachOK bool
 }
+
+// entityReachPad is how much bigger than its brushes' own (already padded)
+// boxes a geometry's reject box is. pushOutOfChunkBrushes compares a body's
+// box against each brush's with a millimetre of padding folded in on one side
+// or the other of a float addition; a centimetre more makes certain that a
+// body the reject turns away is one every brush box would have turned away,
+// whichever way those additions round.
+const entityReachPad = float32(0.01)
+
+// entityReachReject switches the reach reject on; a test turns it off to hold
+// the rejected path to the full resolve.
+var entityReachReject = true
 
 // entityGeometries is every entity-owned solid in the level.
 //
@@ -59,11 +94,23 @@ type entityGeometry struct {
 // A disabled chunk is skipped for the reason the spatial hash skips one: a
 // switched-off chunk is not in the world, and collision, location and the
 // script location verbs all have to agree about that.
+//
+// Inside an EntityUpdate pass the answer is the pass's, worked out once at its
+// start (entityGeometryPass); outside one — the player's move, a script's
+// query — it is worked out on the spot, as it always was.
 func entityGeometries(lvl *world.Level) []entityGeometry {
 	if lvl == nil || lvl.Frames == nil {
 		return nil
 	}
-	var out []entityGeometry
+	if p := activeGeometryPass; p != nil && p.lvl == lvl {
+		return p.geos
+	}
+	return buildEntityGeometries(lvl, nil)
+}
+
+// buildEntityGeometries is entityGeometries without the pass, appending to
+// out.
+func buildEntityGeometries(lvl *world.Level, out []entityGeometry) []entityGeometry {
 	for i := range lvl.Chunks {
 		ch := &lvl.Chunks[i]
 		if ch.FromEntity == "" || !ch.InFrame() || !ch.IsEnabled() {
@@ -73,9 +120,117 @@ func entityGeometries(lvl *world.Level) []entityGeometry {
 		if f == nil {
 			continue
 		}
-		out = append(out, entityGeometry{Chunk: ch, Frame: f})
+		g := entityGeometry{Chunk: ch, Frame: f, invStretch: 1}
+		if m := ch.LocalPlacementMatrix(); m != mgl32.Ident4() {
+			g.placed, g.inv = true, m.Inv()
+			var sq float32
+			for c := 0; c < 3; c++ {
+				for r := 0; r < 3; r++ {
+					v := g.inv.At(r, c)
+					sq += v * v
+				}
+			}
+			g.invStretch = float32(math.Sqrt(float64(sq))) * 1.001
+		}
+		g.reach, g.reachOK = entityGeometryReach(ch)
+		out = append(out, g)
 	}
 	return out
+}
+
+// entityGeometryReach is the chunk-local box pushOutOfChunkBrushes could push
+// a body out of anything in: every solid brush it would consider, at its
+// cached box if fixed and its current placement if loose. A chunk with
+// terrain reports false — the ground has no such cheap bound here — as does
+// one with nothing solid (reach then rejects everything, which is right: the
+// resolve would find nothing to push against).
+func entityGeometryReach(ch *world.Chunk) (aabb, bool) {
+	if ch.Terrain != nil {
+		return aabb{}, false
+	}
+	reach := emptyBox()
+	boxes := brushBoxesFor(ch)
+	for bi := range ch.Brushes {
+		b := &ch.Brushes[bi]
+		if !b.Solid || len(b.Verts) < 4 {
+			continue
+		}
+		if boxes != nil && boxes.boxes[bi].valid() {
+			reach.addBox(boxes.boxes[bi])
+			continue
+		}
+		m := b.Placement()
+		for _, v := range b.Verts {
+			r := m.Mul4x1(v.Vec4(1))
+			reach.addPoint(mgl32.Vec3{r.X(), r.Y(), r.Z()})
+		}
+	}
+	if reach.valid() {
+		pad := mgl32.Vec3{brushBoxPad + entityReachPad, brushBoxPad + entityReachPad, brushBoxPad + entityReachPad}
+		reach = aabb{reach.lo.Sub(pad), reach.hi.Add(pad)}
+	}
+	return reach, true
+}
+
+// local is chunkLocal for this geometry's chunk, from the cached inverse —
+// the same matrix chunkLocal builds, so the same answer to the bit.
+func (g *entityGeometry) local(p mgl32.Vec3) mgl32.Vec3 {
+	if !g.placed {
+		return p
+	}
+	r := g.inv.Mul4x1(p.Vec4(1))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+// out reports whether a body box at chunk-local c with half-extents half is
+// clear of everything the chunk could push it out of — in which case
+// pushOutOfChunkBrushes would hand it back untouched, and need not be asked.
+func (g *entityGeometry) out(c, half mgl32.Vec3) bool {
+	if !g.reachOK {
+		return false
+	}
+	if !g.reach.valid() {
+		return true
+	}
+	return !g.reach.touches(c, half)
+}
+
+// entityGeometryPass is one EntityUpdate's list of entity solids.
+//
+// The list was rebuilt on every call of resolveAgainstEntityBrushes — which is
+// every sweep step of every body, and again for every StepUp probe — by walking
+// every chunk of the level and looking each frame owner up by name. Nothing it
+// depends on changes inside the pass: chunks are switched on and off by
+// scripts, frames are republished by RefreshFrames after it, and a dynamic
+// brush is moved before it. So the pass builds it once, and every query inside
+// the pass reads it — from any goroutine, since it is never written while the
+// pass runs.
+type entityGeometryPass struct {
+	lvl  *world.Level
+	geos []entityGeometry
+}
+
+var (
+	activeGeometryPass *entityGeometryPass
+	geometryPassBuf    entityGeometryPass
+)
+
+// beginEntityGeometryPass builds the pass's list; endEntityGeometryPass drops
+// it, so a query made after the pass — the player's move, a script's — works
+// against the level as it then is.
+func beginEntityGeometryPass(lvl *world.Level) {
+	activeGeometryPass = nil
+	if lvl == nil || lvl.Frames == nil {
+		return
+	}
+	geometryPassBuf.lvl = lvl
+	geometryPassBuf.geos = buildEntityGeometries(lvl, geometryPassBuf.geos[:0])
+	activeGeometryPass = &geometryPassBuf
+}
+
+func endEntityGeometryPass() {
+	activeGeometryPass = nil
+	geometryPassBuf.lvl = nil
 }
 
 // resolveAgainstEntityBrushes pushes a body out of every entity's solid it is
@@ -109,8 +264,10 @@ func resolveAgainstEntityBrushes(
 	if body != nil {
 		bodyID, bodyFrameID = body.ID, body.Frame
 	}
+	half := mgl32.Vec3{radius, halfHeight, radius}
 
-	for _, g := range geos {
+	for gi := range geos {
+		g := &geos[gi]
 		owner := g.Chunk.FrameOwner
 		if owner == bodyID || owner == bodyFrameID {
 			continue // its own solid, or the one it is standing inside
@@ -121,7 +278,10 @@ func resolveAgainstEntityBrushes(
 
 		// Body frame → world → the entity's frame → that chunk's own local
 		// space, which is where the brush verts are and where the push runs.
-		local := chunkLocal(g.Chunk, g.Frame.FromWorld(bodyFrame.ToWorld(out)))
+		local := g.local(g.Frame.FromWorld(bodyFrame.ToWorld(out)))
+		if entityReachReject && g.out(local, half) {
+			continue // nowhere near any of it: the push would be a no-op
+		}
 		resolved, f, c := pushOutOfChunkBrushes(g.Chunk, local, radius, halfHeight)
 		if resolved == local {
 			continue // no contact; skip the round trip back

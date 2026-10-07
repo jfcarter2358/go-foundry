@@ -4,6 +4,7 @@ package collision
 
 import (
 	"slices"
+	"sync"
 
 	"foundry/internal/world"
 
@@ -42,13 +43,27 @@ type brushBoxes struct {
 	cell   float32
 	nx, nz int
 	cells  [][]int32
+}
 
-	// Scratch for near: the candidate list it returns, and a per-brush stamp
-	// so a brush listed in several of the cells a body covers comes back once.
+// nearScratch is near's working memory: the candidate list it returns, and a
+// per-brush stamp so a brush listed in several of the cells a body covers
+// comes back once.
+//
+// It used to live on the chunk's brushBoxes, which made two bodies resolving
+// against one chunk at once — the parallel entity update — trample each
+// other's candidate lists. It is the caller's now, one per goroutine
+// (nearScratchPool). The stamps are not tied to any chunk: a scratch's stamp
+// only ever counts up, so whatever chunk a slot was last stamped for, it is
+// stale for this call; seen only has to be at least as long as the chunk's
+// brush list.
+type nearScratch struct {
 	cand  []int32
 	seen  []uint32
 	stamp uint32
 }
+
+// nearScratchPool hands each concurrent resolve its own nearScratch.
+var nearScratchPool = sync.Pool{New: func() any { return &nearScratch{} }}
 
 // brushGridCells caps the grid's size a side: a chunk's footprint is cut into
 // at most this many cells along its longer axis, and never cells smaller than
@@ -61,6 +76,19 @@ const (
 
 var brushBoxCache = map[*world.Chunk]*brushBoxes{}
 
+// brushBoxesFrozen is set while queries run on several goroutines at once (the
+// parallel entity update, the parallel particle step). syncBrushBoxes has
+// brought every chunk of the level up to date first, so a lookup then only
+// reads the map; one that still misses — a chunk not in the level, which a test
+// can build — gets a box cache of its own that is not stored, rather than
+// writing a map other goroutines are reading.
+var brushBoxesFrozen bool
+
+// brushBoxCacheCap is how many chunks the cache holds before entries for
+// chunks that are not in the current level are let go (syncBrushBoxes), or —
+// for a caller outside any level pass — the whole cache is dropped.
+const brushBoxCacheCap = 4096
+
 // brushBoxesFor returns ch's box cache, building it if the chunk's meshes
 // have changed since it was built.
 func brushBoxesFor(ch *world.Chunk) *brushBoxes {
@@ -72,15 +100,55 @@ func brushBoxesFor(ch *world.Chunk) *brushBoxes {
 	if pc != nil && pc.gen == gen && pc.brushes == &ch.Brushes[0] && pc.count == len(ch.Brushes) {
 		return pc
 	}
+	if brushBoxesFrozen {
+		pc = &brushBoxes{}
+		pc.build(ch, gen)
+		return pc
+	}
 	if pc == nil {
 		// Chunk pointers die with their level; a cache that outlived one is
 		// dropped when it is noticed rather than tracked.
-		if len(brushBoxCache) > 256 {
+		if len(brushBoxCache) > brushBoxCacheCap {
 			clear(brushBoxCache)
 		}
 		pc = &brushBoxes{}
 		brushBoxCache[ch] = pc
 	}
+	pc.build(ch, gen)
+	return pc
+}
+
+// syncBrushBoxes brings every chunk of the level's box cache up to date —
+// building what is missing or stale — so that queries can then run on several
+// goroutines with brushBoxesFrozen set and only read it. Building also fills
+// each chunk's convex-piece cache (world.Chunk.ConvexBrushPieces), the other
+// thing a resolve would otherwise fill in lazily, for the same reason.
+//
+// Entries for chunks of some other level are dropped here once the cache has
+// grown past its cap, rather than the whole cache being cleared mid-level the
+// way brushBoxesFor's own guard would.
+func syncBrushBoxes(lvl *world.Level) {
+	if lvl == nil {
+		return
+	}
+	if len(brushBoxCache) > len(lvl.Chunks)+brushBoxCacheCap/4 {
+		live := make(map[*world.Chunk]bool, len(lvl.Chunks))
+		for i := range lvl.Chunks {
+			live[&lvl.Chunks[i]] = true
+		}
+		for ch := range brushBoxCache {
+			if !live[ch] {
+				delete(brushBoxCache, ch)
+			}
+		}
+	}
+	for i := range lvl.Chunks {
+		brushBoxesFor(&lvl.Chunks[i])
+	}
+}
+
+// build fills pc from ch at mesh generation gen.
+func (pc *brushBoxes) build(ch *world.Chunk, gen uint64) {
 	pc.gen, pc.brushes, pc.count = gen, &ch.Brushes[0], len(ch.Brushes)
 	pc.boxes = append(pc.boxes[:0], make([]aabb, len(ch.Brushes))...)
 	pc.faceBoxes = append(pc.faceBoxes[:0], make([][]aabb, len(ch.Brushes))...)
@@ -113,7 +181,16 @@ func brushBoxesFor(ch *world.Chunk) *brushBoxes {
 		}
 	}
 	pc.buildGrid(all)
-	return pc
+	// Every brush's convex pieces, now, while this is the only goroutine: a
+	// resolve asks for them brush by brush and the chunk caches them in a map
+	// as it goes, which must not happen while other goroutines read it. The
+	// cache is keyed on the same mesh generation this box cache is, so a box
+	// cache that is current means a piece cache that is full.
+	if !brushBoxesFrozen {
+		for bi := range ch.Brushes {
+			ch.ConvexBrushPieces(bi)
+		}
+	}
 }
 
 func padBox(b aabb) aabb {
@@ -196,16 +273,15 @@ func (pc *brushBoxes) fixedUnder(p mgl32.Vec3) []int32 {
 // brushes are ones whose box the body is nowhere near, which the whole walk
 // would have rejected on the box test anyway. The slice is scratch, valid until
 // the next call on this chunk.
-func (pc *brushBoxes) near(c, half mgl32.Vec3, after int) []int32 {
-	pc.cand = pc.cand[:0]
-	if len(pc.seen) != pc.count {
-		pc.seen = make([]uint32, pc.count)
-		pc.stamp = 0
+func (pc *brushBoxes) near(sc *nearScratch, c, half mgl32.Vec3, after int) []int32 {
+	sc.cand = sc.cand[:0]
+	if len(sc.seen) < pc.count {
+		sc.seen = append(sc.seen, make([]uint32, pc.count-len(sc.seen))...)
 	}
-	pc.stamp++
-	if pc.stamp == 0 { // wrapped: every old stamp is now ambiguous
-		clear(pc.seen)
-		pc.stamp = 1
+	sc.stamp++
+	if sc.stamp == 0 { // wrapped: every old stamp is now ambiguous
+		clear(sc.seen)
+		sc.stamp = 1
 	}
 	if pc.nx > 0 {
 		x0, z0 := pc.cellOf(c.Sub(half))
@@ -213,9 +289,9 @@ func (pc *brushBoxes) near(c, half mgl32.Vec3, after int) []int32 {
 		for z := z0; z <= z1; z++ {
 			for x := x0; x <= x1; x++ {
 				for _, bi := range pc.cells[z*pc.nx+x] {
-					if int(bi) > after && pc.seen[bi] != pc.stamp {
-						pc.seen[bi] = pc.stamp
-						pc.cand = append(pc.cand, bi)
+					if int(bi) > after && sc.seen[bi] != sc.stamp {
+						sc.seen[bi] = sc.stamp
+						sc.cand = append(sc.cand, bi)
 					}
 				}
 			}
@@ -223,9 +299,9 @@ func (pc *brushBoxes) near(c, half mgl32.Vec3, after int) []int32 {
 	}
 	for _, bi := range pc.loose {
 		if int(bi) > after {
-			pc.cand = append(pc.cand, bi)
+			sc.cand = append(sc.cand, bi)
 		}
 	}
-	slices.Sort(pc.cand)
-	return pc.cand
+	slices.Sort(sc.cand)
+	return sc.cand
 }

@@ -18,9 +18,15 @@ package sim
 // keys themselves), the level load, and every part of drawing. Those stay in
 // internal/app, which is the only thing that has a window.
 //
-// It is safe with no GL context: the two calls in here that would touch one —
-// gfx.UpdateCamMatrix and world.UploadLightsTo — each answer "nothing to
-// upload" when there is no program, and the profiler is off unless asked for.
+// It makes no GL calls (the groundwork for running it on a thread of its own),
+// and so is safe with no GL context. The two it used to make are the draw's
+// now: the camera is placed with gfx.RebuildCamMatrix, which builds the view
+// matrix on the CPU and leaves the upload to render.DrawWorld, and the lights a
+// waypoint, an emitter or an effect moves are picked up by DrawWorld's own
+// per-frame write of the scene's lights. A texture asked for during the step is
+// decoded here and uploaded by the frame's next drain (gfx/sim_gl.go).
+// TestSimStepMakesNoGLCalls holds it to that. The profiler is off unless asked
+// for.
 
 import (
 	"foundry/internal/ai"
@@ -113,6 +119,11 @@ func (in Input) held() (crouch, sprint, jump bool) {
 // move, then the frames they are expressed in are republished, then everything
 // that reads a position reads it.
 func Step(lvl *world.Level, dt float32, g Gates, in Input) {
+	// GL work the step can leave to the frame's draw — a texture something
+	// spawned asks for — is queued for it rather than done here (gfx/sim_gl.go).
+	gfx.BeginSimStep()
+	defer gfx.EndSimStep()
+
 	render.ProfileBegin("player & vehicles")
 	if g.Play() {
 		// --- Input -> player -> camera ---
@@ -235,7 +246,7 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 			// No player yet: the intent still has to go somewhere, or the
 			// camera freezes on the loading frame.
 			gfx.Cam.Position = gfx.Cam.Position.Add(intent)
-			gfx.UpdateCamMatrix()
+			gfx.RebuildCamMatrix()
 		}
 	}
 	render.ProfileEnd() // player & vehicles
@@ -333,12 +344,10 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 		// now is; and before the emitters and the mixer below read where they
 		// are.
 		//
-		// Lights are uniforms rather than something drawn where it stands, so a
-		// light on a path is uploaded again. Quietly: the verbose upload logs a
-		// line, and this is every frame.
-		if world.AdvanceWaypointFollowers(lvl, dt) {
-			world.UploadLightsTo(gfx.Program, world.SceneLights(lvl), false)
-		}
+		// A light on a path is in the scene's lights, which render.DrawWorld
+		// writes into the scene block every frame — so what this reports
+		// ("a light moved") needs no answer here any more.
+		world.AdvanceWaypointFollowers(lvl, dt)
 	}
 	render.ProfileEnd() // frames & waypoints
 
@@ -352,23 +361,20 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 	// authoring.
 	//
 	// An effect whose document carries a `light:` flashes light over the level
-	// while it goes off — a muzzle flash on the wall beside the gun.
+	// while it goes off — a muzzle flash on the wall beside the gun. The flash
+	// is one of the scene's lights (world.SceneLights), which DrawWorld writes
+	// every frame.
 	render.ProfileBegin("emitters")
-	if world.EmitterUpdate(lvl, dt, g.Play()) {
-		world.UploadLightsTo(gfx.Program, world.SceneLights(lvl), false)
-	}
+	world.EmitterUpdate(lvl, dt, g.Play())
 	render.ProfileEnd()
 
 	// Effects, in the emitters' slot and ungated by the editor for their
 	// reason, but stopped by a pause: an explosion is a moment, and one that
 	// carried on behind a pause menu would be over by the time play resumed.
-	// Its flash is a light, and lights are uniforms, so while one is lit — and
-	// once more when the last goes out — the scene's lights go up again with
-	// the flashes in them.
+	// Its flash is a light — one of the scene's, so DrawWorld's per-frame write
+	// of them carries it while it is lit and drops it once it is out.
 	render.ProfileBegin("effects")
-	if world.EffectUpdate(lvl, dt, !g.GamePaused) {
-		world.UploadLightsTo(gfx.Program, world.SceneLights(lvl), false)
-	}
+	world.EffectUpdate(lvl, dt, !g.GamePaused)
 	render.ProfileEnd()
 
 	// Decals, in the effects' slot and stopped by a pause for their reason: the

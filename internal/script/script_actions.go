@@ -238,7 +238,7 @@ func init() {
 			// has somewhere to close to.
 			world.MaterializeEntityWaypointAnimations(rt.lvl, &rt.lvl.Entities[len(rt.lvl.Entities)-1])
 			// The cache is indexed by name and the new entity is not in it yet.
-			rt.cache = buildRefCache(rt.lvl)
+			rt.syncCache(rt.lvl)
 			return flang.RefVal{Kind: flang.RefEntity, A: id}, nil
 		},
 
@@ -270,7 +270,7 @@ func init() {
 				rt.warnAt(pos, "destroy did nothing: %s is %s",
 					r, destroyRefusal(r))
 			}
-			rt.cache = buildRefCache(rt.lvl)
+			rt.syncCache(rt.lvl)
 			return flang.BoolVal(removed), nil
 		},
 

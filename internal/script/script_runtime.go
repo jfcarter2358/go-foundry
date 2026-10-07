@@ -126,7 +126,14 @@ type ScriptRuntime struct {
 
 	// queue is the single FIFO. head is where the next delivery comes from;
 	// draining pops from the front and appends to the back.
+	//
+	// An index rather than reslicing from the front: `queue = queue[1:]` gives
+	// up the slot it steps past, so a queue that is drained every tick and
+	// refilled every tick reallocated its whole backing array every tick. The
+	// drain resets both to the start once it is empty, and outside a drain head
+	// is always 0.
 	queue []queuedMsg
+	head  int
 	// spill holds messages deferred past the hop cap or the per-tick budget,
 	// carried into the next frame.
 	spill []queuedMsg
@@ -159,7 +166,7 @@ type ScriptRuntime struct {
 	// broadcast, and warning about the other five would make the feature
 	// unusable. One target means the first, several mean the second. Reset every
 	// tick, because it is only ever read during that tick's drain.
-	fanout map[string]int
+	fanout map[sendKey]int
 
 	// hidden collects the screens that leave the stack through
 	// ui.OnScreenHidden. Every refCache built reads it, so a screen ref still
@@ -174,6 +181,17 @@ type ScriptRuntime struct {
 	// run scatters its shots the same way twice. Nothing else needs it: a verb
 	// reaches everything else it touches through rt.self and the host.
 	running *scriptUnit
+
+	// Scratch reused tick to tick rather than allocated per use — see where
+	// each is filled. None of them outlives the call that fills it.
+	refsBuf    []flang.RefVal // scriptedRefs
+	moversBuf  []placedMover  // postOverlapEvents' movers
+	levelUnits []*scriptUnit  // resolveTarget, for the level's several scripts
+	overlap    overlapScratch // postOverlapEvents' containers, grid and set
+
+	// brushScripts caches, per chunk, which of its brushes carry a script —
+	// see scriptedBrushes.
+	brushScripts []chunkScripted
 
 	stats ScriptStats
 }
@@ -205,7 +223,7 @@ var Scripts = &ScriptRuntime{
 	dirtyTex:     map[string]bool{},
 	warned:       map[flang.RefVal]bool{},
 	warnedAt:     map[string]bool{},
-	fanout:       map[string]int{},
+	fanout:       map[sendKey]int{},
 }
 
 // ScriptStatsSnapshot returns the last tick's counters, for the debug overlay.
@@ -229,14 +247,16 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	rt.trees = map[string]*treeUnit{}
 	rt.treeParams = map[string][]string{}
 	rt.queue = nil
+	rt.head = 0
 	rt.spill = nil
+	rt.brushScripts = nil
 	rt.state = map[flang.RefVal]*flang.DictVal{}
 	rt.dirtyBrushes = map[flang.RefVal]bool{}
 	rt.dirtyVolumes = map[string]bool{}
 	rt.dirtyTex = map[string]bool{}
 	rt.warned = map[flang.RefVal]bool{}
 	rt.warnedAt = map[string]bool{}
-	rt.fanout = map[string]int{}
+	rt.fanout = map[sendKey]int{}
 	rt.self = flang.RefVal{}
 	// A zoom a script left on (@level.prop.camera_fov) belongs to the session
 	// that set it.
@@ -683,9 +703,9 @@ func (rt *ScriptRuntime) post(to flang.RefVal, atom string, args []flang.Value, 
 func (rt *ScriptRuntime) postFrom(to flang.RefVal, atom string, args []flang.Value, pos flang.Pos, fromScript bool) error {
 	if fromScript {
 		if rt.fanout == nil {
-			rt.fanout = map[string]int{}
+			rt.fanout = map[sendKey]int{}
 		}
-		rt.fanout[sendKey(atom, pos)]++
+		rt.fanout[sendKey{pos: pos, atom: atom}]++
 	}
 	rt.queue = append(rt.queue, queuedMsg{
 		to: to, atom: atom, args: args, pos: pos,
@@ -695,7 +715,13 @@ func (rt *ScriptRuntime) postFrom(to flang.RefVal, atom string, args []flang.Val
 }
 
 // sendKey identifies one `<-` in one tick: the line it is on and what it sent.
-func sendKey(atom string, pos flang.Pos) string { return pos.String() + "\x00" + atom }
+//
+// A struct rather than the two spelled into a string, which cost a Sprintf and
+// a concatenation on every send and every delivery that asked.
+type sendKey struct {
+	pos  flang.Pos
+	atom string
+}
 
 // wasBroadcast reports whether a send reached more than one object, which is the
 // difference between a mistake and the documented way to address a tag.
@@ -704,7 +730,7 @@ func sendKey(atom string, pos flang.Pos) string { return pos.String() + "\x00" +
 // where the counts have been reset. Treated as a single send, because an
 // unreported bug is worse than a warning about a broadcast that was cut short.
 func (rt *ScriptRuntime) wasBroadcast(m queuedMsg) bool {
-	return rt.fanout[sendKey(m.atom, m.pos)] > 1
+	return rt.fanout[sendKey{pos: m.pos, atom: m.atom}] > 1
 }
 
 // ---------- delivery ----------
@@ -727,29 +753,132 @@ func (rt *ScriptRuntime) scriptFor(r flang.RefVal) string {
 // unitsFor returns every script that should see a message addressed to r. All
 // but the level have exactly one.
 func (rt *ScriptRuntime) unitsFor(r flang.RefVal) []*scriptUnit {
-	if r.Kind == flang.RefLevel && rt.lvl != nil {
-		out := make([]*scriptUnit, 0, len(rt.lvl.Scripts))
+	t := rt.resolveTarget(r)
+	if t.level {
+		return t.levelUnits
+	}
+	if t.unit != nil {
+		return []*scriptUnit{t.unit}
+	}
+	return nil
+}
+
+// deliveryTarget is everything delivering one message to one object needs to
+// know about it, looked up once.
+//
+// Delivery used to ask the same questions several times over — whether the
+// object is alive, what script it runs (three times: for its units, for its
+// tree's interpreter, and for which unit to draw random numbers from), what
+// tree it carries — each answer a walk through the ref cache. One resolve per
+// message answers all of them, on the stack.
+type deliveryTarget struct {
+	// level says the message is the level's, which goes to each of its
+	// several scripts — levelUnits, the runtime's scratch.
+	level      bool
+	levelUnits []*scriptUnit
+	// unit is the object's own script when it has a working one — what sees
+	// the message, what a tree on it runs on, and what it draws its random
+	// numbers from. Not a one-element slice: that made the whole target
+	// escape to the heap, once per message.
+	unit *scriptUnit
+	// tree is the object's decision tree when it has a working one, with the
+	// interpreter it runs on.
+	tree   *treeUnit
+	interp *flang.Interp
+}
+
+// resolveTarget answers deliveryTarget's questions for r. The caller has
+// already decided r is alive.
+func (rt *ScriptRuntime) resolveTarget(r flang.RefVal) (t deliveryTarget) {
+	if r.Kind == flang.RefLevel {
+		if rt.lvl == nil {
+			return t
+		}
+		rt.levelUnits = rt.levelUnits[:0]
 		for _, p := range rt.lvl.Scripts {
 			if u := rt.units[p]; u != nil && !u.disabled && u.interp != nil {
-				out = append(out, u)
+				rt.levelUnits = append(rt.levelUnits, u)
 			}
 		}
-		return out
+		t.level, t.levelUnits = true, rt.levelUnits
+		return t
 	}
-	path := rt.scriptFor(r)
-	if path == "" {
-		return nil
+	var script, tree string
+	if e := rt.host.entityFor(r); e != nil {
+		script, tree = e.Script, e.AITree
+	} else if d := rt.cache.scriptDataFor(r); d != nil {
+		script = d.Script
 	}
-	u := rt.units[path]
-	if u == nil || u.disabled || u.interp == nil {
-		return nil
+	if script != "" {
+		if u := rt.units[script]; u != nil && !u.disabled && u.interp != nil {
+			t.unit = u
+		}
 	}
-	return []*scriptUnit{u}
+	if tree != "" && r.Kind == flang.RefEntity {
+		if tu := rt.loadTree(tree); tu != nil && !tu.disabled && tu.prog != nil {
+			// The tree runs on the object's own script interpreter when it has
+			// one, and on the tree's bare one when it does not — see
+			// script_aitree.go's header.
+			in := tu.interp
+			if t.unit != nil {
+				in = t.unit.interp
+			}
+			if in != nil {
+				t.tree, t.interp = tu, in
+			}
+		}
+	}
+	return t
+}
+
+// answers reports whether anything on r — a script, or a decision tree — has a
+// handler for atom. What lets an engine event nobody listens for go unposted.
+func (rt *ScriptRuntime) answers(r flang.RefVal, atom string) bool {
+	t := rt.resolveTarget(r)
+	if t.tree != nil && t.tree.prog.Events[atom] != nil {
+		return true
+	}
+	if t.unit != nil && t.unit.interp.Answers(atom) {
+		return true
+	}
+	for _, u := range t.levelUnits {
+		if u.interp.Answers(atom) {
+			return true
+		}
+	}
+	return false
+}
+
+// count is how many scripts see a message to this target, and at the i-th.
+func (t *deliveryTarget) count() int {
+	if t.level {
+		return len(t.levelUnits)
+	}
+	if t.unit != nil {
+		return 1
+	}
+	return 0
+}
+
+func (t *deliveryTarget) at(i int) *scriptUnit {
+	if t.level {
+		return t.levelUnits[i]
+	}
+	return t.unit
+}
+
+// alive is host.Alive with the entity it found, so delivery does not have to
+// look an entity up twice.
+func (rt *ScriptRuntime) aliveTarget(r flang.RefVal) bool {
+	if r.Kind == flang.RefEntity {
+		return rt.host.entityFor(r) != nil
+	}
+	return rt.host.Alive(r)
 }
 
 // deliver runs one message's handler.
 func (rt *ScriptRuntime) deliver(m queuedMsg) {
-	if !rt.host.Alive(m.to) {
+	if !rt.aliveTarget(m.to) {
 		// The object was destroyed between the send and the delivery, which is
 		// ordinary. Warn once per target so a repeated send does not fill the log.
 		//
@@ -768,9 +897,8 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 		rt.stats.Dropped++
 		return
 	}
-	units := rt.unitsFor(m.to)
-	runner, tu := rt.runnerFor(m.to)
-	if len(units) == 0 && runner == nil {
+	t := rt.resolveTarget(m.to)
+	if t.count() == 0 && t.tree == nil {
 		if m.fromScript && !rt.wasBroadcast(m) {
 			rt.warnFor(rt.scriptFor(m.from), m.pos,
 				"%s received :%s: but %s", m.to, m.atom, noHandlerReason(rt, m.to))
@@ -779,12 +907,10 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 		return
 	}
 
-	prevSelf, prevHops := rt.self, rt.currentHops
+	// One defer for the three, rather than one each.
+	prevSelf, prevHops, prevRunning := rt.self, rt.currentHops, rt.running
 	rt.self, rt.currentHops = m.to, m.hops
-	defer func() { rt.self, rt.currentHops = prevSelf, prevHops }()
-
-	prevRunning := rt.running
-	defer func() { rt.running = prevRunning }()
+	defer func() { rt.self, rt.currentHops, rt.running = prevSelf, prevHops, prevRunning }()
 
 	anyMatched := false
 
@@ -792,28 +918,27 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 	// event has decided before the script's own clause for it runs, which is
 	// what makes the script's handler a consequence of the decision rather
 	// than a race with it.
-	if runner != nil && runner.Answers(m.atom) {
+	if t.tree != nil && t.tree.prog.Events[m.atom] != nil {
 		// Whatever interpreter the tree is running on is the one a verb should
 		// draw at random from, so rt.running names the script backing it (nil
 		// for a tree with no script, which draws from its own).
-		rt.running = rt.backingUnit(m.to)
-		if runner.Interp != nil {
-			runner.Interp.ResetSteps()
-		}
-		handled, err := runner.Fire(m.atom, m.args)
+		rt.running = t.unit
+		t.interp.ResetSteps()
+		handled, err := rt.fireTree(t.tree, t.interp, m)
 		switch {
 		case err != nil:
 			// A run that failed *was* the handler, on deliver's own rule: the
 			// author's mistake is the error, not a missing clause.
 			anyMatched = true
-			rt.recordTreeFailure(tu, err, m)
+			rt.recordTreeFailure(t.tree, err, m)
 		case handled:
 			anyMatched = true
 			rt.stats.Delivered++
 		}
 	}
 
-	for _, u := range units {
+	for i, n := 0, t.count(); i < n; i++ {
+		u := t.at(i)
 		rt.running = u
 		u.interp.ResetSteps()
 		_, matched, err := u.interp.CallAtom(m.atom, m.args, m.pos)
@@ -869,18 +994,21 @@ func (rt *ScriptRuntime) recordFailure(u *scriptUnit, err error, m queuedMsg) {
 // drain delivers queued messages until nothing is left, or a budget stops it.
 func (rt *ScriptRuntime) drain() {
 	delivered := 0
-	for len(rt.queue) > 0 {
+	for rt.head < len(rt.queue) {
 		if delivered >= scriptMaxMessagesPerTick {
 			// Spill the rest rather than dropping it: a fan-out that overran the
 			// budget still means to happen, just not all in one frame.
-			rt.spill = append(rt.spill, rt.queue...)
-			rt.queue = nil
+			rt.spill = append(rt.spill, rt.queue[rt.head:]...)
+			rt.clearQueue()
 			ScriptLog.Warnf("", "message budget of %d reached; %d deferred to next frame",
 				scriptMaxMessagesPerTick, len(rt.spill))
 			return
 		}
-		m := rt.queue[0]
-		rt.queue = rt.queue[1:]
+		m := rt.queue[rt.head]
+		// Let go of what the slot held, so a message's arguments are not kept
+		// alive by a backing array that is about to be reused.
+		rt.queue[rt.head] = queuedMsg{}
+		rt.head++
 
 		if m.hops > scriptMaxHops {
 			// Deferred, not dropped. A legitimate deep cascade degrades to one
@@ -894,6 +1022,14 @@ func (rt *ScriptRuntime) drain() {
 		rt.deliver(m)
 		delivered++
 	}
+	rt.clearQueue()
+}
+
+// clearQueue empties the queue and keeps its storage for the next tick.
+func (rt *ScriptRuntime) clearQueue() {
+	clear(rt.queue)
+	rt.queue = rt.queue[:0]
+	rt.head = 0
 }
 
 // ---------- the tick ----------
@@ -921,9 +1057,9 @@ func ScriptTick(lvl *world.Level, dt float32, play bool) {
 	// The cache is rebuilt every tick and never carried across one: anything
 	// structural invalidates it, and rebuilding is cheaper than reasoning about
 	// exactly when it did not.
-	rt.cache = buildRefCache(lvl)
+	rt.syncCache(lvl)
 	rt.stats = ScriptStats{}
-	rt.fanout = map[string]int{}
+	clear(rt.fanout)
 
 	// Screens that left the stack before this tick are the ones whose :hidden:
 	// and :cancel: it delivers — see ScriptRuntime.hidden.
@@ -932,7 +1068,7 @@ func ScriptTick(lvl *world.Level, dt float32, play bool) {
 	// Messages deferred last frame go first, so a spilled cascade continues in
 	// the order it was cut off.
 	rt.queue = append(rt.queue, rt.spill...)
-	rt.spill = nil
+	rt.spill = rt.spill[:0]
 
 	rt.currentHops = -1
 	ScriptEventsTick(rt, lvl, dt)
@@ -981,7 +1117,14 @@ func DrainScriptWork(lvl *world.Level) {
 	}
 
 	if len(rt.dirtyBrushes) > 0 {
-		cache := buildRefCache(lvl)
+		// The runtime's own cache when it is on this level, synced; one of its
+		// own otherwise.
+		cache := rt.cache
+		if cache != nil && cache.lvl == lvl {
+			cache.sync(lvl)
+		} else {
+			cache = buildRefCache(lvl)
+		}
 		// Chunk-level work is collected rather than done per brush:
 		// RecomputeBounds covers the whole chunk, so running it once per dirty
 		// brush would repeat the same work for every brush in it.

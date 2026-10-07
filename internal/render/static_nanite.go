@@ -3,11 +3,22 @@ package render
 // static_nanite.go — a compiled level's opaque surfaces through the GPU-driven
 // cull (nanite_cull.go). Phase 1 of the Nanite plan (docs/nanite/PHASE_1.md).
 //
-// Each draw group (static_batch.go) already holds its surfaces' corners in one
-// vertex buffer. Here it is given an index list in CLUSTER order — the cut the
-// compiler stored (world/static_clusters.go), or one made now for a group the
-// stored cut does not match — so each cluster is a contiguous run of indices,
-// and the level's clusters go into one SSBO for the compute cull to read.
+// Each draw group (static_batch.go) already holds its surfaces' corners in its
+// pool's vertex buffer. Here it is given an index list in CLUSTER order — the
+// cut the compiler stored (world/static_clusters.go), or one made now for a
+// group the stored cut does not match — so each cluster is a contiguous run of
+// indices, and the level's clusters go into one SSBO for the compute cull to
+// read. The index lists of a pool's groups are one index buffer, and a
+// cluster's draw names where in the pool its indices and its group's corners
+// start, so every command of every group of a pool draws from one vertex
+// array.
+//
+// The cull's GROUPS — a run of command slots drawn with one draw state — are
+// MATERIALS, not draw groups: every draw group of one material in one pool,
+// whichever chunk it came from, is one cull group, one indirect draw and one
+// material bin in the visibility buffer, where a level of a thousand
+// chunk-and-material groups made a thousand of each. A shadow pass, which
+// draws depth alone, has one cull group a pool.
 //
 // The camera's view keeps the PVS as the first, cheapest filter: the
 // surfaces VisibleSurfaces names mark the clusters they are cut into, and only
@@ -55,8 +66,12 @@ type staticGPU struct {
 	stamp   []uint32
 	stampNo uint32
 
-	main       cullBatch
-	mainGroups []int // the static group each of main's cull groups draws
+	main cullBatch
+	// mats are the material groups: every draw group of one material in one
+	// pool, in the order the level's groups first name them. mainGroups is
+	// the material group each of main's cull groups draws.
+	mats       []staticMatGroup
+	mainGroups []int
 	mainSerial uint64
 	mainTrans  uint64
 	mainValid  bool
@@ -65,9 +80,10 @@ type staticGPU struct {
 	mainSurfaces int
 	// pass2 is set by a camera pass in two-pass mode, for the occlusion pass
 	// to finish.
-	pass2      bool
-	pass2View  cullView
-	shadow     cullBatch
+	pass2     bool
+	pass2View cullView
+	shadow    cullBatch
+	// shadowGrps is the pool each of the shadow pass's cull groups draws.
 	shadowGrps []int
 	shadowHid  uint64
 	shadowHidN int
@@ -88,11 +104,19 @@ type staticGPU struct {
 	// its range tiles.
 	leafRanges [][][2]int32
 	// mainDebug is whether the camera's tiles were built for a debug view.
-	mainDebug  bool
+	mainDebug bool
+	// visGroups is drawMain's list for the visibility buffer, kept.
+	visGroups  []visGroup
 	nodes      uint32
 	madeBy     []int32
 	consumedBy []int32
 	groupStamp []uint32
+}
+
+// staticMatGroup is one material's draw groups within one pool.
+type staticMatGroup struct {
+	pool   int
+	groups []int
 }
 
 // buildStaticGPU gives each group its cluster-order index list and builds the
@@ -127,9 +151,11 @@ func buildStaticGPU(s *world.StaticGeometry, sb *staticBatches, planned []world.
 			k := sort.Search(len(grp.surfaces), func(i int) bool { return triStart[i+1] > int32(t) })
 			return grp.surfaces[k]
 		}
+		pool := sb.pools[grp.pool]
+		indexBase := uint32(len(pool.idx))
 		if d := cg.DAG; d != nil {
 			g.dags++
-			grp.batch.UploadIndices(d.Indices)
+			pool.idx = append(pool.idx, d.Indices...)
 			grp.clusterFirst, grp.clusterCount = int32(len(all)), int32(len(d.Clusters))
 			nodeBase := uint32(len(nodes))
 			for ni := range d.Nodes {
@@ -146,7 +172,7 @@ func buildStaticGPU(s *world.StaticGeometry, sb *staticBatches, planned []world.
 			}
 			for ci := range d.Clusters {
 				c := &d.Clusters[ci]
-				all = append(all, toGPULODCluster(c, d.ClusterLeaf[ci], 0, 0))
+				all = append(all, toGPULODCluster(c, d.ClusterLeaf[ci], indexBase, grp.vertBase))
 				g.spheres = append(g.spheres, all[len(all)-1].Sphere)
 				made, consumed := int32(-1), int32(-1)
 				if c.Group >= 0 {
@@ -170,15 +196,13 @@ func buildStaticGPU(s *world.StaticGeometry, sb *staticBatches, planned []world.
 			}
 			continue
 		}
-		idx := make([]uint32, 0, 3*len(cg.Order))
 		for _, t := range cg.Order {
-			idx = append(idx, 3*t, 3*t+1, 3*t+2)
+			pool.idx = append(pool.idx, 3*t, 3*t+1, 3*t+2)
 		}
-		grp.batch.UploadIndices(idx)
 		grp.clusterFirst, grp.clusterCount = int32(len(all)), int32(len(cg.Clusters))
 		for ci := range cg.Clusters {
 			c := &cg.Clusters[ci]
-			all = append(all, toGPUCluster(c, 0, 0))
+			all = append(all, toGPUCluster(c, indexBase, grp.vertBase))
 			g.spheres = append(g.spheres, all[len(all)-1].Sphere)
 			g.madeBy = append(g.madeBy, -1)
 			g.consumedBy = append(g.consumedBy, -1)
@@ -188,6 +212,15 @@ func buildStaticGPU(s *world.StaticGeometry, sb *staticBatches, planned []world.
 			}
 		}
 	}
+	// Each pool's index lists, as one index buffer its vertex array holds.
+	for _, pool := range sb.pools {
+		pool.batch.UploadIndices(pool.idx)
+		pool.idx = nil
+	}
+	for _, grp := range sb.groups {
+		grp.batch.Ebo = sb.pools[grp.pool].batch.Ebo
+	}
+	g.mats = staticMatGroups(sb)
 	sort.Slice(pairs, func(a, b int) bool {
 		if pairs[a].surf != pairs[b].surf {
 			return pairs[a].surf < pairs[b].surf
@@ -219,12 +252,35 @@ func buildStaticGPU(s *world.StaticGeometry, sb *staticBatches, planned []world.
 	g.shadow.setInstances(append([]gpuInstance(nil), insts...))
 	g.main.ensureHistory(len(all))
 	if g.recut > 0 {
-		log.Printf("nanite: compiled level: %d clusters in %d groups (%d with LOD); %d groups had no stored cut and were cut at load (recompile to store it)",
-			len(all), len(planned), g.dags, g.recut)
+		log.Printf("nanite: compiled level: %d clusters in %d groups (%d with LOD, %d materials, %d pools); %d groups had no stored cut and were cut at load (recompile to store it)",
+			len(all), len(planned), g.dags, len(g.mats), len(sb.pools), g.recut)
 	} else {
-		log.Printf("nanite: compiled level: %d clusters in %d groups (%d with LOD)", len(all), len(planned), g.dags)
+		log.Printf("nanite: compiled level: %d clusters in %d groups (%d with LOD, %d materials, %d pools)",
+			len(all), len(planned), g.dags, len(g.mats), len(sb.pools))
 	}
 	return g
+}
+
+// staticMatGroups gathers the draw groups by pool and material, in the order
+// the groups first name each.
+func staticMatGroups(sb *staticBatches) []staticMatGroup {
+	type key struct {
+		pool int
+		mat  gfx.Material
+	}
+	index := map[key]int{}
+	var out []staticMatGroup
+	for gi, grp := range sb.groups {
+		k := key{grp.pool, grp.key.mat}
+		mi, ok := index[k]
+		if !ok {
+			mi = len(out)
+			index[k] = mi
+			out = append(out, staticMatGroup{pool: grp.pool})
+		}
+		out[mi].groups = append(out[mi].groups, gi)
+	}
+	return out
 }
 
 func (g *staticGPU) release() {
@@ -276,46 +332,60 @@ func (g *staticGPU) rebuildMain(sb *staticBatches, visible []int) {
 	var groups []cullGroup
 	g.mainGroups = g.mainGroups[:0]
 	slot := 0
-	for gi, grp := range sb.groups {
-		if sb.transparent[gi] || grp.clusterCount == 0 {
+	for mi, mg := range g.mats {
+		// One material, so one answer for all its groups.
+		if sb.transparent[mg.groups[0]] {
 			continue
 		}
 		start := slot
-		lo, hi := grp.clusterFirst, grp.clusterFirst+grp.clusterCount
-		if ranges := g.leafRanges[gi]; len(ranges) > 0 && !naniteDebugActive() {
-			// A DAG: range tiles over the leaves any marked cluster is in.
-			var marked [][2]int32
-			for _, l := range ranges {
-				for c := l[0]; c < l[0]+l[1]; c++ {
-					if g.stamp[c] == g.stampNo {
-						marked = append(marked, l)
-						break
-					}
-				}
-			}
-			for _, w := range rangeWindows(marked, nil) {
-				tiles = appendRangeTile(tiles, uint32(w[0]), uint32(w[1]), g.groupInst[gi], uint32(w[0]), &slot)
-			}
-			lo = hi
-		}
-		for c := lo; c < hi; {
-			if g.stamp[c] != g.stampNo {
-				c++
-				continue
-			}
-			end := c + 1
-			for end < hi && g.stamp[end] == g.stampNo {
-				end++
-			}
-			tiles = appendTiles(tiles, uint32(c), uint32(end-c), g.groupInst[gi], uint32(c), &slot)
-			c = end
+		for _, gi := range mg.groups {
+			tiles = g.mainTiles(sb, gi, tiles, &slot)
 		}
 		if slot > start {
 			groups = append(groups, cullGroup{first: int32(start), count: int32(slot - start)})
-			g.mainGroups = append(g.mainGroups, gi)
+			g.mainGroups = append(g.mainGroups, mi)
 		}
 	}
 	g.main.setTiles(tiles, groups, slot)
+}
+
+// mainTiles appends draw group gi's candidate tiles: the runs of its clusters
+// some visible surface is in.
+func (g *staticGPU) mainTiles(sb *staticBatches, gi int, tiles []gpuTile, slot *int) []gpuTile {
+	grp := sb.groups[gi]
+	if grp.clusterCount == 0 {
+		return tiles
+	}
+	lo, hi := grp.clusterFirst, grp.clusterFirst+grp.clusterCount
+	if ranges := g.leafRanges[gi]; len(ranges) > 0 && !naniteDebugActive() {
+		// A DAG: range tiles over the leaves any marked cluster is in.
+		var marked [][2]int32
+		for _, l := range ranges {
+			for c := l[0]; c < l[0]+l[1]; c++ {
+				if g.stamp[c] == g.stampNo {
+					marked = append(marked, l)
+					break
+				}
+			}
+		}
+		for _, w := range rangeWindows(marked, nil) {
+			tiles = appendRangeTile(tiles, uint32(w[0]), uint32(w[1]), g.groupInst[gi], uint32(w[0]), slot)
+		}
+		lo = hi
+	}
+	for c := lo; c < hi; {
+		if g.stamp[c] != g.stampNo {
+			c++
+			continue
+		}
+		end := c + 1
+		for end < hi && g.stamp[end] == g.stampNo {
+			end++
+		}
+		tiles = appendTiles(tiles, uint32(c), uint32(end-c), g.groupInst[gi], uint32(c), slot)
+		c = end
+	}
+	return tiles
 }
 
 // propagate marks the coarser clusters of every DAG: a cluster made by a
@@ -374,41 +444,50 @@ func (g *staticGPU) drawOcclusion(sb *staticBatches) int {
 	return g.drawMain(sb)
 }
 
+// mainBatch is the draw group whose batch — draw state and pool — cull group
+// i of the camera's passes draws with: its material's first.
+func (g *staticGPU) mainBatch(sb *staticBatches, i int) *gfx.Batch {
+	return &sb.groups[g.mats[g.mainGroups[i]].groups[0]].batch
+}
+
 func (g *staticGPU) drawMain(sb *staticBatches) int {
 	if naniteDebugActive() {
-		g.main.drawDebug(len(g.mainGroups), func(i int) uint32 { return sb.groups[g.mainGroups[i]].batch.Vao }, false)
+		g.main.drawDebug(len(g.mainGroups), func(i int) uint32 { return g.mainBatch(sb, i).Vao }, false)
 		return len(g.mainGroups)
 	}
 	identity := mgl32.Ident4()
 	// A visibility-buffer frame draws the groups' IDs instead, shaded later
 	// in one pass (nanite_vis.go).
 	if naniteVisActive() {
-		groups := make([]visGroup, len(g.mainGroups))
-		for i, gi := range g.mainGroups {
-			b := &sb.groups[gi].batch
+		groups := g.visGroups[:0]
+		for i := range g.mainGroups {
+			b := g.mainBatch(sb, i)
 			i := i
-			groups[i] = visGroup{mat: &b.Material, vao: b.Vao, vbo: b.Vbo, nbo: b.Nbo, lbo: b.Lbo, ebo: b.Ebo,
+			groups = append(groups, visGroup{mat: &b.Material, vao: b.Vao, vbo: b.Vbo, nbo: b.Nbo, lbo: b.Lbo, ebo: b.Ebo,
 				baked:   b.Baked && b.Lbo != 0,
-				forward: func() { b.Bind(identity); g.main.drawGroup(i) }}
+				forward: func() { b.Bind(identity); g.main.drawGroup(i) }})
 		}
+		g.visGroups = groups
 		if naniteVis.drawBatch(&g.main, groups) {
 			return len(g.mainGroups)
 		}
 	}
 	prepassBatch(&g.main, len(g.mainGroups),
-		func(i int) *gfx.Material { return &sb.groups[g.mainGroups[i]].batch.Material },
+		func(i int) *gfx.Material { return &g.mainBatch(sb, i).Material },
 		func(int) mgl32.Mat4 { return identity },
-		func(i int) uint32 { return sb.groups[g.mainGroups[i]].batch.Vao }, false)
+		func(i int) uint32 { return g.mainBatch(sb, i).Vao }, false)
 	calls := 0
 	ProfileBegin("nanite: draw")
-	for i, gi := range g.mainGroups {
+	g.main.bindIndirect()
+	for i := range g.mainGroups {
 		if !g.main.groupLive(i) {
 			continue
 		}
-		sb.groups[gi].batch.Bind(identity)
-		g.main.drawGroup(i)
+		g.mainBatch(sb, i).Bind(identity)
+		g.main.drawGroupBound(i)
 		calls++
 	}
+	g.main.unbindIndirect()
 	ProfileEnd()
 	gl.BindVertexArray(0)
 	return calls
@@ -418,15 +497,28 @@ func (g *staticGPU) drawMain(sb *staticBatches) int {
 // (which the cull's compute passes unbind, and this binds back).
 func (g *staticGPU) drawShadow(s *world.StaticGeometry, sb *staticBatches, prog uint32, cull *Frustum) {
 	if !g.shadowOK || s.HiddenVersion() != g.shadowHid || len(s.HiddenChunks) != g.shadowHidN {
+		// Depth alone, so no draw state but the vertex array: a pool's
+		// casters are one cull group and one draw.
 		var tiles []gpuTile
 		var groups []cullGroup
 		g.shadowGrps = g.shadowGrps[:0]
 		slot := 0
+		start, pool := 0, -1
+		close := func() {
+			if pool >= 0 && slot > start {
+				groups = append(groups, cullGroup{first: int32(start), count: int32(slot - start)})
+				g.shadowGrps = append(g.shadowGrps, pool)
+			}
+			start = slot
+		}
 		for gi, grp := range sb.groups {
 			if grp.batch.Alpha < 0.05 || grp.clusterCount == 0 || s.HiddenFor(grp.key.chunk, grp.coveredBy) {
 				continue
 			}
-			start := slot
+			if grp.pool != pool {
+				close()
+				pool = grp.pool
+			}
 			if ranges := g.leafRanges[gi]; len(ranges) > 0 {
 				for _, w := range rangeWindows(ranges, nil) {
 					tiles = appendRangeTile(tiles, uint32(w[0]), uint32(w[1]), g.groupInst[gi], 0, &slot)
@@ -434,9 +526,8 @@ func (g *staticGPU) drawShadow(s *world.StaticGeometry, sb *staticBatches, prog 
 			} else {
 				tiles = appendTiles(tiles, uint32(grp.clusterFirst), uint32(grp.clusterCount), g.groupInst[gi], 0, &slot)
 			}
-			groups = append(groups, cullGroup{first: int32(start), count: int32(slot - start)})
-			g.shadowGrps = append(g.shadowGrps, gi)
 		}
+		close()
 		g.shadow.setTiles(tiles, groups, slot)
 		g.shadowHid, g.shadowHidN, g.shadowOK = s.HiddenVersion(), len(s.HiddenChunks), true
 	}
@@ -446,13 +537,15 @@ func (g *staticGPU) drawShadow(s *world.StaticGeometry, sb *staticBatches, prog 
 	if !ok {
 		return
 	}
-	for i, gi := range g.shadowGrps {
+	g.shadow.bindIndirect()
+	for i, pi := range g.shadowGrps {
 		if !g.shadow.groupLive(i) {
 			continue
 		}
-		gl.BindVertexArray(sb.groups[gi].batch.Vao)
-		g.shadow.drawGroup(i)
+		gl.BindVertexArray(sb.pools[pi].batch.Vao)
+		g.shadow.drawGroupBound(i)
 	}
+	g.shadow.unbindIndirect()
 	gl.BindVertexArray(0)
 }
 

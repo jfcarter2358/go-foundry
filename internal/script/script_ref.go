@@ -19,22 +19,49 @@ import (
 	"foundry/internal/world"
 )
 
-// refCache indexes a level by the names refs are made of. Valid for exactly one
-// tick — anything structural invalidates it, and rebuilding is cheaper than
-// reasoning about when it did not.
+// refCache indexes a level by the names refs are made of.
+//
+// It is kept across ticks and checked rather than rebuilt: re-hashing every ID
+// in a level of thousands of objects sixty times a second was a millisecond a
+// frame spent arriving at the same maps. What makes keeping it safe is that
+// every kind's index remembers the ID list it was built from, and is compared
+// against the level's — a string compare per object, nearly always of two
+// identical pointers — so an add, a removal, a rename or a reorder anywhere is
+// still seen, and the kind it touched is re-indexed.
+//
+// Each kind is checked the first time a tick asks it something (ix), not at
+// the top of every tick: a level's three thousand sprites cost a walk only on
+// the ticks that name a sprite. sync marks every kind unchecked — at the top of
+// each ScriptTick, and after anything structural a verb does mid-tick (spawn,
+// destroy, an effect placed).
 type refCache struct {
-	lvl      *world.Level
-	entity   map[string]int    // entity ID -> index into lvl.Entities
-	volume   map[string]int    // volume ID -> index into lvl.Volumes
-	sprite   map[string]int    // sprite ID -> index into lvl.Sprites
-	emitter  map[string]int    // emitter ID -> index into lvl.Emitters
-	sound    map[string]int    // sound ID -> index into lvl.Sounds
-	effect   map[string]int    // effect ID -> index into lvl.Effects
-	decal    map[string]int    // decal ID -> index into lvl.Decals
-	chunk    map[string]int    // chunk ID -> index into lvl.Chunks
-	brush    map[string][2]int // brush ID -> {chunk, brush}
-	dirLight map[string]int
-	ptLight  map[string]int
+	lvl *world.Level
+	// ixs are the per-kind ID -> slice index maps, by ixKind. Reach them
+	// through ix, which checks them against the level first.
+	ixs [ixCount]idIndex
+
+	// brush is brush ID -> {chunk, brush}. Checked on first use in a tick
+	// (brushIndex) rather than in sync: a level has thousands, and most ticks
+	// never name one. brushIDs is the flattened chunk-by-chunk ID list it was
+	// built from, and brushChecked whether this tick has compared against it.
+	brush        map[string][2]int
+	brushIDs     []string
+	brushChecked bool
+
+	// tags is the tag index — tag -> every object carrying it, in refsWithTag's
+	// order — built the first time a tick asks for a tag and dropped by every
+	// sync. Not carried across ticks the way the ID indexes are: a save restore
+	// rewrites tags in place, under IDs that do not move, so there is no list
+	// to compare against that would notice.
+	tags map[string][]flang.RefVal
+
+	// missing are the names refFor has already failed to find among the
+	// level's objects this tick, so a script asking every frame after one the
+	// level does not have — `@gate2` in a level without a gate2 — pays for
+	// the dozen lookups once. Dropped by every sync, like tags. Only the
+	// level half: the screen stack can change under a tick, so a miss there
+	// is asked again each time.
+	missing map[string]bool
 
 	// ui is the screen stack as it stood at the top of this tick. Not indexed
 	// the way the level kinds are: a stack is a handful of screens with a
@@ -49,6 +76,132 @@ type refCache struct {
 	// as it always did, and nothing here is ticked, because scriptedUIRefs
 	// walks the stack rather than this cache.
 	hidden []*ui.Screen
+}
+
+// ixKind names one of the level's indexed kinds.
+type ixKind uint8
+
+const (
+	ixEntity   ixKind = iota // lvl.Entities
+	ixVolume                 // lvl.Volumes
+	ixSprite                 // lvl.Sprites
+	ixEmitter                // lvl.Emitters
+	ixSound                  // lvl.Sounds
+	ixEffect                 // lvl.Effects
+	ixDecal                  // lvl.Decals
+	ixChunk                  // lvl.Chunks
+	ixDirLight               // lvl.Lights.Directional
+	ixPtLight                // lvl.Lights.Points
+	ixCount
+)
+
+// idIndex is one kind's ID -> slice index map, with the ID list it was built
+// from so that it can tell whether the level still matches it, and whether it
+// has been compared this tick.
+type idIndex struct {
+	m       map[string]int
+	ids     []string
+	checked bool
+}
+
+// ix returns one kind's index, checked against the level.
+func (c *refCache) ix(k ixKind) *idIndex {
+	x := &c.ixs[k]
+	if !x.checked {
+		x.checked = true
+		n, id := c.ids(k)
+		x.sync(n, id)
+	}
+	return x
+}
+
+// ids is how many objects of a kind the level has, and the ID of each.
+func (c *refCache) ids(k ixKind) (int, func(int) string) {
+	lvl := c.lvl
+	if lvl == nil {
+		return 0, nil
+	}
+	switch k {
+	case ixEntity:
+		return len(lvl.Entities), func(i int) string { return lvl.Entities[i].ID }
+	case ixVolume:
+		return len(lvl.Volumes), func(i int) string { return lvl.Volumes[i].ID }
+	case ixSprite:
+		return len(lvl.Sprites), func(i int) string { return lvl.Sprites[i].ID }
+	case ixEmitter:
+		return len(lvl.Emitters), func(i int) string { return lvl.Emitters[i].ID }
+	case ixSound:
+		return len(lvl.Sounds), func(i int) string { return lvl.Sounds[i].ID }
+	case ixEffect:
+		return len(lvl.Effects), func(i int) string { return lvl.Effects[i].ID }
+	case ixDecal:
+		return len(lvl.Decals), func(i int) string { return lvl.Decals[i].ID }
+	case ixChunk:
+		return len(lvl.Chunks), func(i int) string { return lvl.Chunks[i].ID }
+	case ixDirLight:
+		return len(lvl.Lights.Directional), func(i int) string { return lvl.Lights.Directional[i].ID }
+	case ixPtLight:
+		return len(lvl.Lights.Points), func(i int) string { return lvl.Lights.Points[i].ID }
+	}
+	return 0, nil
+}
+
+// get looks one ID up.
+func (x *idIndex) get(id string) (int, bool) {
+	i, ok := x.m[id]
+	return i, ok
+}
+
+// has reports whether an ID is indexed.
+func (x *idIndex) has(id string) bool {
+	_, ok := x.m[id]
+	return ok
+}
+
+// sync brings the index up to n objects whose IDs id(i) returns.
+//
+// Three cases. Nothing changed — the common one by far — costs a compare per
+// object. Objects appended past the end, which is what spawning anything does,
+// cost an insert each. Anything else — a removal, a rename, a reorder — starts
+// the index over, because a removal shifts every index after it and finding
+// which entries moved is the same work as re-inserting them.
+//
+// A duplicated ID maps to its last occurrence, exactly as filling the map in
+// level order always did.
+func (x *idIndex) sync(n int, id func(int) string) {
+	if x.m == nil {
+		x.m = make(map[string]int, n)
+	}
+	i := 0
+	for i < n && i < len(x.ids) && x.ids[i] == id(i) {
+		i++
+	}
+	if i == n && i == len(x.ids) {
+		return
+	}
+	if i < len(x.ids) {
+		clear(x.m)
+		x.ids = x.ids[:0]
+		i = 0
+	}
+	for ; i < n; i++ {
+		s := id(i)
+		x.m[s] = i
+		x.ids = append(x.ids, s)
+	}
+}
+
+// appended records that one object with this ID was just appended as the
+// n-th. When the index was in step before the append it is one insert; when it
+// was not, it is a sync.
+func (x *idIndex) appended(n int, id func(int) string) {
+	if x.m != nil && len(x.ids) == n-1 {
+		s := id(n - 1)
+		x.m[s] = n - 1
+		x.ids = append(x.ids, s)
+		return
+	}
+	x.sync(n, id)
 }
 
 // screenFor returns the screen a ref names, or nil.
@@ -84,8 +237,6 @@ func (c *refCache) widgetFor(r flang.RefVal) *ui.Node {
 	return s.Find(r.B)
 }
 
-// buildRefCache indexes lvl. Cheap enough to do every tick at the entity counts
-// a level holds.
 // uiStack is the screen stack refs resolve against.
 //
 // A variable rather than a direct reference to ui.Game so a test can point it
@@ -94,79 +245,93 @@ func (c *refCache) widgetFor(r flang.RefVal) *ui.Node {
 // against a document being authored.
 var uiStack = &ui.Game
 
+// buildRefCache returns a fresh cache indexing lvl. The runtime keeps one and
+// syncs it instead (ScriptRuntime.syncCache); this is for callers that look a
+// level up once — the linter, completion, the console.
 func buildRefCache(lvl *world.Level) *refCache {
-	c := &refCache{
-		lvl:      lvl,
-		entity:   map[string]int{},
-		volume:   map[string]int{},
-		sprite:   map[string]int{},
-		emitter:  map[string]int{},
-		sound:    map[string]int{},
-		effect:   map[string]int{},
-		decal:    map[string]int{},
-		chunk:    map[string]int{},
-		brush:    map[string][2]int{},
-		dirLight: map[string]int{},
-		ptLight:  map[string]int{},
-		ui:       uiStack,
-		// From the runtime rather than handed in by ScriptTick: a verb that
-		// spawns or destroys something rebuilds the cache partway through a
-		// drain, and a departed screen must survive that rebuild.
-		hidden: Scripts.hidden,
-	}
-	if lvl == nil {
-		return c
-	}
-	for i := range lvl.Entities {
-		c.entity[lvl.Entities[i].ID] = i
-	}
-	for i := range lvl.Volumes {
-		c.volume[lvl.Volumes[i].ID] = i
-	}
-	for i := range lvl.Sprites {
-		c.sprite[lvl.Sprites[i].ID] = i
-	}
-	for i := range lvl.Emitters {
-		c.emitter[lvl.Emitters[i].ID] = i
-	}
-	for i := range lvl.Sounds {
-		c.sound[lvl.Sounds[i].ID] = i
-	}
-	for i := range lvl.Effects {
-		c.effect[lvl.Effects[i].ID] = i
-	}
-	for i := range lvl.Decals {
-		c.decal[lvl.Decals[i].ID] = i
-	}
-	for ci := range lvl.Chunks {
-		c.chunk[lvl.Chunks[ci].ID] = ci
-	}
-	// Brushes are indexed on first use (brushIndex): a level has thousands,
-	// the cache is rebuilt every tick, and most ticks never name one.
-	c.brush = nil
-	for i := range lvl.Lights.Directional {
-		c.dirLight[lvl.Lights.Directional[i].ID] = i
-	}
-	for i := range lvl.Lights.Points {
-		c.ptLight[lvl.Lights.Points[i].ID] = i
-	}
+	c := &refCache{}
+	c.sync(lvl)
 	return c
 }
 
-// brushIndex is the brush ID -> {chunk, brush} map, built the first time a
-// tick needs it.
+// sync brings the cache up to date with lvl and with the screen stack.
+func (c *refCache) sync(lvl *world.Level) {
+	c.lvl = lvl
+	c.ui = uiStack
+	// From the runtime rather than handed in by ScriptTick: a verb that
+	// spawns or destroys something syncs the cache partway through a drain,
+	// and a departed screen must survive that.
+	c.hidden = Scripts.hidden
+	c.tags = nil
+	clear(c.missing)
+	c.brushChecked = false
+	for k := range c.ixs {
+		c.ixs[k].checked = false
+	}
+}
+
+// syncCache brings the runtime's cache up to date with lvl, making one the
+// first time.
+func (rt *ScriptRuntime) syncCache(lvl *world.Level) {
+	if rt.cache == nil {
+		rt.cache = &refCache{}
+	}
+	rt.cache.sync(lvl)
+}
+
+// brushIndex is the brush ID -> {chunk, brush} map, checked against the level
+// the first time a tick needs it.
 func (c *refCache) brushIndex() map[string][2]int {
-	if c.brush != nil || c.lvl == nil {
+	if c.lvl == nil {
 		return c.brush
 	}
-	c.brush = map[string][2]int{}
+	if c.brushChecked && c.brush != nil {
+		return c.brush
+	}
+	c.brushChecked = true
+	if c.brush != nil && c.brushesUnchanged() {
+		return c.brush
+	}
+	if c.brush == nil {
+		c.brush = map[string][2]int{}
+	} else {
+		clear(c.brush)
+	}
+	c.brushIDs = c.brushIDs[:0]
 	for ci := range c.lvl.Chunks {
 		ch := &c.lvl.Chunks[ci]
 		for bi := range ch.Brushes {
 			c.brush[ch.Brushes[bi].ID] = [2]int{ci, bi}
+			c.brushIDs = append(c.brushIDs, ch.Brushes[bi].ID)
 		}
 	}
 	return c.brush
+}
+
+// brushesUnchanged reports whether every chunk still holds the brushes the
+// index was built from, in the same places.
+//
+// The flat ID list alone would not see a brush moving from the end of one chunk
+// to the start of the next, so the chunk boundaries are compared too: c.brush
+// holds each ID's {chunk, brush}, and the walk checks that it is where the map
+// says.
+func (c *refCache) brushesUnchanged() bool {
+	k := 0
+	for ci := range c.lvl.Chunks {
+		bs := c.lvl.Chunks[ci].Brushes
+		for bi := range bs {
+			if k >= len(c.brushIDs) || c.brushIDs[k] != bs[bi].ID {
+				return false
+			}
+			if at := c.brush[bs[bi].ID]; at[0] != ci || at[1] != bi {
+				// A duplicated ID: the map holds its last place, so only the
+				// last occurrence can agree. Rare enough to just rebuild.
+				return false
+			}
+			k++
+		}
+	}
+	return k == len(c.brushIDs)
 }
 
 // ---------- name to ref ----------
@@ -180,25 +345,53 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	if id == "" {
 		return flang.RefVal{}, false
 	}
-	if _, ok := c.entity[id]; ok {
+	if c.missing[id] {
+		return c.uiRefOnly(id)
+	}
+	if r, ok := c.levelRefFor(id); ok {
+		return r, true
+	}
+	if c.missing == nil {
+		c.missing = map[string]bool{}
+	}
+	c.missing[id] = true
+	// Biome scatter has no addressable object at the moment — see biomeFor.
+	// The UI last, so a level object always wins a name it shares with a
+	// widget: the level is the thing an author names deliberately, and a widget
+	// id is scoped to its screen in a way a level id is not.
+	return c.uiRefOnly(id)
+}
+
+// uiRefOnly is uiRefFor with refFor's answer for a miss: the zero ref, whether
+// nothing matched or too many widgets did.
+func (c *refCache) uiRefOnly(id string) (flang.RefVal, bool) {
+	if r, ok := c.uiRefFor(id); ok {
+		return r, true
+	}
+	return flang.RefVal{}, false
+}
+
+// levelRefFor is refFor's search of the level's own objects.
+func (c *refCache) levelRefFor(id string) (flang.RefVal, bool) {
+	if c.ix(ixEntity).has(id) {
 		return flang.RefVal{Kind: flang.RefEntity, A: id}, true
 	}
-	if _, ok := c.volume[id]; ok {
+	if c.ix(ixVolume).has(id) {
 		return flang.RefVal{Kind: flang.RefVolume, A: id}, true
 	}
-	if _, ok := c.sprite[id]; ok {
+	if c.ix(ixSprite).has(id) {
 		return flang.RefVal{Kind: flang.RefSprite, A: id}, true
 	}
-	if _, ok := c.emitter[id]; ok {
+	if c.ix(ixEmitter).has(id) {
 		return flang.RefVal{Kind: flang.RefEmitter, A: id}, true
 	}
-	if _, ok := c.sound[id]; ok {
+	if c.ix(ixSound).has(id) {
 		return flang.RefVal{Kind: flang.RefSound, A: id}, true
 	}
-	if _, ok := c.effect[id]; ok {
+	if c.ix(ixEffect).has(id) {
 		return flang.RefVal{Kind: flang.RefEffect, A: id}, true
 	}
-	if _, ok := c.decal[id]; ok {
+	if c.ix(ixDecal).has(id) {
 		return flang.RefVal{Kind: flang.RefDecal, A: id}, true
 	}
 	if _, ok := c.brushIndex()[id]; ok {
@@ -207,13 +400,13 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 		// sector's used to be.
 		return flang.RefVal{Kind: flang.RefBrush, A: id}, true
 	}
-	if _, ok := c.chunk[id]; ok {
+	if c.ix(ixChunk).has(id) {
 		return flang.RefVal{Kind: flang.RefChunk, A: id}, true
 	}
-	if _, ok := c.dirLight[id]; ok {
+	if c.ix(ixDirLight).has(id) {
 		return flang.RefVal{Kind: flang.RefLight, A: id}, true
 	}
-	if _, ok := c.ptLight[id]; ok {
+	if c.ix(ixPtLight).has(id) {
 		return flang.RefVal{Kind: flang.RefLight, A: id}, true
 	}
 	// A waypoint animation is found by walking the list rather than through an
@@ -221,13 +414,6 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	// sends a brush along one.
 	if world.FindWaypointAnimation(c.lvl, id) != nil {
 		return flang.RefVal{Kind: flang.RefWaypoints, A: id}, true
-	}
-	// Biome scatter has no addressable object at the moment — see biomeFor.
-	// The UI last, so a level object always wins a name it shares with a
-	// widget: the level is the thing an author names deliberately, and a widget
-	// id is scoped to its screen in a way a level id is not.
-	if r, ok := c.uiRefFor(id); ok {
-		return r, true
 	}
 	return flang.RefVal{}, false
 }
@@ -304,7 +490,7 @@ func (c *refCache) entityFor(r flang.RefVal) *world.Entity {
 	if c.lvl == nil {
 		return nil
 	}
-	if i, ok := c.entity[r.A]; ok && i < len(c.lvl.Entities) {
+	if i, ok := c.ix(ixEntity).get(r.A); ok && i < len(c.lvl.Entities) {
 		return &c.lvl.Entities[i]
 	}
 	return nil
@@ -315,7 +501,7 @@ func (c *refCache) volumeFor(r flang.RefVal) *world.Volume {
 	if c.lvl == nil || r.Kind != flang.RefVolume {
 		return nil
 	}
-	if i, ok := c.volume[r.A]; ok && i < len(c.lvl.Volumes) {
+	if i, ok := c.ix(ixVolume).get(r.A); ok && i < len(c.lvl.Volumes) {
 		return &c.lvl.Volumes[i]
 	}
 	return nil
@@ -328,7 +514,7 @@ func (c *refCache) spriteFor(r flang.RefVal) *world.Sprite {
 	if c.lvl == nil || r.Kind != flang.RefSprite {
 		return nil
 	}
-	if i, ok := c.sprite[r.A]; ok && i < len(c.lvl.Sprites) {
+	if i, ok := c.ix(ixSprite).get(r.A); ok && i < len(c.lvl.Sprites) {
 		return &c.lvl.Sprites[i]
 	}
 	return nil
@@ -339,7 +525,7 @@ func (c *refCache) emitterFor(r flang.RefVal) *world.Emitter {
 	if c.lvl == nil || r.Kind != flang.RefEmitter {
 		return nil
 	}
-	if i, ok := c.emitter[r.A]; ok && i < len(c.lvl.Emitters) {
+	if i, ok := c.ix(ixEmitter).get(r.A); ok && i < len(c.lvl.Emitters) {
 		return &c.lvl.Emitters[i]
 	}
 	return nil
@@ -350,7 +536,7 @@ func (c *refCache) soundFor(r flang.RefVal) *world.Sound {
 	if c.lvl == nil || r.Kind != flang.RefSound {
 		return nil
 	}
-	if i, ok := c.sound[r.A]; ok && i < len(c.lvl.Sounds) {
+	if i, ok := c.ix(ixSound).get(r.A); ok && i < len(c.lvl.Sounds) {
 		return &c.lvl.Sounds[i]
 	}
 	return nil
@@ -361,7 +547,7 @@ func (c *refCache) decalFor(r flang.RefVal) *world.Decal {
 	if c.lvl == nil || r.Kind != flang.RefDecal {
 		return nil
 	}
-	if i, ok := c.decal[r.A]; ok && i < len(c.lvl.Decals) {
+	if i, ok := c.ix(ixDecal).get(r.A); ok && i < len(c.lvl.Decals) {
 		return &c.lvl.Decals[i]
 	}
 	return nil
@@ -372,7 +558,7 @@ func (c *refCache) effectFor(r flang.RefVal) *world.Effect {
 	if c.lvl == nil || r.Kind != flang.RefEffect {
 		return nil
 	}
-	if i, ok := c.effect[r.A]; ok && i < len(c.lvl.Effects) {
+	if i, ok := c.ix(ixEffect).get(r.A); ok && i < len(c.lvl.Effects) {
 		return &c.lvl.Effects[i]
 	}
 	return nil
@@ -390,7 +576,7 @@ func (c *refCache) chunkFor(r flang.RefVal) *world.Chunk {
 	if c.lvl == nil {
 		return nil
 	}
-	if i, ok := c.chunk[r.A]; ok && i < len(c.lvl.Chunks) {
+	if i, ok := c.ix(ixChunk).get(r.A); ok && i < len(c.lvl.Chunks) {
 		return &c.lvl.Chunks[i]
 	}
 	return nil
@@ -427,10 +613,10 @@ func (c *refCache) lightFor(r flang.RefVal) (*world.DirectionalLight, *world.Poi
 	if c.lvl == nil || r.Kind != flang.RefLight {
 		return nil, nil
 	}
-	if i, ok := c.dirLight[r.A]; ok && i < len(c.lvl.Lights.Directional) {
+	if i, ok := c.ix(ixDirLight).get(r.A); ok && i < len(c.lvl.Lights.Directional) {
 		return &c.lvl.Lights.Directional[i], nil
 	}
-	if i, ok := c.ptLight[r.A]; ok && i < len(c.lvl.Lights.Points) {
+	if i, ok := c.ix(ixPtLight).get(r.A); ok && i < len(c.lvl.Lights.Points) {
 		return nil, &c.lvl.Lights.Points[i]
 	}
 	return nil, nil
@@ -537,71 +723,99 @@ func (c *refCache) alive(r flang.RefVal) bool {
 // entities, then volumes, then geometry in level order. Determinism matters
 // because a broadcast's delivery order follows this one, and script behaviour
 // that changed between runs would be untestable.
+//
+// The level's half comes from the tag index, built on the first call of a tick
+// (tagIndex) — every `#tag`, find() and tag send used to walk every object in
+// the level, brushes included. The UI's half is walked live, as it always was:
+// the stack is small and changes under a tick in ways nothing re-syncs.
+//
+// The slice returned may be shared with the index, so callers must not write
+// to it; its capacity is clipped, so an append makes a copy.
 func (c *refCache) refsWithTag(tag string) []flang.RefVal {
 	if c.lvl == nil || tag == "" {
 		return nil
 	}
-	var out []flang.RefVal
-	for i := range c.lvl.Entities {
-		if c.lvl.Entities[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefEntity, A: c.lvl.Entities[i].ID})
+	lvlRefs := c.tagIndex()[tag]
+	uiRefs := c.uiRefsWithTag(tag)
+	if len(uiRefs) == 0 {
+		if len(lvlRefs) == 0 {
+			return nil
 		}
-	}
-	for i := range c.lvl.Volumes {
-		if c.lvl.Volumes[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefVolume, A: c.lvl.Volumes[i].ID})
-		}
-	}
-	for i := range c.lvl.Sprites {
-		if c.lvl.Sprites[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefSprite, A: c.lvl.Sprites[i].ID})
-		}
-	}
-	for i := range c.lvl.Emitters {
-		if c.lvl.Emitters[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefEmitter, A: c.lvl.Emitters[i].ID})
-		}
-	}
-	for i := range c.lvl.Sounds {
-		if c.lvl.Sounds[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefSound, A: c.lvl.Sounds[i].ID})
-		}
-	}
-	for i := range c.lvl.Effects {
-		if c.lvl.Effects[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefEffect, A: c.lvl.Effects[i].ID})
-		}
-	}
-	for i := range c.lvl.Decals {
-		if c.lvl.Decals[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefDecal, A: c.lvl.Decals[i].ID})
-		}
-	}
-	for ci := range c.lvl.Chunks {
-		ch := &c.lvl.Chunks[ci]
-		if ch.HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefChunk, A: ch.ID})
-		}
-		for bi := range ch.Brushes {
-			if ch.Brushes[bi].HasTag(tag) {
-				out = append(out, flang.RefVal{Kind: flang.RefBrush, A: ch.Brushes[bi].ID})
-			}
-		}
-	}
-	for i := range c.lvl.Lights.Directional {
-		if c.lvl.Lights.Directional[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefLight, A: c.lvl.Lights.Directional[i].ID})
-		}
-	}
-	for i := range c.lvl.Lights.Points {
-		if c.lvl.Lights.Points[i].HasTag(tag) {
-			out = append(out, flang.RefVal{Kind: flang.RefLight, A: c.lvl.Lights.Points[i].ID})
-		}
+		return lvlRefs[:len(lvlRefs):len(lvlRefs)]
 	}
 	// The UI last, and in stack-then-tree order, so a broadcast reaches the
 	// level before the screens over it and always in the same order.
-	out = append(out, c.uiRefsWithTag(tag)...)
-	return out
+	out := make([]flang.RefVal, 0, len(lvlRefs)+len(uiRefs))
+	out = append(out, lvlRefs...)
+	return append(out, uiRefs...)
+}
+
+// tagIndex returns the level's tag -> refs index, building it on first use.
+//
+// One walk in exactly the order refsWithTag always walked — entities, volumes,
+// sprites, emitters, sounds, effects, decals, then each chunk followed by its
+// brushes, then lights — appending each object to the list of every tag it
+// carries. Per tag that is the same sequence a walk testing HasTag would have
+// produced, which is what keeps a broadcast's delivery order unchanged.
+func (c *refCache) tagIndex() map[string][]flang.RefVal {
+	if c.tags != nil {
+		return c.tags
+	}
+	c.tags = map[string][]flang.RefVal{}
+	lvl := c.lvl
+	if lvl == nil {
+		return c.tags
+	}
+	for i := range lvl.Entities {
+		c.indexTags(lvl.Entities[i].Tags, flang.RefVal{Kind: flang.RefEntity, A: lvl.Entities[i].ID})
+	}
+	for i := range lvl.Volumes {
+		c.indexTags(lvl.Volumes[i].Tags, flang.RefVal{Kind: flang.RefVolume, A: lvl.Volumes[i].ID})
+	}
+	for i := range lvl.Sprites {
+		c.indexTags(lvl.Sprites[i].Tags, flang.RefVal{Kind: flang.RefSprite, A: lvl.Sprites[i].ID})
+	}
+	for i := range lvl.Emitters {
+		c.indexTags(lvl.Emitters[i].Tags, flang.RefVal{Kind: flang.RefEmitter, A: lvl.Emitters[i].ID})
+	}
+	for i := range lvl.Sounds {
+		c.indexTags(lvl.Sounds[i].Tags, flang.RefVal{Kind: flang.RefSound, A: lvl.Sounds[i].ID})
+	}
+	for i := range lvl.Effects {
+		c.indexTags(lvl.Effects[i].Tags, flang.RefVal{Kind: flang.RefEffect, A: lvl.Effects[i].ID})
+	}
+	for i := range lvl.Decals {
+		c.indexTags(lvl.Decals[i].Tags, flang.RefVal{Kind: flang.RefDecal, A: lvl.Decals[i].ID})
+	}
+	for ci := range lvl.Chunks {
+		ch := &lvl.Chunks[ci]
+		c.indexTags(ch.Tags, flang.RefVal{Kind: flang.RefChunk, A: ch.ID})
+		for bi := range ch.Brushes {
+			c.indexTags(ch.Brushes[bi].Tags, flang.RefVal{Kind: flang.RefBrush, A: ch.Brushes[bi].ID})
+		}
+	}
+	for i := range lvl.Lights.Directional {
+		c.indexTags(lvl.Lights.Directional[i].Tags, flang.RefVal{Kind: flang.RefLight, A: lvl.Lights.Directional[i].ID})
+	}
+	for i := range lvl.Lights.Points {
+		c.indexTags(lvl.Lights.Points[i].Tags, flang.RefVal{Kind: flang.RefLight, A: lvl.Lights.Points[i].ID})
+	}
+	return c.tags
+}
+
+// indexTags files one object under each of its tags.
+//
+// A tag listed twice on one object files it once, as HasTag would have: the
+// objects arrive one at a time, so a repeat is always the last entry already
+// in that tag's list.
+func (c *refCache) indexTags(tags []string, r flang.RefVal) {
+	for _, t := range tags {
+		list := c.tags[t]
+		if n := len(list); n > 0 && list[n-1] == r {
+			continue
+		}
+		c.tags[t] = append(list, r)
+	}
 }
 
 // uiRefsWithTag is the screen-stack half of refsWithTag.
@@ -693,7 +907,7 @@ func (c *refCache) allTags() []string {
 func attrToValue(a world.AttrValue) flang.Value {
 	switch a.Type {
 	case world.AttrInt:
-		return flang.IntVal(a.I)
+		return flang.BoxInt(a.I)
 	case world.AttrFloat:
 		return flang.FloatVal(a.F)
 	case world.AttrBool:
@@ -727,12 +941,37 @@ func valueToAttr(v flang.Value) (world.AttrValue, bool) {
 	return world.AttrValue{}, false
 }
 
-// cacheAdded records one object just appended to the level in the tick's cache
-// — or rebuilds it, when there is no cache for this level to add to.
-func (rt *ScriptRuntime) cacheAdded(add func(c *refCache)) {
-	if rt.cache == nil || rt.cache.lvl != rt.lvl {
-		rt.cache = buildRefCache(rt.lvl)
+// cacheAdded records that one object of this kind was just appended to the
+// level — an effect placed, a sound started — so the tick's cache can find it.
+// An append shifts nothing, so it is one entry rather than a re-index: a battle
+// places a one-shot sound for every shot fired.
+func (rt *ScriptRuntime) cacheAdded(kind flang.Kind_) {
+	c, lvl := rt.cache, rt.lvl
+	if c == nil || c.lvl != lvl || lvl == nil {
+		rt.syncCache(lvl)
 		return
 	}
-	add(rt.cache)
+	// Whatever it was may carry tags, and may be a name refFor had missed.
+	c.tags = nil
+	clear(c.missing)
+	var k ixKind
+	switch kind {
+	case flang.RefEmitter:
+		k = ixEmitter
+	case flang.RefSound:
+		k = ixSound
+	case flang.RefEffect:
+		k = ixEffect
+	case flang.RefDecal:
+		k = ixDecal
+	default:
+		c.sync(lvl)
+		return
+	}
+	// An index not yet checked this tick will see the new object when it is;
+	// one that has been takes it as one more entry.
+	if x := &c.ixs[k]; x.checked {
+		n, id := c.ids(k)
+		x.appended(n, id)
+	}
 }
