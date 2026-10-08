@@ -87,6 +87,9 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindBrush:
 		return selectedBrushesCenter()
 
+	case gizmoKindGroup:
+		return objectSetCenter()
+
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
 			return s.Position, true
@@ -484,6 +487,9 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindGroup:
+		return captureObjectSetDragStart()
+
 	case gizmoKindWaypointAnim:
 		wa := activeGizmoWaypointAnimation()
 		if wa == nil || len(wa.Points) == 0 {
@@ -605,6 +611,8 @@ func translateGizmoMouseMove(mx, my int32) {
 	switch gizmoEffectiveKind() {
 	case gizmoKindVertices, gizmoKindFace, gizmoKindBrush:
 		dragVerticesAlongAxis(axis, delta)
+	case gizmoKindGroup:
+		dragObjectSet(axis, delta)
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
 			s.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)

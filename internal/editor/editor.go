@@ -719,6 +719,16 @@ func EditorHandleEvent(event sdl.Event) bool {
 				case sdl.SCANCODE_Y:
 					EditorRedo()
 					return true
+				case sdl.SCANCODE_C:
+					if Editor.Mode == Mode3D {
+						editorCopySelection()
+						return true
+					}
+				case sdl.SCANCODE_V:
+					if Editor.Mode == Mode3D {
+						editorPasteClipboard()
+						return true
+					}
 				}
 			}
 		}
@@ -1091,6 +1101,12 @@ func EditorDeleteSelected() {
 		Editor.level.Spawn.Delete()
 		Editor.level.Spawn = nil
 		editorClearSpawnSelection()
+		return
+	}
+
+	// Several objects at once (editor_object_set.go).
+	if len(objectSet()) > 0 {
+		deleteObjectSet()
 		return
 	}
 

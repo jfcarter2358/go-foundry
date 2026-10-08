@@ -878,6 +878,7 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	drawSelectedDecalOutline()
 	drawSelectedSceneryOutline()
 	drawSelectedTreeOutline()
+	drawObjectSetOutlines()
 	// What the selected prop collides as, when Show collision is on.
 	drawSelectedSceneryCollision()
 	// The brush's footprint ring, on the same terms: it says where the next

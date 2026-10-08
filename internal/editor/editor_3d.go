@@ -449,6 +449,9 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	// throwing it away: aiming past the last wall of a dozen and missing must
 	// not undo the other eleven.
 	if ctrlHeld {
+		if objSetKinds[hit.kind] {
+			editorToggleObjectSelection(objRef{kind: hit.kind, idx: hit.idx})
+		}
 		return
 	}
 
@@ -573,6 +576,11 @@ func editor3DObjectClick(mx, my int32, ctrlHeld bool) {
 		}
 	}
 	if ctrlHeld {
+		// A placed object joins (or leaves) the object multi-selection —
+		// editor_object_set.go.
+		if objSetKinds[hit.kind] {
+			editorToggleObjectSelection(objRef{kind: hit.kind, idx: hit.idx})
+		}
 		return
 	}
 
