@@ -162,6 +162,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DDecalMenuItems()...)
 	case sel3DScenery:
 		items = append(items, editor3DSceneryMenuItems()...)
+	case sel3DTree:
+		items = append(items, editor3DTreeMenuItems()...)
 	case sel3DWaypoint:
 		items = append(items, editor3DWaypointMenuItems()...)
 	default:

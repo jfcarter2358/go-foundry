@@ -152,6 +152,10 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		if fx := activeGizmoEffect(); fx != nil {
 			return fx.Position, true
 		}
+	case gizmoKindTree:
+		if tr := activeGizmoTree(); tr != nil {
+			return tr.Position, true
+		}
 	case gizmoKindSound:
 		if sd := activeGizmoSound(); sd != nil {
 			return sd.Position, true
@@ -269,6 +273,14 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 		// An emitter's rotation aims its emission shape, which is the whole
 		// reason the rotate gizmo is offered on something with no visible body.
 		em.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if tr := activeGizmoTree(); tr != nil {
+		// About its trunk only: a tree grows up, so the other two rings
+		// turn nothing.
+		if up := axis.Y(); absF32(up) > 0.9 {
+			tr.Yaw = Editor.GizmoDragStartRot.Y() + delta*up
+		}
 		return
 	}
 	if fx := activeGizmoEffect(); fx != nil {

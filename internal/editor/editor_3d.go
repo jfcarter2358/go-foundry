@@ -327,6 +327,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.TreePlacementMode {
+		// The foot of the trunk on the surface clicked; it stays armed, so
+		// a stand of trees is a click per tree.
+		placeTreeAt(editor3DPointAt(t.X, t.Y))
+		return
+	}
+
 	if Editor.EffectPlacementMode {
 		// Lifted by placeEffectAt, so an explosion clicked onto the floor goes
 		// off on it rather than half inside it.
@@ -519,6 +526,9 @@ func editor3DSelectNonBrushHit(hit pickHit) {
 
 	case pickEffect:
 		editorSelectEffect(hit.idx)
+
+	case pickTree:
+		editorSelectTree(hit.idx)
 
 	case pickWaypoint:
 		// One point, not the whole path: it is the arrow that was clicked,

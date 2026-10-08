@@ -272,34 +272,34 @@ func rayBoxNormal(origin, dir mgl32.Vec3, m mgl32.Mat4, half mgl32.Vec3, tMax fl
 }
 
 // sceneryRayNearest is the nearest solid placement along a ray within
-// tMax, by the placement broadphase: its index in lvl.Scenery, the distance
-// and the world normal. any stops at the first hit found.
-func sceneryRayNearest(lvl *world.Level, origin, dir mgl32.Vec3, tMax float32, ignore map[string]bool, any bool) (idx int, t float32, n mgl32.Vec3, ok bool) {
+// tMax, by the placement broadphase: its ID (a scenery's or a placed tree's),
+// the distance and the world normal. any stops at the first hit found.
+func sceneryRayNearest(lvl *world.Level, origin, dir mgl32.Vec3, tMax float32, ignore map[string]bool, any bool) (id string, t float32, n mgl32.Vec3, ok bool) {
 	ix := sceneryIndexFor(lvl)
 	if ix == nil {
-		return -1, 0, mgl32.Vec3{}, false
+		return "", 0, mgl32.Vec3{}, false
 	}
 	start := profStart()
 	defer profStop(start, &sceneryStats.rayTime)
-	best, bestIdx := tMax, -1
+	best, bestID, found := tMax, "", false
 	var bestN mgl32.Vec3
 	ix.along(origin, dir, &best, func(e *sceneryEntry) bool {
-		if len(ignore) > 0 && ignore[lvl.Scenery[e.idx].ID] {
+		if len(ignore) > 0 && ignore[e.id] {
 			return true
 		}
 		th, nn, hit := sceneryRay(lvl, e, origin, dir, best)
 		if hit && th <= best {
-			best, bestIdx, bestN = th, e.idx, nn
+			best, bestID, bestN, found = th, e.id, nn, true
 			if any {
 				return false
 			}
 		}
 		return true
 	})
-	if bestIdx < 0 {
-		return -1, 0, mgl32.Vec3{}, false
+	if !found {
+		return "", 0, mgl32.Vec3{}, false
 	}
-	return bestIdx, best, bestN, true
+	return bestID, best, bestN, true
 }
 
 // ---------- particles ----------

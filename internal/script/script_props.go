@@ -880,7 +880,7 @@ func volumeProps() map[string]propAccess {
 					s.Kind = world.ScatterKindFromName(name)
 				})
 			}),
-			Doc: "what grows: grass, rock, wildflower, cattail or moss",
+			Doc: "what grows: grass, rock, wildflower, cattail, moss or biome",
 		},
 		"scatter_density": {
 			Get: get(func(v *world.Volume) flang.Value {

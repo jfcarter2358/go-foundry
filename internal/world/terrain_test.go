@@ -580,13 +580,14 @@ func TestTerrainFillBox(t *testing.T) {
 // style.
 func TestBiomesGrowTheirSignatureSpecies(t *testing.T) {
 	want := map[string][]FoliageShape{
-		"jungle":   {FoliageBroadleaf, FoliagePalm, FoliageJunglePlant, FoliageFern},
-		"desert":   {FoliageCactus, FoliageDeadBush, FoliageRock},
-		"beach":    {FoliagePalm, FoliageTallGrass, FoliagePebbles},
-		"tundra":   {FoliageGrass, FoliageMoss, FoliageShrub},
-		"badlands": {FoliageRock, FoliageDeadBush, FoliageCactus},
-		"volcanic": {FoliageMoss, FoliageRock, FoliageFlower},
-		"savannah": {FoliageTallGrass, FoliageAcacia, FoliageShrub},
+		"jungle":     {FoliageBroadleaf, FoliagePalm, FoliageJunglePlant, FoliageFern},
+		"desert":     {FoliageCactus, FoliageDeadBush, FoliageRock},
+		"beach":      {FoliagePalm, FoliageTallGrass, FoliagePebbles},
+		"tundra":     {FoliageGrass, FoliageMoss, FoliageShrub},
+		"badlands":   {FoliageRock, FoliageDeadBush, FoliageCactus},
+		"volcanic":   {FoliageMoss, FoliageRock, FoliageFlower},
+		"savannah":   {FoliageTallGrass, FoliageAcacia, FoliageShrub},
+		"rainforest": {FoliageSwordFern, FoliageOxalis, FoliageForestLitter, FoliageMossMound},
 	}
 	for name, shapes := range want {
 		t.Run(name, func(t *testing.T) {

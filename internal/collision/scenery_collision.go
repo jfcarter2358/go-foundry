@@ -70,7 +70,7 @@ func sceneryProxy(s *world.Scenery) (world.Entity, bool) {
 // — comparing the two would be subtracting numbers that do not mean the same
 // thing, which is the same reason the entity pass skips cross-frame pairs.
 func ResolveSceneryCollisions(lvl *world.Level, player *world.Entity) []int {
-	if lvl == nil || len(lvl.Scenery) == 0 || !world.EntityWorldCollisionEnabled {
+	if lvl == nil || len(lvl.Scenery)+len(lvl.Trees) == 0 || !world.EntityWorldCollisionEnabled {
 		return nil
 	}
 	ix := sceneryIndexFor(lvl)

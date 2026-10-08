@@ -583,6 +583,14 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		level.Scenery = append(level.Scenery, sc)
 	}
 
+	// Trees: hand-placed plants, with the same ID guarantee. Nothing to
+	// load: the foliage renderer draws them from the shared templates.
+	for _, rt := range raw.Trees {
+		t := world.TreeFromRaw(rt)
+		t.ID = world.UniqueTreeID(level, t.ID)
+		level.Trees = append(level.Trees, t)
+	}
+
 	// Sounds: placed sound sources, with the same ID guarantee.
 	//
 	// A missing or unreadable clip is reported and the sound kept, on exactly

@@ -43,6 +43,7 @@ import (
 	"sort"
 	"strings"
 
+	"foundry/internal/biomeground"
 	"foundry/internal/fileutil"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -128,6 +129,15 @@ var foliageShapeAliases = map[string]string{
 	"broadleaf": "broadleaf_tree", "tree": "broadleaf_tree", "litter": "leaf_litter",
 	"leaves": "leaf_litter", "tallgrass": "tall_grass", "jungleplant": "jungle_plant",
 	"deadbush": "dead_bush", "pine": "conifer",
+	"spruce": "sitka_spruce", "sitka": "sitka_spruce", "western_hemlock": "hemlock",
+	"cedar": "redcedar", "western_redcedar": "redcedar", "red_cedar": "redcedar",
+	"fir": "douglas_fir", "douglasfir": "douglas_fir",
+	"maple": "bigleaf_maple", "alder": "red_alder", "vinemaple": "vine_maple",
+	"swordfern": "sword_fern", "fern2": "forest_fern", "sorrel": "oxalis",
+	"undershrub": "under_shrub", "huckleberry": "under_shrub", "salal": "under_shrub",
+	"nurselog": "nurse_log", "log": "nurse_log", "branches": "branch_litter",
+	"sticks": "branch_litter", "floor_litter": "forest_litter",
+	"hummock": "moss_mound",
 }
 
 // FoliageShapeByKey finds a shape by its file name (or a short alias).
@@ -147,27 +157,43 @@ func FoliageShapeByKey(key string) (FoliageShape, bool) {
 // FoliageShapeDocs describes each shape for an author choosing one: what it
 // is, how big it grows at scale 1, and what its variants are.
 var FoliageShapeDocs = [FoliageShapeCount]string{
-	FoliageGrass:       "a clump of curved grass blades, ~0.5 tall; the dense ground cover",
-	FoliageTallGrass:   "a sparse clump of long blades with seed heads, ~1.2 tall",
-	FoliageFlower:      "a flowering plant; variant 0 a daisy head, 1 a spike (lupine, foxglove), 2 nodding bells; flower colour comes from accents",
-	FoliageFern:        "a rosette of arching fronds, ~0.7 tall",
-	FoliageShrub:       "a low leafy bush, ~1.2 tall and wide",
-	FoliageBroadleaf:   "a deciduous tree, ~6-8 tall with a round crown; needs clearance 5+",
-	FoliageConifer:     "a pine or spruce, ~8-10 tall; needs clearance 7+",
-	FoliageRock:        "a part-buried boulder, ~1 across; four shapes; use sink 0.3-0.4",
-	FoliagePebbles:     "a scatter of small stones, ~1 across",
-	FoliageMoss:        "flat patches of moss (or lichen) hugging any surface",
-	FoliageVine:        "a hanging strand of leaves; on walls use top_edge to hang it from a cliff's lip, on ceilings it hangs down",
-	FoliageReed:        "a clump of reeds with cattail heads (accents colour the heads), ~1.6 tall",
-	FoliageMushroom:    "a small cluster of mushrooms; accents colour the caps",
-	FoliageLitter:      "fallen leaves (variant 0, accents colour them) or needles (variant 1) lying flat",
-	FoliageDeadwood:    "a fallen branch or driftwood log, ~2 long",
-	FoliagePalm:        "a palm, ~6-7 tall, trunk leaning more in later variants; accents colour the trunk (coconuts on 0 and 1 are a darker tone of it); needs clearance 6+",
-	FoliageCactus:      "variant 0 a saguaro column with arms (~3.5 tall), 1 a ribbed barrel with a crown of flowers, 2 a prickly pear of flat paddles with fruit; accents colour flowers and fruit",
-	FoliageAcacia:      "a savannah tree, ~4.5 tall with a wide flat-topped canopy; variant 2 has a lower tier; needs clearance 5+",
-	FoliageJunglePlant: "variant 0 elephant ears on long stalks (~1 tall), 1 a banana with long arching leaves (~2 tall)",
-	FoliageDeadBush:    "a leafless twiggy bush ~0.9 tall; variant 1 keeps tufts of leaves at its tips, coloured by accents",
-	FoliageIce:         "glacier ice: variant 0 a faceted block ~1 across, 1 a tall leaning serac ~3 tall, 2 a cluster of broken shards; colour it pale blue-white; use sink 0.2-0.3",
+	FoliageGrass:        "a clump of curved grass blades, ~0.5 tall; the dense ground cover",
+	FoliageTallGrass:    "a sparse clump of long blades with seed heads, ~1.2 tall",
+	FoliageFlower:       "a flowering plant; variant 0 a daisy head, 1 a spike (lupine, foxglove), 2 nodding bells; flower colour comes from accents",
+	FoliageFern:         "a rosette of arching fronds, ~0.7 tall",
+	FoliageShrub:        "a low leafy bush, ~1.2 tall and wide",
+	FoliageBroadleaf:    "a deciduous tree, ~6-8 tall with a round crown; needs clearance 5+",
+	FoliageConifer:      "a pine or spruce, ~8-10 tall; needs clearance 7+",
+	FoliageRock:         "a part-buried boulder, ~1 across; four shapes; use sink 0.3-0.4",
+	FoliagePebbles:      "a scatter of small stones, ~1 across",
+	FoliageMoss:         "flat patches of moss (or lichen) hugging any surface",
+	FoliageVine:         "a hanging strand of leaves; on walls use top_edge to hang it from a cliff's lip, on ceilings it hangs down",
+	FoliageReed:         "a clump of reeds with cattail heads (accents colour the heads), ~1.6 tall",
+	FoliageMushroom:     "a small cluster of mushrooms; accents colour the caps",
+	FoliageLitter:       "fallen leaves (variant 0, accents colour them) or needles (variant 1) lying flat",
+	FoliageDeadwood:     "a fallen branch or driftwood log, ~2 long",
+	FoliagePalm:         "a palm, ~6-7 tall, trunk leaning more in later variants; accents colour the trunk (coconuts on 0 and 1 are a darker tone of it); needs clearance 6+",
+	FoliageCactus:       "variant 0 a saguaro column with arms (~3.5 tall), 1 a ribbed barrel with a crown of flowers, 2 a prickly pear of flat paddles with fruit; accents colour flowers and fruit",
+	FoliageAcacia:       "a savannah tree, ~4.5 tall with a wide flat-topped canopy; variant 2 has a lower tier; needs clearance 5+",
+	FoliageJunglePlant:  "variant 0 elephant ears on long stalks (~1 tall), 1 a banana with long arching leaves (~2 tall)",
+	FoliageDeadBush:     "a leafless twiggy bush ~0.9 tall; variant 1 keeps tufts of leaves at its tips, coloured by accents",
+	FoliageIce:          "glacier ice: variant 0 a faceted block ~1 across, 1 a tall leaning serac ~3 tall, 2 a cluster of broken shards; colour it pale blue-white; use sink 0.2-0.3",
+	FoliageSitkaSpruce:  "a Sitka spruce, ~40 tall with a buttressed foot and scaly bark; 0 mature, 1 an old moss-hung giant (~48), 2 a colonnade tree on stilt roots; accents colour the hanging moss; needs clearance 8+",
+	FoliageHemlock:      "a western hemlock, ~32 tall, slender and lacy with a nodding leader; 2 straddles an old stump on its roots; accents colour the moss; needs clearance 8+",
+	FoliageRedcedar:     "a western redcedar, ~30 tall, fluted foot and stringy red bark, J-shaped limbs hung with flat sprays; 1 an old candelabra with a dead spike top; accents colour the moss; needs clearance 8+",
+	FoliageDouglasFir:   "a Douglas-fir, ~44 tall, a long clean bole of deeply furrowed bark under a high crown; 1 old and broken-topped, 2 younger and fuller; accents colour the moss; needs clearance 8+",
+	FoliageBigleafMaple: "a bigleaf maple, ~20 tall and as wide, great ascending limbs sleeved in moss with licorice ferns and hanging club moss; accents colour the moss; needs clearance 6+",
+	FoliageRedAlder:     "a red alder, ~18 tall, straight pale lichen-blotched trunk, narrow crown; 1 leaning, 2 twin-stemmed; accents colour the moss at its foot; needs clearance 6+",
+	FoliageVineMaple:    "a vine maple, a sprawling clump of arching mossy stems ~7 tall and wide under flat layers of round leaves; accents colour the moss",
+	FoliageCottonwood:   "a black cottonwood, ~28 tall, deeply furrowed grey bark, ascending limbs, open crown of heart-shaped leaves; 2 old with dead limbs; needs clearance 8+",
+	FoliageSwordFern:    "a sword fern, a fountain of long leathery fronds ~1.2 tall; 0 large, 1 medium, 2 skirted with dead fronds (accents colour the dead ones brown)",
+	FoliageForestFern:   "variant 0 a lady fern (lacy vase, ~1 tall), 1 a deer fern (flat rosette with a few upright fertile fronds)",
+	FoliageOxalis:       "a patch of redwood sorrel: trefoil leaves on thin stalks ~0.15 tall; accents colour its few flowers (white or pink)",
+	FoliageUnderShrub:   "variant 0 red huckleberry (airy, ~1.8 tall, red berries), 1 salal (dense leathery thicket ~0.9), 2 devil's club (spiny stems ~2 tall, huge leaves, red berry spikes); accents colour the berries",
+	FoliageNurseLog:     "variant 0 a fallen moss-covered log ~12 long with young hemlocks on its back, 1 a mossy broken snag ~4 tall, 2 an upturned root wad with its log; colours are the moss and saplings, accents the moss; use upright 0 and sink 0.1-0.2",
+	FoliageBranchLitter: "variant 0 a fallen conifer branch ~3 long with dead needles (accents colour them), 1 a scatter of sticks, 2 a mossy fallen limb with ferns",
+	FoliageForestLitter: "fallen leaves lying curled on the ground; 0 big maple leaves, 1 conifer needles, cones and sprigs, 2 oval leaves; accents colour the leaves",
+	FoliageMossMound:    "a hummock of deep moss ~0.5 tall (0), a moss-capped stone (1) or a moss-buried stub of wood (2); colours are the moss",
 }
 
 var foliageSurfaceKeys = []struct {
@@ -633,9 +659,10 @@ func FoliagePresetsSorted() []*FoliagePreset {
 
 // BiomeTextureProblem is what is wrong with p's ground texture, or "": a
 // named texture with no file under textures/ is skipped when drawn, so the
-// author would never see why the ground did not change.
+// author would never see why the ground did not change. A built-in ground
+// (internal/biomeground) needs no file: the engine paints it.
 func BiomeTextureProblem(p *FoliagePreset) string {
-	if p.GroundTexture == "" {
+	if p.GroundTexture == "" || biomeground.Has(p.GroundTexture) {
 		return ""
 	}
 	if _, err := os.Stat(filepath.Join(fileutil.TexturesDir(), p.GroundTexture+".png")); err != nil {

@@ -69,9 +69,11 @@ import (
 // just a tick's first, checks the fingerprint.
 const checkEveryQueryBelow = 64
 
-// sceneryEntry is one solid placement in the index.
+// sceneryEntry is one solid placement in the index: a scenery's, or a
+// placed tree's trunk (world.Tree.TrunkBox), which is a box-mode entry.
 type sceneryEntry struct {
-	idx  int // into lvl.Scenery
+	idx  int // into lvl.Scenery; -1 for a tree
+	id   string
 	mode meshcollide.Mode
 	box  aabb // world space, padded
 	m    mgl32.Mat4
@@ -97,12 +99,25 @@ func keyOf(s *world.Scenery) sceneryKey {
 		solid: s.Solid, mode: s.Collision, data: s.CollisionData()}
 }
 
+// treeKey is what a placed tree's entry depends on.
+type treeKey struct {
+	lo, hi mgl32.Vec3
+	ok     bool
+}
+
+func treeKeyOf(t *world.Tree) treeKey {
+	lo, hi, ok := t.TrunkBox()
+	return treeKey{lo, hi, ok}
+}
+
 // sceneryIndex is a level's solid placements under a tree of their boxes.
 type sceneryIndex struct {
 	lvl   *world.Level
 	base  *world.Scenery
 	n     int
 	keys  []sceneryKey
+	trees []treeKey
+	tbase *world.Tree
 	epoch uint64
 
 	entries []sceneryEntry
@@ -159,7 +174,7 @@ func thawScenery()                    { frozenScenery = nil }
 // sceneryIndexFor is lvl's index, rebuilt if it is stale. Never nil for a
 // level with scenery; nil otherwise.
 func sceneryIndexFor(lvl *world.Level) *sceneryIndex {
-	if lvl == nil || len(lvl.Scenery) == 0 {
+	if lvl == nil || len(lvl.Scenery)+len(lvl.Trees) == 0 {
 		return nil
 	}
 	if ix := frozenScenery; ix != nil && ix.lvl == lvl {
@@ -168,8 +183,9 @@ func sceneryIndexFor(lvl *world.Level) *sceneryIndex {
 	sceneryState.Lock()
 	defer sceneryState.Unlock()
 	ix := sceneryState.idx
-	if ix != nil && ix.lvl == lvl && ix.base == &lvl.Scenery[0] && ix.n == len(lvl.Scenery) {
-		if ix.epoch == sceneryState.epoch && ix.n > checkEveryQueryBelow {
+	if ix != nil && ix.lvl == lvl && ix.base == firstScenery(lvl) && ix.n == len(lvl.Scenery) &&
+		ix.tbase == firstTree(lvl) && len(ix.trees) == len(lvl.Trees) {
+		if ix.epoch == sceneryState.epoch && ix.n+len(ix.trees) > checkEveryQueryBelow {
 			return ix
 		}
 		same := true
@@ -177,6 +193,11 @@ func sceneryIndexFor(lvl *world.Level) *sceneryIndex {
 			if keyOf(&lvl.Scenery[i]) != ix.keys[i] {
 				same = false
 				break
+			}
+		}
+		for i := 0; same && i < len(lvl.Trees); i++ {
+			if treeKeyOf(&lvl.Trees[i]) != ix.trees[i] {
+				same = false
 			}
 		}
 		if same {
@@ -195,8 +216,25 @@ func sceneryIndexFor(lvl *world.Level) *sceneryIndex {
 	return ix
 }
 
+// firstScenery and firstTree are where the level's slices start (nil when
+// empty): an append that moved one rebuilds the index.
+func firstScenery(lvl *world.Level) *world.Scenery {
+	if len(lvl.Scenery) == 0 {
+		return nil
+	}
+	return &lvl.Scenery[0]
+}
+
+func firstTree(lvl *world.Level) *world.Tree {
+	if len(lvl.Trees) == 0 {
+		return nil
+	}
+	return &lvl.Trees[0]
+}
+
 func buildSceneryIndex(lvl *world.Level) *sceneryIndex {
-	ix := &sceneryIndex{lvl: lvl, base: &lvl.Scenery[0], n: len(lvl.Scenery), keys: make([]sceneryKey, len(lvl.Scenery))}
+	ix := &sceneryIndex{lvl: lvl, base: firstScenery(lvl), n: len(lvl.Scenery), keys: make([]sceneryKey, len(lvl.Scenery)),
+		tbase: firstTree(lvl), trees: make([]treeKey, len(lvl.Trees))}
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
 		ix.keys[i] = keyOf(s)
@@ -205,7 +243,7 @@ func buildSceneryIndex(lvl *world.Level) *sceneryIndex {
 		if mode == meshcollide.ModeNone {
 			continue
 		}
-		e := sceneryEntry{idx: i, mode: mode, m: s.ModelMatrix(), data: s.CollisionData()}
+		e := sceneryEntry{idx: i, id: s.ID, mode: mode, m: s.ModelMatrix(), data: s.CollisionData()}
 		e.inv = e.m.Inv()
 		switch mode {
 		case meshcollide.ModeBox:
@@ -228,6 +266,25 @@ func buildSceneryIndex(lvl *world.Level) *sceneryIndex {
 				e.hullBoxes = append(e.hullBoxes, aabb{lo: h.Lo, hi: h.Hi}.transformed(e.m).padded())
 			}
 		}
+		ix.entries = append(ix.entries, e)
+	}
+	// A placed tree is solid as the box round its trunk: its crown is not
+	// something a body is stopped by.
+	for i := range lvl.Trees {
+		t := &lvl.Trees[i]
+		ix.trees[i] = treeKeyOf(t)
+		lo, hi, ok := t.TrunkBox()
+		if !ok {
+			ix.byMode[meshcollide.ModeNone]++
+			continue
+		}
+		ix.byMode[meshcollide.ModeBox]++
+		c, h := lo.Add(hi).Mul(0.5), hi.Sub(lo).Mul(0.5)
+		e := sceneryEntry{idx: -1, id: t.ID, mode: meshcollide.ModeBox, m: mgl32.Translate3D(c[0], c[1], c[2]),
+			box: aabb{lo: lo, hi: hi}.padded()}
+		e.inv = e.m.Inv()
+		e.proxy = world.Entity{ID: t.ID, Position: c, Scale: mgl32.Vec3{1, 1, 1}, BoundingKind: world.BoundingAABB,
+			BoundHalfX: h[0], BoundHalfY: h[1], BoundHalfZ: h[2]}
 		ix.entries = append(ix.entries, e)
 	}
 	ix.buildTree()

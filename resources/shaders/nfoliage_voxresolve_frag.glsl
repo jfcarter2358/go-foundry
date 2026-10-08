@@ -19,7 +19,6 @@ layout(std430, binding = 14) coherent buffer VisFoliage {
 uniform usamplerBuffer nfRefs;
 uniform ivec2 viewSize;
 uniform int coverageDither;
-uniform vec3 barkColor;
 uniform mat4 motionViewProj;
 uniform mat4 motionPrevViewProj;
 uniform int writeMotion;
@@ -56,7 +55,7 @@ void main() {
     vec3 c = vec3(float(l & 3), float((l >> 2) & 3), float(l >> 4)) + 0.5;
     vec3 world = o + A * c;
     vec3 upWorld = normalize(mat3(nModel) * nUp);
-    vec3 bark = barkColor * (0.8 + 0.4 * iAccentSeed.w);
+    vec3 bark = shapeBark[nShape] * (0.8 + 0.4 * iAccentSeed.w);
     uvec4 seed = uvec4(uvec2(p), uint(coverageDither) + 17u, uint(bi) * 64u + uint(l));
     vec3 col = nfVoxelShade(vox, world, camPos, vec3(Ainv[0][0], Ainv[1][0], Ainv[2][0]), vec3(Ainv[0][1], Ainv[1][1], Ainv[2][1]),
                             vec3(Ainv[0][2], Ainv[1][2], Ainv[2][2]), upWorld, iColorRank.rgb, iAccentSeed.rgb, bark, seed);

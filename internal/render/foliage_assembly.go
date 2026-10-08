@@ -68,6 +68,9 @@ const (
 	asmSpanCard  = iota // a card: a part
 	asmSpanAxis         // something that grows along an axis: a bone
 	asmSpanOther        // anything else: core, riding the nearest bone
+	// asmSpanRide grows along an axis but is no bone of its own (a moss
+	// shell over a limb): it rides, whole, the bone nearest its pivot.
+	asmSpanRide
 )
 
 // asmCard is a card as foliage_mesh.go's card() was asked for it.
@@ -105,6 +108,12 @@ func (m *fmesh) recordCard(first int, c asmCard) {
 func (m *fmesh) recordAxis(first int, pivot, tip mgl32.Vec3) {
 	if r := asmRecording; r != nil {
 		r.spans = append(r.spans, asmSpan{m: m, first: first, end: m.mark(), kind: asmSpanAxis, pivot: pivot, tip: tip})
+	}
+}
+
+func (m *fmesh) recordRide(first int, pivot mgl32.Vec3) {
+	if r := asmRecording; r != nil {
+		r.spans = append(r.spans, asmSpan{m: m, first: first, end: m.mark(), kind: asmSpanRide, pivot: pivot})
 	}
 }
 
@@ -248,6 +257,16 @@ func recordFoliageAssembly(shape world.FoliageShape, variant int) foliageAssembl
 			return 0
 		}
 		return best
+	}
+
+	// An axis past the bone budget, and a riding span, goes whole with the
+	// bone nearest where it grows from — a twig with the limb it is on —
+	// rather than each of its vertices with whichever bone is nearest it.
+	for si := range spans {
+		s := &spans[si]
+		if boneOf[si] < 0 && (s.kind == asmSpanAxis || s.kind == asmSpanRide) && len(a.bones) > 1 {
+			boneOf[si] = nearest(s.pivot)
+		}
 	}
 
 	// Cards to parts; everything else to the core, bound vertex by vertex.

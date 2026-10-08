@@ -280,6 +280,7 @@ func editorArmWaypointPlacement() {
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.EffectPlacementMode = false
+	Editor.TreePlacementMode = false
 	Editor.SpawnPlacementMode = false
 	Editor.WaypointPlacementMode = true
 }

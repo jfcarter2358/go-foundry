@@ -154,7 +154,8 @@ way it's one undo step.
 
 A biome is **what grows** on the faces you paint it on. You don't place plants.
 Each biome is a community of species, and each species knows the conditions it
-grows in. Paint a whole hillside and every face grows what suits it:
+grows in. Paint a whole hillside and every face grows what suits it. To grow a
+biome on brush ground instead, use a [biome scatter volume](06-scatter.md#biome-volumes).
 
 | Biome | Ground | Walls and overhangs |
 | --- | --- | --- |
@@ -176,6 +177,7 @@ grows in. Paint a whole hillside and every face grows what suits it:
 | **Glacier** | leaning seracs and broken ice blocks, dark moraine gravel and boulders along its edges; nothing grows | blue ice |
 | **Ice Plains** | wind-rippled snow with patches of blue ice, frozen tufts, ice blocks, frosted stones | lichen |
 | **Rocky Cliff** | talus piled at the foot, gravel, lichen, a tuft of grass or a stunted pine where soil holds | bare weathered rock, lichen |
+| **Temperate Rainforest** | a Hoh-valley forest floor: sword ferns everywhere, lady and deer ferns, carpets of redwood sorrel, huckleberry, salal and devil's club, nurse logs with young hemlocks on their backs, mossy snags and root wads, fallen branches, curled leaves and deep moss. No trees: [place those by hand](14-scenery-brush.md#trees) | moss, deer ferns, vines |
 
 What decides where each species takes, read from the blocks:
 
@@ -195,6 +197,30 @@ What decides where each species takes, read from the blocks:
 
 Plants in better spots grow bigger, and colours drift across the landscape, so
 a field is lusher in one place and drier in another.
+
+### The temperate rainforest
+
+Temperate Rainforest paints only the forest floor. Its trees are placed by hand
+as [trees](14-scenery-brush.md#trees), so you decide where every giant stands:
+Sitka spruce, western hemlock, western redcedar, Douglas-fir, bigleaf maple, red
+alder, vine maple and black cottonwood, three variants each. They are life-size
+and built in much more detail than the other biomes' plants. A Sitka spruce is
+about 40 units tall, and each tree is 50,000 to 100,000 triangles up close. Bark
+is modelled rather than painted: a spruce's scaly plates, a Douglas-fir's deep
+furrows, a redcedar's stringy strips and fluted foot, an alder's pale,
+lichen-blotched skin. Moss lies along the limbs, curtains of club moss hang from
+them, and licorice ferns grow out of the moss on a maple. Among the variants
+are a spruce standing on stilt roots where its nurse log rotted away, a hemlock
+straddling an old stump, and an old cedar with a dead spike top. Nanite foliage
+draws the trees and the nurse logs. The floor's dense plants (ferns, sorrel,
+shrubs, litter, moss) are drawn the way ground cover is.
+
+The floor's plant shapes are `sword_fern`, `forest_fern`, `oxalis`,
+`under_shrub`, `nurse_log`, `branch_litter`, `forest_litter` and `moss_mound`.
+Any biome file can use them, and the tree shapes too (`sitka_spruce`,
+`hemlock`, `redcedar`, `douglas_fir`, `bigleaf_maple`, `red_alder`,
+`vine_maple`, `cottonwood`) if a biome should grow trees after all.
+`foundry biomes schema` describes each one.
 
 Painted ground shows the biome's own **ground texture**: sand under a desert,
 leaf mould under a forest, black cinders under a lava field. It lies on ground
@@ -271,8 +297,10 @@ built-ins. To start from them:
 | `foundry biomes check` | parses every file and checks its ground texture exists |
 | `foundry biomes list` | every biome, its ground texture and where it comes from |
 
-The ground textures are `textures/ground_<biome>.png`, made by
-`go run ./cmd/genbiomeground` (or `... genbiomeground desert` for one). Any
+The built-in biomes' ground textures (`ground_meadow`, `ground_desert`, …) are
+painted by the engine, so a project needs no files for them. To edit one, write
+it out as `textures/ground_<biome>.png` with `go run ./cmd/genbiomeground` (or
+`... genbiomeground desert` for one); a file of that name always wins. Any
 seamless PNG works as a biome's ground.
 
 In the editor, the Claude Code panel has `biome_schema`, `biome_list`,
@@ -344,6 +372,13 @@ without a draw per section. How it is drawn:
 
 Trees reach about 1.5 km, shrubs and rocks about 400–500 m, grass and flowers
 about 130 m.
+
+Building every plant's Nanite foliage takes the CPU a while: about 13
+seconds on a 20-thread machine with the rainforest's giants. It is done once
+and kept in your cache folder (`~/.cache/foundry/foliage`, or
+`%LocalAppData%\foundry\foliage` on Windows), so later launches read it back
+almost at once. It is built again only when a plant changes. An entry is
+about 130 MB, and the folder keeps the newest two.
 
 On a graphics driver that cannot run the Nanite foliage (it needs 44 texture
 units and compute shaders), or with `FOUNDRY_NANITE_FOLIAGE=0`, trees, shrubs

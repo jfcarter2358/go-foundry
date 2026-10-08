@@ -69,6 +69,7 @@ func editorPropertiesSection(lvl *world.Level) {
 	editorSpritePropertiesSection()
 	editorDecalPropertiesSection()
 	editorSceneryPropertiesSection()
+	editorTreePropertiesSection()
 	// Not selection-driven, unlike everything around it: the brush block is
 	// about the *next* click rather than about anything selected, which is why
 	// it draws whenever the brush has a model — see editor_scenery_panel.go.

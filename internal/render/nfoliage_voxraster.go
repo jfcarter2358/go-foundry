@@ -179,7 +179,7 @@ func (v *nfVoxRaster) draw(r *nfRenderer, lvl *world.Level, view nfView, frame S
 	for _, p := range []*progUniforms{&v.list, &v.raster} {
 		gl.UseProgram(p.prog)
 		r.bindVertexData(p)
-		uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"))
+		uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"), p.U("shapeBark"))
 		gl.Uniform1ui(p.U("setupCap"), uint32(v.setupCap))
 		gl.Uniform1ui(p.U("listCap"), uint32(v.listCap))
 	}
@@ -229,7 +229,7 @@ func (v *nfVoxRaster) draw(r *nfRenderer, lvl *world.Level, view nfView, frame S
 	ProfileBegin("foliage: voxel resolve")
 	rs := &v.resolve
 	uploadBiomeLighting(rs.prog, lvl, frame)
-	uploadFoliageParams(rs.U("shapeRange"), rs.U("shapeMore"), rs.U("bucketInfo"), rs.U("bucketImp"))
+	uploadFoliageParams(rs.U("shapeRange"), rs.U("shapeMore"), rs.U("bucketInfo"), rs.U("bucketImp"), rs.U("shapeBark"))
 	r.bindVertexData(rs)
 	gl.Uniform2i(rs.U("viewSize"), vw, vh)
 	gl.Uniform1i(rs.U("coverageDither"), coverageDither())

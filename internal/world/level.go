@@ -65,6 +65,8 @@ type Level struct {
 	// Scenery are the level's placed static models (scenery.go) — one mesh, a
 	// transform and a collision flag, and nothing a script can address.
 	Scenery []Scenery
+	// Trees are the level's hand-placed plants (tree.go), drawn as foliage.
+	Trees []Tree
 	// Decals are the level's projected textures (decal.go). Level-scoped for the
 	// volumes' reason and one more of its own: a decal's mesh is clipped out of
 	// whatever chunks its box reaches, so it belongs to none of them.

@@ -87,6 +87,61 @@ const (
 	// FoliageIce is glacier ice: variant 0 a faceted ice block, 1 a tall
 	// leaning serac, 2 a cluster of broken shards.
 	FoliageIce
+	// The temperate rainforest's trees (a Hoh valley's), each with three
+	// variants, life-size: a Sitka spruce is forty units tall.
+	//
+	// FoliageSitkaSpruce is a buttressed giant with scaly bark: variant 0
+	// mature, 1 an old giant hung with moss, 2 a colonnade tree standing on
+	// stilt roots where its nurse log rotted away.
+	FoliageSitkaSpruce
+	// FoliageHemlock is a western hemlock: slender, lacy, its leader nodding
+	// over; variant 2 straddles an old stump on its roots.
+	FoliageHemlock
+	// FoliageRedcedar is a western redcedar: fluted foot, stringy bark,
+	// sweeping J-shaped limbs hung with flat sprays; variant 1 an old
+	// candelabra with a dead silver spike top.
+	FoliageRedcedar
+	// FoliageDouglasFir is a Douglas-fir: the tallest, a long clean bole of
+	// deeply furrowed bark under a high, irregular crown.
+	FoliageDouglasFir
+	// FoliageBigleafMaple is a bigleaf maple: a short trunk parting into great
+	// ascending limbs, every one sleeved in moss and hung with club moss.
+	FoliageBigleafMaple
+	// FoliageRedAlder is a red alder: a straight, pale, lichen-blotched
+	// trunk under a narrow crown.
+	FoliageRedAlder
+	// FoliageVineMaple is a vine maple: a sprawling clump of arching,
+	// mossy stems under flat layers of round leaves.
+	FoliageVineMaple
+	// FoliageCottonwood is a black cottonwood: deeply furrowed grey bark,
+	// ascending limbs, an open crown of heart-shaped leaves.
+	FoliageCottonwood
+	// The rainforest's floor.
+	//
+	// FoliageSwordFern is a sword fern: a fountain of long, leathery fronds;
+	// variant 2 lies in a skirt of its own dead fronds.
+	FoliageSwordFern
+	// FoliageForestFern is a lady fern (variant 0) or a deer fern (1).
+	FoliageForestFern
+	// FoliageOxalis is a patch of redwood sorrel: trefoil leaves on thin
+	// stalks, a few white flowers.
+	FoliageOxalis
+	// FoliageUnderShrub is red huckleberry (variant 0), salal (1) or devil's
+	// club (2).
+	FoliageUnderShrub
+	// FoliageNurseLog is a great fallen log under moss with a row of young
+	// hemlocks on its back (variant 0), a mossy broken snag (1) or an
+	// upturned root wad (2).
+	FoliageNurseLog
+	// FoliageBranchLitter is a fallen conifer branch (variant 0), a scatter
+	// of sticks (1) or a mossy fallen limb with ferns on it (2).
+	FoliageBranchLitter
+	// FoliageForestLitter is the forest floor's leaves: curled maple leaves
+	// (variant 0), conifer needles, cones and sprigs (1), or oval leaves (2).
+	FoliageForestLitter
+	// FoliageMossMound is a hummock of deep moss (variant 0), a moss-capped
+	// stone (1) or a moss-buried stub of wood (2).
+	FoliageMossMound
 
 	FoliageShapeCount
 )
@@ -100,13 +155,20 @@ var FoliageVariants = [FoliageShapeCount]int{
 	FoliagePebbles: 2, FoliageMoss: 2, FoliageVine: 3, FoliageReed: 2,
 	FoliageMushroom: 2, FoliageLitter: 2, FoliageDeadwood: 2, FoliagePalm: 3,
 	FoliageCactus: 3, FoliageAcacia: 3, FoliageJunglePlant: 2, FoliageDeadBush: 2,
-	FoliageIce: 3,
+	FoliageIce: 3, FoliageSitkaSpruce: 3, FoliageHemlock: 3, FoliageRedcedar: 3,
+	FoliageDouglasFir: 3, FoliageBigleafMaple: 3, FoliageRedAlder: 3, FoliageVineMaple: 3,
+	FoliageCottonwood: 3, FoliageSwordFern: 3, FoliageForestFern: 2, FoliageOxalis: 2,
+	FoliageUnderShrub: 3, FoliageNurseLog: 3, FoliageBranchLitter: 3, FoliageForestLitter: 3,
+	FoliageMossMound: 3,
 }
 
 var foliageShapeNames = [FoliageShapeCount]string{
 	"grass", "tall grass", "flower", "fern", "shrub", "broadleaf tree", "conifer",
 	"rock", "pebbles", "moss", "vine", "reed", "mushroom", "leaf litter", "deadwood",
 	"palm", "cactus", "acacia", "jungle plant", "dead bush", "ice",
+	"sitka spruce", "hemlock", "redcedar", "douglas fir", "bigleaf maple", "red alder",
+	"vine maple", "cottonwood", "sword fern", "forest fern", "oxalis", "under shrub",
+	"nurse log", "branch litter", "forest litter", "moss mound",
 }
 
 func (s FoliageShape) String() string {
@@ -360,6 +422,20 @@ var (
 	mesaRock      = [2]mgl32.Vec3{rgb(0.66, 0.38, 0.22), rgb(0.82, 0.56, 0.36)}
 	juniperGreen  = [2]mgl32.Vec3{rgb(0.22, 0.30, 0.18), rgb(0.32, 0.38, 0.24)}
 	graniteGrey   = [2]mgl32.Vec3{rgb(0.46, 0.45, 0.43), rgb(0.62, 0.60, 0.57)}
+	// The temperate rainforest's: dark conifer greens, the fresh green of
+	// maple and alder, and the moss — yellow-green on the limbs, deep green
+	// on the ground.
+	spruceGreen  = [2]mgl32.Vec3{rgb(0.13, 0.22, 0.12), rgb(0.20, 0.30, 0.15)}
+	hemlockGreen = [2]mgl32.Vec3{rgb(0.15, 0.26, 0.11), rgb(0.23, 0.34, 0.14)}
+	cedarGreen   = [2]mgl32.Vec3{rgb(0.17, 0.29, 0.11), rgb(0.26, 0.37, 0.14)}
+	firGreen     = [2]mgl32.Vec3{rgb(0.14, 0.24, 0.12), rgb(0.21, 0.31, 0.15)}
+	mapleGreen   = [2]mgl32.Vec3{rgb(0.28, 0.42, 0.12), rgb(0.40, 0.52, 0.16)}
+	alderGreen   = [2]mgl32.Vec3{rgb(0.22, 0.36, 0.11), rgb(0.32, 0.45, 0.14)}
+	fernGreen    = [2]mgl32.Vec3{rgb(0.16, 0.32, 0.09), rgb(0.26, 0.42, 0.12)}
+	limbMoss     = []mgl32.Vec3{rgb(0.34, 0.44, 0.12), rgb(0.42, 0.50, 0.14), rgb(0.30, 0.40, 0.13), rgb(0.46, 0.48, 0.20)}
+	floorMoss    = [2]mgl32.Vec3{rgb(0.20, 0.34, 0.08), rgb(0.32, 0.44, 0.12)}
+	deadNeedles  = []mgl32.Vec3{rgb(0.48, 0.30, 0.15), rgb(0.55, 0.36, 0.18), rgb(0.42, 0.28, 0.16)}
+	fallenLeaves = []mgl32.Vec3{rgb(0.55, 0.40, 0.16), rgb(0.62, 0.48, 0.18), rgb(0.44, 0.30, 0.14), rgb(0.66, 0.54, 0.24)}
 )
 
 // allSurfaces is every kind of surface.
@@ -856,6 +932,70 @@ var builtinFoliagePresets = []FoliagePreset{
 				Light: [2]float32{0.4, 1}, Cluster: 0.6, ClusterSize: 12, Edge: -0.3, Clearance: 4},
 			{Shape: FoliageShrub, Spacing: 9, Where: OnGround, Slope: [2]float32{0, 45}, Scale: [2]float32{0.3, 0.6},
 				Colors: juniperGreen, Upright: 0.9, Cluster: 0.6, ClusterSize: 6, Edge: 1, Clearance: 1},
+		},
+	},
+	{
+		Name: "rainforest", Label: "Temperate Rainforest",
+		Doc:           "A Hoh-valley rainforest floor: sword ferns and sorrel, huckleberry, salal and devil's club, nurse logs, fallen branches and deep moss. Place its trees by hand.",
+		GroundTexture: "ground_rainforest", GroundScale: 5,
+		GroundTint: rgb(0.20, 0.28, 0.10), Cover: 1,
+		Species: []FoliageSpecies{
+			// Undergrowth only: the trees (FoliageSitkaSpruce and the rest)
+			// are placed by hand as level objects (world.Tree), so an author
+			// decides where every giant stands. Light is read off the blocks
+			// and placed trees shade nothing as far as it is concerned, so
+			// the floor takes any light, as under a real closed canopy.
+			{Shape: FoliageSwordFern, Spacing: 1.5, Where: OnGround, Variants: 0b011, Slope: [2]float32{0, 60}, Scale: [2]float32{0.8, 1.3},
+				Colors: fernGreen, Upright: 0.7,
+				Light: [2]float32{0, 1}, Cluster: 0.35, ClusterSize: 6, Edge: 0.6, Moisture: 0.2, ColorNoise: 0.25},
+			{Shape: FoliageSwordFern, Spacing: 4, Where: OnGround, Variants: 0b100, Slope: [2]float32{0, 50}, Scale: [2]float32{0.8, 1.2},
+				Colors: fernGreen, Accents: deadNeedles, Upright: 0.7,
+				Light: [2]float32{0, 1}, Cluster: 0.5, ClusterSize: 6, Edge: 0.4, ColorNoise: 0.25},
+			{Shape: FoliageForestFern, Spacing: 2.6, Where: OnGround, Variants: 0b01, Slope: [2]float32{0, 40}, Scale: [2]float32{0.8, 1.3},
+				Colors: [2]mgl32.Vec3{rgb(0.28, 0.44, 0.12), rgb(0.38, 0.52, 0.16)}, Upright: 0.8,
+				Light: [2]float32{0, 1}, Cluster: 0.7, ClusterSize: 6, Moisture: 0.8, ColorNoise: 0.2},
+			{Shape: FoliageForestFern, Spacing: 2.2, Where: OnGround | OnWall, Variants: 0b10, Slope: [2]float32{0, 75}, Scale: [2]float32{0.8, 1.2},
+				Colors: fernGreen, Upright: 0.5,
+				Light: [2]float32{0, 1}, Cluster: 0.6, ClusterSize: 5, Edge: 0.8, Moisture: 0.4, ColorNoise: 0.2},
+			{Shape: FoliageOxalis, Spacing: 0.55, Where: OnGround, Slope: [2]float32{0, 45}, Scale: [2]float32{0.8, 1.3},
+				Colors: [2]mgl32.Vec3{rgb(0.26, 0.42, 0.12), rgb(0.36, 0.50, 0.15)}, Accents: []mgl32.Vec3{rgb(0.96, 0.94, 0.92), rgb(0.95, 0.82, 0.88)},
+				Upright: 0.7, Light: [2]float32{0, 1}, Cluster: 0.55, ClusterSize: 5, Moisture: 0.3, ColorNoise: 0.25},
+			{Shape: FoliageUnderShrub, Spacing: 7, Where: OnGround, Variants: 0b001, Slope: [2]float32{0, 40}, Scale: [2]float32{0.8, 1.2},
+				Colors: [2]mgl32.Vec3{rgb(0.30, 0.46, 0.13), rgb(0.40, 0.54, 0.17)}, Accents: []mgl32.Vec3{rgb(0.85, 0.15, 0.10), rgb(0.92, 0.25, 0.12)},
+				Upright: 0.9, Light: [2]float32{0, 1}, Cluster: 0.5, ClusterSize: 10, Edge: 0.3, Clearance: 2, ColorNoise: 0.2},
+			{Shape: FoliageUnderShrub, Spacing: 4, Where: OnGround, Variants: 0b010, Slope: [2]float32{0, 45}, Scale: [2]float32{0.8, 1.3},
+				Colors: [2]mgl32.Vec3{rgb(0.16, 0.30, 0.09), rgb(0.24, 0.38, 0.12)}, Accents: []mgl32.Vec3{rgb(0.16, 0.10, 0.18), rgb(0.22, 0.14, 0.24)},
+				Upright: 0.9, Light: [2]float32{0, 1}, Cluster: 0.7, ClusterSize: 8, Moisture: -0.5, Clearance: 1, ColorNoise: 0.2},
+			{Shape: FoliageUnderShrub, Spacing: 6, Where: OnGround, Variants: 0b100, Slope: [2]float32{0, 30}, Scale: [2]float32{0.8, 1.2},
+				Colors: [2]mgl32.Vec3{rgb(0.26, 0.42, 0.12), rgb(0.36, 0.50, 0.16)}, Accents: []mgl32.Vec3{rgb(0.88, 0.12, 0.08)},
+				Upright: 0.95, Light: [2]float32{0, 1}, Cluster: 0.8, ClusterSize: 8, Moisture: 1, Clearance: 2, ColorNoise: 0.2},
+			{Shape: FoliageNurseLog, Spacing: 34, Where: OnGround, Slope: [2]float32{0, 20}, Scale: [2]float32{0.8, 1.15},
+				Colors: hemlockGreen, Accents: limbMoss, Sink: 0.12,
+				Light: [2]float32{0, 1}, Cluster: 0.3, ClusterSize: 30, Clearance: 3, ColorNoise: 0.2},
+			{Shape: FoliageBranchLitter, Spacing: 4.5, Where: OnGround, Variants: 0b011, Slope: [2]float32{0, 40}, Scale: [2]float32{0.8, 1.3},
+				Colors: floorMoss, Accents: deadNeedles, Sink: 0.05,
+				Light: [2]float32{0, 1}, Cluster: 0.3, ClusterSize: 8},
+			{Shape: FoliageBranchLitter, Spacing: 7, Where: OnGround, Variants: 0b100, Slope: [2]float32{0, 30}, Scale: [2]float32{0.8, 1.3},
+				Colors: fernGreen, Accents: limbMoss, Sink: 0.05,
+				Light: [2]float32{0, 1}, Cluster: 0.4, ClusterSize: 10, Moisture: 0.3},
+			{Shape: FoliageForestLitter, Spacing: 0.6, Where: OnGround, Slope: [2]float32{0, 45}, Scale: [2]float32{0.8, 1.4},
+				Colors: floorMoss, Accents: fallenLeaves, Light: [2]float32{0, 1}, Cluster: 0.35, ClusterSize: 4, ColorNoise: 0.2},
+			{Shape: FoliageForestLitter, Spacing: 0.7, Where: OnGround, Variants: 0b010, Slope: [2]float32{0, 45}, Scale: [2]float32{0.8, 1.3},
+				Colors: floorMoss, Accents: deadNeedles, Light: [2]float32{0, 1}, Cluster: 0.4, ClusterSize: 5},
+			{Shape: FoliageMossMound, Spacing: 2.2, Where: OnGround, Slope: [2]float32{0, 55}, Scale: [2]float32{0.7, 1.5},
+				Colors: floorMoss, Sink: 0.1, Light: [2]float32{0, 1}, Cluster: 0.45, ClusterSize: 6, Edge: 0.8, Moisture: 0.4, ColorNoise: 0.3},
+			{Shape: FoliageMushroom, Spacing: 5, Where: OnGround, Slope: [2]float32{0, 35}, Scale: [2]float32{0.7, 1.3},
+				Colors: [2]mgl32.Vec3{rgb(0.85, 0.82, 0.74), rgb(0.92, 0.88, 0.80)}, Accents: mushroomCaps,
+				Light: [2]float32{0, 1}, Cluster: 0.85, ClusterSize: 3, Moisture: 0.6},
+			// Rock, walls and overhangs: everything under moss.
+			{Shape: FoliageRock, Spacing: 9, Where: OnGround, Slope: [2]float32{0, 70}, Scale: [2]float32{0.3, 0.9},
+				Colors: stoneMossy, Sink: 0.4, Cluster: 0.5, ClusterSize: 10, Edge: 1.4},
+			{Shape: FoliageMoss, Spacing: 0.4, Where: OnWall | OnCeiling, Scale: [2]float32{0.8, 1.5},
+				Colors: floorMoss, Cluster: 0.25, ClusterSize: 3, Moisture: 0.4, ColorNoise: 0.25},
+			{Shape: FoliageVine, Spacing: 1.0, Where: OnWall, TopEdge: true, Scale: [2]float32{0.8, 1.6},
+				Colors: ivyGreen, Cluster: 0.35, ClusterSize: 3},
+			{Shape: FoliageVine, Spacing: 0.9, Where: OnCeiling, Scale: [2]float32{0.7, 1.5},
+				Colors: ivyGreen, Cluster: 0.35, ClusterSize: 3},
 		},
 	},
 }

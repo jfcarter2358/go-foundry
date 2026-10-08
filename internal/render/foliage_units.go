@@ -723,6 +723,10 @@ func syncFoliage(lvl *world.Level) {
 		var again []foliageJob
 		walk(&again)
 	}
+	// The placed plants go on the list after the terrains' (each walk
+	// starts it afresh).
+	foliage.placed.sync(lvl, foliage.frame, foliageMaxRange*scale)
+	foliage.volumes.sync(lvl, foliage.frame, foliageMaxRange*scale)
 
 	for t, g := range foliage.cache {
 		if !g.seen {

@@ -179,6 +179,9 @@ type nfRenderer struct {
 	ok     bool
 	failed bool
 	data   nfAssetData
+	// cacheName is the assets' entry in the cache (nfoliage_cache.go), set
+	// by FoliageInit from the templates it built.
+	cacheName string
 	// cmdOf is each cluster's draw command (a voxel cluster's as boxes) and
 	// smallCmdOf a voxel cluster's for the compute rasteriser's small
 	// bricks; groupFirst/Count each program group's run of commands.
@@ -300,7 +303,7 @@ func (r *nfRenderer) init(atlas nfAtlas) {
 	}
 	r.release()
 	if r.data.buckets == nil {
-		r.data = buildNaniteFoliageAssets(atlas)
+		r.data = nfAssetsCached(r.cacheName, atlas)
 	}
 	if err := r.build(); err != nil {
 		log.Printf("foliage: Nanite path: %v — the classic tiers draw", err)
@@ -745,7 +748,7 @@ func (r *nfRenderer) cullPass(v nfView) bool {
 	c := &r.cull
 	gl.UseProgram(c.prog)
 	if r.paramsAt[0] != foliage.frame || foliage.frame == 0 {
-		uploadFoliageParams(c.U("shapeRange"), c.U("shapeMore"), c.U("bucketInfo"), c.U("bucketImp"))
+		uploadFoliageParams(c.U("shapeRange"), c.U("shapeMore"), c.U("bucketInfo"), c.U("bucketImp"), c.U("shapeBark"))
 		r.paramsAt[0] = foliage.frame
 	}
 	lod := currentNaniteLOD()
@@ -828,7 +831,6 @@ func (r *nfRenderer) bindVertexData(p *progUniforms) {
 	gl.Uniform1f(p.U("windStrength"), foliageWind.strength)
 	cam := gfx.Cam.Position
 	gl.Uniform3f(p.U("camPos"), cam[0], cam[1], cam[2])
-	gl.Uniform3f(p.U("barkColor"), 0.30, 0.24, 0.18)
 }
 
 // useProgram readies draw program i for a pass.
@@ -843,7 +845,7 @@ func (r *nfRenderer) useProgram(i int, lvl *world.Level, v nfView, frame ShadowF
 	}
 	if r.paramsAt[1+i] != foliage.frame || foliage.frame == 0 {
 		r.paramsAt[1+i] = foliage.frame
-		uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"))
+		uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"), p.U("shapeBark"))
 	}
 	gl.UniformMatrix4fv(p.U("projView"), 1, false, &v.projView[0])
 	inv := v.projView.Inv()

@@ -193,6 +193,7 @@ func editorResetSelectionState() {
 	editorClearEmitterSelection()
 	editorClearSoundSelection()
 	editorClearEffectSelection()
+	editorClearTreeSelection()
 	// An undo or redo puts it back by ID afterwards — see restoreLevelSnapshot.
 	editorClearWaypointSelection()
 	// The previewed object was rebuilt at rest by the snapshot — every one is
@@ -213,6 +214,7 @@ func editorResetSelectionState() {
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.EffectPlacementMode = false
+	Editor.TreePlacementMode = false
 	Editor.SelectedVertices = nil
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1

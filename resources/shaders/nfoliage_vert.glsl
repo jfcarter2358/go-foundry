@@ -28,7 +28,6 @@ layout(location = 4) in uvec2 aRef;
 
 uniform mat4 projView;
 uniform int receiveShadows;
-uniform vec3 barkColor;
 // TAA: this frame's and last frame's unjittered view-projection.
 uniform mat4 motionViewProj;
 uniform mat4 motionPrevViewProj;
@@ -82,7 +81,7 @@ void main() {
     if (part == 2 || part == 3) {
         base = iAccentSeed.rgb;
     } else if (part == 4) {
-        base = barkColor * (0.8 + 0.4 * iAccentSeed.w);
+        base = shapeBark[nShape] * (0.8 + 0.4 * iAccentSeed.w);
     }
     bool thin = part == 1 || part == 3 || part == 5;
     if (part == 5) {

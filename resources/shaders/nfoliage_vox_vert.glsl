@@ -34,6 +34,7 @@ flat out vec3 vMotionDelta; // where the brick was last frame, less where it is
 flat out vec3 vColor;
 flat out vec3 vAccent;
 flat out vec4 vMisc;        // fade, seed, 0, 0
+flat out vec3 vBark;        // the shape's bark colour
 
 void main() {
     vBrick = uvec4(0u);
@@ -46,6 +47,7 @@ void main() {
     vColor = vec3(0.0);
     vAccent = vec3(0.0);
     vMisc = vec4(0.0);
+    vBark = vec3(0.0);
     if (!nfBeginRef(aRef)) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
@@ -73,4 +75,5 @@ void main() {
     vColor = iColorRank.rgb;
     vAccent = iAccentSeed.rgb;
     vMisc = vec4(nFade, iAccentSeed.w, 0.0, 0.0);
+    vBark = shapeBark[nShape];
 }

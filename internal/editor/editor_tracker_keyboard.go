@@ -213,6 +213,8 @@ func drawTrackerKeyboardWindow() {
 	} else {
 		editorTextMuted("Playing  -")
 	}
+	imgui.SameLine()
+	editorTextMuted("   |   1 or =  note off ===    ` or ^  note cut ^^^    Delete  clear    Enter  next line")
 
 	// The hex-code key takes what the piano leaves; the piano keeps a playable
 	// height however small the window gets.
@@ -292,7 +294,7 @@ func trkKbHexKey() {
 		col        imgui.Vec4
 		code, text string
 	}{
-		{trkKbNoteV4, "C-4  C#4", "Note: name, sharp, octave.  === releases the note, ^^^ cuts it dead, ... is empty."},
+		{trkKbNoteV4, "C-4  C#4", "Note: name, sharp, octave.  === releases the note (type 1 or =), ^^^ cuts it dead (type ` or ^), ... is empty (Delete)."},
 		{trkKbInstrV4, "01..FF", "Instrument number, in hex.  .. keeps the channel's last instrument."},
 		{trkKbVolV4, "00..40", "Volume, in hex: 40 is full, 20 half, 00 silent.  .. is full for a new note, unchanged otherwise."},
 		{trkKbFXV4, "#xx  #xy", "Effect: a letter and two hex digits.  xx is one value 00..FF; xy is two digits, x and y, 0..F each.  A 0 on a slide, vibrato or tremolo repeats the channel's last value."},

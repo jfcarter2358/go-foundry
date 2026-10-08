@@ -39,6 +39,7 @@ const (
 	gizmoKindEmitter  = "emitter"
 	gizmoKindSound    = "sound"
 	gizmoKindEffect   = "effect"
+	gizmoKindTree     = "tree"
 	gizmoKindScenery  = "scenery"
 	gizmoKindLight    = "light"
 	gizmoKindPrefab   = "prefab"
@@ -127,6 +128,11 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindEffect:
 		if fx := activeGizmoEffect(); fx != nil {
 			return fx.Position, true
+		}
+
+	case gizmoKindTree:
+		if tr := activeGizmoTree(); tr != nil {
+			return tr.Position, true
 		}
 
 	case gizmoKindDecal:
@@ -437,6 +443,20 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindTree:
+		tr := activeGizmoTree()
+		if tr == nil {
+			return false
+		}
+		// The yaw rides in the rotation's Y and the size in all three of
+		// the scale, for the rotate and scale gizmos to read back.
+		s := tr.EffectiveScale()
+		Editor.GizmoDragStartPos = tr.Position
+		Editor.GizmoDragStartRot = mgl32.Vec3{0, tr.Yaw, 0}
+		Editor.GizmoDragStartScale = mgl32.Vec3{s, s, s}
+		EditorPushUndo()
+		return true
+
 	case gizmoKindEffect:
 		fx := activeGizmoEffect()
 		if fx == nil {
@@ -620,6 +640,10 @@ func translateGizmoMouseMove(mx, my int32) {
 	case gizmoKindEffect:
 		if fx := activeGizmoEffect(); fx != nil {
 			fx.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindTree:
+		if tr := activeGizmoTree(); tr != nil {
+			tr.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindWaypoint:
 		if wp := activeGizmoWaypoint(); wp != nil {

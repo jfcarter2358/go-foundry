@@ -72,6 +72,7 @@ func editorExplorerSection(lvl *world.Level) {
 	editorExplorerSpriteNodes(lvl)
 	editorExplorerDecalNodes(lvl)
 	editorExplorerSceneryNodes(lvl)
+	editorExplorerTreeNodes(lvl)
 	editorExplorerEmitterNodes(lvl)
 	editorExplorerSoundNodes(lvl)
 	editorExplorerEffectNodes(lvl)
@@ -813,6 +814,14 @@ func editorExplorerAddMenu(lvl *world.Level) {
 	if imgui.BeginMenu("Scenery") {
 		editorSceneryAddMenu()
 		imgui.EndMenu()
+	}
+	if imgui.BeginMenu("Tree") {
+		editorTreeAddMenu()
+		imgui.EndMenu()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A tree planted by hand: species, variant, size and turn\n" +
+			"are yours. Drawn as Nanite foliage; its trunk is solid.")
 	}
 	if imgui.BeginMenu("Emitter") {
 		editorEmitterAddMenu()

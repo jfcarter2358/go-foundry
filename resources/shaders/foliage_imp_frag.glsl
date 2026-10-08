@@ -21,6 +21,7 @@ flat in vec3 vAxZ;
 flat in vec3 vColor;
 flat in vec3 vAccent;
 flat in float vSeed;
+flat in vec3 vBark;
 in float vFade;
 in vec2 vXfade;
 in vec3 vWorldPos;
@@ -39,7 +40,6 @@ float coverageNoise(vec2 p, int frame) {
     return fract(ign + float(frame) * 0.125);
 }
 uniform int receiveShadows;
-uniform vec3 barkColor;
 uniform vec3 camPos;
 
 out vec4 outputColor;
@@ -103,7 +103,7 @@ void main() {
     vec3 ch = alb.rgb / used;
 
     float lum = ch.r * 1.5;
-    vec3 bark = barkColor * (0.8 + 0.4 * vSeed);
+    vec3 bark = vBark * (0.8 + 0.4 * vSeed);
     vec3 base = mix(mix(vColor, vAccent, clamp(ch.g, 0.0, 1.0)), bark, clamp(ch.b, 0.0, 1.0)) * lum;
     vec3 nl = nrm.xyz / used * 2.0 - 1.0;
     vec3 n = normalize(vAxX * nl.x + vAxY * nl.y + vAxZ * nl.z + vec3(0.0, 1e-4, 0.0));

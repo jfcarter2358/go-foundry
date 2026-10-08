@@ -949,9 +949,19 @@ func editorTerrainToolbarButton() {
 // a meadow can be made all flowers, or a forest thinned to a few trees over
 // the same undergrowth, on this terrain only. The biome file is untouched.
 func editorTerrainBiomeAmounts(t *world.Terrain, b *world.TerrainBiome) {
+	if editorBiomeAmounts(b) {
+		// What grows changed, not the ground's shape: the foliage and face
+		// looks rebuild, the surface does not.
+		t.TouchPaint(0, 0, 0, t.SizeX-1, t.SizeY-1, t.SizeZ-1)
+	}
+}
+
+// editorBiomeAmounts is the per-kind amount sliders for one biome — a
+// terrain's slot or a scatter volume's — and whether any of them changed.
+func editorBiomeAmounts(b *world.TerrainBiome) bool {
 	shapes := b.Def().Shapes()
 	if len(shapes) == 0 {
-		return
+		return false
 	}
 	label := "Amounts"
 	if len(b.Amounts) > 0 {
@@ -959,9 +969,9 @@ func editorTerrainBiomeAmounts(t *world.Terrain, b *world.TerrainBiome) {
 	}
 	if !imgui.TreeNodeV(label+"###amounts", 0) {
 		if imgui.IsItemHovered() {
-			imgui.SetTooltip("How much of each kind of thing grows here, on this terrain.")
+			imgui.SetTooltip("How much of each kind of thing grows here.")
 		}
-		return
+		return false
 	}
 	changed := false
 	for _, sh := range shapes {
@@ -984,10 +994,6 @@ func editorTerrainBiomeAmounts(t *world.Terrain, b *world.TerrainBiome) {
 		b.Amounts = nil
 		changed = true
 	}
-	if changed {
-		// What grows changed, not the ground's shape: the foliage and face
-		// looks rebuild, the surface does not.
-		t.TouchPaint(0, 0, 0, t.SizeX-1, t.SizeY-1, t.SizeZ-1)
-	}
 	imgui.TreePop()
+	return changed
 }

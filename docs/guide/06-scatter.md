@@ -1,7 +1,8 @@
 # Scatter
 
 A scatter volume grows things: GPU-instanced grass, rocks, wildflowers,
-cattails or moss, planted on whatever geometry is underneath it.
+cattails or moss, or a whole [biome](30-terrain.md) of trees and undergrowth,
+planted on whatever geometry is underneath it.
 
 It is decoration. It never collides, and the player walks on the brush faces
 under it.
@@ -34,6 +35,7 @@ under scattered rock.
 | `cattail` | A tall reed with a seed head. Not height-capped — reeds read fine tall. |
 | `rock` | Small faceted blobs. Sparse, and the only kind that reads correctly on a cliff. |
 | `moss` | Low squashed clumps. Rock's shading, foliage's density. |
+| `biome` | A terrain biome's species — trees, shrubs, ferns, logs, rocks. See [Biome volumes](#biome-volumes). |
 
 **Density** thins the lattice out; it does not spread it. The spacing is fixed
 per kind, so density is how many of the available slots survive.
@@ -88,6 +90,50 @@ group mesh worth building.
 not, because a blade thinner than a shadow texel aliases into flickering speckle
 rather than a shadow. F5/F6/F7 toggle them live against the frame time in the F3
 overlay, which is the way to decide.
+
+## Biome volumes
+
+Kind `biome` grows a [terrain biome](30-terrain.md)'s species on brush ground:
+pick the biome, and the volume fills with what the biome grows.
+
+```yaml
+volumes:
+- id: woods
+  position: {x: 0, "y": 5, z: 40}
+  half: {x: 60, "y": 8, z: 40}
+  scatter:
+    kind: biome
+    edge_fade_distance: 10
+    biome:
+      preset: forest
+      density: 1.2
+      amounts: {grass: 0, broadleaf_tree: 1.5}
+```
+
+These are real plant instances rather than a lattice. The volume places them
+once, on the ground under it, and the foliage renderer draws them the same way
+it draws a painted terrain's plants. Trees, shrubs, rocks and logs draw as
+Nanite foliage, with wind and shadows; ground cover keeps its usual tiers. Each
+species brings its own size, look and draw distance, so the lattice controls
+(density, draw range, tint, size) are hidden for this kind.
+
+- **Biome**, **Density**, **Tint** and **Amounts** work as on a terrain's biome
+  slot. An amount of 0 removes that kind of plant.
+- **Min/Max slope** narrows each species' own slope range. It never widens it.
+- **Edge fade** thins the plants over that distance in from the boundary,
+  frayed by noise. 0 is a hard edge.
+
+Some of a biome's ecology needs terrain blocks to read, and is ignored here:
+
+- Sky exposure, the foot of cliffs, moisture and headroom are ignored.
+- Only species that grow on the ground take part. Wall and ceiling growers, and
+  vines hung over a cliff's lip, have nothing to grow from.
+
+A volume regrows when it moves, when its settings change, when the brushes
+under it change, or when the biome file is saved. While you drag it in the
+editor, it waits until you stop. Growing a very large volume is capped at
+400,000 candidates. Past that cap, the densest species (grass, litter) are
+spaced out and the trees are left alone.
 
 ## From a script
 

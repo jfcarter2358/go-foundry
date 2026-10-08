@@ -89,7 +89,13 @@ var FoliageExtent = [FoliageShapeCount][2]float32{
 	FoliageMushroom: {0.25, 0.25}, FoliageLitter: {0.05, 0.45}, FoliageDeadwood: {0.35, 1.6},
 	FoliagePalm: {8, 4.8}, FoliageCactus: {4.2, 1.3}, FoliageAcacia: {6, 5.5},
 	FoliageJunglePlant: {2.4, 1.8}, FoliageDeadBush: {1.2, 0.85},
-	FoliageIce: {3.4, 1.6},
+	FoliageIce:         {3.4, 1.6},
+	FoliageSitkaSpruce: {58, 16}, FoliageHemlock: {40, 11}, FoliageRedcedar: {40, 14},
+	FoliageDouglasFir: {56, 13}, FoliageBigleafMaple: {28, 18}, FoliageRedAlder: {24, 8},
+	FoliageVineMaple: {9, 7}, FoliageCottonwood: {38, 13},
+	FoliageSwordFern: {1.7, 2}, FoliageForestFern: {1.5, 1.5}, FoliageOxalis: {0.3, 0.5},
+	FoliageUnderShrub: {2.6, 1.6}, FoliageNurseLog: {7, 9}, FoliageBranchLitter: {1.2, 2.2},
+	FoliageForestLitter: {0.12, 0.6}, FoliageMossMound: {0.9, 1.3},
 }
 
 // foliageFaceEnv is what the ecology reads for one face.
@@ -487,6 +493,28 @@ func (b *foliageBuild) suitability(sp *FoliageSpecies, e *foliageFaceEnv, surf F
 func foliageRank(h uint32) float32 { return Unit(Hash32(h ^ 0x4a4c)) }
 
 func (b *foliageBuild) emit(sp *FoliageSpecies, si int, f *TerrainFace, p, n mgl32.Vec3, surf FoliageSurface, suit float32, h uint32, tint mgl32.Vec3, seed uint32, out *FoliageSection, up mgl32.Vec3) {
+	variant, in := growFoliage(sp, si, p, n, surf, suit, h, tint, seed, up)
+	key := [2]int{int(sp.Shape), variant}
+	bt := b.byKey[key]
+	if bt == nil {
+		bt = &FoliageBatch{Shape: sp.Shape, Variant: variant}
+		b.byKey[key] = bt
+	}
+	bt.Instances = append(bt.Instances, in)
+	ext := FoliageExtent[sp.Shape]
+	reach := max(ext[0], ext[1]) * in.Scale
+	for k := 0; k < 3; k++ {
+		out.Lo[k] = min(out.Lo[k], in.Pos[k]-reach)
+		out.Hi[k] = max(out.Hi[k], in.Pos[k]+reach)
+	}
+}
+
+// growFoliage is the plant species sp puts at the accepted candidate hashed
+// h — at p on a surface facing n, suiting it by suit — and which of its
+// meshes it is: its size, axis, turn and colours. Shared by terrain paint and
+// scatter volumes (volume_plants.go), so a biome's plants look the same
+// whichever grew them.
+func growFoliage(sp *FoliageSpecies, si int, p, n mgl32.Vec3, surf FoliageSurface, suit float32, h uint32, tint mgl32.Vec3, seed uint32, up mgl32.Vec3) (int, FoliageInstance) {
 	r := func(k uint32) float32 { return Unit(Hash32(h ^ k)) }
 	variant := 0
 	nv := FoliageVariants[sp.Shape]
@@ -555,20 +583,8 @@ func (b *foliageBuild) emit(sp *FoliageSpecies, si int, f *TerrainFace, p, n mgl
 		accent = col
 	}
 
-	key := [2]int{int(sp.Shape), variant}
-	bt := b.byKey[key]
-	if bt == nil {
-		bt = &FoliageBatch{Shape: sp.Shape, Variant: variant}
-		b.byKey[key] = bt
-	}
-	bt.Instances = append(bt.Instances, FoliageInstance{
+	return variant, FoliageInstance{
 		Pos: pos, Up: axis, Yaw: r(0x9a3) * 2 * math.Pi, Scale: scale,
 		Color: col, Accent: accent, Rank: foliageRank(h),
-	})
-	ext := FoliageExtent[sp.Shape]
-	reach := max(ext[0], ext[1]) * scale
-	for k := 0; k < 3; k++ {
-		out.Lo[k] = min(out.Lo[k], pos[k]-reach)
-		out.Hi[k] = max(out.Hi[k], pos[k]+reach)
 	}
 }

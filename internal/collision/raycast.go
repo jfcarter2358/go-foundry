@@ -375,12 +375,12 @@ func appendVolumeHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f 
 // a shot exactly where it stops a body. A prop blocks, so only the nearest
 // can matter, and it lowers the limit everything else is tested within.
 func appendSceneryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter, limit float32) ([]RayHit, float32) {
-	i, t, _, ok := sceneryRayNearest(lvl, origin, dir, limit, f.Ignore, false)
+	id, t, _, ok := sceneryRayNearest(lvl, origin, dir, limit, f.Ignore, false)
 	if !ok || t > limit {
 		return out, limit
 	}
 	return append(out, RayHit{
-		Kind: RayHitScenery, ID: lvl.Scenery[i].ID, T: t, Point: origin.Add(dir.Mul(t)),
+		Kind: RayHitScenery, ID: id, T: t, Point: origin.Add(dir.Mul(t)),
 	}), t
 }
 

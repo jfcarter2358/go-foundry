@@ -687,3 +687,29 @@ func TestTrackerInsertAndDeleteChannelFromTheEditor(t *testing.T) {
 		t.Fatal("the last channel was deleted")
 	}
 }
+
+func TestTrackerNoteOffAndCutKeys(t *testing.T) {
+	e := trkTestState()
+	e.Step = 1
+	e.Cur.Field = 0
+	e.typeKey(sdl.SCANCODE_EQUALS)
+	e.typeKey(sdl.SCANCODE_GRAVE)
+	e.typeKey(sdl.SCANCODE_1)
+	want := []uint8{tracker.NoteOff, tracker.NoteCut, tracker.NoteOff}
+	for r, n := range want {
+		if got := trkCellAtT(e, r, 0).Note; got != n {
+			t.Errorf("row %d note %s, want %s", r, tracker.NoteName(got), tracker.NoteName(n))
+		}
+	}
+}
+
+func TestTrackerShiftSixIsNoteCut(t *testing.T) {
+	e := trkTestState()
+	defer func(old *trackerState) { trkEd = old }(trkEd)
+	trkEd = e
+	e.Cur.Field = 0
+	trkGridKey(sdl.SCANCODE_6, false, true, false)
+	if got := trkCellAtT(e, 0, 0).Note; got != tracker.NoteCut {
+		t.Fatalf("Shift+6 wrote %s, want ^^^", tracker.NoteName(got))
+	}
+}

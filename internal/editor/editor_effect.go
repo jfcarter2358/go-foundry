@@ -78,6 +78,7 @@ func editorArmEffectPlacement() {
 	editorDisarmBrush()
 	editorDisarmBrushPlacement()
 	Editor.EffectPlacementMode = true
+	Editor.TreePlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.EmitterPlacementMode = false
 	Editor.SpritePlacementMode = false
@@ -93,6 +94,7 @@ func editorArmEffectPlacement() {
 // mode.
 func placeEffectAt(pos mgl32.Vec3) bool {
 	Editor.EffectPlacementMode = false
+	Editor.TreePlacementMode = false
 	lvl := Editor.level
 	if lvl == nil {
 		return false

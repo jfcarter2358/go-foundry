@@ -1076,7 +1076,8 @@ func (t *trackerState) typeKey(sc sdl.Scancode) (audition uint8) {
 	switch kind {
 	case trkKindNote:
 		switch sc {
-		case sdl.SCANCODE_1:
+		case sdl.SCANCODE_1, sdl.SCANCODE_EQUALS:
+			// 1 is the tracker convention; = is what === looks like.
 			t.enterNote(tracker.NoteOff)
 			return 0
 		case sdl.SCANCODE_GRAVE:

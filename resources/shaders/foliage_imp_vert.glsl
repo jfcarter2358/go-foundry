@@ -31,6 +31,7 @@ flat out vec3 vAxZ;
 flat out vec3 vColor;
 flat out vec3 vAccent;
 flat out float vSeed;
+flat out vec3 vBark;
 out float vFade;
 out vec2 vXfade;
 out vec3 vWorldPos;
@@ -72,6 +73,7 @@ void main() {
         vAxX = vAxY = vAxZ = vec3(0.0);
         vColor = vAccent = vec3(0.0);
         vSeed = 0.0;
+        vBark = vec3(0.0);
         vFade = 0.0;
         vXfade = vec2(0.0);
         vWorldPos = vec3(0.0);
@@ -127,6 +129,7 @@ void main() {
     vColor = iColorRank.rgb;
     vAccent = iAccentSeed.rgb;
     vSeed = iAccentSeed.w;
+    vBark = shapeBark[fShape];
     vFade = fFade;
     vXfade = fXfade;
     vWorldPos = w.xyz;

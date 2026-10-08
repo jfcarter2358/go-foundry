@@ -42,7 +42,7 @@ and is always current.
 | [Textures](04-textures.md) | The texture editor, palettes, layers, animation, bump maps |
 | [Materials](28-materials.md) | `.fmat`: the shader effects a surface, sprite, particle or sky wears |
 | [Smooth shading](05-smoothing.md) | Welding normals so a run of faces reads as one curved surface |
-| [Scatter](06-scatter.md) | Volumes of grass, rock, wildflowers, cattails and moss |
+| [Scatter](06-scatter.md) | Volumes of grass, rock, wildflowers, cattails, moss, or a whole biome |
 | [Lighting](07-lighting.md) | Global, directional and point lights; shadows and their cost |
 | [Sky and fog](08-sky-and-fog.md) | Skyboxes, gradients, distance fog, fog volumes |
 | [Models](09-models.md) | The model editor: primitives, shaping, UVs, OBJ import |
@@ -51,7 +51,7 @@ and is always current.
 | [Vehicles and frames](12-vehicles-and-frames.md) | Drivable things and walkable interiors |
 | [AI agents](24-ai.md) | Controllers that find their way, hunt targets and work objective volumes, and decision trees (.fai) for what an agent does about what it finds |
 | [Volumes](13-volumes.md) | Trigger regions, level exits, checkpoints, fog volumes, AI objectives |
-| [Scenery and the brush](14-scenery-brush.md) | Stamping hundreds of static props |
+| [Scenery and the brush](14-scenery-brush.md) | Stamping hundreds of static props; placing trees by hand |
 | [Sprites and particles](15-sprites-and-particles.md) | Billboards, the particle editor, and explosion effects |
 | [Decals](29-decals.md) | Textures projected onto the level's surfaces: posters, stencils, scorch marks, bullet holes |
 | [Audio](16-audio.md) | Placed sounds, music, attenuation, the mixer settings |

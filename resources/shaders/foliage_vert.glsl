@@ -15,7 +15,6 @@
 
 uniform mat4 projView;
 uniform int receiveShadows;
-uniform vec3 barkColor;
 
 out vec3 vColor;
 out vec2 vUV;
@@ -41,7 +40,7 @@ void main() {
     if (part == 2 || part == 3) {
         base = iAccentSeed.rgb;
     } else if (part == 4) {
-        base = barkColor * (0.8 + 0.4 * iAccentSeed.w);
+        base = shapeBark[fShape] * (0.8 + 0.4 * iAccentSeed.w);
     }
     bool thin = part == 1 || part == 3 || part == 5;
     vec3 n = fNormal;

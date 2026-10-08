@@ -71,6 +71,58 @@ panel put together.
 A row reads `(no mesh)` when the model will not load, and `(not solid)` when
 collision is off.
 
+## Trees
+
+A tree is placed by hand like a prop, but it is a plant rather than a model.
+You choose the species, the variant, the size and which way it faces, and it is
+drawn exactly as the plants a biome grows are, with Nanite foliage, wind, shadows
+and live GI. Biome paint is for undergrowth; the trees a scene is built around
+are yours to place.
+
+`Add... > Tree` lists the trees: the temperate rainforest's eight (Sitka spruce,
+western hemlock, western redcedar, Douglas-fir, bigleaf maple, red alder, vine
+maple, black cottonwood) and the other biomes' trees. **Other plants** has every
+other plant shape, from a nurse log to a sword fern. Choosing one arms
+placement, and every left-click plants one with its trunk's foot where you
+clicked, turned at random. It stays armed until `Esc`. The combo at the top
+picks the variant, or **Random variant**.
+
+A selected tree is outlined as its crown's footprint and the box its trunk
+collides as. The move gizmo carries it, the rotate gizmo turns it about its
+trunk (only the yaw ring does anything, because a tree grows up), and the scale
+gizmo sizes it.
+
+| Field | |
+| --- | --- |
+| **ID** | committed on Enter |
+| **Species / Variant** | any plant shape and any of its meshes |
+| **Solid** | its trunk stops the player, entities and shots; the crown never does |
+| **Position** | the foot of the trunk |
+| **Turn** | degrees about the trunk |
+| **Size** | against the species' own: at 1 a Sitka spruce is about 40 units tall |
+| **Foliage / Moss & accent** | its colours; **Species colours** puts them back |
+
+The right-click menu has **Move here**, **Plant more like this**, **Solid**,
+**Duplicate** and **Delete**. In the Explorer, trees are listed under **Trees**.
+
+In the level file:
+
+```yaml
+trees:
+- id: spruce_1
+  species: sitka_spruce   # any plant shape, as biome files name them
+  variant: 1              # optional, from 0
+  position: {x: 12, "y": 0, z: -40}
+  yaw: 35                 # degrees, optional
+  scale: 1.2              # optional, 1 is the species' own size
+  color: [0.16, 0.27, 0.13]   # optional, the species' own when absent
+  accent: [0.34, 0.44, 0.12]  # optional
+  solid: false            # optional, solid when absent
+```
+
+A species name the engine does not know is reported when the level loads and
+kept as written, so a typo never loses a tree when you save.
+
 ## Rendering
 
 Props draw and cast shadows through the same passes entities do. They are solid

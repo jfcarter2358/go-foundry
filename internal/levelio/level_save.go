@@ -163,6 +163,9 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 	for i := range level.Scenery {
 		raw.Scenery = append(raw.Scenery, world.SceneryToRaw(&level.Scenery[i]))
 	}
+	for i := range level.Trees {
+		raw.Trees = append(raw.Trees, world.TreeToRaw(&level.Trees[i]))
+	}
 
 	// A decal a script spawned is skipped on the one-shot sounds' rule below: a
 	// level file places the marks an author put there, and the bullet holes a

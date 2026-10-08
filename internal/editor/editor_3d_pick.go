@@ -48,6 +48,7 @@ const (
 	panelFocusEmitter  = "emitter"
 	panelFocusSound    = "sound"
 	panelFocusEffect   = "effect"
+	panelFocusTree     = "tree"
 	panelFocusChunk    = "chunk"
 	panelFocusLight    = "light"
 	panelFocusScenery  = "scenery"
@@ -75,6 +76,7 @@ const (
 	pickEmitter   pickKind = "emitter"
 	pickSound     pickKind = "sound"
 	pickEffect    pickKind = "effect"
+	pickTree      pickKind = "tree"
 	pickLight     pickKind = "light"
 	pickScenery   pickKind = "scenery"
 	pickWaypoint  pickKind = "waypoint"
@@ -394,6 +396,11 @@ func pick3DCandidates(sx, sy int32) []pickHit {
 	// Volumes and sprites are tested afterwards precisely because they are not.
 	for si := range lvl.Scenery {
 		scene.add(pickSceneryRayT(origin, dir, &lvl.Scenery[si]), pickScenery, -1, si)
+	}
+	// Trees on the same terms: solid things standing in the level, tested
+	// against their crown's footprint (editor_tree.go).
+	for ti := range lvl.Trees {
+		scene.add(pickTreeRayT(origin, dir, &lvl.Trees[ti]), pickTree, -1, ti)
 	}
 
 	// Emitters, against the marker disc drawn for them. An emitter has no
@@ -870,6 +877,7 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	drawSelectedSpriteOutline(ws().camPos())
 	drawSelectedDecalOutline()
 	drawSelectedSceneryOutline()
+	drawSelectedTreeOutline()
 	// What the selected prop collides as, when Show collision is on.
 	drawSelectedSceneryCollision()
 	// The brush's footprint ring, on the same terms: it says where the next

@@ -34,6 +34,7 @@ flat in vec3 vMotionDelta;
 flat in vec3 vColor;
 flat in vec3 vAccent;
 flat in vec4 vMisc;
+flat in vec3 vBark;
 
 uniform mat4 projView;
 // The view's inverse and its viewport (x, y, w, h), to cast each pixel's
@@ -42,7 +43,6 @@ uniform mat4 invProjView;
 uniform vec4 viewport;
 uniform vec3 camPos;
 uniform int coverageDither;
-uniform vec3 barkColor;
 uniform mat4 motionViewProj;
 uniform mat4 motionPrevViewProj;
 uniform int writeMotion;
@@ -124,7 +124,7 @@ void main() {
     vec3 world = ro + s * dw;
     vec4 clip = projView * vec4(world, 1.0);
     gl_FragDepth = clamp(clip.z / clip.w * 0.5 + 0.5, gl_FragCoord.z, 1.0);
-    vec3 bark = barkColor * (0.8 + 0.4 * vMisc.y);
+    vec3 bark = vBark * (0.8 + 0.4 * vMisc.y);
     uvec4 seed = uvec4(uvec2(gl_FragCoord.xy), uint(coverageDither) + 17u, vBrick.w * 64u + uint(hitCell));
     vec3 col = nfVoxelShade(vox, world, camPos, vRow0, vRow1, vRow2, vUpWorld, vColor, vAccent, bark, seed);
     outputColor = vec4(col, 1.0);

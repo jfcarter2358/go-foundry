@@ -166,11 +166,11 @@ func (a nfAtlas) at(uv mgl32.Vec2, lvl int) (lum, alpha float32) {
 		return 1, 1
 	}
 	img := a.chain[min(max(lvl, 0), len(a.chain)-1)]
-	b := img.Bounds()
-	x := min(max(int(uv[0]*float32(b.Dx())), 0), b.Dx()-1)
-	y := min(max(int(uv[1]*float32(b.Dy())), 0), b.Dy()-1)
-	c := img.NRGBAAt(x, y)
-	return float32(c.R) / 255, float32(c.A) / 255
+	w, h := img.Rect.Dx(), img.Rect.Dy()
+	x := min(max(int(uv[0]*float32(w)), 0), w-1)
+	y := min(max(int(uv[1]*float32(h)), 0), h-1)
+	i := y*img.Stride + x*4
+	return float32(img.Pix[i]) / 255, float32(img.Pix[i+3]) / 255
 }
 
 // width is the full-size level's width in texels.
@@ -428,13 +428,18 @@ func (b *nfBuilt) buildProxy() {
 // does not change shade where its triangles hand over to its voxels — and its
 // bone.
 func (b *nfBuilt) sample(atlas nfAtlas, v [3]uint32, bc [3]float32, size float32, attr []float32) cluster.VoxelSample {
-	at := func(k int, f int) float32 { return b.verts[int(v[k])*nfVertexFloats+f] }
-	lerp := func(f int) float32 { return at(0, f)*bc[0] + at(1, f)*bc[1] + at(2, f)*bc[2] }
+	// Called for every sample of every piece of every triangle voxelised,
+	// millions of times for the rainforest's trees: the three rows are
+	// read once, not through closures per field.
+	r0 := b.verts[int(v[0])*nfVertexFloats : int(v[0])*nfVertexFloats+nfVertexFloats]
+	r1 := b.verts[int(v[1])*nfVertexFloats : int(v[1])*nfVertexFloats+nfVertexFloats]
+	r2 := b.verts[int(v[2])*nfVertexFloats : int(v[2])*nfVertexFloats+nfVertexFloats]
+	lerp := func(f int) float32 { return r0[f]*bc[0] + r1[f]*bc[1] + r2[f]*bc[2] }
 	n := mgl32.Vec3{lerp(3), lerp(4), lerp(5)}
 	if n.Len() > 1e-6 {
 		n = n.Normalize()
 	}
-	part := int(at(0, 9) + 0.5)
+	part := int(r0[9] + 0.5)
 	weight, grey := float32(1), float32(1)
 	if part == partLeaf || part == partAccentCard {
 		uv := mgl32.Vec2{lerp(6), lerp(7)}
@@ -442,15 +447,15 @@ func (b *nfBuilt) sample(atlas nfAtlas, v [3]uint32, bc [3]float32, size float32
 			weight = 0
 		}
 		// Texels per unit across the triangle: its uv area over its area.
-		p := func(k int) mgl32.Vec3 { return mgl32.Vec3{at(k, 0), at(k, 1), at(k, 2)} }
-		q := func(k int) mgl32.Vec2 { return mgl32.Vec2{at(k, 6), at(k, 7)} }
-		area := p(1).Sub(p(0)).Cross(p(2).Sub(p(0))).Len()
-		e1, e2 := q(1).Sub(q(0)), q(2).Sub(q(0))
-		uvArea := float32(math.Abs(float64(e1[0]*e2[1] - e1[1]*e2[0])))
+		e1 := mgl32.Vec3{r1[0] - r0[0], r1[1] - r0[1], r1[2] - r0[2]}
+		e2 := mgl32.Vec3{r2[0] - r0[0], r2[1] - r0[1], r2[2] - r0[2]}
+		area := e1.Cross(e2).Len()
+		u1, v1, u2, v2 := r1[6]-r0[6], r1[7]-r0[7], r2[6]-r0[6], r2[7]-r0[7]
+		uvArea := float32(math.Abs(float64(u1*v2 - v1*u2)))
 		lvl := 0
 		if area > 1e-12 && uvArea > 0 {
 			perUnit := atlas.width() * float32(math.Sqrt(float64(uvArea/area)))
-			lvl = int(math.Round(math.Log2(math.Max(float64(size*perUnit), 1))))
+			lvl = nfRoundLog2(size * perUnit)
 		}
 		lum, _ := atlas.at(uv, lvl)
 		// foliage_frag.glsl's c *= 0.35 + 0.85·t.r.
@@ -472,7 +477,17 @@ func (b *nfBuilt) sample(atlas nfAtlas, v [3]uint32, bc [3]float32, size float32
 	}
 	attr[nfAttrTone] = lerp(10)
 	attr[nfAttrGrey] = grey
-	return cluster.VoxelSample{Weight: weight, Normal: n, Bind: int32(at(0, 11) + 0.5), BindWeight: lerp(12)}
+	return cluster.VoxelSample{Weight: weight, Normal: n, Bind: int32(r0[11] + 0.5), BindWeight: lerp(12)}
+}
+
+// nfRoundLog2 is round(log2(max(x, 1))), from the float's exponent: the mip
+// level a footprint of x texels reads.
+func nfRoundLog2(x float32) int {
+	if !(x > 1) {
+		return 0
+	}
+	// log2(x·√2) floored is log2(x) rounded.
+	return int((math.Float32bits(x*math.Sqrt2)>>23)&0xff) - 127
 }
 
 // nfWindAmount is the strongest wind the bounds allow for: strength 1.5 in

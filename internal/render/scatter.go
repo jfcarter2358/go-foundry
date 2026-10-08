@@ -199,6 +199,10 @@ var scatters scatterRenderer
 // EvictScatterCache releases the cached height texture for a deleted volume.
 // Call from the editor when a volume is removed or its level replaced.
 func EvictScatterCache(id string) {
+	// A biome volume's plants regrow on the next sync.
+	if p := foliage.volumes.byID[id]; p != nil {
+		p.fp = 0
+	}
 	e, ok := scatters.heightCache[id]
 	if !ok {
 		return
@@ -800,6 +804,11 @@ func forEachScatterVolume(level *world.Level, camPos mgl32.Vec3, castOnly bool, 
 		v := &level.Volumes[vi]
 		s := v.Scatter
 		if s == nil || !s.Enabled || !v.Enabled || !v.HasBounds() || s.Density <= 0 {
+			continue
+		}
+		// A biome volume's plants are foliage instances, drawn by the
+		// foliage renderer (foliage_volumes.go), not a lattice.
+		if s.Kind == world.ScatterBiome {
 			continue
 		}
 		// Scatter grows on the ground of the space its volume belongs to — the

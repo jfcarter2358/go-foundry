@@ -165,6 +165,7 @@ and `foliage: voxel resolve`; the bones and the cull show again under
 | `FOUNDRY_NANITE_FOLIAGE_PX=n` | the level of detail's error, in pixels (default 1) |
 | `FOUNDRY_NANITE_FOLIAGE_SWRASTER=0` | ray-march every voxel brick, even where the compute rasteriser could run |
 | `FOUNDRY_NANITE_FOLIAGE_GI=1` | put the tree crowns into live GI, so a canopy shades the ground under it (off by default: a forest comes out noticeably darker) |
+| `FOUNDRY_FOLIAGE_CACHE=off` | build the Nanite foliage every launch instead of reading it from the cache; any other value is the cache's folder |
 | `FOUNDRY_NANITE_FOLIAGE_FLUSH=0` / `=1` | on WSL's GL (Mesa's D3D12 driver) the Nanite foliage submits the GPU's queued work between its shadow and camera passes, to step round a driver hang; `0` turns that off, `1` on everywhere |
 
 ## Live GI

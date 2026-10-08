@@ -25,14 +25,19 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"sync"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
 const (
-	foliageTileSize  = 128
-	foliageAtlasCols = 4
+	// foliageTileSize is a tile's size in texels; every tile is drawn in a
+	// space foliageTileUnits across, so a tile's drawing does not change
+	// with the resolution it is rendered at.
+	foliageTileSize  = 256
+	foliageTileUnits = 128
+	foliageAtlasCols = 8
 	foliageAtlasRows = 4
 )
 
@@ -54,6 +59,25 @@ const (
 	tileTallGrassClump // taller, laxer blades with seed heads
 	tileFlowerDots     // flower heads scattered over a tuft's height
 	tileReedClump      // upright straps with dark catkins
+	// The temperate rainforest's (foliage_atlas_rainforest.go).
+	tileSpruceSpray      // a Sitka spruce's bottle-brush branch tip
+	tileHemlockSpray     // a western hemlock's lacy, drooping spray
+	tileCedarSpray       // a redcedar's flat fan of scale-leaf sprays
+	tileFirSpray         // a Douglas-fir's soft needled twigs
+	tileMapleLeaves      // bigleaf maple: a few huge palmate leaves
+	tileAlderLeaves      // red alder: ovate, toothed leaves on a twig
+	tileVineMapleLeaves  // vine maple: round, many-lobed leaves in pairs
+	tileCottonwoodLeaves // black cottonwood: heart-shaped leaves on long stalks
+	tileMossDrape        // hanging moss and lichen, strands from the top edge
+	tileSwordFern        // a sword fern frond: toothed, eared pinnae
+	tileLadyFern         // a lady fern frond: lacy, twice divided
+	tileDeerFern         // a deer fern frond: a ladder of rounded pinnae
+	tileOxalis           // one redwood sorrel leaf: three hearts, from above
+	tileTwigLitter       // fallen twigs and bark flakes, from above
+	tileMapleLeaf        // one big palmate leaf, stalk at the bottom
+	tileOvalLeaf         // one leathery oval leaf (salal), stalk at the bottom
+	tileHuckleberry      // small oval leaves on zig-zag twigs
+	tileMossFringe       // the upright fringe of a moss carpet, seen side on
 )
 
 // tileUV maps (u, v) in [0,1]^2 across tile i to atlas coordinates, inset
@@ -70,23 +94,28 @@ func tileUV(i int, u, v float32) mgl32.Vec2 {
 // bottom (v = 0), where a card's base is.
 type atlasCanvas struct {
 	lum, alpha []float32
-	n          int
+	// n is the tile's size in texels, k texels to a drawing unit.
+	n int
+	k float64
 }
 
 func newAtlasCanvas() *atlasCanvas {
 	n := foliageTileSize
-	return &atlasCanvas{lum: make([]float32, n*n), alpha: make([]float32, n*n), n: n}
+	return &atlasCanvas{lum: make([]float32, n*n), alpha: make([]float32, n*n), n: n,
+		k: float64(foliageTileSize) / foliageTileUnits}
 }
 
 // shape paints every texel whose centre lies inside the shape given by the
-// signed distance function sd (negative inside, in texels), with an
-// antialiased edge, and luminance from lumAt.
+// signed distance function sd (negative inside), with an antialiased edge,
+// and luminance from lumAt. The box, sd and lumAt are all in drawing units
+// (foliageTileUnits across a tile).
 func (c *atlasCanvas) shape(x0, y0, x1, y1 float64, sd func(x, y float64) float64, lumAt func(x, y, d float64) float64) {
-	for y := max(int(y0)-1, 0); y <= min(int(y1)+1, c.n-1); y++ {
-		for x := max(int(x0)-1, 0); x <= min(int(x1)+1, c.n-1); x++ {
-			px, py := float64(x)+0.5, float64(y)+0.5
+	for y := max(int(y0*c.k)-1, 0); y <= min(int(y1*c.k)+1, c.n-1); y++ {
+		for x := max(int(x0*c.k)-1, 0); x <= min(int(x1*c.k)+1, c.n-1); x++ {
+			px, py := (float64(x)+0.5)/c.k, (float64(y)+0.5)/c.k
 			d := sd(px, py)
-			a := math.Min(math.Max(0.5-d, 0), 1)
+			// The edge is a texel wide, whatever the scale.
+			a := math.Min(math.Max(0.5-d*c.k, 0), 1)
 			if a <= 0 {
 				continue
 			}
@@ -169,7 +198,11 @@ func (c *atlasCanvas) ellipse(cx, cy, rx, ry, ang, tone float64) {
 
 func drawTile(tile int) *atlasCanvas {
 	c := newAtlasCanvas()
-	n := float64(foliageTileSize)
+	if tile >= tileSpruceSpray {
+		drawRainforestTile(c, tile)
+		return c
+	}
+	n := float64(foliageTileUnits)
 	r := rand.New(rand.NewSource(int64(tile)*7919 + 17))
 	rf := func(a, b float64) float64 { return a + r.Float64()*(b-a) }
 	switch tile {
@@ -372,8 +405,18 @@ func buildFoliageAtlas() []*image.NRGBA {
 	w, h := foliageTileSize*foliageAtlasCols, foliageTileSize*foliageAtlasRows
 	lum := make([]float32, w*h)
 	alpha := make([]float32, w*h)
-	for tile := 0; tile < foliageAtlasCols*foliageAtlasRows; tile++ {
-		c := drawTile(tile)
+	// Tiles are independent (each has its own seed), so they draw at once.
+	tiles := make([]*atlasCanvas, foliageAtlasCols*foliageAtlasRows)
+	var wg sync.WaitGroup
+	for tile := range tiles {
+		wg.Add(1)
+		go func(tile int) {
+			defer wg.Done()
+			tiles[tile] = drawTile(tile)
+		}(tile)
+	}
+	wg.Wait()
+	for tile, c := range tiles {
 		ox, oy := (tile%foliageAtlasCols)*foliageTileSize, (tile/foliageAtlasCols)*foliageTileSize
 		for y := 0; y < foliageTileSize; y++ {
 			for x := 0; x < foliageTileSize; x++ {

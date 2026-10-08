@@ -19,6 +19,8 @@ uniform vec4 shapeRange[FOLIAGE_SHAPES];
 // distance and the distance its far tier (clump cards, or an impostor) takes
 // over (0: it has none).
 uniform vec4 shapeMore[FOLIAGE_SHAPES];
+// Per shape: the colour its bark is drawn in.
+uniform vec3 shapeBark[FOLIAGE_SHAPES];
 // Per bucket: its shape, and its impostor's layer (-1: none).
 uniform ivec2 bucketInfo[FOLIAGE_BUCKETS];
 // Per bucket: its impostor's centre (plant frame, unit scale) and radius.

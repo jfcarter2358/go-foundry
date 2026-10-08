@@ -309,6 +309,14 @@ type EditorState struct {
 	// forces a rescan, so a clip added while the editor is open shows up.
 	SoundFileNames []string
 
+	// ActiveTreeIdx indexes level.Trees; -1 = none selected.
+	ActiveTreeIdx int
+	// TreePlacementMode is true when a left-click plants NewTreeSpecies
+	// (editor_tree.go); NewTreeVariant is its variant, -1 for a random one.
+	TreePlacementMode bool
+	NewTreeSpecies    world.FoliageShape
+	NewTreeVariant    int
+
 	// ActiveEffectIdx indexes level.Effects; -1 = none selected.
 	ActiveEffectIdx int
 	// EffectPlacementMode is true when the next left-click drops an effect.
@@ -471,6 +479,11 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.ShowSoundRanges = true
 	Editor.ActiveEffectIdx = -1
 	Editor.EffectPlacementMode = false
+	Editor.TreePlacementMode = false
+	Editor.ActiveTreeIdx = -1
+	Editor.TreePlacementMode = false
+	Editor.NewTreeSpecies = world.FoliageSitkaSpruce
+	Editor.NewTreeVariant = -1
 	Editor.ActiveWaypointAnimIdx = -1
 	Editor.ActiveWaypointIdx = -1
 	Editor.WaypointPlacementMode = false
@@ -759,6 +772,13 @@ func EditorHandleEvent(event sdl.Event) bool {
 				EditorDeleteSelected()
 			}
 		case sdl.SCANCODE_ESCAPE:
+			// Planting trees stays armed like the brush, and is put away the
+			// same way (editor_tree.go).
+			if Editor.TreePlacementMode && !imgui.CurrentIO().WantCaptureKeyboard() {
+				Editor.TreePlacementMode = false
+				editorSetStatus("Stopped planting trees")
+				return true
+			}
 			// Laying a path is a mode like the brush, and put away the same way.
 			if Editor.WaypointPlacementMode && !imgui.CurrentIO().WantCaptureKeyboard() {
 				editorDisarmWaypointPlacement()
@@ -1117,6 +1137,12 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Tree deletion
+	if activeTree() != nil {
+		deleteActiveTree()
+		return
+	}
+
 	// Scenery deletion
 	if activeScenery() != nil {
 		deleteActiveScenery()
@@ -1209,6 +1235,11 @@ func editorInstallLevel(newLevel world.Level, path string) {
 	Editor.ShowSoundRanges = true
 	Editor.ActiveEffectIdx = -1
 	Editor.EffectPlacementMode = false
+	Editor.TreePlacementMode = false
+	Editor.ActiveTreeIdx = -1
+	Editor.TreePlacementMode = false
+	Editor.NewTreeSpecies = world.FoliageSitkaSpruce
+	Editor.NewTreeVariant = -1
 	Editor.ActiveWaypointAnimIdx = -1
 	Editor.ActiveWaypointIdx = -1
 	Editor.WaypointPlacementMode = false

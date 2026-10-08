@@ -295,7 +295,7 @@ func (g *foliageGPU) render(lvl *world.Level, projView mgl32.Mat4, frustum *Frus
 	c := &g.cull
 	gl.UseProgram(c.prog)
 	if g.paramsAt[0] != r.frame {
-		uploadFoliageParams(c.U("shapeRange"), c.U("shapeMore"), c.U("bucketInfo"), c.U("bucketImp"))
+		uploadFoliageParams(c.U("shapeRange"), c.U("shapeMore"), c.U("bucketInfo"), c.U("bucketImp"), c.U("shapeBark"))
 		ext := make([]float32, world.FoliageShapeCount)
 		for s := range ext {
 			e := world.FoliageExtent[s]
@@ -367,11 +367,10 @@ func (g *foliageGPU) colorUniforms(grp int, lvl *world.Level, projView mgl32.Mat
 	uploadBiomeLighting(p.prog, lvl, frame)
 	if g.paramsAt[1+i] != foliage.frame {
 		g.paramsAt[1+i] = foliage.frame
-		uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"))
+		uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"), p.U("shapeBark"))
 	}
 	gl.UniformMatrix4fv(p.U("projView"), 1, false, &projView[0])
 	foliage.commonUniforms(p, gfx.Cam.Position)
-	gl.Uniform3f(p.U("barkColor"), 0.30, 0.24, 0.18)
 	gl.Uniform1i(p.U("alphaToCoverage"), boolToInt32(alphaToCoverage()))
 	// In a TAA frame, its dither instead (taa.go).
 	gl.Uniform1i(p.U("coverageDither"), coverageDither())

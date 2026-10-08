@@ -137,6 +137,8 @@ func pickHitIsSelectedObject(h pickHit) bool {
 		return Editor.ActiveSoundIdx == h.idx
 	case pickEffect:
 		return Editor.ActiveEffectIdx == h.idx
+	case pickTree:
+		return Editor.ActiveTreeIdx == h.idx
 	case pickWaypoint:
 		return Editor.ActiveWaypointAnimIdx == h.idx && Editor.ActiveWaypointIdx == h.sub
 	case pickLight:

@@ -17,6 +17,13 @@ package render
 // files is rewritten on disk — checked once a second, since a stat per
 // texture per frame is waste and a second is faster than anyone switches
 // windows after saving a texture.
+//
+// A built-in biome's texture (ground_meadow and the rest) that the project
+// has no file for is painted by internal/biomeground instead — the biomes are
+// engine data, so a project made by the installed editor names them without
+// having them. That takes a fraction of a second a texture, so it runs off
+// the main thread: the ground shows its tint until the image is ready, and
+// the array is rebuilt when it is. A file of that name always wins.
 
 import (
 	"fmt"
@@ -24,8 +31,10 @@ import (
 	"log"
 	"os"
 	"slices"
+	"sync"
 	"time"
 
+	"foundry/internal/biomeground"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
@@ -51,6 +60,40 @@ type groundArray struct {
 }
 
 var ground groundArray
+
+// builtinGround holds the built-in ground textures painted for projects
+// without the file, by name; a nil entry is one still being painted.
+var builtinGround struct {
+	mu   sync.Mutex
+	imgs map[string]*image.RGBA
+	// ready counts the paintings finished; syncGroundArray rebuilds when it
+	// moves past the count the array was built at.
+	ready uint64
+	built uint64
+}
+
+// builtinGroundImage is the painted image for name if it is ready. If it is
+// not, it starts painting it (once) and returns nil.
+func builtinGroundImage(name string) *image.RGBA {
+	b := &builtinGround
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if img, ok := b.imgs[name]; ok {
+		return img
+	}
+	if b.imgs == nil {
+		b.imgs = map[string]*image.RGBA{}
+	}
+	b.imgs[name] = nil
+	go func() {
+		img := biomeground.Image(name)
+		b.mu.Lock()
+		b.imgs[name] = img
+		b.ready++
+		b.mu.Unlock()
+	}()
+	return nil
+}
 
 // groundArrayInit makes the placeholder array: a sampler of a type other than
 // its unit's binding is an invalid draw, so the unit always holds an array.
@@ -84,6 +127,11 @@ func syncGroundArray(lvl *world.Level) {
 	}
 	slices.Sort(want)
 	stale := !slices.Equal(want, ground.names) || ground.gen != world.FoliagePresetGeneration()
+	builtinGround.mu.Lock()
+	if builtinGround.ready != builtinGround.built {
+		stale = true
+	}
+	builtinGround.mu.Unlock()
 	if !stale && len(want) > 0 && time.Since(ground.checked) > time.Second {
 		ground.checked = time.Now()
 		for _, n := range want {
@@ -117,6 +165,9 @@ func buildGroundArray(names []string) {
 	ground.checked = time.Now()
 	ground.stamps = map[string]string{}
 	ground.missing = map[string]bool{}
+	builtinGround.mu.Lock()
+	builtinGround.built = builtinGround.ready
+	builtinGround.mu.Unlock()
 	if len(names) == 0 {
 		return
 	}
@@ -124,11 +175,20 @@ func buildGroundArray(names []string) {
 	pix := make([]uint8, n*n*4*len(names))
 	for i, name := range names {
 		ground.stamps[name] = groundTextureStamp(name)
-		img, err := gfx.DecodeTexture(name)
-		if err != nil {
-			log.Printf("terrain: biome ground texture %q: %v — that ground keeps its block's texture", name, err)
-			ground.missing[name] = true
-			continue
+		var img *image.RGBA
+		if _, onDisk := gfx.TextureFile(name); !onDisk && biomeground.Has(name) {
+			if img = builtinGroundImage(name); img == nil {
+				// Still being painted: the tint until it is.
+				ground.missing[name] = true
+				continue
+			}
+		} else {
+			var err error
+			if img, err = gfx.DecodeTexture(name); err != nil {
+				log.Printf("terrain: biome ground texture %q: %v — that ground keeps its block's texture", name, err)
+				ground.missing[name] = true
+				continue
+			}
 		}
 		resampleWrapped(img, pix[i*n*n*4:(i+1)*n*n*4], n)
 	}

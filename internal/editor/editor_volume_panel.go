@@ -236,6 +236,9 @@ func editorVolumeScatter(v *world.Volume) {
 			if imguibackend.SelectableV(name, kind == s.Kind, 0, imgui.Vec2{}) && kind != s.Kind {
 				EditorPushUndo()
 				s.Kind = kind
+				if kind == world.ScatterBiome && s.Biome.Preset == "" {
+					s.Biome.Preset = defaultVolumeBiome()
+				}
 				// The slope gate's DEFAULT differs per kind — rock reads fine
 				// on a cliff and grass does not — so a kind change moves where
 				// the instances can land and the bake has to go.
@@ -243,6 +246,11 @@ func editorVolumeScatter(v *world.Volume) {
 			}
 		}
 		imguibackend.EndCombo()
+	}
+
+	if s.Kind == world.ScatterBiome {
+		editorVolumeBiome(v, s)
+		return
 	}
 
 	editorDragFloat("Density##volscatterdens", &s.Density, 0, 1, "%.2f")
@@ -267,6 +275,69 @@ func editorVolumeScatter(v *world.Volume) {
 	editorPropGroup("Size##volscattersize", 0, func() { editorScatterSize(s) })
 	editorPropGroup("Ground##volscatterground", 0, func() { editorScatterGround(v, s) })
 	editorPropGroup("Edges##volscatteredges", 0, func() { editorScatterEdges(s) })
+}
+
+// defaultVolumeBiome is the biome a volume switched to `biome` starts with.
+func defaultVolumeBiome() string {
+	if world.FoliagePresetByName("forest") != nil {
+		return "forest"
+	}
+	if names := world.FoliagePresetNames(); len(names) > 0 {
+		return names[0]
+	}
+	return ""
+}
+
+// editorVolumeBiome draws a `biome` volume's controls: which biome, how
+// thickly, its tint and per-kind amounts — a terrain biome slot's — then
+// the ground gate and the edge fray. None of the lattice's controls apply:
+// each species brings its own size, look and draw distance.
+func editorVolumeBiome(v *world.Volume, s *world.VolumeScatter) {
+	b := &s.Biome
+	if imguibackend.BeginCombo("Biome##volscatterbiome", terrainPresetLabel(b.Preset)) {
+		for _, name := range world.FoliagePresetNames() {
+			if imguibackend.SelectableV(terrainPresetLabel(name)+"##volbiome"+name, b.Preset == name, 0, imgui.Vec2{}) && b.Preset != name {
+				EditorPushUndo()
+				b.Preset = name
+				// Amounts are kept: a shape the new biome does not grow
+				// is simply not asked about.
+			}
+		}
+		imguibackend.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A biome's species grow here as real plant instances, placed\n" +
+			"once on the ground under the volume. Trees, shrubs, rocks and\n" +
+			"logs draw as Nanite foliage; ground cover keeps its usual tiers.")
+	}
+
+	dens := b.EffectiveDensity()
+	if imgui.SliderFloatV("Density##volbiomedens", &dens, 0.05, world.MaxFoliageAmount, "%.2fx", 0) {
+		b.Density = dens
+	}
+	if imgui.IsItemActivated() {
+		EditorPushUndo()
+	}
+	tint := b.EffectiveTint()
+	col := [3]float32{tint[0], tint[1], tint[2]}
+	if imgui.ColorEdit3("Tint##volbiometint", &col) {
+		b.Tint = mgl32.Vec3{col[0], col[1], col[2]}
+		if b.Tint == (mgl32.Vec3{1, 1, 1}) {
+			b.Tint = mgl32.Vec3{}
+		}
+	}
+	if imgui.IsItemActivated() {
+		EditorPushUndo()
+	}
+	editorBiomeAmounts(b)
+
+	editorPropGroup("Ground##volscatterground", 0, func() { editorScatterGround(v, s) })
+	editorDragFloat("Edge Fade##volbiomeedge", &s.EdgeFadeDistance, 0, 40, "%.1f")
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("World units in from the volume's boundary over which the\n" +
+			"plants thin out, frayed by noise so the edge is not a line.\n" +
+			"0 is a hard edge.")
+	}
 }
 
 // editorScatterSize draws the per-kind appearance controls.

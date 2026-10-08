@@ -255,6 +255,11 @@ func trkGridKey(sc sdl.Scancode, ctrl, shift, repeat bool) {
 	if repeat && kind == trkKindNote {
 		return
 	}
+	// Shift+6 is ^, which is what ^^^ looks like. Unshifted, 6 is a piano key.
+	if kind == trkKindNote && shift && sc == sdl.SCANCODE_6 {
+		e.enterNote(tracker.NoteCut)
+		return
+	}
 	note := e.typeKey(sc)
 	if note >= tracker.NoteMin && note <= tracker.NoteMax {
 		trkSyncPlayer(false)

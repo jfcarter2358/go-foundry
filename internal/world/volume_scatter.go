@@ -42,6 +42,8 @@ package world
 // sector's floor; the difference is only what the ray hits.
 
 import (
+	"maps"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -55,12 +57,17 @@ const (
 	ScatterWildflower
 	ScatterCattail
 	ScatterMoss
+	// ScatterBiome grows a terrain biome's species (VolumeScatter.Biome)
+	// rather than one lattice kind: real foliage instances placed on the CPU
+	// and drawn by the foliage renderer, Nanite foliage included — see
+	// volume_plants.go.
+	ScatterBiome
 )
 
 // ScatterKindNames is the YAML/UI name of each kind, indexed by the kind
 // itself — the same arrangement VolumeShapeNames uses, so adding one means
 // adding its name here and nowhere else.
-var ScatterKindNames = []string{"grass", "rock", "wildflower", "cattail", "moss"}
+var ScatterKindNames = []string{"grass", "rock", "wildflower", "cattail", "moss", "biome"}
 
 // ScatterKindName is a kind's name, falling back to grass for a value out of a
 // hand-edited file.
@@ -242,6 +249,11 @@ type VolumeScatter struct {
 	// nothing, and a perfectly circular pop-in line is not a look worth
 	// defaulting to.
 	BoundaryJitter float32
+
+	// Biome is what a ScatterBiome volume grows: a biome preset by name, with
+	// the density, tint and per-shape amounts a terrain's biome slot takes.
+	// GroundLayer means nothing here. Ignored by every other kind.
+	Biome TerrainBiome
 }
 
 // DefaultVolumeScatter is what a freshly ticked scatter volume starts as: a
@@ -392,7 +404,9 @@ func ResolvedMaxSlope(s *VolumeScatter) float32 {
 	if s.MaxSlopeAngle > 0 {
 		return s.MaxSlopeAngle
 	}
-	if s.Kind == ScatterRock {
+	if s.Kind == ScatterRock || s.Kind == ScatterBiome {
+		// A biome's species carry their own slope ranges; the volume's
+		// gate only narrows them when the author sets one.
 		return DefaultRockMaxSlope
 	}
 	return DefaultFoliageMaxSlope
@@ -434,6 +448,17 @@ func VolumeScatterFromRaw(r *RawVolumeScatter) *VolumeScatter {
 	s.RangeFadeFraction = float32Default(r.RangeFadeFraction, defaultRangeFadeFraction)
 	s.EdgeFadeDistance = r.EdgeFadeDistance
 	s.BoundaryJitter = r.BoundaryJitter
+	if b := r.Biome; b != nil {
+		s.Biome = TerrainBiome{Preset: b.Preset, Density: b.Density}
+		for k, v := range b.Amounts {
+			if sh, ok := FoliageShapeByKey(k); ok {
+				s.Biome.SetAmount(sh, v)
+			}
+		}
+		if b.Tint != nil {
+			s.Biome.Tint = mgl32.Vec3{b.Tint.R, b.Tint.G, b.Tint.B}
+		}
+	}
 	return &s
 }
 
@@ -443,6 +468,13 @@ func VolumeScatterToRaw(s *VolumeScatter) *RawVolumeScatter {
 		return nil
 	}
 	color := RawColor{R: s.Color.X(), G: s.Color.Y(), B: s.Color.Z()}
+	var biome *RawVolumeBiome
+	if s.Kind == ScatterBiome || s.Biome.Preset != "" {
+		biome = &RawVolumeBiome{Preset: s.Biome.Preset, Density: s.Biome.Density, Amounts: maps.Clone(s.Biome.Amounts)}
+		if t := s.Biome.Tint; t != (mgl32.Vec3{}) {
+			biome.Tint = &RawColor{R: t[0], G: t[1], B: t[2]}
+		}
+	}
 	center := RawColor{R: s.CenterColor.X(), G: s.CenterColor.Y(), B: s.CenterColor.Z()}
 	density, gh, gw := s.Density, s.GrassHeight, s.GrassWidth
 	rock, fade := s.RockScale, s.RangeFadeFraction
@@ -471,5 +503,6 @@ func VolumeScatterToRaw(s *VolumeScatter) *RawVolumeScatter {
 		RangeFadeFraction: &fade,
 		EdgeFadeDistance:  s.EdgeFadeDistance,
 		BoundaryJitter:    s.BoundaryJitter,
+		Biome:             biome,
 	}
 }

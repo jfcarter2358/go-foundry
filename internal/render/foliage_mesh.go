@@ -856,6 +856,12 @@ func (m *fmesh) ribTube(pts []mgl32.Vec3, radii []float32, ribs int, depth float
 // fold (a fraction of the width), so a palm frond or a banana leaf is a
 // shallow V rather than a board.
 func (m *fmesh) frond(pt func(t float32) mgl32.Vec3, w func(t float32) float32, side mgl32.Vec3, segs, tile int, fold, sway0, sway1 float32) {
+	m.frondPart(pt, w, side, segs, tile, partLeaf, fold, sway0, sway1)
+}
+
+// frondPart is frond coloured as part (partLeaf, or partAccentCard for a
+// dead frond in the accent's brown).
+func (m *fmesh) frondPart(pt func(t float32) mgl32.Vec3, w func(t float32) float32, side mgl32.Vec3, segs, tile, part int, fold, sway0, sway1 float32) {
 	defer m.recordAxis(m.mark(), pt(0), pt(1))
 	for s := 0; s < segs; s++ {
 		t0, t1 := float32(s)/float32(segs), float32(s+1)/float32(segs)
@@ -867,7 +873,7 @@ func (m *fmesh) frond(pt func(t float32) mgl32.Vec3, w func(t float32) float32, 
 		}
 		n = n.Add(yUp.Mul(0.5)).Normalize()
 		mk := func(p mgl32.Vec3, u, v, t float32) fvert {
-			return fvert{p: p, n: n, uv: tileUV(tile, u, v), sway: sway0 + (sway1-sway0)*t, tone: 0.6 + 0.5*v, part: partLeaf}
+			return fvert{p: p, n: n, uv: tileUV(tile, u, v), sway: sway0 + (sway1-sway0)*t, tone: 0.6 + 0.5*v, part: part}
 		}
 		w0, w1 := max(w(t0), 0.01), max(w(t1), 0.01)
 		d0, d1 := n.Mul(-w0*fold), n.Mul(-w1*fold)
@@ -1394,6 +1400,38 @@ func buildFoliageTemplate(shape world.FoliageShape, variant, lod int) []float32 
 		return buildDeadBush(variant, lod)
 	case world.FoliageIce:
 		return buildIce(variant, lod)
+	case world.FoliageSitkaSpruce:
+		return buildSitkaSpruce(variant, lod)
+	case world.FoliageHemlock:
+		return buildHemlock(variant, lod)
+	case world.FoliageRedcedar:
+		return buildRedcedar(variant, lod)
+	case world.FoliageDouglasFir:
+		return buildDouglasFir(variant, lod)
+	case world.FoliageBigleafMaple:
+		return buildBigleafMaple(variant, lod)
+	case world.FoliageRedAlder:
+		return buildRedAlder(variant, lod)
+	case world.FoliageVineMaple:
+		return buildVineMaple(variant, lod)
+	case world.FoliageCottonwood:
+		return buildCottonwood(variant, lod)
+	case world.FoliageSwordFern:
+		return buildSwordFern(variant, lod)
+	case world.FoliageForestFern:
+		return buildForestFern(variant, lod)
+	case world.FoliageOxalis:
+		return buildOxalis(variant, lod)
+	case world.FoliageUnderShrub:
+		return buildUnderShrub(variant, lod)
+	case world.FoliageNurseLog:
+		return buildNurseLog(variant, lod)
+	case world.FoliageBranchLitter:
+		return buildBranchLitter(variant, lod)
+	case world.FoliageForestLitter:
+		return buildForestLitter(variant, lod)
+	case world.FoliageMossMound:
+		return buildMossMound(variant, lod)
 	}
 	return nil
 }

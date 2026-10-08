@@ -77,7 +77,7 @@ type RawVolumeContext struct {
 type RawVolumeScatter struct {
 	Disabled bool `yaml:"disabled,omitempty"`
 
-	Kind    string    `yaml:"kind,omitempty"` // grass (default) | rock | wildflower | cattail | moss
+	Kind    string    `yaml:"kind,omitempty"` // grass (default) | rock | wildflower | cattail | moss | biome
 	Density *float32  `yaml:"density,omitempty"`
 	Range   float32   `yaml:"range,omitempty"`
 	Color   *RawColor `yaml:"color,omitempty"`
@@ -107,6 +107,24 @@ type RawVolumeScatter struct {
 	RangeFadeFraction *float32 `yaml:"range_fade_fraction,omitempty"`
 	EdgeFadeDistance  float32  `yaml:"edge_fade_distance,omitempty"`
 	BoundaryJitter    float32  `yaml:"boundary_jitter,omitempty"`
+
+	// Biome is what `kind: biome` grows (volume_plants.go).
+	Biome *RawVolumeBiome `yaml:"biome,omitempty"`
+}
+
+// RawVolumeBiome is the biome a `kind: biome` scatter volume grows: a
+// terrain biome slot's fields, less the ground layer a volume has no faces
+// to draw with.
+type RawVolumeBiome struct {
+	// Preset names the biome: a file in biomes/ or a built-in.
+	Preset string `yaml:"preset"`
+	// Density scales how thickly everything grows. Omitted means 1.
+	Density float32 `yaml:"density,omitempty"`
+	// Tint multiplies every colour in the biome. Omitted means none.
+	Tint *RawColor `yaml:"tint,omitempty"`
+	// Amounts scales each kind of thing by shape key — {grass: 0, sitka_spruce:
+	// 2}: 0 none, 1 as the biome has it, up to 4.
+	Amounts map[string]float32 `yaml:"amounts,omitempty"`
 }
 
 // RawFrameDoorway is the boundary between two frames (volume_doorway.go).
@@ -232,6 +250,37 @@ type RawSprite struct {
 	SheetRows   int        `yaml:"sheet_rows,omitempty"`
 	Frame       int        `yaml:"frame,omitempty"`
 	Attach      *RawAttach `yaml:"attach,omitempty"`
+}
+
+// RawTree is the YAML representation of a hand-placed plant (tree.go):
+//
+//	trees:
+//	- id: spruce_1
+//	  species: sitka_spruce
+//	  variant: 1
+//	  position: {x: 12, "y": 0, z: -40}
+//	  yaw: 35
+//	  scale: 1.2
+//
+// Everything after the position is optional: variant 0, no turn, the
+// species' own size and colours, solid.
+type RawTree struct {
+	ID string `yaml:"id"`
+	// Species is a foliage shape's name, as a biome file writes it.
+	Species string `yaml:"species"`
+	Variant int    `yaml:"variant,omitempty"`
+	// Position is the foot of the trunk.
+	Position RawVec3 `yaml:"position"`
+	// Yaw turns it about its trunk, in degrees.
+	Yaw float32 `yaml:"yaw,omitempty"`
+	// Scale is its size against the species' own; absent is 1.
+	Scale float32 `yaml:"scale,omitempty"`
+	// Color and Accent are its foliage and moss (or berry, or flower)
+	// colours, [r, g, b]; absent is the species' own.
+	Color  []float32 `yaml:"color,omitempty,flow"`
+	Accent []float32 `yaml:"accent,omitempty,flow"`
+	// Solid defaults to true; written only to let bodies through the trunk.
+	Solid *bool `yaml:"solid,omitempty"`
 }
 
 // RawScenery is the YAML representation of a placed static model
@@ -844,6 +893,8 @@ type RawLevel struct {
 	// world space, and a chunk boundary is not something an author aims at
 	// while scattering rocks along a path.
 	Scenery []RawScenery `yaml:"scenery,omitempty"`
+	// Trees are the level's hand-placed plants (tree.go), drawn as foliage.
+	Trees []RawTree `yaml:"trees,omitempty"`
 	// Decals are the level's projected textures (decal.go) — posters, stencils,
 	// scorch marks. Level-scoped for one more reason than the rest: a decal's
 	// mesh is clipped out of whatever chunks its box reaches, so it belongs to

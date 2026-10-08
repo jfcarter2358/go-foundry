@@ -45,6 +45,7 @@ const (
 	sel3DEmitter
 	sel3DSound
 	sel3DEffect
+	sel3DTree
 	sel3DWaypoint // one point of a waypoint animation, or the animation whole
 )
 
@@ -74,6 +75,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DSound
 	case activeEffect() != nil:
 		return sel3DEffect
+	case activeTree() != nil:
+		return sel3DTree
 	case activeWaypointAnimation() != nil:
 		return sel3DWaypoint
 	case len(Editor.SelectedVertices) > 0:
@@ -154,6 +157,10 @@ func editor3DSelectionSummary() string {
 	case sel3DEffect:
 		fx := activeEffect()
 		return fmt.Sprintf("Effect %s (%s)", fx.ID, fx.Kind)
+
+	case sel3DTree:
+		tr := activeTree()
+		return fmt.Sprintf("Tree %s (%s %d)", tr.ID, treeSpeciesLabel(tr.Species), tr.EffectiveVariant()+1)
 
 	case sel3DWaypoint:
 		a := activeWaypointAnimation()
@@ -505,7 +512,7 @@ func editor3DCanSnap() bool {
 	switch editor3DSelection() {
 	case sel3DVertices, sel3DBrush, sel3DSpawn, sel3DEntity, sel3DVolume,
 		sel3DPrefab, sel3DSprite, sel3DDecal, sel3DScenery, sel3DEmitter, sel3DSound, sel3DEffect,
-		sel3DWaypoint:
+		sel3DTree, sel3DWaypoint:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -615,6 +622,12 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		fx.Position = snapVec3(fx.Position, step)
 		editorSetStatus("Snapped effect %q to the grid", fx.ID)
+
+	case sel3DTree:
+		tr := activeTree()
+		EditorPushUndo()
+		tr.Position = snapVec3(tr.Position, step)
+		editorSetStatus("Snapped tree %q to the grid", tr.ID)
 
 	case sel3DWaypoint:
 		// The position only, on the scenery rule: rounding a point's scale

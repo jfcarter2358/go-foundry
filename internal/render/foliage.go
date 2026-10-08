@@ -80,6 +80,8 @@ import (
 	"log"
 	"math"
 	"os"
+	"runtime"
+	"sync"
 	"time"
 
 	"foundry/internal/gfx"
@@ -128,7 +130,14 @@ type foliageShapeInfo struct {
 	// average: the low, dense ground cover, which is most of the vertices
 	// drawn and where one blade's flicker is lost among thousands.
 	cheap bool
+	// bark is the colour its bark (partBark) is drawn in; zero is
+	// defaultBark. A redcedar's is red, an alder's nearly white, a mossy
+	// stone's the stone's grey.
+	bark mgl32.Vec3
 }
+
+// defaultBark is the bark colour of a shape that names none.
+var defaultBark = mgl32.Vec3{0.30, 0.24, 0.18}
 
 var foliageShapes = [world.FoliageShapeCount]foliageShapeInfo{
 	world.FoliageGrass:       {rng: 130, start: 16, thin: 2, comp: 1, compUp: 0.35, lod: 22, cpuLod: 9, far: 38, shrink: true, cheap: true},
@@ -152,6 +161,27 @@ var foliageShapes = [world.FoliageShapeCount]foliageShapeInfo{
 	world.FoliageJunglePlant: {rng: 260, start: 40, thin: 1, comp: 0.5, compUp: 0.6, lod: 32, cpuLod: 24, far: 55, impostor: true, casts: true},
 	world.FoliageDeadBush:    {rng: 360, start: 55, thin: 1, comp: 0.5, compUp: 0.6, lod: 36, cpuLod: 28, far: 60, impostor: true, casts: true},
 	world.FoliageIce:         {rng: 800, lod: 50, cpuLod: 40, far: 90, impostor: true, casts: true},
+
+	// The rainforest's: the trees, and the sparse nurse logs, on the Nanite
+	// path (impostor); the floor's dense plants keep the classic tiers, as
+	// ground cover does (docs/nanite/PHASE_6.md: a floor of small plants as
+	// voxels costs many times their meshes).
+	world.FoliageSitkaSpruce:  {rng: 1500, lod: 85, cpuLod: 60, far: 140, impostor: true, casts: true, bark: mgl32.Vec3{0.40, 0.35, 0.29}},
+	world.FoliageHemlock:      {rng: 1500, lod: 80, cpuLod: 60, far: 130, impostor: true, casts: true, bark: mgl32.Vec3{0.33, 0.24, 0.18}},
+	world.FoliageRedcedar:     {rng: 1500, lod: 80, cpuLod: 60, far: 130, impostor: true, casts: true, bark: mgl32.Vec3{0.46, 0.27, 0.17}},
+	world.FoliageDouglasFir:   {rng: 1500, lod: 85, cpuLod: 60, far: 140, impostor: true, casts: true, bark: mgl32.Vec3{0.33, 0.23, 0.16}},
+	world.FoliageBigleafMaple: {rng: 1500, lod: 75, cpuLod: 55, far: 120, impostor: true, casts: true, bark: mgl32.Vec3{0.36, 0.32, 0.26}},
+	world.FoliageRedAlder:     {rng: 1500, lod: 70, cpuLod: 55, far: 115, impostor: true, casts: true, bark: mgl32.Vec3{0.60, 0.60, 0.56}},
+	world.FoliageVineMaple:    {rng: 900, lod: 50, cpuLod: 40, far: 90, impostor: true, casts: true, bark: mgl32.Vec3{0.34, 0.36, 0.24}},
+	world.FoliageCottonwood:   {rng: 1500, lod: 75, cpuLod: 55, far: 120, impostor: true, casts: true, bark: mgl32.Vec3{0.43, 0.41, 0.37}},
+	world.FoliageSwordFern:    {rng: 220, start: 40, thin: 1.2, comp: 0.7, compUp: 0.6, lod: 26, cpuLod: 18, casts: true, bark: mgl32.Vec3{0.24, 0.17, 0.11}},
+	world.FoliageForestFern:   {rng: 200, start: 35, thin: 1.2, comp: 0.7, compUp: 0.6, lod: 26, cpuLod: 16, casts: true},
+	world.FoliageOxalis:       {rng: 70, start: 14, thin: 2, comp: 0.9, compUp: 0.4, lod: 14, cpuLod: 8, shrink: true, cheap: true},
+	world.FoliageUnderShrub:   {rng: 320, start: 55, thin: 1, comp: 0.5, compUp: 0.6, lod: 34, cpuLod: 24, casts: true, bark: mgl32.Vec3{0.36, 0.28, 0.20}},
+	world.FoliageNurseLog:     {rng: 700, lod: 50, cpuLod: 40, far: 90, impostor: true, casts: true, bark: mgl32.Vec3{0.34, 0.26, 0.19}},
+	world.FoliageBranchLitter: {rng: 160, start: 35, thin: 1.2, comp: 0.4, compUp: 0.7, lod: 24, cpuLod: 16, cheap: true, bark: mgl32.Vec3{0.36, 0.29, 0.22}},
+	world.FoliageForestLitter: {rng: 65, start: 14, thin: 2, comp: 1, compUp: 0.3, lod: 16, cpuLod: 9, shrink: true, cheap: true, bark: mgl32.Vec3{0.38, 0.28, 0.18}},
+	world.FoliageMossMound:    {rng: 220, start: 40, thin: 1.2, comp: 0.6, compUp: 0.6, lod: 26, cpuLod: 18, cheap: true, bark: mgl32.Vec3{0.44, 0.44, 0.41}},
 }
 
 // foliageShapeParams is a shape's info with FoliageDistance applied: what
@@ -218,6 +248,10 @@ type foliageRenderer struct {
 	gpu        foliageGPU
 	// nan is the Nanite path (nfoliage.go).
 	nan nfRenderer
+	// placed is the hand-placed plants' units (foliage_placed.go).
+	placed foliagePlaced
+	// volumes is the biome scatter volumes' units (foliage_volumes.go).
+	volumes foliageVolumes
 }
 
 var foliage foliageRenderer
@@ -292,13 +326,38 @@ func FoliageInit() {
 		idx = append(idx, ui...)
 		return t
 	}
+	// The generators are pure (nothing records an assembly here), and the
+	// rainforest's giants take a while each, so they build at once.
+	type job struct {
+		s      world.FoliageShape
+		v, lod int
+		tris   []float32
+	}
+	var jobs []*job
 	for s := world.FoliageShape(0); s < world.FoliageShapeCount; s++ {
-		foliage.templates[s] = make([][foliageLODs]foliageTemplate, world.FoliageVariants[s])
 		for v := 0; v < world.FoliageVariants[s]; v++ {
 			for lod := 0; lod < foliageLODs; lod++ {
-				foliage.templates[s][v][lod] = add(buildFoliageTemplate(s, v, lod))
+				jobs = append(jobs, &job{s: s, v: v, lod: lod})
 			}
 		}
+	}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	for _, j := range jobs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(j *job) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			j.tris = buildFoliageTemplate(j.s, j.v, j.lod)
+		}(j)
+	}
+	wg.Wait()
+	for s := world.FoliageShape(0); s < world.FoliageShapeCount; s++ {
+		foliage.templates[s] = make([][foliageLODs]foliageTemplate, world.FoliageVariants[s])
+	}
+	for _, j := range jobs {
+		foliage.templates[j.s][j.v][j.lod] = add(j.tris)
 	}
 	foliage.quad = add(impostorQuad())
 	gl.GenVertexArrays(1, &foliage.vao)
@@ -317,6 +376,7 @@ func FoliageInit() {
 	gl.BindVertexArray(0)
 
 	atlasChain := buildFoliageAtlas()
+	foliage.nan.cacheName = nfCacheName(verts, idx, nfAtlas{chain: atlasChain})
 	foliage.atlas = uploadFoliageAtlas(atlasChain)
 	foliage.imp = bakeFoliageImpostors()
 	foliage.cache = map[*world.Terrain]*foliageTerrainGPU{}
@@ -371,6 +431,8 @@ func ReleaseFoliage() {
 		g.release()
 		delete(foliage.cache, t)
 	}
+	foliage.placed.release()
+	foliage.volumes.release()
 	foliage.draws = foliage.draws[:0]
 }
 
@@ -394,11 +456,11 @@ func (r *foliageRenderer) uploadParams(i int) {
 	}
 	r.paramsAt[i] = r.frame
 	p := &r.progs[i]
-	uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"))
+	uploadFoliageParams(p.U("shapeRange"), p.U("shapeMore"), p.U("bucketInfo"), p.U("bucketImp"), p.U("shapeBark"))
 }
 
 // uploadFoliageParams sends the table to the bound program's four arrays.
-func uploadFoliageParams(rangeLoc, moreLoc, infoLoc, impLoc int32) {
+func uploadFoliageParams(rangeLoc, moreLoc, infoLoc, impLoc, barkLoc int32) {
 	n := int(world.FoliageShapeCount)
 	rng := make([]float32, 0, 4*n)
 	more := make([]float32, 0, 4*n)
@@ -408,6 +470,17 @@ func uploadFoliageParams(rangeLoc, moreLoc, infoLoc, impLoc int32) {
 	}
 	gl.Uniform4fv(rangeLoc, int32(n), &rng[0])
 	gl.Uniform4fv(moreLoc, int32(n), &more[0])
+	if barkLoc >= 0 {
+		bark := make([]float32, 0, 3*n)
+		for s := world.FoliageShape(0); s < world.FoliageShapeCount; s++ {
+			b := foliageShapes[s].bark
+			if b == (mgl32.Vec3{}) {
+				b = defaultBark
+			}
+			bark = append(bark, b[0], b[1], b[2])
+		}
+		gl.Uniform3fv(barkLoc, int32(n), &bark[0])
+	}
 	info := make([]int32, 0, 2*foliage.buckets)
 	imp := make([]float32, 0, 4*foliage.buckets)
 	for s := world.FoliageShape(0); s < world.FoliageShapeCount; s++ {
@@ -456,7 +529,6 @@ func (r *foliageRenderer) colorUniforms(i int, lvl *world.Level, projView mgl32.
 	r.uploadParams(i)
 	gl.UniformMatrix4fv(p.U("projView"), 1, false, &projView[0])
 	r.commonUniforms(p, gfx.Cam.Position)
-	gl.Uniform3f(p.U("barkColor"), 0.30, 0.24, 0.18)
 	gl.Uniform1i(p.U("alphaToCoverage"), boolToInt32(alphaToCoverage()))
 	// In a TAA frame, its dither instead (taa.go).
 	gl.Uniform1i(p.U("coverageDither"), coverageDither())

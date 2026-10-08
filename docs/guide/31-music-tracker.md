@@ -43,8 +43,8 @@ Effects read as words ("Vibrato 4/4"). The **hex** toggle shows the raw
 
 Click the grid to give it the keyboard. The keys are laid out like a piano:
 `Z S X D C V G B H N J M` is the lower octave and `Q 2 W 3 E R 5 T 6 Y 7 U I`
-the upper; `[` and `]` move the octave. `1` is note off and `` ` `` is note
-cut. A note moves the cursor down by the edit step (`Ctrl+0`–`9`).
+the upper; `[` and `]` move the octave. `1` (or `=`) is note off, `===`, and
+`` ` `` (or `^`, Shift+6) is note cut, `^^^`. A note moves the cursor down by the edit step (`Ctrl+0`–`9`).
 
 Hex digits fill the instrument, volume and effect columns, and a code is typed
 along its row the way a word is: `V`, `4`, `4` puts the cursor on each
