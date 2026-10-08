@@ -117,6 +117,12 @@ const (
 	nfSlots    = nfGusts * nfFlutters
 )
 
+// nfBucketWords is a variant's row in the bucket table: three uvec4s —
+// (first bone, bones, first cluster, clusters), its bounding sphere's bits,
+// and (DAG clusters, shadow-proxy clusters, 0, 0). Shaders index it as
+// buckets[bucket * 3 + i].
+const nfBucketWords = 12
+
 // Texture units, clear of the lighting's, the GI's and the virtual map's.
 const (
 	nfItemsUnit    = 34
@@ -435,12 +441,19 @@ func (r *nfRenderer) upload() {
 		ct = append(ct, uint32(c.kind), uint32(c.bucket), uint32(first), uint32(d.buckets[c.bucket].firstBone),
 			f(c.voxelSize), uint32(c.mult), 0, 0)
 	}
-	bk := make([]uint32, 0, len(d.buckets)*8)
+	bk := make([]uint32, 0, len(d.buckets)*nfBucketWords)
 	for bi := range d.buckets {
 		b := &d.buckets[bi]
 		sph := r.bucketSphere(bi)
+		// The shadow proxy's clusters are the bucket's tail (nfAssetData.pack):
+		// a pass walks only its own half.
+		dag := b.clusters
+		for dag > 0 && d.clusters[b.firstCluster+dag-1].kind == nfKindProxy {
+			dag--
+		}
 		bk = append(bk, uint32(b.firstBone), uint32(b.bones), uint32(b.firstCluster), uint32(b.clusters),
-			f(sph[0]), f(sph[1]), f(sph[2]), f(sph[3]))
+			f(sph[0]), f(sph[1]), f(sph[2]), f(sph[3]),
+			uint32(dag), uint32(b.clusters-dag), 0, 0)
 	}
 	bones := make([]float32, 0, len(d.bones)*12)
 	for _, b := range d.bones {
@@ -723,7 +736,21 @@ func (r *nfRenderer) cullPass(v nfView) bool {
 		gl.BindBuffer(target, 0)
 	}
 	upload(gl.SHADER_STORAGE_BUFFER, r.tileBuf, u32bytes(r.tiles))
-	upload(gl.SHADER_STORAGE_BUFFER, r.cmdBuf, u32bytes(r.cmdInit))
+	// A pass resets and lays out only its own commands: a shadow pass's are
+	// the proxies (the last group), a camera pass's everything before them.
+	// Orphaned first, so the last pass's draws never hold it up; the whole
+	// table every pass cost ~0.25 ms of upload and scan per shadow
+	// rectangle once trees ran to thousands of clusters.
+	cmdFirst, cmdCount := 0, r.groupFirst[nfGroupProxy]
+	if v.shadow {
+		cmdFirst, cmdCount = r.groupFirst[nfGroupProxy], r.groupCount[nfGroupProxy]
+	}
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, r.cmdBuf)
+	gl.BufferData(gl.SHADER_STORAGE_BUFFER, len(r.cmdInit)*4, nil, gl.STREAM_DRAW)
+	if cmdCount > 0 {
+		gl.BufferSubData(gl.SHADER_STORAGE_BUFFER, cmdFirst*5*4, cmdCount*5*4, gl.Ptr(r.cmdInit[cmdFirst*5:]))
+	}
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
 	ctr := make([]uint32, nfCtrWords)
 	ctr[nfCtrItemCap], ctr[nfCtrRefCap] = uint32(r.itemCap), uint32(r.refCap)
 	upload(gl.SHADER_STORAGE_BUFFER, r.counterBuf, u32bytes(ctr))
@@ -789,11 +816,16 @@ func (r *nfRenderer) cullPass(v nfView) bool {
 
 	s := &r.scan
 	gl.UseProgram(s.prog)
-	gl.Uniform1ui(s.U("cmdCount"), uint32(len(r.cmdInit)/5))
+	gl.Uniform1ui(s.U("cmdFirst"), uint32(cmdFirst))
+	gl.Uniform1ui(s.U("cmdCount"), uint32(cmdCount))
+	voxCount, boxCount := r.groupCount[nfGroupSmall], r.groupCount[nfGroupVoxel]
+	if v.shadow {
+		voxCount, boxCount = 0, 0
+	}
 	gl.Uniform1ui(s.U("voxFirst"), uint32(r.groupFirst[nfGroupSmall]))
-	gl.Uniform1ui(s.U("voxCount"), uint32(r.groupCount[nfGroupSmall]))
+	gl.Uniform1ui(s.U("voxCount"), uint32(voxCount))
 	gl.Uniform1ui(s.U("boxFirst"), uint32(r.groupFirst[nfGroupVoxel]))
-	gl.Uniform1ui(s.U("boxCount"), uint32(r.groupCount[nfGroupVoxel]))
+	gl.Uniform1ui(s.U("boxCount"), uint32(boxCount))
 	gl.DispatchCompute(1, 1, 1)
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT | gl.COMMAND_BARRIER_BIT)
 

@@ -29,6 +29,10 @@ layout(std430, binding = 13) buffer Counters {
     uvec4 voxRefs;          // first, count, bricks as boxes, 0
 };
 
+// The pass's commands: a shadow pass's proxies, or a camera pass's
+// everything else (render/nfoliage.go's cullPass). Others are left as they
+// are — no pass draws them.
+uniform uint cmdFirst;
 uniform uint cmdCount;
 // The voxel clusters' SMALL commands — the bricks small on screen, which
 // the compute rasteriser takes where it runs: first and count (one run).
@@ -44,8 +48,9 @@ void main() {
     uint lid = gl_LocalInvocationID.x;
     uint carry = 0u;
     for (uint base = 0u; base < cmdCount; base += 1024u) {
-        uint i = base + lid;
-        uint v = i < cmdCount ? cmds[i * 5u + 1u] : 0u;
+        uint i = cmdFirst + base + lid;
+        bool mine = base + lid < cmdCount;
+        uint v = mine ? cmds[i * 5u + 1u] : 0u;
         sums[lid] = v;
         barrier();
         for (uint off = 1u; off < 1024u; off <<= 1u) {
@@ -55,7 +60,7 @@ void main() {
             barrier();
         }
         uint excl = carry + sums[lid] - v;
-        if (i < cmdCount) {
+        if (mine) {
             uint n = v;
             if (excl >= refCap) {
                 n = 0u;

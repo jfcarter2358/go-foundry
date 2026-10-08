@@ -9,8 +9,12 @@
 // drawn so far), and then which of its variant's DAG clusters are in its CUT:
 // a cluster whose error, seen from the camera, is within the threshold and
 // whose parent's is not (cluster.LODWithin) — the per-cluster test that gives
-// a complete cut with no traversal (internal/cluster's dag.go). A variant is
-// a few dozen clusters at most, so the thread tests them all. Each one in the
+// a complete cut with no traversal (internal/cluster's dag.go). A variant
+// can be thousands of clusters (a life-size rainforest tree), so the cluster
+// tests are the WORKGROUP's: the instances that pass go to shared memory,
+// and the group's threads split their (instance, cluster) pairs — a thread
+// per instance walking its own tree's clusters ran a whole forest's shadow
+// rectangles at ~1 ms each on a GTX 1070. Each one in the
 // cut, inside the frustum and not occluded, becomes an ITEM (instance,
 // terrain, cluster), and its draw command counts the references it will take
 // — one for a triangle cluster, a part cluster's parts, a voxel cluster's
@@ -21,7 +25,8 @@
 // A shadow pass casts each variant's SHADOW PROXY instead of its cut (the
 // classic far mesh, on the same bones: render/nfoliage_asset.go's
 // buildProxy), culled cluster by cluster with the light's frustum and no
-// Hi-Z.
+// Hi-Z. The bucket table splits a variant's clusters into its DAG and, after
+// it, its proxy, so each pass walks only its own.
 
 layout(local_size_x = 64) in;
 
@@ -48,6 +53,9 @@ layout(std430, binding = 2) writeonly buffer Items {
 layout(std430, binding = 4) readonly buffer Clusters {
     NFCluster clusters[];
 };
+// Three per variant (render/nfoliage.go's nfBucketWords): (first bone,
+// bones, first cluster, clusters), its sphere's bits, (DAG clusters, proxy
+// clusters, 0, 0).
 layout(std430, binding = 5) readonly buffer Buckets {
     uvec4 buckets[];
 };
@@ -146,6 +154,13 @@ vec3 toWorld(vec3 q) {
     return (gModel * vec4(gAnchor + gX * lp.x + gUp * lp.y + gZ * lp.z, 1.0)).xyz;
 }
 
+// This round's instances that passed the plant tests, with their frames.
+shared uint sCount;
+shared vec4 sAnchor[64]; // anchor, largest stretch
+shared vec4 sX[64];      // gX, pool index's bits
+shared vec4 sUp[64];
+shared vec4 sScale[64];
+
 void main() {
     uvec4 tile = tiles[tileBase + gl_WorkGroupID.x];
     uint bucket = tile.z;
@@ -154,61 +169,83 @@ void main() {
     float modelScale = length(gModel[1].xyz);
     int shape = bucketInfo[bucket].x;
     vec4 R = shapeRange[shape];
-    uvec4 bk = buckets[bucket * 2];
-    vec4 bs = uintBitsToFloat(buckets[bucket * 2 + 1]);
-    uint firstCluster = bk.z;
-    uint nClusters = bk.w;
-    for (uint i = gl_LocalInvocationID.x; i < tile.y; i += gl_WorkGroupSize.x) {
-        uint idx = tile.x + i;
-        vec4 ps = texelFetch(instances, int(idx) * 4);
-        vec4 ua = texelFetch(instances, int(idx) * 4 + 1);
-        vec4 cr = texelFetch(instances, int(idx) * 4 + 2);
-        vec3 anchorW = (gModel * vec4(ps.xyz, 1.0)).xyz;
-        float d = length(anchorW - camPos);
-        float fade = foliageRankFade(foliageKeep(R, d), cr.w);
-        if (fade <= 0.0) {
-            continue;
+    uvec4 bk = buckets[bucket * 3u];
+    vec4 bs = uintBitsToFloat(buckets[bucket * 3u + 1u]);
+    uvec4 split = buckets[bucket * 3u + 2u];
+    // A shadow pass walks the proxy, a camera pass the DAG.
+    uint firstCluster = shadowPass != 0 ? bk.z + split.x : bk.z;
+    uint nClusters = shadowPass != 0 ? split.y : split.x;
+    uint lid = gl_LocalInvocationID.x;
+    // Rounds of 64 instances: uniform across the group, so every thread
+    // meets every barrier.
+    for (uint base = 0u; base < tile.y; base += gl_WorkGroupSize.x) {
+        if (lid == 0u) {
+            sCount = 0u;
         }
-        if (shadowPass != 0 && (fade < 0.5 || d > shadowReach)) {
-            continue;
+        memoryBarrierShared();
+        barrier();
+        uint i = base + lid;
+        if (i < tile.y) {
+            uint idx = tile.x + i;
+            vec4 ps = texelFetch(instances, int(idx) * 4);
+            vec4 ua = texelFetch(instances, int(idx) * 4 + 1);
+            vec4 cr = texelFetch(instances, int(idx) * 4 + 2);
+            vec3 anchorW = (gModel * vec4(ps.xyz, 1.0)).xyz;
+            float d = length(anchorW - camPos);
+            float fade = foliageRankFade(foliageKeep(R, d), cr.w);
+            bool keep = fade > 0.0 && !(shadowPass != 0 && (fade < 0.5 || d > shadowReach));
+            if (keep) {
+                // The plant's frame: foliage_common.glsl's foliageBegin.
+                vec3 up = normalize(ua.xyz);
+                vec3 ref = abs(up.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                vec3 t0 = normalize(cross(ref, up));
+                vec3 b0 = cross(up, t0);
+                float c = cos(ua.w), s = sin(ua.w);
+                gX = t0 * c + b0 * s;
+                gZ = cross(gX, up);
+                gUp = up;
+                gAnchor = ps.xyz;
+                float comp = foliageComp(R, d);
+                float scale = ps.w;
+                if (shapeMore[shape].y > 0.5) {
+                    scale *= mix(0.25, 1.0, fade);
+                }
+                gScale = vec3(comp, pow(comp, shapeMore[shape].x), comp) * scale;
+                // Errors and radii scale by the largest stretch: never
+                // coarser than the plant needs.
+                float sMax = max(max(gScale.x, gScale.y), gScale.z) * modelScale;
+                vec3 wc = toWorld(bs.xyz);
+                float wr = bs.w * sMax;
+                if (inFrustum(wc, wr) && !occluded(wc, wr)) {
+                    uint at = atomicAdd(sCount, 1u);
+                    sAnchor[at] = vec4(gAnchor, sMax);
+                    sX[at] = vec4(gX, uintBitsToFloat(idx));
+                    sUp[at] = vec4(gUp, 0.0);
+                    sScale[at] = vec4(gScale, 0.0);
+                }
+            }
         }
-        // The plant's frame: foliage_common.glsl's foliageBegin.
-        vec3 up = normalize(ua.xyz);
-        vec3 ref = abs(up.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-        vec3 t0 = normalize(cross(ref, up));
-        vec3 b0 = cross(up, t0);
-        float c = cos(ua.w), s = sin(ua.w);
-        gX = t0 * c + b0 * s;
-        gZ = cross(gX, up);
-        gUp = up;
-        gAnchor = ps.xyz;
-        float comp = foliageComp(R, d);
-        float scale = ps.w;
-        if (shapeMore[shape].y > 0.5) {
-            scale *= mix(0.25, 1.0, fade);
-        }
-        gScale = vec3(comp, pow(comp, shapeMore[shape].x), comp) * scale;
-        // Errors and radii scale by the largest stretch: never coarser than
-        // the plant needs.
-        float sMax = max(max(gScale.x, gScale.y), gScale.z) * modelScale;
-        vec3 wc = toWorld(bs.xyz);
-        float wr = bs.w * sMax;
-        if (!inFrustum(wc, wr) || occluded(wc, wr)) {
-            continue;
-        }
-        for (uint k = 0u; k < nClusters; k++) {
+        memoryBarrierShared();
+        barrier();
+        uint pairs = sCount * nClusters;
+        for (uint j = lid; j < pairs; j += gl_WorkGroupSize.x) {
+            uint p = j / nClusters;
+            uint k = j - p * nClusters;
+            gAnchor = sAnchor[p].xyz;
+            float sMax = sAnchor[p].w;
+            gX = sX[p].xyz;
+            uint idx = floatBitsToUint(sX[p].w);
+            gUp = sUp[p].xyz;
+            gZ = cross(gX, gUp);
+            gScale = sScale[p].xyz;
             NFCluster cl = clusters[firstCluster + k];
-            // A shadow pass casts the variant's shadow proxy and nothing
-            // else; a camera pass never draws it.
-            bool proxy = cl.info.x == 3u;
-            if (proxy != (shadowPass != 0)) {
-                continue;
-            }
-            if (!proxy && !lodWithin(cl.errs.x * sMax, toWorld(cl.lod.xyz), cl.lod.w * sMax)) {
-                continue;
-            }
-            if (!proxy && cl.errs.y >= 0.0 && lodWithin(cl.errs.y * sMax, toWorld(cl.parent.xyz), cl.parent.w * sMax)) {
-                continue;
+            if (shadowPass == 0) {
+                if (!lodWithin(cl.errs.x * sMax, toWorld(cl.lod.xyz), cl.lod.w * sMax)) {
+                    continue;
+                }
+                if (cl.errs.y >= 0.0 && lodWithin(cl.errs.y * sMax, toWorld(cl.parent.xyz), cl.parent.w * sMax)) {
+                    continue;
+                }
             }
             vec3 cw = toWorld(cl.sphere.xyz);
             float cr2 = cl.sphere.w * sMax;
@@ -233,5 +270,8 @@ void main() {
             }
             atomicAdd(cmds[cmd * 5u + 1u], mult);
         }
+        // Everyone is done with this round's shared frames before the next
+        // overwrites them.
+        barrier();
     }
 }

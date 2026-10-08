@@ -27,8 +27,9 @@ layout(local_size_x = 64) in;
 layout(std430, binding = 9) readonly buffer Bones {
     vec4 bones[];
 };
-// Per variant, two each: (first bone, bones, first cluster, clusters) and
-// its bounding sphere's bits (nfoliage_cull_comp.glsl).
+// Per variant, three each (render/nfoliage.go's nfBucketWords): (first bone,
+// bones, first cluster, clusters), its bounding sphere's bits, and its DAG /
+// shadow-proxy split (nfoliage_cull_comp.glsl).
 layout(std430, binding = 5) readonly buffer Buckets {
     uvec4 buckets[];
 };
@@ -81,7 +82,7 @@ void main() {
     float amount = windStrength * (0.2 + 0.8 * gust);
     vec3 axis = dir == 0 ? vec3(0.0, 0.0, -1.0) : vec3(1.0, 0.0, 0.0);
 
-    uvec4 bk = buckets[bucket * 2];
+    uvec4 bk = buckets[bucket * 3];
     int first = int(bk.x);
     int count = int(bk.y);
     for (int i = 0; i < count; i++) {
