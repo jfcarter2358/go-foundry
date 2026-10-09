@@ -222,6 +222,11 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// scatter sways identically in the depth maps and in the color pass and
 		// a blade's shadow stays under the blade.
 		BiomeWindTime = float32(o.Now)
+		// And the same wind for the cooked meshes that bend in it
+		// (wind_common.glsl), on the same clock, before the shadows and the
+		// cull read it.
+		gfx.Wind.Set(foliageWind.dir, foliageWind.strength, BiomeWindTime)
+		gfx.Wind.Flush()
 		// The cloud wind clock, latched for the same reason: the shadow bake
 		// below and the volumetric pass after the transparent pass must see
 		// one cloud, or its shadow slides off it.

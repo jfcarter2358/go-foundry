@@ -52,7 +52,7 @@ shared uint frontier[2][FRONTIER];
 shared uint frontierLen[2];
 
 bool nodeWanted(Node n, mat4 m, float s) {
-    if (!inFrustum((m * vec4(n.sphere.xyz, 1.0)).xyz, n.sphere.w * s)) {
+    if (!inFrustum((m * vec4(n.sphere.xyz, 1.0)).xyz, n.sphere.w * s + clusterPad)) {
         return false;
     }
     if (n.errs.x < 3.0e38) {
@@ -76,6 +76,7 @@ void main() {
     mat4 m = inst[ii].model;
     float s = maxScale(m);
     uint leafBase = inst[ii].flags.z;
+    clusterPad = instancePad(ii);
     if (lid == 0u) {
         frontier[0][0] = inst[ii].flags.y;
         frontierLen[0] = 1u;

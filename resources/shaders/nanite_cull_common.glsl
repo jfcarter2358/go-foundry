@@ -66,10 +66,13 @@ uniform uint passStamp;
 // faces are not where the cone says); bit 2 — its mesh is closed, so a shadow
 // pass may cone-test it too (CONE_CLOSED); bit 3 — its mesh has a cluster
 // DAG: flags.y is its LOD tree's root node, flags.z its first leaf mark.
+// wind: how it bends in the wind (wind_common.glsl, spliced in above this
+// file); zero for none.
 struct Instance {
     mat4 model;
     vec4 sphere; // local centre, radius
     uvec4 flags;
+    vec4 wind;
 };
 
 layout(std430, binding = 0) readonly buffer Instances {
@@ -100,6 +103,16 @@ bool inFrustum(vec3 c, float r) {
     }
     return true;
 }
+
+// instancePad is how far instance i's wind can carry any of its vertices
+// (windReach): what its sphere, its tree's and its clusters' are grown by.
+float instancePad(uint i) {
+    return windReach(inst[i].model, inst[i].wind);
+}
+
+// clusterPad is the pad of the instance whose clusters this invocation is
+// testing, set by the cull stages before they call clusterDraws.
+float clusterPad = 0.0;
 
 float maxScale(mat4 m) {
     return sqrt(max(dot(m[0].xyz, m[0].xyz), max(dot(m[1].xyz, m[1].xyz), dot(m[2].xyz, m[2].xyz))));

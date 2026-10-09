@@ -10,6 +10,12 @@ uniform mat4 model;
 // `model` as it always has, and the attribute is never looked at.
 uniform int instanced;
 layout(location = 7) in mat4 instanceModel;
+// A cooked placement's wind (wind_common.glsl, render/nanite_scenery.go):
+// its mesh's bounding sphere and its wind, beside its matrix in the instance
+// record. Never enabled on any other draw, so they read (0,0,0,1) there,
+// which is no wind.
+layout(location = 13) in vec4 instanceSphere;
+layout(location = 14) in vec4 instanceWind;
 
 // Water animation. isWater gates the whole path; time is seconds since start.
 uniform int   isWater;
@@ -105,7 +111,11 @@ void main() {
     // (skin_common.glsl), so every static surface takes the same path it always
     // did.
     mat4 M = instanced != 0 ? instanceModel : model;
-    vec4 worldPos = M * skinPosition(vert);
+    vec4 localPos = skinPosition(vert);
+    vec4 worldPos = M * localPos;
+    if (instanced != 0) {
+        worldPos.xyz += windOffset(localPos.xyz, M, instanceWind, instanceSphere);
+    }
 
     // Vertical displacement only, so worldPos.xz still carries the undisplaced
     // surface coordinate the fragment stage needs to re-derive the normal.

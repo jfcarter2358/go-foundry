@@ -328,6 +328,10 @@ func pointShadowSignaturesIn(level *world.Level, pl world.PointLight, cubemap ui
 		for si := range s.Submeshes {
 			sh.geometry(&s.Submeshes[si])
 		}
+		// Swaying in the wind (nanite_scenery.go): changed every frame.
+		if sceneryWindMoving(s) {
+			sh.f32(BiomeWindTime)
+		}
 		fold(mask, 1<<32|uint64(i), sh.sum())
 	}
 

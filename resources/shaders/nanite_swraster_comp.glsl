@@ -58,6 +58,7 @@ struct Instance {
     mat4 model;
     vec4 sphere;
     uvec4 flags;
+    vec4 wind;
 };
 layout(std430, binding = 0) readonly buffer Instances {
     Instance inst[];
@@ -106,6 +107,15 @@ uniform mat4 camera;
 uniform ivec2 viewSize;
 
 shared mat4 mvp;
+// A windy placement (wind_common.glsl, spliced in by the Go side): its
+// corners go through the model matrix, take the wind's offset, then the
+// view-projection, as vertex.glsl's do. windy says so; vp, model, wnd and
+// sph are the cluster's instance's, made by the first thread with mvp.
+shared bool windy;
+shared mat4 vp;
+shared mat4 mdl;
+shared vec4 wnd;
+shared vec4 sph;
 shared int boxLoX, boxLoY, boxHiX, boxHiY;
 uniform uint recordBase;
 uniform uint binBase;
@@ -123,7 +133,14 @@ void rasterise(uint first, int baseVertex, uint ii, uint t, uint id) {
     for (int k = 0; k < 3; k++) {
         uint v = uint(int(indices[first + 3u * t + uint(k)]) + baseVertex);
         vec4 p = vec4(vertexData[5u * v], vertexData[5u * v + 1u], vertexData[5u * v + 2u], 1.0);
-        vec4 clip = mvp * p;
+        vec4 clip;
+        if (windy) {
+            vec4 w = mdl * p;
+            w.xyz += windOffset(p.xyz, mdl, wnd, sph);
+            clip = vp * w;
+        } else {
+            clip = mvp * p;
+        }
         if (clip.w <= 0.0) {
             return; // never, in front of swNear; a safety net
         }
@@ -218,6 +235,13 @@ void main() {
             records[rec].a = uvec4(a.x, a.z, a.w, binBase + b.x);
             records[rec].b = uvec4(rec + 1u, a.y, 0u, 0u);
             mvp = projection * camera * inst[a.w].model;
+            wnd = inst[a.w].wind;
+            windy = windReach(inst[a.w].model, wnd) > 0.0;
+            if (windy) {
+                vp = projection * camera;
+                mdl = inst[a.w].model;
+                sph = inst[a.w].sphere;
+            }
         }
         barrier();
         uint tris = min(a.y / 3u, 128u);

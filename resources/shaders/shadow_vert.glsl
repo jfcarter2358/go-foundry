@@ -9,6 +9,12 @@ uniform mat4 model;
 // `model` as it always has, and the attribute is never looked at.
 uniform int instanced;
 layout(location = 7) in mat4 instanceModel;
+// A cooked placement's wind (wind_common.glsl, render/nanite_scenery.go):
+// its mesh's bounding sphere and its wind, beside its matrix in the instance
+// record. Never enabled on any other draw, so they read (0,0,0,1) there,
+// which is no wind.
+layout(location = 13) in vec4 instanceSphere;
+layout(location = 14) in vec4 instanceWind;
 
 layout(location = 0) in vec3 vert;
 
@@ -16,5 +22,11 @@ void main() {
     // Skinned here too, or an animated entity would cast the silhouette of its
     // rest pose while the mesh moved — see skin_common.glsl.
     mat4 M = instanced != 0 ? instanceModel : model;
-    gl_Position = lightSpaceMatrix * M * skinPosition(vert);
+    vec4 local = skinPosition(vert);
+    vec4 worldPos = M * local;
+    // Bent as the colour pass bends it (vertex.glsl).
+    if (instanced != 0) {
+        worldPos.xyz += windOffset(local.xyz, M, instanceWind, instanceSphere);
+    }
+    gl_Position = lightSpaceMatrix * worldPos;
 }

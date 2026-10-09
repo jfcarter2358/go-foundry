@@ -227,7 +227,11 @@ func (s *naniteSWRaster) build(mode int) (err error) {
 		head += "#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_NV_gpu_shader5 : enable\n" +
 			"#extension GL_NV_shader_atomic_int64 : require\n#define SW64\n"
 	}
-	cs, cerr := gfx.CompileShader(head+mustReadShader(biomeShaderPath("nanite_swraster_comp.glsl")), gl.COMPUTE_SHADER)
+	rsrc, werr := gfx.InjectWind(head + mustReadShader(biomeShaderPath("nanite_swraster_comp.glsl")))
+	if werr != nil {
+		return fmt.Errorf("raster: %v", werr)
+	}
+	cs, cerr := gfx.CompileShader(rsrc, gl.COMPUTE_SHADER)
 	if cerr != nil {
 		return fmt.Errorf("raster: %v", cerr)
 	}

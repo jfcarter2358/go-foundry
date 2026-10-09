@@ -23,6 +23,7 @@ void main() {
     bool cone = instanceCones(fl);
     bool walked = instanceWalked(fl);
     uint leafBase = inst[ii].flags.z;
+    clusterPad = instancePad(ii);
     for (uint k = gl_LocalInvocationID.x; k < t.a.y; k += gl_WorkGroupSize.x) {
         uint ci = t.a.x + k;
         bool vis = instVisible;

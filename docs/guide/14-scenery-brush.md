@@ -181,6 +181,40 @@ cook. In the level file the overrides are `materials: {stone: granite}`.
 A cooked mesh draws opaque: a slot whose texture has soft alpha is not sorted
 the way a classic model's translucent parts are.
 
+### Wind
+
+A cooked prop can sway in the wind: an imported tree whose trunk leans with
+each gust and whose leaves flutter. Tick **Sway in the wind** in its panel's
+**Wind** group, or give it `wind:` in the level file:
+
+```yaml
+scenery:
+- id: oak_3
+  model: models/oak.fnm
+  position: {x: 4, "y": 0, z: -12}
+  wind:
+    bend: 0.02     # how far the top leans in a full gust, as a fraction of the height
+    flutter: 0.08  # metres a branch tip at the crown's edge bobs and its leaves shake
+```
+
+Nothing in the mesh needs authoring or re-cooking for it. The motion comes from
+where each vertex sits in the mesh. The trunk bends by the square of the height
+up it, so its foot stays planted. The flutter is nothing on the vertical line
+through the middle of the mesh's bounds and grows to the full amount at their
+edge and top, so the trunk stays still and the outer branches move most. The
+model should stand upright with its trunk roughly in the middle of its bounds,
+as most tree models do.
+
+The wind's direction, strength and gusts are the ones the biome scatter sways
+in, so a tree moves with the grass round it. The bend and its shadow move
+together in every pass. Collision, picking and shots keep the still mesh. The
+wind shows only on the GPU path: a cooked prop drawn the classic way
+(`FOUNDRY_NANITE_MESHES=0`, or a driver without the GPU cull) stands still.
+
+A swaying prop costs a little more than a still one. Its shadow is drawn again
+every frame rather than cached, and with TAA its leaves are smoothed using the
+camera's motion only, not their own.
+
 `FOUNDRY_NANITE_MESHES=0` draws cooked props the classic way, for comparison;
 `FOUNDRY_NANITE_LOD=0` keeps the GPU path but draws every prop at full detail.
 A cooked prop drawn the classic way still casts its shadow from the cook's

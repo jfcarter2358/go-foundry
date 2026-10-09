@@ -154,6 +154,7 @@ func editorSceneryProperties(s *world.Scenery) {
 	editorPropGroupOpen("Collision##sccolgrp", func() { editorSceneryCollision(s) })
 	if s.Nanite != nil || nanitecook.IsSourcePath(s.Model) {
 		editorPropGroupOpen("Nanite##scnanite", func() { editorSceneryNanite(s) })
+		editorPropGroupOpen("Wind##scwind", func() { editorSceneryWind(s) })
 	}
 	editorPropGroup("Actions##scactions", 0, func() { editorSceneryActions(s) })
 }
@@ -224,6 +225,46 @@ func editorSceneryTransform(s *world.Scenery) {
 			world.EntityScaleClamp(scale[1]),
 			world.EntityScaleClamp(scale[2]),
 		}
+	}
+}
+
+// editorSceneryWind draws a cooked prop's wind (world.SceneryWind): whether
+// it sways, how far its top leans and how far its leaves shake.
+func editorSceneryWind(s *world.Scenery) {
+	on := s.Wind.Active()
+	if imgui.Checkbox("Sway in the wind##scwindon", &on) {
+		EditorPushUndo()
+		if on {
+			s.Wind = world.DefaultSceneryWind
+		} else {
+			s.Wind = world.SceneryWind{}
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Bend with the level's wind, in time with the grass.\nCollision and picking keep the still mesh.")
+	}
+	if !on {
+		return
+	}
+	bend := s.Wind.Bend * 100
+	if editorDragFloatStep("Bend (% of height)##scwindbend", &bend, 0, 25, "%.1f", 0.1) {
+		s.Wind.Bend = max(bend, 0) / 100
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far the top leans over in a full gust.\nThe trunk's foot stays put.")
+	}
+	if editorDragFloatStep("Flutter (m)##scwindflutter", &s.Wind.Flutter, 0, 2, "%.3f", 0.005) {
+		s.Wind.Flutter = max(s.Wind.Flutter, 0)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far branch tips at the crown's edge bob and leaves shake.\nNothing on the trunk's axis, the full amount at the bounds' edge.")
+	}
+	if !s.NaniteGPU && s.Nanite != nil {
+		editorTextMutedWrapped("Drawn on the classic path here, which does not sway: the wind shows only through the GPU cull.")
+	}
+	if !s.Wind.Active() {
+		// Both dragged to nothing: the checkbox reads off next frame.
+		s.Wind = world.SceneryWind{}
 	}
 }
 

@@ -48,6 +48,7 @@ struct MatInstance {
     mat4 model;
     vec4 sphere;
     uvec4 flags;
+    vec4 wind;
 };
 layout(std430, binding = 0) readonly buffer MatInstances {
     MatInstance matInstances[];
@@ -69,6 +70,9 @@ void main() {
     uvec4 ra = records[(id >> 12) - 1u].a;
     uint first = ra.x + 3u * (id & 4095u);
     instanceModel = matInstances[ra.z].model;
+    // Its wind (wind_common.glsl): the corners are bent as the ID pass bent them.
+    instanceSphere = matInstances[ra.z].sphere;
+    instanceWind = matInstances[ra.z].wind;
 
     vec4 clip[3];
     vec2 uv[3];

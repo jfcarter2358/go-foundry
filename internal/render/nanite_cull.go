@@ -245,13 +245,20 @@ const (
 	rangeMaxClusters = cluster.WindowMaxClusters
 )
 
-// gpuInstance is an instance (std430, 96 bytes). Its first 64 bytes are also
+// gpuInstance is an instance (std430, 112 bytes). Its first 64 bytes are also
 // the per-instance model matrix the vertex stage reads at locations 7-10, so
-// one buffer serves the cull and the draw.
+// one buffer serves the cull and the draw; its Sphere and Wind are the
+// vertex stage's instanceSphere and instanceWind (locations 13 and 14).
+//
+// Wind is how the placement bends in the wind (wind_common.glsl's
+// windOffset): bend, flutter, the mesh's base height and one over its
+// height. Zero — every instance but a windy cooked placement's — is none,
+// and the cull pads nothing for it.
 type gpuInstance struct {
 	Model  [16]float32
 	Sphere [4]float32
 	Flags  [4]uint32
+	Wind   [4]float32
 }
 
 const (
@@ -675,6 +682,13 @@ func (n *naniteCuller) build() (err error) {
 		}
 	}()
 	common := mustReadShader(biomeShaderPath("nanite_cull_common.glsl"))
+	// The wind (wind_common.glsl): a windy placement's spheres are padded by
+	// how far it can swing.
+	wind, werr := gfx.WindCommonSource()
+	if werr != nil {
+		return werr
+	}
+	common = wind + "\n" + common
 	clusterCommon := mustReadShader(biomeShaderPath("nanite_cluster_common.glsl"))
 	for _, s := range []struct {
 		file     string

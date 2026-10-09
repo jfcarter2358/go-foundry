@@ -58,6 +58,8 @@ var (
 	reInvariant    = regexp.MustCompile(`(?m)^\s*invariant\s+gl_Position\s*;[^\n]*\n`)
 	reMain         = regexp.MustCompile(`\bvoid\s+main\s*\(\s*\)`)
 	reInstanceAttr = regexp.MustCompile(`(?m)^\s*layout\s*\(\s*location\s*=\s*7\s*\)\s*in\s+mat4\s+instanceModel\s*;`)
+	reSphereAttr   = regexp.MustCompile(`(?m)^\s*layout\s*\(\s*location\s*=\s*13\s*\)\s*in\s+vec4\s+instanceSphere\s*;`)
+	reWindAttr     = regexp.MustCompile(`(?m)^\s*layout\s*\(\s*location\s*=\s*14\s*\)\s*in\s+vec4\s+instanceWind\s*;`)
 )
 
 // visVertexSource is the ID pass's vertex stage: vertSrc (vertex.glsl with
@@ -70,6 +72,13 @@ func visVertexSource(vertSrc string) (string, error) {
 	if !reMain.MatchString(vertSrc) {
 		return "", fmt.Errorf("vertex.glsl: no main")
 	}
+	// The placement's wind (wind_common.glsl), read from the instance record
+	// with its matrix: the ID pass must bend a tree as the forward pass would.
+	if !reSphereAttr.MatchString(vertSrc) || !reWindAttr.MatchString(vertSrc) {
+		return "", fmt.Errorf("vertex.glsl: no per-instance sphere and wind at locations 13 and 14 to read from the instance buffer")
+	}
+	vertSrc = reSphereAttr.ReplaceAllString(vertSrc, "vec4 instanceSphere;")
+	vertSrc = reWindAttr.ReplaceAllString(vertSrc, "vec4 instanceWind;")
 	src := reInstanceAttr.ReplaceAllString(vertSrc, `mat4 instanceModel;
 // The visibility buffer's command record (render/nanite_vis.go): a = first
 // index, base vertex, instance, material bin; b = the record's number + 1.
@@ -79,6 +88,7 @@ struct VisInstance {
     mat4 model;
     vec4 sphere;
     uvec4 flags;
+    vec4 wind;
 };
 layout(std430, binding = 0) readonly buffer VisInstances {
     VisInstance visInstances[];
@@ -89,6 +99,8 @@ flat out uint visCmd;`)
 
 void main() {
     instanceModel = visInstances[visRecA.z].model;
+    instanceSphere = visInstances[visRecA.z].sphere;
+    instanceWind = visInstances[visRecA.z].wind;
     nvVertexMain();
     visCmd = visRecB.x;
 }

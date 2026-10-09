@@ -13,6 +13,7 @@ struct Instance {
     mat4 model;
     vec4 sphere;
     uvec4 flags;
+    vec4 wind;
 };
 layout(std430, binding = 0) readonly buffer Instances {
     Instance inst[];
@@ -39,7 +40,10 @@ flat out uint vLevel;
 out vec3 vWorld;
 
 void main() {
-    vec4 w = inst[slot.x].model * vec4(vert, 1.0);
+    mat4 M = inst[slot.x].model;
+    vec4 w = M * vec4(vert, 1.0);
+    // Bent as the colour pass bends it (wind_common.glsl, spliced in by the Go side).
+    w.xyz += windOffset(vert, M, inst[slot.x].wind, inst[slot.x].sphere);
     vWorld = w.xyz;
     vInstance = slot.x;
     vCluster = slot.y;

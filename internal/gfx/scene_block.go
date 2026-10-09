@@ -188,6 +188,8 @@ func (s *SceneBuffer) BindAt(binding uint32) {
 func BindSceneBlocks() {
 	Scene.Bind()
 	PreviewScene.Bind()
+	// And the wind (wind_shader.go), which every static mesh's vertex stage reads.
+	Wind.Bind()
 }
 
 // previewScenePrograms are the programs re-pointed at PreviewScene.

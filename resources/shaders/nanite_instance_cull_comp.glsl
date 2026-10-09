@@ -22,7 +22,7 @@ void main() {
     mat4 m = inst[i].model;
     vec4 s = inst[i].sphere;
     vec3 c = (m * vec4(s.xyz, 1.0)).xyz;
-    float r = s.w * maxScale(m);
+    float r = s.w * maxScale(m) + instancePad(i);
     bool vis = inFrustum(c, r);
     if (vis && mode == CULL_PASS2) {
         vis = !occluded(c, r);

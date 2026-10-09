@@ -38,6 +38,7 @@ void main() {
     bool instVisible = instVis[ii] != 0u;
     bool walked = instanceWalked(fl);
     uint leafBase = inst[ii].flags.z;
+    clusterPad = instancePad(ii);
     bool cone = instanceCones(fl);
     uint count = min(t.a.y, 32u);
     // drawn: the survivors; inCut: every cluster of the window the LOD test

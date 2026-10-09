@@ -99,7 +99,7 @@ bool clusterDraws(Cluster cl, bool vis, mat4 m, float s, bool cone, uint h) {
     float r = 0.0;
     if (vis) {
         c = (m * vec4(cl.sphere.xyz, 1.0)).xyz;
-        r = cl.sphere.w * s;
+        r = cl.sphere.w * s + clusterPad;
         vis = inFrustum(c, r);
         if (vis && cone && cl.cone.w < 1.0) {
             vec3 apex = (m * vec4(cl.apex.xyz, 1.0)).xyz;

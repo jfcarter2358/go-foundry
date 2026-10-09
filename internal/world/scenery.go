@@ -69,6 +69,13 @@ type Scenery struct {
 	// cooked has no hulls or mesh to offer and always collides as its box.
 	Collision meshcollide.Mode
 
+	// Wind bends a cooked mesh in the wind, in the vertex stage
+	// (resources/shaders/wind_common.glsl): a tree's trunk leans and its
+	// leaves flutter. The zero value is none. Drawn only by the GPU-driven
+	// cull (NaniteGPU); a model on the classic path stands still. Collision,
+	// picking and raycasts keep the still mesh.
+	Wind SceneryWind
+
 	// ---------- runtime, never authored and never saved ----------
 
 	// Submeshes is the uploaded mesh, in model space — the draw carries
@@ -91,6 +98,28 @@ type Scenery struct {
 	// the editor's placement ghost, which nothing would otherwise draw.
 	NoNanite bool
 }
+
+// SceneryWind is how a placement bends in the wind. The wind's direction,
+// strength and gusts are the level's, shared with the biome scatter, so a
+// tree sways with the grass round it.
+type SceneryWind struct {
+	// Bend is how far the top leans over in a full gust, as a fraction of
+	// the mesh's height: 0.02 moves the crown of a 20 m tree 40 cm. The
+	// trunk bends by the square of the height up it, so its foot stays put.
+	Bend float32
+	// Flutter is how far, in metres, a branch tip at the edge of the crown
+	// bobs and its leaves shake. It grows from nothing on the trunk's axis
+	// (the centre of the mesh's bounds) to this at the bounds' edge, and
+	// from nothing at the base to this at the top.
+	Flutter float32
+}
+
+// Active reports whether the placement moves in the wind at all.
+func (w SceneryWind) Active() bool { return w.Bend > 0 || w.Flutter > 0 }
+
+// DefaultSceneryWind is what the editor's Wind checkbox switches on: a
+// tree's sway, gentle enough for a broadleaf or a conifer.
+var DefaultSceneryWind = SceneryWind{Bend: 0.02, Flutter: 0.08}
 
 // NaniteMeshes is whether cooked meshes draw through the GPU-driven cull. On
 // by default; FOUNDRY_NANITE_MESHES=0 puts them on the classic per-model path
@@ -570,7 +599,17 @@ func SceneryFromRaw(r RawScenery) Scenery {
 		Solid:     BoolDefault(r.Solid, true),
 		Materials: copyStringMap(r.Materials),
 		Collision: collisionModeFromRaw(r.ID, r.Collision),
+		Wind:      sceneryWindFromRaw(r.Wind),
 	}
+}
+
+// sceneryWindFromRaw reads a placement's wind: key; absent is still air, and
+// a negative amount is none.
+func sceneryWindFromRaw(r *RawSceneryWind) SceneryWind {
+	if r == nil {
+		return SceneryWind{}
+	}
+	return SceneryWind{Bend: max(r.Bend, 0), Flutter: max(r.Flutter, 0)}
 }
 
 // collisionModeFromRaw reads a placement's collision: key. A value that is
@@ -610,6 +649,9 @@ func SceneryToRaw(s *Scenery) RawScenery {
 	}
 	if s.Collision != meshcollide.ModeAuto {
 		r.Collision = s.Collision.String()
+	}
+	if s.Wind.Active() {
+		r.Wind = &RawSceneryWind{Bend: s.Wind.Bend, Flutter: s.Wind.Flutter}
 	}
 	if sc := s.EffectiveScale(); sc != (mgl32.Vec3{1, 1, 1}) {
 		r.Scale = &RawVec3{X: sc.X(), Y: sc.Y(), Z: sc.Z()}

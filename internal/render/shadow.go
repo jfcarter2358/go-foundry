@@ -164,6 +164,12 @@ func LinkProgram(vertPath, fragPath string, out *uint32) error {
 	if err != nil {
 		return err
 	}
+	// And bend in the wind as the colour pass bends (wind_common.glsl), or a
+	// swaying tree's shadow stands still under it.
+	vertSrc, err = gfx.InjectWind(vertSrc)
+	if err != nil {
+		return err
+	}
 	fragSrc, err := gfx.ReadShaderFile(fragPath)
 	if err != nil {
 		return err

@@ -28,7 +28,8 @@ package render
 //   - each entity: visible, its matrix and its frame's, each attachment's
 //     matrix and mesh — and a posed (skinned) one counts as moved every
 //     frame, rather than have every bone of it hashed to find out;
-//   - each scenery placement: its matrix and meshes;
+//   - each scenery placement: its matrix and meshes — and a cooked one
+//     swaying in the wind counts as changed every frame;
 //   - the shadow-casting sprites and particles, instance by instance.
 //
 // And what it cannot hash it treats as moving every frame, as the point
@@ -276,6 +277,14 @@ func (t *vsmTracker) collect(level *world.Level, cam mgl32.Vec3, reach float32) 
 		h.u64(uint64(boolToInt32(s.NaniteGPU)))
 		for si := range s.Submeshes {
 			h.geometry(&s.Submeshes[si])
+		}
+		// A cooked mesh swaying in the wind changes every frame, over the
+		// box it can swing through. It is drawn with the static layer
+		// (vsmRenderer.drawStatic), so its pages are drawn again whole.
+		if sceneryWindMoving(s) {
+			h.f32(BiomeWindTime)
+			p := sceneryWindReach(s, gfx.Wind.Strength())
+			lo, hi = lo.Sub(mgl32.Vec3{p, p, p}), hi.Add(mgl32.Vec3{p, p, p})
 		}
 		t.note(t.scenery, i, h.sum(), vsmBox{lo, hi, true})
 	}

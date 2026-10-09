@@ -36,9 +36,17 @@ package render
 // FOUNDRY_NANITE_STREAM=0 keeps the Phase 2 pool, every mesh decoded whole
 // (nanite.Mesh.Flat) and uploaded with the level.
 //
+// Wind: a placement with world.Scenery.Wind bends in the vertex stage
+// (resources/shaders/wind_common.glsl) — its instance record carries the
+// wind, every stage that places a cooked vertex adds the same offset, and the
+// cull pads its spheres by how far it can swing. Its normals are the still
+// mesh's, and it writes no motion vectors of its own (TAA reprojects its
+// leaves with the camera's motion, as the classic foliage path's).
+//
 // What is not here yet: translucent slots (a cooked mesh draws in the opaque
 // pass, alpha-to-coverage cutouts and all — a texture with partial alpha is
-// not sorted as a classic model's is), and skinning (a cooked mesh is static).
+// not sorted as a classic model's is), and skinning (a cooked mesh is static,
+// bar the wind).
 
 import (
 	"encoding/binary"
@@ -82,8 +90,10 @@ type naniteSceneryRenderer struct {
 	groups []gfx.Material
 	insts  []gpuInstance
 	// spheres are the placements' world spheres, for the CPU's look ahead of
-	// a pass (inView).
+	// a pass (inView), and reach how far each one's wind can swing it in
+	// air of strength 1 (0: still).
 	spheres []mgl32.Vec4
+	reach   []float32
 	// leafBase is each placement's first leaf mark.
 	leafBase []uint32
 
@@ -402,6 +412,7 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 	if changed {
 		r.insts = make([]gpuInstance, len(r.members))
 		r.spheres = make([]mgl32.Vec4, len(r.members))
+		r.reach = make([]float32, len(r.members))
 	}
 	for k, i := range r.members {
 		s := &lvl.Scenery[i]
@@ -415,10 +426,18 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 				in.Flags[1], in.Flags[2] = pm.nodeBase, r.leafBase[k]
 			}
 		}
+		if w, ok := sceneryWindRecord(s); ok {
+			in.Wind = w
+			// A bent cluster's triangles no longer face where its cone
+			// says.
+			in.Flags[0] |= instNoCone
+			in.Flags[0] &^= instShadowCone
+		}
 		if in != r.insts[k] {
 			r.insts[k] = in
 			c, rad := naniteSceneryBounds(s)
 			r.spheres[k] = c.Vec4(rad)
+			r.reach[k] = sceneryWindReach(s, 1)
 			changed = true
 		}
 	}
@@ -433,8 +452,10 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 	}
 }
 
-// attachInstances points the pool VAO's instance-matrix attributes at the
-// batch's instance buffer: the first 64 bytes of each 96-byte record.
+// attachInstances points the pool VAO's instance attributes at the batch's
+// instance buffer: the matrix (the first 64 bytes of each record), the
+// sphere after it and the wind at its end (vertex.glsl's instanceSphere and
+// instanceWind).
 func (r *naniteSceneryRenderer) attachInstances() {
 	r.attachedVAO = r.vao
 	gl.BindVertexArray(r.vao)
@@ -444,6 +465,14 @@ func (r *naniteSceneryRenderer) attachInstances() {
 		gl.EnableVertexAttribArray(loc)
 		gl.VertexAttribPointerWithOffset(loc, 4, gl.FLOAT, false, gpuInstanceStride, uintptr(i*16))
 		gl.VertexAttribDivisor(loc, 1)
+	}
+	for _, a := range []struct {
+		loc uint32
+		off uintptr
+	}{{gfx.AttribInstanceSphere, unsafe.Offsetof(gpuInstance{}.Sphere)}, {gfx.AttribInstanceWind, unsafe.Offsetof(gpuInstance{}.Wind)}} {
+		gl.EnableVertexAttribArray(a.loc)
+		gl.VertexAttribPointerWithOffset(a.loc, 4, gl.FLOAT, false, gpuInstanceStride, a.off)
+		gl.VertexAttribDivisor(a.loc, 1)
 	}
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
@@ -608,12 +637,50 @@ func (r *naniteSceneryRenderer) inView(cull *Frustum) int {
 		return len(r.spheres)
 	}
 	n := 0
-	for _, sp := range r.spheres {
-		if sphereInFrustum(*cull, sp.Vec3(), sp[3]) {
+	k := gfx.Wind.Strength()
+	for i, sp := range r.spheres {
+		if sphereInFrustum(*cull, sp.Vec3(), sp[3]+r.reach[i]*k) {
 			n++
 		}
 	}
 	return n
+}
+
+// sceneryWindRecord is s's instance wind (wind_common.glsl's windOffset):
+// bend, flutter, its mesh's base height and one over its height. False for
+// a placement without wind, or a mesh with no height to bend over.
+func sceneryWindRecord(s *world.Scenery) ([4]float32, bool) {
+	if !s.Wind.Active() {
+		return [4]float32{}, false
+	}
+	lo, hi := s.LocalMin.Y(), s.LocalMax.Y()
+	if s.Nanite != nil && hi <= lo {
+		lo, hi = s.Nanite.Center.Y()-s.Nanite.Radius, s.Nanite.Center.Y()+s.Nanite.Radius
+	}
+	if hi-lo < 1e-4 {
+		return [4]float32{}, false
+	}
+	return [4]float32{s.Wind.Bend, s.Wind.Flutter, lo, 1 / (hi - lo)}, true
+}
+
+// sceneryWindMoving reports whether s is drawn swaying this frame: a cooked
+// placement the GPU cull draws, with wind, in moving air. What the shadow
+// caches redraw every frame.
+func sceneryWindMoving(s *world.Scenery) bool {
+	return s.NaniteGPU && s.Nanite != nil && s.Wind.Active() && gfx.Wind.Strength() > 0
+}
+
+// sceneryWindReach is how far s's wind can carry any vertex, in air of
+// strength k: wind_common.glsl's windReach, for the CPU's tests.
+func sceneryWindReach(s *world.Scenery, k float32) float32 {
+	w, ok := sceneryWindRecord(s)
+	if !ok || k <= 0 {
+		return 0
+	}
+	m := s.ModelMatrix()
+	height := m.Col(1).Vec3().Len() / w[3]
+	bend := k * w[0] * height * 1.15
+	return bend + bend*bend*0.5/max(height, 0.05) + 2.5*k*w[1]
 }
 
 // naniteSceneryBounds is a placement's world sphere, for tests and the

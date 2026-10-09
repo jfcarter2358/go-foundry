@@ -307,6 +307,17 @@ type RawScenery struct {
 	// Collision is how a cooked Nanite mesh collides: auto (absent), box,
 	// hulls, mesh or none. Any other model collides as its box.
 	Collision string `yaml:"collision,omitempty"`
+	// Wind bends a cooked Nanite mesh in the level's wind: `wind: {bend:
+	// 0.02, flutter: 0.08}`. Absent: it stands still.
+	Wind *RawSceneryWind `yaml:"wind,omitempty"`
+}
+
+// RawSceneryWind is a placement's wind (world.SceneryWind).
+type RawSceneryWind struct {
+	// Bend is how far the top leans in a full gust, as a fraction of the mesh's height (0.02 = 2%).
+	Bend float32 `yaml:"bend,omitempty"`
+	// Flutter is how far, in metres, branch tips at the crown's edge bob and leaves shake.
+	Flutter float32 `yaml:"flutter,omitempty"`
 }
 
 // RawDecal is the YAML representation of a projected decal (decal.go) — a

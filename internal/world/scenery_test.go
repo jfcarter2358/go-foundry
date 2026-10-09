@@ -144,6 +144,9 @@ func TestUntouchedSceneryWritesNoOptionalKeys(t *testing.T) {
 	if r.Rotation != (RawVec3{}) {
 		t.Errorf("an unrotated prop wrote rotation: %+v", r.Rotation)
 	}
+	if r.Wind != nil {
+		t.Errorf("a still prop wrote wind: %+v", *r.Wind)
+	}
 }
 
 // And the other direction: absent means the default, not the zero value. A prop
@@ -167,6 +170,7 @@ func TestSceneryRoundTripsEveryField(t *testing.T) {
 		Rotation: mgl32.Vec3{0.1, 1.25, -0.3},
 		Scale:    mgl32.Vec3{2, 0.5, 2},
 		Solid:    false,
+		Wind:     SceneryWind{Bend: 0.03, Flutter: 0.1},
 	}
 	got := SceneryFromRaw(SceneryToRaw(&want))
 	// Compared field by field rather than with reflect.DeepEqual: the runtime
@@ -174,7 +178,7 @@ func TestSceneryRoundTripsEveryField(t *testing.T) {
 	// format and is deliberately absent on both sides here.
 	if got.ID != want.ID || got.Model != want.Model ||
 		got.Position != want.Position || got.Rotation != want.Rotation ||
-		got.Scale != want.Scale || got.Solid != want.Solid {
+		got.Scale != want.Scale || got.Solid != want.Solid || got.Wind != want.Wind {
 		t.Fatalf("scenery changed across a round trip:\n got %+v\nwant %+v", got, want)
 	}
 }

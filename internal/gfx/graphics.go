@@ -185,6 +185,13 @@ func WorldProgramSources(vertexShaderPath, fragmentShaderPath string) (string, s
 	if err != nil {
 		return "", "", err
 	}
+	// And the wind (wind_shader.go): a cooked placement with wind bends here,
+	// and in every program built from this source after it — the depth
+	// prepass and the visibility buffer's two passes.
+	vertexSource, err = InjectWind(vertexSource)
+	if err != nil {
+		return "", "", err
+	}
 	// And the fragment stage gets the shared fog source, for the same reason and
 	// on the same terms: fragment.glsl calls applyFog, and every other program
 	// that shades world geometry compiles this same file, so there is one fog

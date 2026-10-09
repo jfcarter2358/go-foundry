@@ -96,7 +96,11 @@ func (d *naniteDebugProgram) build() (err error) {
 			err = fmt.Errorf("%v", r)
 		}
 	}()
-	vs, err := gfx.CompileShader(mustReadShader(biomeShaderPath("nanite_debug_vert.glsl")), gl.VERTEX_SHADER)
+	vsrc, err := gfx.InjectWind(mustReadShader(biomeShaderPath("nanite_debug_vert.glsl")))
+	if err != nil {
+		return err
+	}
+	vs, err := gfx.CompileShader(vsrc, gl.VERTEX_SHADER)
 	if err != nil {
 		return fmt.Errorf("nanite_debug_vert.glsl: %v", err)
 	}
