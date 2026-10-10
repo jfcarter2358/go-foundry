@@ -410,7 +410,7 @@ func (p *Player) advanceRow() {
 			ok = crossed
 		}
 		if ok {
-			p.addStinger(r.p)
+			p.addStinger(r.g)
 			p.pending = append(p.pending[:i], p.pending[i+1:]...)
 			i--
 		}

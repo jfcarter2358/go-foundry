@@ -1063,3 +1063,80 @@ func TestMain(m *testing.M) {
 	glyph.Bravura() // parse once, outside any test's timing
 	os.Exit(m.Run())
 }
+
+// A percussion staff shows each drum at its place with its notehead (a
+// hi-hat's x above the staff, the snare in the third space, the kick in
+// the bottom one), with no key signature and no accidentals; a key the kit
+// map does not name sits at its letter's place.
+func TestPercussionStaff(t *testing.T) {
+	s := fixture(t, "percussion")
+	l := Engrave(s, Options{})
+	if got := len(itemsOf(l, RoleKey)); got != 0 {
+		t.Errorf("%d key signature items on a percussion staff", got)
+	}
+	if got := len(itemsOf(l, RoleAccidental)); got != 0 {
+		t.Errorf("%d accidentals on a percussion staff", got)
+	}
+	heads := func(bar, voice, event int) map[string]float64 {
+		out := map[string]float64{}
+		for _, it := range l.Items {
+			if it.Role == RoleNotehead && it.Ref.Bar == bar && it.Ref.Voice == voice && it.Ref.Event == event {
+				out[it.Glyph] = it.P.Y
+			}
+		}
+		return out
+	}
+	// y is staff-relative: the top line at 0, the bottom at 4.
+	top := l.Staves[0].Top
+	check := func(bar, voice, event int, want map[string]float64) {
+		t.Helper()
+		got := heads(bar, voice, event)
+		if len(got) != len(want) {
+			t.Errorf("bar %d voice %d event %d: heads %v, want %v", bar, voice+1, event, got, want)
+			return
+		}
+		for g, y := range want {
+			if gy, ok := got[g]; !ok || math.Abs(gy-top-y) > 1e-9 {
+				t.Errorf("bar %d voice %d event %d: %s at %v, want %v (all %v)", bar, voice+1, event, g, gy-top, y, got)
+			}
+		}
+	}
+	check(1, 0, 0, map[string]float64{"noteheadXBlack": -1}) // hi-hat G5 and crash A5: both x, a second apart
+	if n := len(itemsBy(l, RoleNotehead, 1, 0, 0)); n != 2 {
+		t.Errorf("hi-hat and crash: %d heads", n)
+	}
+	check(1, 0, 2, map[string]float64{"noteheadXBlack": -0.5, "noteheadBlack": 1.5}) // hi-hat + snare
+	check(1, 0, 5, map[string]float64{"noteheadCircleX": -0.5})                      // open hi-hat
+	check(1, 1, 0, map[string]float64{"noteheadBlack": 3.5})                         // kick, bottom space
+	check(2, 0, 0, map[string]float64{"noteheadBlack": 0})                           // high tom, top line
+	check(2, 0, 10, map[string]float64{"noteheadBlack": 3})                          // low floor tom, G4
+	check(2, 1, 2, map[string]float64{"noteheadHalf": 3.5})                          // a half-note kick
+	// A key the kit map does not name: C5 (72) on the third space, plain.
+	k := one(t, "percussion", "| qC5 qF4 hr |")
+	kl := Engrave(k, Options{})
+	for _, it := range kl.Items {
+		if it.Role == RoleNotehead && it.Ref.Event == 0 && (it.Glyph != "noteheadBlack" || math.Abs(it.P.Y-kl.Staves[0].Top-1.5) > 1e-9) {
+			t.Errorf("unmapped C5: %s at %v", it.Glyph, it.P.Y-kl.Staves[0].Top)
+		}
+	}
+}
+
+func itemsOf(l *List, role Role) []Item {
+	var out []Item
+	for _, it := range l.Items {
+		if it.Role == role {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+func itemsBy(l *List, role Role, bar, voice, event int) []Item {
+	var out []Item
+	for _, it := range l.Items {
+		if it.Role == role && it.Ref.Bar == bar && it.Ref.Voice == voice && it.Ref.Event == event {
+			out = append(out, it)
+		}
+	}
+	return out
+}

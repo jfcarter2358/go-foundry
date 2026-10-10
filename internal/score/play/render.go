@@ -20,6 +20,10 @@ type RenderOptions struct {
 	// Section starts there; otherwise From, a tick.
 	Section string
 	From    int64
+	// To, when past the start, stops the transport there (every note
+	// releases, as Stop does) and renders Tail after it: a region of the
+	// piece — a loop, a selection — rather than the rest of it.
+	To int64
 	// Seconds caps the length. 0 renders to the end of the piece (one pass
 	// of a looping one) plus Tail.
 	Seconds float64
@@ -56,20 +60,35 @@ func Render(prog *Program, o RenderOptions) []float32 {
 		p.StartAt(o.From)
 	}
 	p.scale, p.scaleTarget = o.TempoScale, o.TempoScale
+	end := prog.Perf.Seconds
+	stop := -1 // the frame the transport stops on, for a region
+	if o.To > 0 {
+		if at := prog.Perf.Tempo.Seconds(float64(clampTick(o.To, prog.Perf.Length))); at > p.sec {
+			end = at
+			stop = int(math.Round((at - p.sec) / o.TempoScale * float64(o.Rate)))
+		}
+	}
 	secs := o.Seconds
 	if secs <= 0 {
-		secs = (prog.Perf.Seconds-p.sec)/o.TempoScale + o.Tail
+		secs = (end-p.sec)/o.TempoScale + o.Tail
 	}
 	total := int(math.Ceil(secs * float64(o.Rate)))
 	out := make([]float32, total*2)
 	p.eng.SetRate(o.Rate)
 	p.rate = o.Rate
-	for i := 0; i < total; i += o.Block {
+	for i := 0; i < total; {
 		n := min(o.Block, total-i)
-		if !p.Render(out[i*2:(i+n)*2], n, o.Rate) {
+		if stop > i && stop < i+n {
+			n = stop - i // the block ends where the region does
+		}
+		if i == stop {
+			p.apply(command{kind: cmdStop})
+		}
+		if !p.Render(out[i*2:(i+n)*2], n, o.Rate) && i >= stop {
 			out = out[:(i+n)*2]
 			break
 		}
+		i += n
 	}
 	return out
 }

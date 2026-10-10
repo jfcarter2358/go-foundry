@@ -18,6 +18,8 @@ package tracker
 import (
 	"math"
 	"sync/atomic"
+
+	"foundry/internal/audio"
 )
 
 // Quantize says when a requested change takes effect.
@@ -94,15 +96,15 @@ const (
 )
 
 type command struct {
-	kind   cmdKind
-	name   string
-	i, j   int
-	f, f2  float32
-	b      bool
-	q      Quantize
-	song   *Song
-	player *Player
-	hold   float32
+	kind  cmdKind
+	name  string
+	i, j  int
+	f, f2 float32
+	b     bool
+	q     Quantize
+	song  *Song
+	gen   audio.Generator
+	hold  float32
 }
 
 type paramState struct {
@@ -116,7 +118,7 @@ type resolvedBind struct {
 }
 
 type stingerReq struct {
-	p *Player
+	g audio.Generator
 	q Quantize
 }
 
@@ -158,7 +160,9 @@ type Player struct {
 	params []paramState
 	binds  []resolvedBind
 
-	stingers   []*Player
+	// stingers are generators mixed over the song: another song's player,
+	// or a score's (StingerGenerator).
+	stingers   []audio.Generator
 	pending    []stingerReq
 	stingerBuf []float32
 	rng        uint64
@@ -181,7 +185,7 @@ func NewPlayer(s *Song) *Player {
 		jumpOrder:      -1,
 		breakRow:       -1,
 		rng:            0x9E3779B97F4A7C15,
-		stingers:       make([]*Player, 0, 4),
+		stingers:       make([]audio.Generator, 0, 4),
 		pending:        make([]stingerReq, 0, 4),
 		eng:            NewEngine(0),
 	}
@@ -268,12 +272,30 @@ func (p *Player) Tempo(bpm, secs float32) bool {
 // Stinger plays another song over this one, starting on the next q boundary.
 // The stinger does not loop.
 func (p *Player) Stinger(s *Song, q Quantize) bool {
+	return p.StingerGenerator(NewStinger(s), q)
+}
+
+// NewStinger is a started player for a song played once over other music:
+// a copy that does not loop. It is what Stinger mixes over a song, and
+// what a score's player mixes over a score (play.Player.Stinger).
+func NewStinger(s *Song) *Player {
 	c := s.Clone()
 	c.Loop = false
 	sp := NewPlayer(c)
 	sp.child = true
 	sp.Start("")
-	return p.send(command{kind: cmdStinger, player: sp, q: q})
+	return sp
+}
+
+// StingerGenerator mixes any generator over the song from the next q
+// boundary until it reports it is done — a score's player as a stinger
+// over a song. It must be started, must not loop, and must not be playing
+// anywhere else: the song renders it on the mixer goroutine.
+func (p *Player) StingerGenerator(g audio.Generator, q Quantize) bool {
+	if g == nil {
+		return false
+	}
+	return p.send(command{kind: cmdStinger, gen: g, q: q})
 }
 
 // SetSong swaps in an edited copy of the song, keeping the position. The
@@ -517,11 +539,11 @@ func (p *Player) apply(c command) {
 		}
 	case cmdStinger:
 		if c.q == QuantNow || !p.playing {
-			p.addStinger(c.player)
+			p.addStinger(c.gen)
 			return
 		}
 		if len(p.pending) < cap(p.pending) {
-			p.pending = append(p.pending, stingerReq{p: c.player, q: c.q})
+			p.pending = append(p.pending, stingerReq{g: c.gen, q: c.q})
 		}
 	case cmdSetSong:
 		p.installSong(c.song)
@@ -549,7 +571,7 @@ func (p *Player) apply(c command) {
 	}
 }
 
-func (p *Player) addStinger(sp *Player) {
+func (p *Player) addStinger(sp audio.Generator) {
 	if sp == nil {
 		return
 	}

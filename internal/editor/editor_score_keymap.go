@@ -138,6 +138,13 @@ const (
 	scZoomOut
 	scZoomReset
 	scKeypadPanel
+	scLoop
+	scLoopToggle
+	scToStart
+	scFollow
+	scMixer
+	scExportAudio
+	scAddLine
 	scCmdCount
 )
 
@@ -219,6 +226,13 @@ func buildScoreCmdInfos() []scoreCmdInfo {
 	set(scZoomOut, "zoom_out", "Zoom out", "File & view")
 	set(scZoomReset, "zoom_reset", "Actual size", "File & view")
 	set(scKeypadPanel, "keypad_panel", "Show / hide the keypad", "File & view")
+	set(scLoop, "loop_selection", "Loop the selected bars (no selection: loop on / off)", "Playback")
+	set(scLoopToggle, "loop", "Loop on / off", "Playback")
+	set(scToStart, "to_start", "Play head to the start", "Playback")
+	set(scFollow, "follow", "Follow playback on / off", "Playback")
+	set(scMixer, "mixer", "Score / Mixer view", "File & view")
+	set(scExportAudio, "export_audio", "Export audio (WAV)...", "File & view")
+	set(scAddLine, "add_line", "Add a line...", "Entry")
 	return in
 }
 
@@ -519,6 +533,9 @@ func scoreCommonBinds(k *scoreKeymap) {
 	k.bind(scRepeat, key(sdl.SCANCODE_R))
 	k.bind(scPlay, key(sdl.SCANCODE_SPACE))
 	k.bind(scPlayFrom, key(sdl.SCANCODE_P))
+	k.bind(scLoop, key(sdl.SCANCODE_L))
+	k.bind(scLoopToggle, shiftKey(sdl.SCANCODE_L))
+	k.bind(scToStart, key(sdl.SCANCODE_HOME))
 	for i := 0; i < 7; i++ {
 		k.bind(scLetterC+scoreCmd(i), key(scoreLetterKeys[i]))
 	}
@@ -565,6 +582,7 @@ func scoreSibeliusKeymap() *scoreKeymap {
 	k.bind(scTimeSig, ctrlShift(sdl.SCANCODE_T))
 	k.bind(scClef, key(sdl.SCANCODE_Q))
 	k.bind(scKeypadPanel, ctrlAlt(sdl.SCANCODE_K))
+	k.bind(scMixer, key(sdl.SCANCODE_M))
 	k.index()
 	return k
 }
@@ -603,6 +621,7 @@ func scoreMuseScoreKeymap() *scoreKeymap {
 	k.bind(scTimeSig, ctrlShift(sdl.SCANCODE_T))
 	k.bind(scClef, ctrlShift(sdl.SCANCODE_C))
 	k.bind(scKeypadPanel, ctrlAlt(sdl.SCANCODE_K))
+	k.bind(scMixer, key(sdl.SCANCODE_F10))
 	k.index()
 	return k
 }

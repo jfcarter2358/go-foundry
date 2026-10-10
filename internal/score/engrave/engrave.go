@@ -118,8 +118,11 @@ type staffCtx struct {
 	bottom      int            // diatonic of the bottom line
 	iv          score.Interval // sounding → written; zero when concert
 	transposed  bool
-	first, end  bool // first / last staff of its line
-	nStaves     int  // staves in its line
+	// percussion shows drums by place and notehead (score.DrumDisplay),
+	// with no key and no accidentals.
+	percussion bool
+	first, end bool // first / last staff of its line
+	nStaves    int  // staves in its line
 
 	bars  []*staffBar // per layout bar
 	items []Item      // staff-local y (top line at 0), absolute x
@@ -196,6 +199,9 @@ type ev struct {
 	shift float64 // x of the head origin from the column x (voice offset, grace place)
 	x     float64 // absolute head origin x
 
+	// head is the notehead glyph the event's stem and width follow: its
+	// value's, or on a percussion staff the shape every note shares.
+	head     string
 	headW    float64 // a normal head's width at this size
 	dotX     float64 // relative to x
 	dotRows  []int   // staff positions of the dots (odd)
@@ -231,6 +237,8 @@ type nt struct {
 	tieEv   *ev
 	tieFrom *nt
 	ev      *ev
+	// head is a percussion note's own notehead ("" for the event's).
+	head string
 }
 
 func newEngraver(s *score.Score, o Options) *engraver {
@@ -261,8 +269,10 @@ func newEngraver(s *score.Score, o Options) *engraver {
 		l := s.Lines[li]
 		for si, st := range l.Staves {
 			sc := &staffCtx{line: li, staff: si, st: st, clef: st.Clef, bottom: clefBottom(st.Clef),
-				first: si == 0, end: si == len(l.Staves)-1, nStaves: len(l.Staves)}
-			if !o.Concert && (st.Transpose.Diatonic != 0 || st.Transpose.Chromatic != 0) {
+				first: si == 0, end: si == len(l.Staves)-1, nStaves: len(l.Staves), percussion: st.Clef == "percussion"}
+			if sc.percussion {
+				// A drum staff does not transpose.
+			} else if !o.Concert && (st.Transpose.Diatonic != 0 || st.Transpose.Chromatic != 0) {
 				sc.iv = score.Interval{Diatonic: -st.Transpose.Diatonic, Chromatic: -st.Transpose.Chromatic}
 				sc.transposed = true
 			}
@@ -306,7 +316,7 @@ func (e *engraver) collect() {
 	for _, sc := range e.staves {
 		sc.bars = make([]*staffBar, len(e.bars))
 		for bi, bc := range e.bars {
-			sb := &staffBar{st: sc, bar: bc, fifths: writtenFifths(bc.fifths, sc.iv)}
+			sb := &staffBar{st: sc, bar: bc, fifths: sc.key(bc.fifths)}
 			sb.voices = make([][]*ev, len(sc.st.Voices))
 			sb.meas = make([]score.Measure, len(sc.st.Voices))
 			sc.bars[bi] = sb
@@ -384,7 +394,7 @@ func (e *engraver) lastEventBefore(sc *staffCtx, vi int, v *score.Voice, bar int
 		if se.Kind != score.EventChord {
 			return nil
 		}
-		sb := &staffBar{st: sc, bar: &barCtx{bar: bar, length: e.s.BarLength(bar)}, fifths: writtenFifths(e.s.KeyAt(bar).Fifths, sc.iv)}
+		sb := &staffBar{st: sc, bar: &barCtx{bar: bar, length: e.s.BarLength(bar)}, fifths: sc.key(e.s.KeyAt(bar).Fifths)}
 		x := e.newEv(sb, vi, bar, ei, se, score.Frac{}, m)
 		x.ref.Bar = -bar // outside the layout
 		return x
@@ -414,26 +424,52 @@ func (e *engraver) newEv(sb *staffBar, vi, bar, ei int, se *score.Event, onset s
 	case score.EventSpace:
 		x.space = true
 	case score.EventChord:
+		shared, same := score.DrumHead(0), true
 		for k, n := range se.Notes {
 			p := n.Pitch
 			if sc.transposed {
 				p = p.Transpose(sc.iv)
 			}
 			q := &nt{idx: k, p: p, pos: p.Diatonic() - sc.bottom, tie: n.Tie, ev: x}
+			if sc.percussion {
+				pos, h := score.DrumDisplay(n.Pitch)
+				q.p, q.pos, q.head = score.FromDiatonic(pos+sc.bottom), pos, drumHeadGlyph(h, x.base)
+				if k == 0 {
+					shared = h
+				}
+				same = same && h == shared
+			}
 			q.y = 4 - float64(q.pos)/2
-			switch n.Acc {
-			case score.AccForce:
+			switch {
+			case sc.percussion:
+				// Drums have no accidentals.
+			case n.Acc == score.AccForce:
 				q.acc = true
-			case score.AccCautionary:
+			case n.Acc == score.AccCautionary:
 				q.acc, q.parens = true, true
 			}
 			x.notes = append(x.notes, q)
 		}
 		sort.SliceStable(x.notes, func(i, j int) bool { return x.notes[i].pos < x.notes[j].pos })
 		x.hasStem = x.base >= score.Half
+		if sc.percussion && same {
+			x.head = drumHeadGlyph(shared, x.base)
+		}
 	}
-	x.headW = e.f.Width(headGlyph(x.base)) * x.size
+	if x.head == "" {
+		x.head = headGlyph(x.base)
+	}
+	x.headW = e.f.Width(x.head) * x.size
 	return x
+}
+
+// key is the key signature a staff shows for a concert key: none on a
+// percussion staff.
+func (sc *staffCtx) key(fifths int) int {
+	if sc.percussion {
+		return 0
+	}
+	return writtenFifths(fifths, sc.iv)
 }
 
 // linkTies joins the tied notes of a to the same written pitch in b.
@@ -715,7 +751,7 @@ func (e *engraver) finish() *List {
 
 	for _, sc := range e.staves {
 		l.Staves = append(l.Staves, StaffBox{Line: sc.line, Staff: sc.staff, Top: sc.top, Clef: sc.clef, Bottom: sc.bottom,
-			Fifths: writtenFifths(e.bars[0].fifths, sc.iv), Transposed: sc.transposed, Extent: sc.ext.Offset(Point{X: 0, Y: sc.top})})
+			Fifths: sc.key(e.bars[0].fifths), Transposed: sc.transposed, Extent: sc.ext.Offset(Point{X: 0, Y: sc.top})})
 	}
 	for _, bc := range e.bars {
 		bb := BarBox{Bar: bc.bar, X0: bc.x0, X1: bc.x1, Content: bc.content}

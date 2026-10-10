@@ -13,21 +13,31 @@ package editor
 // Layout:
 //
 //	┌──────────────────────────────────────────────────────────────────┐
-//	│ File Edit View Notes Play Window │ Level … Score       name [Saved]│
+//	│ File Edit View Notes Lines Play Window │ Level … Score  name [Saved]│
 //	│ Note input │ 64 32 16 8 4 2 1 . rest │ # b n │ Voice 1 2 3 4 │ …    │
+//	│ Score Mixer │ Start Play Loop Follow │ Bar 5 · Beat 2 · 0:07.3 │ Tempo│
 //	├────────┬─────────────────────────────────────────────────────────┤
-//	│ lines  │ bar ruler                                               │
-//	│        │ the score, engraved on paper, one continuous system     │
-//	│        │                                         ┌─keypad─┐      │
-//	│        │                                         └────────┘      │
+//	│ staff  │ time ruler: bars, times, beats, the loop, the play head │
+//	│ headers│ the score, engraved on paper, one continuous system     │
+//	│ (name, │                                         ┌─keypad─┐      │
+//	│ M S ⧉) │                                         └────────┘      │
 //	├────────┴─────────────────────────────────────────────────────────┤
 //	│ mode · key · meter · duration · voice · selection · clipboard     │
 //	└──────────────────────────────────────────────────────────────────┘
 //
-// The view is editor_score_view.go, the keypad editor_score_keypad.go, the
-// keys editor_score_input.go, the F1 overlay and the shortcut settings
-// editor_score_help.go. What every command does to the music is
-// editor_score_edit.go.
+// The Mixer tab puts the mixer (editor_score_mixer.go) where the score is.
+// The view is editor_score_view.go, the headers editor_score_header.go, the
+// transport row and the ruler editor_score_ruler.go, the keypad
+// editor_score_keypad.go, the keys editor_score_input.go, the F1 overlay and
+// the shortcut settings editor_score_help.go, WAV export
+// editor_score_export.go. What every command does to the music is
+// editor_score_edit.go, to the lines and the mixer editor_score_lines.go, to
+// the transport editor_score_transport.go.
+//
+// The player is told of changes two ways (scoreSyncPlayer): a change to the
+// music hands it a fresh clone to prepare; a change to the mixer alone is
+// sent live (SetMix, SetGain, SetReturns, MuteIndex, SetInstrument), so a
+// fader can be dragged while the music plays.
 
 import (
 	"fmt"
@@ -70,6 +80,15 @@ var (
 	scoreVoice     audio.VoiceID
 	scorePlayerRev uint64
 	scorePlayerSet bool
+	// What the player was last told of the mixer, so a fader drag sends
+	// only what moved.
+	scorePlayerMixRev uint64
+	scoreSentMix      []play.LineMix
+	scoreSentMute     []bool
+	scoreSentGain     float32
+	scoreSentReturns  [2]float32
+	// scoreWasPlaying notices the transport stopping by itself (the end).
+	scoreWasPlaying bool
 )
 
 // scoreRend draws notation (the glyph atlas's textures live in it).
@@ -171,7 +190,8 @@ func (k scoreKeepAlive) Render(dst []float32, frames, rate int) bool {
 	return true
 }
 
-// scoreEnsurePlayer starts the editor's voice if it is not running.
+// scoreEnsurePlayer starts the editor's voice if it is not running, with
+// the transport as it stands: the tempo slider, the loop, the play head.
 func scoreEnsurePlayer() {
 	if scorePlayer != nil || scEd == nil {
 		return
@@ -184,7 +204,9 @@ func scoreEnsurePlayer() {
 		return
 	}
 	scorePlayer = p
-	scorePlayerRev, scorePlayerSet = scEd.Rev, true
+	scoreAdopted()
+	p.TempoScale(scEd.Transport.Scale, 0)
+	p.MoveTo(scEd.Transport.Head)
 	scoreVoice = audio.PlayGenerator(scoreKeepAlive{p}, audio.PlayOptions{Bus: audio.BusMusic, Priority: audio.PriorityHigh})
 }
 
@@ -192,21 +214,136 @@ func scoreStopPlayer() {
 	if scoreVoice != 0 {
 		audio.Stop(scoreVoice)
 	}
-	scorePlayer, scoreVoice, scorePlayerSet = nil, 0, false
+	scorePlayer, scoreVoice, scorePlayerSet, scoreWasPlaying = nil, 0, false, false
+	scoreSentMix, scoreSentMute = nil, nil
 }
 
-// scoreSyncPlayer hands the player the score as it stands, when it changed.
+// scoreAdopted records that the player now holds the score as it stands
+// (mixer and all) and re-sends the loop, whose ticks an edit may have moved.
+func scoreAdopted() {
+	e := scEd
+	scorePlayerRev, scorePlayerMixRev, scorePlayerSet = e.Rev, e.MixRev, true
+	s := e.Score
+	// The program only re-mutes a line whose own flags changed against the
+	// player's last program, which a live mute never touched (an undo of
+	// one leaves the flags as that program had them): every strip whose
+	// mute differs from what it was last sent is told again.
+	for i := range s.Lines {
+		if want := play.LineSilenced(s, i); i >= len(scoreSentMute) || scoreSentMute[i] != want {
+			scorePlayer.MuteIndex(i, want, 0.02)
+		}
+	}
+	scoreSentMix = scoreSentMix[:0]
+	scoreSentMute = scoreSentMute[:0]
+	for i, l := range s.Lines {
+		scoreSentMix = append(scoreSentMix, scoreLineMix(l))
+		scoreSentMute = append(scoreSentMute, play.LineSilenced(s, i))
+	}
+	scoreSentGain, scoreSentReturns = s.Gain, [2]float32{s.Buses.A.Return, s.Buses.B.Return}
+	if a, b, ok := scoreLoopTicks(scorePlayer.Performance(), e.Transport.Loop); ok && e.Transport.Loop.On {
+		scorePlayer.SetLoop(a, b)
+	} else {
+		scorePlayer.ClearLoop()
+	}
+}
+
+func scoreLineMix(l *score.Line) play.LineMix {
+	return play.LineMix{Volume: l.Volume, Pan: l.Pan, SendA: l.SendA, SendB: l.SendB}
+}
+
+// scoreSyncPlayer hands the player the score as it stands: a new program
+// when the music changed, the mixer alone (live, nothing prepared) when only
+// that did.
 func scoreSyncPlayer(force bool) {
 	if scorePlayer == nil {
 		return
 	}
-	if !force && scorePlayerSet && scorePlayerRev == scEd.Rev {
+	e := scEd
+	if force || !scorePlayerSet || scorePlayerRev != e.Rev {
+		if _, err := scorePlayer.SetScore(e.Score.Clone()); err != nil {
+			e.Status = "Playback: " + err.Error()
+		}
+		scoreAdopted()
 		return
 	}
-	if _, err := scorePlayer.SetScore(scEd.Score.Clone()); err != nil {
-		scEd.Status = "Playback: " + err.Error()
+	if scorePlayerMixRev == e.MixRev {
+		return
 	}
-	scorePlayerRev, scorePlayerSet = scEd.Rev, true
+	s := e.Score
+	for i, l := range s.Lines {
+		if m := scoreLineMix(l); i >= len(scoreSentMix) || scoreSentMix[i] != m {
+			scorePlayer.SetMix(i, m)
+		}
+		if muted := play.LineSilenced(s, i); i >= len(scoreSentMute) || scoreSentMute[i] != muted {
+			scorePlayer.MuteIndex(i, muted, 0.02)
+		}
+	}
+	if s.Gain != scoreSentGain {
+		scorePlayer.SetGain(s.Gain)
+	}
+	if r := [2]float32{s.Buses.A.Return, s.Buses.B.Return}; r != scoreSentReturns {
+		scorePlayer.SetReturns(r[0], r[1])
+	}
+	scoreSentMix, scoreSentMute = scoreSentMix[:0], scoreSentMute[:0]
+	for i, l := range s.Lines {
+		scoreSentMix = append(scoreSentMix, scoreLineMix(l))
+		scoreSentMute = append(scoreSentMute, play.LineSilenced(s, i))
+	}
+	scoreSentGain, scoreSentReturns = s.Gain, [2]float32{s.Buses.A.Return, s.Buses.B.Return}
+	scorePlayerMixRev = e.MixRev
+}
+
+// scoreApplyOps hands the player what the transport asked for this frame,
+// with the score brought up to date first (the ops' ticks are the current
+// score's).
+func scoreApplyOps() {
+	ops := scEd.takeOps()
+	if len(ops) == 0 {
+		if scorePlaying() {
+			scoreSyncPlayer(false)
+		}
+		return
+	}
+	scoreEnsurePlayer()
+	if scorePlayer == nil {
+		return
+	}
+	scoreSyncPlayer(false)
+	p := scorePlayer
+	for _, o := range ops {
+		switch o.Kind {
+		case scoreOpSeek:
+			p.MoveTo(o.Tick)
+		case scoreOpPlay:
+			p.PlayFrom(o.Tick)
+		case scoreOpStop:
+			p.StopTransport()
+		case scoreOpLoop:
+			p.SetLoop(o.A, o.B)
+			// A loop set while the music plays elsewhere starts at once.
+			if o.A < o.B && scorePlaying() {
+				if t := p.Position().Tick; t < o.A || t >= o.B {
+					p.PlayFrom(o.A)
+				}
+			}
+		case scoreOpTempo:
+			p.TempoScale(o.Scale, 0.15)
+		case scoreOpSwap:
+			if err := p.SetInstrument(o.Line, o.Name); err != nil {
+				scEd.Status = "Playback: " + err.Error()
+			}
+		}
+	}
+}
+
+// scoreWatchTransport notices the transport stopping by itself at the end:
+// the play head stays where it stopped.
+func scoreWatchTransport() {
+	playing := scorePlaying()
+	if scoreWasPlaying && !playing && scorePlayer != nil {
+		scEd.Transport.Head = scorePlayer.Position().Tick
+	}
+	scoreWasPlaying = playing
 }
 
 // scorePlayAuditions plays what the last commands asked to be heard.
@@ -226,50 +363,17 @@ func scorePlayAuditions() {
 // scorePlaying reports the transport running.
 func scorePlaying() bool { return scorePlayer != nil && scorePlayer.Position().Playing }
 
-// scorePlayToggle is Space: play from the selection (or the top), or stop.
+// scorePlayToggle is Space: stop where it is, or play from the play head.
 func scorePlayToggle() {
+	at := scEd.Transport.Head
 	if scorePlaying() {
-		scorePlayer.StopTransport()
-		return
+		at = scorePlayer.Position().Tick
 	}
-	scorePlayFromSelection()
+	scEd.togglePlay(scorePlaying(), at)
 }
 
 // scorePlayFromSelection is P: play from the selected note or bar.
-func scorePlayFromSelection() {
-	scoreEnsurePlayer()
-	if scorePlayer == nil {
-		return
-	}
-	scoreSyncPlayer(false)
-	bar, at := scEd.selBar(), scEd.selOnset()
-	perf := scorePlayer.Performance()
-	tick := int64(0)
-	if perf != nil {
-		if t := perf.BarTick(bar); t >= 0 {
-			tick = t + at.Ticks()
-		}
-	}
-	scorePlayer.PlayFrom(tick)
-}
-
-// scorePlayhead is where the transport is: a written bar and the fraction of
-// it played, while playing.
-func scorePlayhead() (bar int, frac float64, ok bool) {
-	if !scorePlaying() {
-		return 0, 0, false
-	}
-	pos := scorePlayer.Position()
-	perf := scorePlayer.Performance()
-	if perf == nil || len(perf.Bars) == 0 {
-		return 0, 0, false
-	}
-	b := perf.Bars[perf.BarAt(float64(pos.Tick))]
-	if b.Ticks > 0 {
-		frac = float64(pos.Tick-b.Tick) / float64(b.Ticks)
-	}
-	return b.Bar, max(0, min(frac, 1)), true
-}
+func scorePlayFromSelection() { scEd.playFromSelection() }
 
 // ---------- the document ----------
 
@@ -284,7 +388,7 @@ func scoreFingerprint(s *score.Score) uint64 {
 	return h.Sum64()
 }
 
-func scoreKey() any { return docKey{scEd.Score, scEd.Rev} }
+func scoreKey() any { return docKey{scEd.Score, scEd.Rev + scEd.MixRev} }
 
 func scoreMarkSaved() {
 	if scEd != nil {
@@ -316,6 +420,7 @@ func scoreNew(t scoreTemplate) {
 		scorePlayer.StopTransport()
 	}
 	scoreSyncPlayer(true)
+	scEd.seekTick(0)
 	scoreMarkSaved()
 	scEd.Status = "New score from " + t.Name
 }
@@ -338,6 +443,7 @@ func scoreLoad(name string) error {
 		scorePlayer.StopTransport()
 	}
 	scoreSyncPlayer(true)
+	scEd.seekTick(0)
 	scoreMarkSaved()
 	scoreNoteRecent(name)
 	scEd.Status = "Opened " + name
@@ -523,6 +629,25 @@ func scoreRunCmd(c scoreCmd) {
 	case scKeypadPanel:
 		scoreShowKeypad = !scoreShowKeypad
 		scoreSetKeypadWanted(scoreShowKeypad)
+	case scLoop:
+		e.loopSelection()
+	case scLoopToggle:
+		e.toggleLoop()
+	case scToStart:
+		e.toStart()
+	case scFollow:
+		e.Transport.Follow = !e.Transport.Follow
+		e.Status = "Follow playback " + scoreOnOff(e.Transport.Follow, "on", "off")
+	case scMixer:
+		if scoreView == scoreViewMixer {
+			scoreView = scoreViewScore
+		} else {
+			scoreView = scoreViewMixer
+		}
+	case scExportAudio:
+		scoreOpenExport()
+	case scAddLine:
+		scoreOpenAddLine(len(e.Score.Lines))
 	}
 }
 
@@ -541,18 +666,34 @@ func drawScoreEditorWindow() {
 	if scoreRend == nil {
 		scoreRend = scoredraw.New()
 	}
-	W, H := float32(w.W), float32(w.H)
+	scoreDrawFrame(float32(w.W), float32(w.H))
+	// Ops first: an instrument just picked is the one its audition plays.
+	scoreApplyOps()
+	scorePlayAuditions()
+	scoreWatchTransport()
+	scorePollExport()
+}
+
+// scoreViewTop is where the main area (the score or the mixer) starts.
+const scoreViewTop = editorTopBarH + scoreTransportH
+
+// scoreDrawFrame draws the whole window at a size: the top bar, the
+// transport row, the score or the mixer, the status bar, the keypad and
+// the dialogs. The tests draw through it too.
+func scoreDrawFrame(W, H float32) {
 	scoreToolbar(W)
-	scoreViewPane(imgui.Vec2{X: 0, Y: editorTopBarH}, imgui.Vec2{X: W, Y: H - editorTopBarH - scoreStatusH})
+	scoreTransportBar(imgui.Vec2{X: 0, Y: editorTopBarH}, W)
+	area := imgui.Vec2{X: W, Y: H - scoreViewTop - scoreStatusH}
+	if scoreView == scoreViewMixer {
+		scoreMixerPane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
+	} else {
+		scoreViewPane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
+	}
 	scoreStatusBar(imgui.Vec2{X: 0, Y: H - scoreStatusH}, W)
-	if scoreShowKeypad {
+	if scoreShowKeypad && scoreView == scoreViewScore {
 		scoreKeypadPanel(W, H)
 	}
 	scoreDialogs()
-	scorePlayAuditions()
-	if scorePlaying() {
-		scoreSyncPlayer(false)
-	}
 }
 
 // ---------- the top bar ----------
@@ -658,11 +799,6 @@ func scoreToolRow() {
 	editorMenuTooltip("A staff's clef" + scoreKeysSuffix(scClef))
 	editorToolbarGroupSep()
 	imgui.SameLine()
-	if editorActiveToggleButtonColor("Play##scplay", scorePlaying(), scoreColInput) {
-		scoreRunCmd(scPlay)
-	}
-	editorMenuTooltip("Play from the selection, or stop" + scoreKeysSuffix(scPlay))
-	imgui.SameLine()
 	if editorActiveToggleButtonColor("Keypad##sckp", scoreShowKeypad, scoreColActive) {
 		scoreRunCmd(scKeypadPanel)
 	}
@@ -767,6 +903,11 @@ func scoreMenus() {
 		item("Save", scSave, true)
 		item("Save As...", scSaveAs, true)
 		editorSaveAllMenuItem()
+		imgui.Separator()
+		if imgui.MenuItemV("Export Audio (WAV)...", km.label(scExportAudio), false, scoreExportResult == nil) {
+			scoreRunCmd(scExportAudio)
+		}
+		editorMenuTooltip("Render the whole score, the loop region or the selection to a WAV file.")
 		editorCloseWindowItem(CloseScoreEditorWindow)
 		imgui.EndMenu()
 	}
@@ -808,6 +949,9 @@ func scoreMenus() {
 		if imgui.MenuItemV("Keypad", km.label(scKeypadPanel), scoreShowKeypad, true) {
 			scoreRunCmd(scKeypadPanel)
 		}
+		if imgui.MenuItemV("Mixer", km.label(scMixer), scoreView == scoreViewMixer, true) {
+			scoreRunCmd(scMixer)
+		}
 		if imgui.MenuItemV("Keymap Overlay", "F1", uiwin.KeybindHelpVisible, true) {
 			uiwin.KeybindHelpToggle()
 		}
@@ -846,11 +990,48 @@ func scoreMenus() {
 		}
 		imgui.EndMenu()
 	}
+	if imgui.BeginMenu("Lines") {
+		item("Add Line...", scAddLine, true)
+		editorMenuTooltip("A line for any instrument of the library, written on the staff it asks for\n(a grand staff for a piano, a percussion staff for a kit).")
+		if imgui.MenuItem("Add Grand Staff (Piano)") {
+			e.insertLine(len(e.Score.Lines), scoreGrandStaffLine())
+		}
+		if imgui.MenuItem("Add Percussion Staff (Drum Kit)") {
+			e.insertLine(len(e.Score.Lines), scorePercussionLine())
+		}
+		editorMenuTooltip("Each drum has its place and notehead (a hi-hat's x above the staff,\nthe snare in the third space): a click writes the drum on that line or space.")
+		imgui.Separator()
+		li := e.selLine()
+		if e.Sel.Kind == scoreSelNone {
+			editorTextMuted("Select a line for its commands")
+		} else if imgui.BeginMenu(e.lineName(li) + "##sclinesub") {
+			scoreLineMenuItems(li)
+			imgui.EndMenu()
+		}
+		imgui.EndMenu()
+	}
 	if imgui.BeginMenu("Play") {
 		if imgui.MenuItemV("Play / Stop", km.label(scPlay), scorePlaying(), true) {
 			scoreRunCmd(scPlay)
 		}
 		item("Play from Selection", scPlayFrom, true)
+		item("To Start", scToStart, true)
+		imgui.Separator()
+		item("Loop Selection", scLoop, e.Sel.Kind == scoreSelBars || e.Transport.Loop.Set)
+		if imgui.MenuItemV("Loop", km.label(scLoopToggle), e.Transport.Loop.On, true) {
+			scoreRunCmd(scLoopToggle)
+		}
+		editorMenuTooltip(scoreLoopText(e.Score, e.Transport.Loop))
+		if imgui.MenuItemV("Follow Playback", km.label(scFollow), e.Transport.Follow, true) {
+			scoreRunCmd(scFollow)
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Tempo 100%", "", e.Transport.Scale == 1, true) {
+			e.setTempoScale(1)
+		}
+		if imgui.MenuItemV(fmt.Sprintf("Write Tempo Slider (%.0f%%) as Tempo Marks", e.Transport.Scale*100), "", false, e.Transport.Scale != 1) {
+			e.writeTempoScaled()
+		}
 		imgui.EndMenu()
 	}
 }
@@ -1054,6 +1235,8 @@ func scoreDialogs() {
 	})
 
 	scoreKeysDialog()
+	scoreExportDialog()
+	scoreLinePopups()
 }
 
 // scoreStaffName is "Piano (staff 2)", or the line's name for one staff.

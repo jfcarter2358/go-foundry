@@ -1,9 +1,11 @@
 package editor
 
 // editor_score_view.go — the Score editor's view of the music: the engraved
-// score on paper as one continuous, scrolling system, with the lines' names
-// in a column on the left, a bar ruler along the top, the selection, the
-// note-input ghost and caret, the playhead, and the status bar.
+// score on paper as one continuous, scrolling system, with the staff headers
+// in a column on the left (editor_score_header.go), the time ruler along the
+// top (editor_score_ruler.go), the loop region, the selection, the
+// note-input ghost and caret, the play head across every staff, and the
+// status bar.
 //
 // The engraving is the display list internal/score/engrave makes (cached per
 // edit in scoreLayout), drawn through internal/score/scoredraw with the glyph
@@ -14,8 +16,9 @@ package editor
 //
 // Clicks land on one InvisibleButton covering only the visible music — not
 // the header column, the ruler or the scrollbars — so nothing drawn over it
-// later needs to see a click (the Tracker header trap), and the keypad panel,
-// a window of its own above this one, takes its own clicks.
+// later needs to see a click (the Tracker header trap); the ruler and the
+// headers have their own, over only themselves, and the keypad panel, a
+// window of its own above this one, takes its own clicks.
 
 import (
 	"fmt"
@@ -31,8 +34,8 @@ import (
 )
 
 const (
-	scoreHeaderW = float32(150)
-	scoreRulerH  = float32(24)
+	scoreHeaderW = float32(210)
+	scoreRulerH  = float32(36)
 	scorePad     = float32(18)
 	scoreScrollW = float32(14)
 )
@@ -151,6 +154,7 @@ func scoreViewPane(pos, size imgui.Vec2) {
 
 	dl := imgui.WindowDrawList()
 	dl.PushClipRect(g.visMin, g.visMax)
+	scoreDrawLoopShade(dl, l, g)
 	scoreDrawSelection(dl, l, g)
 	scoreRend.Draw(dl, l, scoredraw.View{Origin: g.origin, Scale: z, Clip: g.clip(), Ink: scoreColInk, Colour: scoreItemColour, Faint: 0.3})
 	scoreDrawCaret(dl, l, g)
@@ -165,11 +169,12 @@ func scoreViewPane(pos, size imgui.Vec2) {
 		}
 	}
 	dl.PopClipRect()
-	scoreDrawRuler(dl, l, g, wp, size)
-	scoreDrawHeader(dl, l, g, wp, size)
+	scoreRuler(dl, l, g, wp, size)
+	scoreHeaderColumn(dl, l, g, wp, size)
 	if hovered && e.Input && targetOK {
 		scoreDrawGhostTip(dl, g, target)
 	}
+	scoreFollow(l, g)
 
 	// Ctrl+wheel zooms about the pointer.
 	if _, wheel := io.MouseWheel(); hovered && ctrl && wheel != 0 {
@@ -203,6 +208,9 @@ func scoreClick(l *engrave.List, p engrave.Point, t scoreTarget, tOK bool, io im
 	default:
 		if ref, ok := scoreHitEvent(l, p); ok && edit.Event(e.Score, scoreRefLoc(ref)) != nil {
 			e.selectEvent(scoreRefLoc(ref), ref.Note)
+			// A clicked note is where the play head goes (playing or not),
+			// as the mockup has it: Space then plays from there.
+			e.seekToSel()
 			return
 		}
 		if line, staff, bar, ok := scoreHitBarStaff(l, p); ok {
@@ -285,19 +293,17 @@ func scoreDrawCaret(dl imgui.DrawList, l *engrave.List, g scoreViewGeom) {
 	}
 }
 
-// scoreDrawPlayhead is the transport's place while it plays.
+// scoreDrawPlayhead is the play head: a line across every staff, where the
+// music is while it plays and where it will start when stopped.
 func scoreDrawPlayhead(dl imgui.DrawList, l *engrave.List, g scoreViewGeom) {
-	bar, frac, ok := scorePlayhead()
-	if !ok {
+	hx, ok := scoreHeadX(l)
+	if !ok || len(l.Staves) == 0 {
 		return
 	}
-	bb := l.Bar(bar)
-	if bb == nil {
-		return
-	}
-	x := bb.XAt(frac * scEd.Score.BarLength(bar).Float())
-	a := g.toScreen(engrave.Point{X: x})
-	dl.AddLineV(imgui.Vec2{X: a.X, Y: g.visMin.Y}, imgui.Vec2{X: a.X, Y: g.visMax.Y}, scoreColPlay, 1.6)
+	x := g.toScreen(engrave.Point{X: hx}).X
+	top := g.toScreen(engrave.Point{Y: l.Staves[0].Top - 3}).Y
+	bottom := g.toScreen(engrave.Point{Y: l.Staves[len(l.Staves)-1].Top + 7}).Y
+	dl.AddLineV(imgui.Vec2{X: x, Y: max(top, g.visMin.Y)}, imgui.Vec2{X: x, Y: min(bottom, g.visMax.Y)}, scoreColPlay, 1.6)
 }
 
 // scoreDrawGhost is the notehead a click would write, spelled in the key,
@@ -314,6 +320,14 @@ func scoreDrawGhost(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, t score
 	}
 	f := glyph.Bravura()
 	head := scoreHeadGlyph(scEd.Dur.Base)
+	drums := scEd.percussion(t.Line, t.Staff)
+	if drums {
+		d, ok := scEd.ghostDrum(t.Diatonic)
+		if !ok {
+			return
+		}
+		head = engrave.DrumHeadGlyph(d.Head, scEd.Dur.Base)
+	}
 	hw := f.Width(head)
 	items := []engrave.Item{{Kind: engrave.ItemGlyph, Glyph: head, Size: 1, P: engrave.Point{X: t.X, Y: t.Y}, Ref: engrave.NoRef}}
 	// Ledger lines from the staff out to the note.
@@ -331,7 +345,7 @@ func scoreDrawGhost(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, t score
 		led(d)
 	}
 	p := scEd.ghost(t.Line, t.Staff, t.Bar, t.Diatonic)
-	if scEd.Armed {
+	if scEd.Armed && !drums {
 		name := scoreAccGlyph(int(p.Alter))
 		items = append(items, engrave.Item{Kind: engrave.ItemGlyph, Glyph: name, Size: 1,
 			P: engrave.Point{X: t.X - f.Width(name) - 0.25, Y: t.Y}, Ref: engrave.NoRef})
@@ -342,68 +356,19 @@ func scoreDrawGhost(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, t score
 // scoreDrawGhostTip is the label beside the ghost: pitch, value, voice.
 func scoreDrawGhostTip(dl imgui.DrawList, g scoreViewGeom, t scoreTarget) {
 	p := scEd.ghost(t.Line, t.Staff, t.Bar, t.Diatonic)
-	text := fmt.Sprintf("%s  %s  voice %d", edit.PitchName(p), edit.DurName(scEd.Dur), scEd.Voice+1)
+	what := edit.PitchName(p)
+	if scEd.percussion(t.Line, t.Staff) {
+		what = "no drum here"
+		if d, ok := scEd.ghostDrum(t.Diatonic); ok {
+			what = d.Name
+		}
+	}
+	text := fmt.Sprintf("%s  %s  voice %d", what, edit.DurName(scEd.Dur), scEd.Voice+1)
 	at := g.toScreen(engrave.Point{X: t.X, Y: t.Y})
 	sz := imgui.CalcTextSize(text, false, 0)
 	a := imgui.Vec2{X: at.X + 16, Y: at.Y - sz.Y - 14}
 	dl.AddRectFilledV(a, imgui.Vec2{X: a.X + sz.X + 12, Y: a.Y + sz.Y + 6}, scoreColTip, 4, imgui.DrawFlagsRoundCornersAll)
 	dl.AddText(imgui.Vec2{X: a.X + 6, Y: a.Y + 3}, scoreColTipText, text)
-}
-
-// scoreDrawRuler is the bar numbers along the top, scrolled with the music.
-func scoreDrawRuler(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, wp, size imgui.Vec2) {
-	top, bottom := wp.Y, wp.Y+scoreRulerH
-	dl.AddRectFilled(imgui.Vec2{X: wp.X, Y: top}, imgui.Vec2{X: wp.X + size.X, Y: bottom}, scoreColRuler)
-	dl.AddLine(imgui.Vec2{X: wp.X, Y: bottom - 0.5}, imgui.Vec2{X: wp.X + size.X, Y: bottom - 0.5}, scoreColEdge)
-	dl.PushClipRect(imgui.Vec2{X: g.visMin.X, Y: top}, imgui.Vec2{X: g.visMax.X, Y: bottom})
-	for _, bb := range l.Bars {
-		x := g.toScreen(engrave.Point{X: bb.X0}).X
-		if x > g.visMax.X || g.toScreen(engrave.Point{X: bb.X1}).X < g.visMin.X {
-			continue
-		}
-		dl.AddLine(imgui.Vec2{X: x, Y: top + 4}, imgui.Vec2{X: x, Y: bottom}, scoreColDim)
-		dl.AddText(imgui.Vec2{X: x + 5, Y: top + 5}, scoreColRulerText, fmt.Sprint(bb.Bar))
-	}
-	if bar, frac, ok := scorePlayhead(); ok {
-		if bb := l.Bar(bar); bb != nil {
-			x := g.toScreen(engrave.Point{X: bb.XAt(frac * scEd.Score.BarLength(bar).Float())}).X
-			dl.AddTriangleFilled(imgui.Vec2{X: x - 6, Y: bottom - 9}, imgui.Vec2{X: x + 6, Y: bottom - 9}, imgui.Vec2{X: x, Y: bottom}, scoreColPlay)
-		}
-	}
-	dl.PopClipRect()
-	dl.AddRectFilled(imgui.Vec2{X: wp.X, Y: top}, imgui.Vec2{X: wp.X + scoreHeaderW, Y: bottom}, scoreColRuler)
-	dl.AddText(imgui.Vec2{X: wp.X + 10, Y: top + 5}, scoreColDim, "BAR")
-}
-
-// scoreDrawHeader is the column of line names on the left, scrolled with the
-// music vertically but not across.
-func scoreDrawHeader(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, wp, size imgui.Vec2) {
-	top := wp.Y + scoreRulerH
-	dl.AddRectFilled(imgui.Vec2{X: wp.X, Y: top}, imgui.Vec2{X: wp.X + scoreHeaderW, Y: wp.Y + size.Y}, scoreColHeader)
-	dl.AddLine(imgui.Vec2{X: wp.X + scoreHeaderW, Y: top}, imgui.Vec2{X: wp.X + scoreHeaderW, Y: wp.Y + size.Y}, scoreColEdge)
-	dl.PushClipRect(imgui.Vec2{X: wp.X, Y: top}, imgui.Vec2{X: wp.X + scoreHeaderW, Y: g.visMax.Y})
-	for li, line := range scEd.Score.Lines {
-		lo, hi := math.Inf(1), math.Inf(-1)
-		for _, sb := range l.Staves {
-			if sb.Line == li {
-				lo, hi = math.Min(lo, sb.Top), math.Max(hi, sb.Top+4)
-			}
-		}
-		if math.IsInf(lo, 1) {
-			continue
-		}
-		mid := g.toScreen(engrave.Point{Y: (lo + hi) / 2}).Y
-		name := scEd.lineName(li)
-		dl.AddText(imgui.Vec2{X: wp.X + 10, Y: mid - 15}, scoreColText, scoreClipText(name, scoreHeaderW-16))
-		dl.AddText(imgui.Vec2{X: wp.X + 10, Y: mid + 1}, scoreColDim, scoreClipText(line.Instrument, scoreHeaderW-16))
-		// The selected line's edge.
-		if q := scEd.Sel; (q.Kind == scoreSelBars && li >= q.LineA && li <= q.LineB) || ((q.Kind == scoreSelEvent || q.Kind == scoreSelCaret) && q.Loc.Line == li) {
-			a := g.toScreen(engrave.Point{Y: lo})
-			b := g.toScreen(engrave.Point{Y: hi})
-			dl.AddRectFilled(imgui.Vec2{X: wp.X + scoreHeaderW - 4, Y: a.Y}, imgui.Vec2{X: wp.X + scoreHeaderW - 1, Y: b.Y}, scoreColSel)
-		}
-	}
-	dl.PopClipRect()
 }
 
 // scoreClipText cuts text to a pixel width with an ellipsis.
@@ -541,6 +506,12 @@ func scoreStatusParts() []string {
 	}
 	if e.Concert {
 		parts = append(parts, "Concert pitch")
+	}
+	if e.Transport.Loop.On {
+		parts = append(parts, scoreLoopText(e.Score, e.Transport.Loop))
+	}
+	if e.Transport.Scale != 1 {
+		parts = append(parts, fmt.Sprintf("Tempo %.0f%%", e.Transport.Scale*100))
 	}
 	parts = append(parts, "Keymap: "+scoreKeymapActive().Name+" (F1)")
 	return parts

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/score"
 	"foundry/internal/tracker"
 )
@@ -458,7 +459,12 @@ func TestRandomCommandsKeepThePlayerSane(t *testing.T) {
 	length := p.Performance().Length
 	buf := make([]float32, 1024*2)
 	for step := 0; step < 3000; step++ {
-		switch rng.Intn(14) {
+		switch rng.Intn(15) {
+		case 13:
+			p.SetMix(rng.Intn(4)-1, LineMix{Volume: rng.Float32() * 1.5, Pan: rng.Float32()*2 - 1, SendA: rng.Float32()})
+			if rng.Intn(4) == 0 {
+				p.SetGain(rng.Float32() * 2)
+			}
 		case 0:
 			p.PlayFrom(rng.Int63n(length + 2000))
 		case 1:
@@ -514,5 +520,319 @@ func TestRandomCommandsKeepThePlayerSane(t *testing.T) {
 	}
 	if n := p.LiveVoices(); n != 0 {
 		t.Errorf("%d voices still sounding 4 s after stopping", n)
+	}
+}
+
+// SetMix moves a line's fader and pan at once, with no new program, and a
+// later SetScore takes the score's values back; SetGain is the master.
+func TestLiveMixAndGain(t *testing.T) {
+	useTestInstruments(t)
+	s := build(t, "bars: 4", "A|dc/0.5|0|| wC4 | wC4 | wC4 | wC4 |")
+	p := NewFromProgram(prepare(t, s))
+	p.Start("")
+	out := render(p, 6, map[int]func(){
+		100: func() { p.SetMix(0, LineMix{Volume: 0.5, Pan: -1}) },
+		200: func() { p.SetGain(0.25) },
+		300: func() {
+			p.SetGain(1)
+			if _, err := p.SetScore(s.Clone()); err != nil {
+				t.Fatal(err)
+			}
+		},
+		400: func() { p.SetMix(7, LineMix{Volume: 9}) }, // no such line: ignored
+	})
+	at := func(sec float64) (float32, float32) { i := int(sec*rate) * 2; return out[i], out[i+1] }
+	l0, r0 := at(0.5)
+	l1, r1 := at(1.5)
+	l2, r2 := at(2.5)
+	l3, r3 := at(3.5)
+	l4, r4 := at(4.5)
+	if l0 == 0 || math.Abs(float64(l0-r0)) > 1e-6 {
+		t.Fatalf("centred at unity: %v %v", l0, r0)
+	}
+	// Hard left at half volume: the strip's balance keeps the left at its
+	// centre level and silences the right.
+	want := l0 * 0.5
+	if math.Abs(float64(l1-want)) > 1e-4 || math.Abs(float64(r1)) > 1e-6 {
+		t.Errorf("after SetMix: %v %v, want %v 0", l1, r1, want)
+	}
+	if math.Abs(float64(l2-l1*0.25)) > 1e-4 || math.Abs(float64(r2)) > 1e-6 {
+		t.Errorf("after SetGain: %v %v, want %v", l2, r2, l1*0.25)
+	}
+	if math.Abs(float64(l3-l0)) > 1e-5 || math.Abs(float64(r3-r0)) > 1e-5 {
+		t.Errorf("after SetScore the score's mix is back: %v %v, want %v %v", l3, r3, l0, r0)
+	}
+	if l4 != l3 || r4 != r3 {
+		t.Errorf("a mix for no line changed something: %v %v", l4, r4)
+	}
+	if n := testing.AllocsPerRun(200, func() {
+		p.SetMix(0, LineMix{Volume: 0.7})
+		p.Render(make([]float32, 0, 960)[:960], 480, rate)
+	}); n > 1 { // the one allocation is the test's own buffer
+		t.Errorf("a mix command allocates on the render path: %v", n)
+	}
+}
+
+// RenderOptions.To renders a region: notes sounding at its end release
+// there, and the tail after it is the release and nothing else.
+func TestRenderRegion(t *testing.T) {
+	useTestInstruments(t)
+	s := build(t, "bars: 3", "A|dc/0.5|0|| qC4 qD4 qE4 qF4 | wG4 | qA4 qB4 qC5 qD5 |")
+	prog := prepare(t, s)
+	// Bar 2 alone (2 s .. 4 s at 120) with a half-second tail.
+	out := Render(prog, RenderOptions{Rate: rate, From: 3840, To: 7680, Tail: 0.5})
+	if got, want := len(out)/2, int(2.5*rate); got != want {
+		t.Fatalf("length %d frames, want %d", got, want)
+	}
+	eqInts(t, "region", onsets(out), []int{0})
+	if out[int(1.9*rate)*2] == 0 {
+		t.Error("the bar's note is silent before the region's end")
+	}
+	if v := out[(2*rate+400)*2]; v != 0 {
+		t.Errorf("still sounding 400 frames after the region's end: %v", v)
+	}
+	// At half speed the region takes twice as long.
+	slow := Render(prog, RenderOptions{Rate: rate, From: 3840, To: 7680, TempoScale: 0.5})
+	if got, want := len(slow)/2, 4*rate; got != want {
+		t.Errorf("half speed: %d frames, want %d", got, want)
+	}
+	// Past the end it is the rest of the piece.
+	all := Render(prog, RenderOptions{Rate: rate, From: 3840, To: 1 << 40})
+	if got, want := len(all)/2, 4*rate; got != want {
+		t.Errorf("to past the end: %d frames, want %d", got, want)
+	}
+}
+
+// SetReturns brings a send bus in live: a dry line with its send up is
+// dry until the reverb's return is raised.
+func TestLiveReturns(t *testing.T) {
+	useTestInstruments(t)
+	s := build(t, "bars: 4", "A|dc/0.5|0|| qC4 qr hr | R | R | R |")
+	s.Lines[0].SendA = 1
+	s.Buses.A = score.Bus{FX: []score.FX{{Kind: "reverb", Params: []score.FXParam{{Name: "size", Value: 0.8}}}}, Return: 0}
+	p := NewFromProgram(prepare(t, s))
+	p.Start("")
+	dry := render(p, 2, nil)
+	q := NewFromProgram(prepare(t, s))
+	q.Start("")
+	wet := render(q, 2, map[int]func(){0: func() { q.SetReturns(1, 0) }})
+	tail := func(out []float32) float64 {
+		e := 0.0
+		for i := int(1.0 * rate); i < int(1.9*rate); i++ {
+			e += math.Abs(float64(out[i*2]))
+		}
+		return e
+	}
+	if tail(dry) != 0 {
+		t.Errorf("dry line has a tail: %v", tail(dry))
+	}
+	if tail(wet) == 0 {
+		t.Error("raising the return gave no reverb tail")
+	}
+}
+
+// constGen is a stinger that plays a constant level for n frames.
+type constGen struct {
+	level float32
+	n     int
+}
+
+func (g *constGen) Render(dst []float32, frames, rate int) bool {
+	k := min(frames, g.n)
+	for i := 0; i < frames; i++ {
+		v := float32(0)
+		if i < k {
+			v = g.level
+		}
+		dst[i*2], dst[i*2+1] = v, v
+	}
+	g.n -= k
+	return g.n > 0
+}
+
+// A stinger starts on the frame its boundary falls on — the next bar,
+// beat, the end of the section — or at once, plays to its own end over the
+// score, and a score that has finished keeps rendering until it is done.
+func TestStingers(t *testing.T) {
+	useTestInstruments(t)
+	// 120 bpm in 4/4: a bar is 2 s, a beat half a second. Only rests, so
+	// what is heard is the stinger.
+	s := build(t, "bars: 2", "A|dc/0.5|0|| wr | wr |")
+	for _, c := range []struct {
+		q    tracker.Quantize
+		want int
+	}{
+		{tracker.QuantBar, 2 * rate},
+		{tracker.QuantBeat, rate},
+		{tracker.QuantSection, 4 * rate}, // no section: the end of the piece
+	} {
+		p := NewFromProgram(prepare(t, s))
+		p.Start("")
+		g := &constGen{level: 0.25, n: rate / 4}
+		// Asked for 0.7 s in: the next beat is 1 s, the next bar 2 s.
+		out := render(p, 4.5, map[int]func(){70: func() { p.Stinger(g, c.q) }})
+		eqInts(t, fmt.Sprintf("stinger on quantise %d", c.q), onsets(out), []int{c.want})
+		if g.n != 0 {
+			t.Errorf("quantise %d: the stinger has %d frames left", c.q, g.n)
+		}
+		if v := out[(c.want+rate/8)*2]; v != 0.25 {
+			t.Errorf("quantise %d: the stinger plays at %v, want 0.25", c.q, v)
+		}
+	}
+
+	// Now: the next block.
+	p := NewFromProgram(prepare(t, s))
+	p.Start("")
+	g := &constGen{level: 0.25, n: rate}
+	out := render(p, 1, map[int]func(){10: func() { p.Stinger(g, tracker.QuantNow) }})
+	eqInts(t, "stinger now", onsets(out), []int{4800})
+
+	// A loop jump is a boundary: a stinger waiting for a bar that the loop
+	// never reaches starts at the jump.
+	p = NewFromProgram(prepare(t, build(t, "bars: 3", "A|dc/0.5|0|| wr | wr | wr |")))
+	p.Start("")
+	p.SetLoop(0, 1920) // the first half of bar 1
+	g = &constGen{level: 0.25, n: 100}
+	out = render(p, 1.5, map[int]func(){10: func() { p.Stinger(g, tracker.QuantBar) }})
+	eqInts(t, "stinger at a loop jump", onsets(out), []int{rate})
+
+	// The score ends (it does not loop) while a long stinger plays: the
+	// player keeps rendering until the stinger is done.
+	p = NewFromProgram(prepare(t, build(t, "bars: 1", "A|dc/0.5|0|| wr |")))
+	p.Start("")
+	g = &constGen{level: 0.25, n: 8 * rate}
+	p.Stinger(g, tracker.QuantNow)
+	buf := make([]float32, 480*2)
+	blocks := 0
+	for p.Render(buf, 480, rate) {
+		blocks++
+		if blocks > 2000 {
+			t.Fatal("the player never finished")
+		}
+	}
+	if secs := float64(blocks*480) / rate; secs < 7.9 {
+		t.Errorf("the player stopped %.2f s in, before its 8 s stinger ended", secs)
+	}
+}
+
+// Stingers past the cap are refused, and mixing them allocates nothing.
+func TestStingerCapAndAllocations(t *testing.T) {
+	useTestInstruments(t)
+	p := NewFromProgram(prepare(t, build(t, "bars: 8\nloop: true", "A|dc/0.5|0|| wC4 | R | R | R | R | R | R | R |")))
+	p.Start("")
+	buf := make([]float32, 480*2)
+	gens := make([]*constGen, maxStingers+2)
+	for i := range gens {
+		gens[i] = &constGen{level: 0.01, n: 30 * rate}
+		p.Stinger(gens[i], tracker.QuantNow)
+	}
+	p.Render(buf, 480, rate)
+	if len(p.stingers) != maxStingers {
+		t.Errorf("%d stingers playing, want the cap of %d", len(p.stingers), maxStingers)
+	}
+	if n := testing.AllocsPerRun(200, func() { p.Render(buf, 480, rate) }); n != 0 {
+		t.Errorf("Render with stingers allocates %v times a block", n)
+	}
+}
+
+// A score stinger is the score once: no loop, no section looping back.
+func TestNewStingerPlaysOnce(t *testing.T) {
+	useTestInstruments(t)
+	dir := t.TempDir()
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = dir
+	t.Cleanup(func() { fileutil.ResourcesPath = prev; score.Reload() })
+	score.Reload()
+	src := build(t, "bars: 1\nloop: true\nsections: [{name: a, bar: 1, loop: true}]", "A|dc/0.5|0|| qC4 qr qr qr |")
+	if err := score.Save("sting", src); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewStinger("sting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]float32, 480*2)
+	frames := 0
+	for p.Render(buf, 480, rate) {
+		frames += 480
+		if frames > 20*rate {
+			t.Fatal("the stinger loops")
+		}
+	}
+	if secs := float64(frames) / rate; secs < 2 || secs > 2+tailSeconds+0.1 {
+		t.Errorf("the stinger ran %.2f s, want its 2 s bar and the tail", secs)
+	}
+	if !src.Loop || !src.Sections[0].Loop {
+		t.Error("NewStinger changed the score it loaded")
+	}
+	if _, err := NewStinger("missing"); err == nil {
+		t.Error("NewStinger of a missing score did not fail")
+	}
+}
+
+// Play has no device to play on here: the player comes back started where
+// it was asked, its voice zero.
+func TestPlayStartsWhereAsked(t *testing.T) {
+	useTestInstruments(t)
+	dir := t.TempDir()
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = dir
+	t.Cleanup(func() { fileutil.ResourcesPath = prev; score.Reload() })
+	score.Reload()
+	src := build(t, "bars: 2\nsections: [{name: a, bar: 1}, {name: b, bar: 2}]\nparams: [{name: x, default: 0}]", "A|dc/0.5|0|| wC4 | wD4 |")
+	if err := score.Save("theme", src); err != nil {
+		t.Fatal(err)
+	}
+	p, id, err := Play("theme", PlayOptions{Section: "b", Params: map[string]float32{"x": 0.75}})
+	if err != nil || p == nil || !id.IsZero() {
+		t.Fatalf("Play: %v %v %v", p, id, err)
+	}
+	if pos := p.Position(); !pos.Playing || pos.Bar != 2 || pos.Tick != 3840 {
+		t.Errorf("started at %+v, want bar 2 (tick 3840)", pos)
+	}
+	if p.params[0].cur != 0.75 {
+		t.Errorf("param x = %v, want 0.75", p.params[0].cur)
+	}
+	p, _, _ = Play("theme", PlayOptions{Resume: true, Tick: 960})
+	if pos := p.Position(); pos.Tick != 960 || pos.Beat != 2 {
+		t.Errorf("resumed at %+v, want tick 960, beat 2", pos)
+	}
+	if err := Preload("theme"); err != nil {
+		t.Error(err)
+	}
+	if _, _, err := Play("nothing", PlayOptions{}); err == nil {
+		t.Error("Play of a missing score did not fail")
+	}
+}
+
+// A new program re-mutes the lines its score silences differently from the
+// last one's — a solo on one line silences the others, whose own flags did
+// not change — and leaves the rest alone.
+func TestSetScoreFollowsAnotherLinesSolo(t *testing.T) {
+	useTestInstruments(t)
+	s := build(t, "bars: 4", "A|dc/0.5|0|| wC4 | wC4 | wC4 | wC4 |", "B|dc/0.25|0|| wC4 | wC4 | wC4 | wC4 |")
+	p := NewFromProgram(prepare(t, s))
+	p.Start("")
+	soloed := s.Clone()
+	soloed.Lines[1].Solo = true
+	out := render(p, 3, map[int]func(){
+		100: func() {
+			if _, err := p.SetScore(soloed); err != nil {
+				t.Fatal(err)
+			}
+		},
+		200: func() {
+			if _, err := p.SetScore(s.Clone()); err != nil {
+				t.Fatal(err)
+			}
+		},
+	})
+	at := func(sec float64) float32 { return out[int(sec*rate)*2] }
+	both, solo, back := at(0.5), at(1.5), at(2.5)
+	if both == 0 || math.Abs(float64(solo-both/3)) > 1e-4 {
+		t.Errorf("B soloed: %v, want B alone (%v)", solo, both/3)
+	}
+	if math.Abs(float64(back-both)) > 1e-4 {
+		t.Errorf("the solo taken off: %v, want both again (%v)", back, both)
 	}
 }

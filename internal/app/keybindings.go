@@ -125,6 +125,9 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Keypad 1-6, F8 / Alt+1-6", Desc: "Durations 32nd..whole; second layout 64th..breve"},
 			{Keys: "Click / Ctrl+click / Shift+click", Desc: "Select a bar / it in every line / extend"},
 			{Keys: "Ctrl+C / Ctrl+V / R / Alt+click", Desc: "Copy / paste / repeat after / paste at the click"},
+			{Keys: "Space / P / Home", Desc: "Play or stop from the play head / play from the selection / to start"},
+			{Keys: "L / drag the ruler", Desc: "Loop the selected bars / loop between two beats"},
+			{Keys: "M (Sibelius) / F10 (MuseScore)", Desc: "Score / Mixer view"},
 		},
 	},
 	{

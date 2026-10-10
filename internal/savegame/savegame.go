@@ -146,6 +146,13 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 				ms.Section = s
 			}
 		}
+		if m.Score != nil {
+			pos := m.Score.Position()
+			ms.Tick, ms.Playing = pos.Tick, pos.Playing
+			if s := world.MusicSection(lvl); s != "" {
+				ms.Section = s
+			}
+		}
 		ws.Music = ms
 	}
 	return ws
@@ -391,7 +398,7 @@ func applyWorld(lvl *world.Level, ws *savefile.WorldState) {
 	if m := ws.Music; m != nil {
 		lvl.Music = &world.Music{Track: m.Track, Gain: m.Gain, Loop: m.Loop, Fade: m.Fade,
 			Section: m.Section, Params: m.Params, Mutes: m.Mutes,
-			Resume: m.Playing, ResumeOrder: m.Order, ResumeRow: m.Row}
+			Resume: m.Playing, ResumeOrder: m.Order, ResumeRow: m.Row, ResumeTick: m.Tick}
 	}
 	lvl.Player.StepHeight = ws.StepHeight
 	lvl.Gravity = world.CopyFloatPtr(ws.Gravity)

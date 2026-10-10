@@ -1,0 +1,11 @@
+version: 1
+title: Percussion
+key: [{bar: 1, fifths: 2, mode: major}]
+lines:
+- name: Drums
+  instrument: percussion/drum_kit
+  staves:
+  - clef: percussion
+    voices:
+    - "| eF#2+C#3 eF#2 eF#2+D2 eF#2 eF#2 eA#2 eF#2+D2 eF#2 | sD3 sD3 sC3 sC3 sB2 sB2 sA2 sA2 sG2 sG2 sF2 sF2 qD#3+C#3 |"
+    - "| qC2 qr qC2 qr | qC2 qC2 hC2 |"

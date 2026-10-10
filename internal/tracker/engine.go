@@ -287,6 +287,17 @@ func (e *Engine) SetBuses(rev ReverbSpec, dly DelaySpec, comp CompressorSpec, ga
 	}
 }
 
+// SetGain sets the master gain alone, as it is: 0 is silence (SetBuses
+// reads 0 as unity, for a song that never set one). Cheap; any goroutine
+// that owns the engine.
+func (e *Engine) SetGain(gain float32) { e.gain = gain }
+
+// SetReturns sets the reverb and delay buses' return levels alone, as
+// SetBuses would with the rest of their specs unchanged. Cheap.
+func (e *Engine) SetReturns(reverb, delay float32) {
+	e.reverbSpec.Return, e.delaySpec.Return = reverb, delay
+}
+
 func (e *Engine) applyBuses() {
 	e.rev.set(e.reverbSpec)
 	e.dly.set(e.delaySpec, e.bpm, e.rate)

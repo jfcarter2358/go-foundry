@@ -7,13 +7,20 @@ same sample engine and the same instrument library as the
 [Tracker](31-music-tracker.md), so a `.fscore` and a `.ftrk` can share every
 instrument.
 
-Scores live beside the other sounds, as `resources/sounds/<name>.fscore`. This
-chapter covers the file, the notation text inside it, how a score plays, and
-the `foundry score` commands that check, render, play, import and export
-scores, and the Score editor window, where notes are entered the way Sibelius
-or MuseScore enters them. Playing a score in a level comes in a later update;
-until then a score is heard in the editor, or with `foundry score render` or
-`foundry score play`.
+Scores live beside the other sounds, as `resources/sounds/<name>.fscore`, and
+a level plays one the way it plays a song:
+
+```yaml
+music:
+  track: hangar_theme      # sounds/hangar_theme.fscore
+  section: theme           # optional: a rehearsal mark to start at
+  params: {intensity: 0}   # optional: the score's params at the start
+```
+
+This chapter covers the file, the notation text inside it, how a score plays,
+the Score editor window (where notes are entered the way Sibelius or MuseScore
+enters them), playing a score in a level and steering it from scripts, and the
+`foundry score` commands that check, render, play, import and export scores.
 
 ## The file
 
@@ -80,16 +87,18 @@ when you change it.
 
 Open it from the editor strip (**Score**) or **Window > Score**. It starts on
 a one-line sketch; **File > New** offers a solo line, a piano (grand staff),
-a string quartet and a chamber ensemble (flute, clarinet in B♭ and horn in F
-written transposed, violins, cello), each eight empty bars of 4/4 in C.
+a string quartet, a chamber ensemble (flute, clarinet in B♭ and horn in F
+written transposed, violins, cello) and a rhythm section (piano, bass, drum
+kit on a percussion staff), each eight empty bars of 4/4 in C.
 **File > Open**, **Open Recent**, **Save** (Ctrl+S), **Save As** and **Save
 All** work as in every editor, and the chip at the right of the menu bar says
 whether the score matches its file.
 
 The score is drawn as one continuous system on paper, scrolled with the
 wheel (Shift+wheel across) and zoomed with Ctrl+wheel about the pointer,
-Ctrl+= and Ctrl+-. Line names sit in the column on the left, bar numbers
-along the top. **View > Concert Pitch** shows transposing instruments as they
+Ctrl+= and Ctrl+-. Each line's header sits in the column on the left (see
+*Lines* below), the time ruler along the top, and the transport in the row
+under the toolbar. **View > Concert Pitch** shows transposing instruments as they
 sound; otherwise they are shown — and typed, clicked and sharpened — at
 written pitch, and stored at concert pitch. **View > Voice Colours** colours
 voices 2–4 green, orange and magenta.
@@ -133,8 +142,72 @@ repeats the selection right after itself, growing the score when it has to,
 and selects the copy, so `R` again carries on. A paste into bars of another
 meter is fitted to them. `Ctrl+Z` / `Ctrl+Y` undo and redo every edit.
 
-`Space` plays from the selection and stops; `P` plays from the selection.
-The full transport (ruler, loop, tempo) comes with many-line playback.
+### Lines
+
+Every line is a staff (a piano's is a grand staff with a brace, a drum kit's
+a percussion staff) with a header beside it:
+
+| Part of the header | Does |
+| --- | --- |
+| Name | click selects every bar of the line; double-click renames it (scripts and bindings find lines by name, so names stay unique and bindings follow a rename) |
+| Instrument | click for the picker: type to search the whole `.finst` library, click (or `Enter` for the first match) to play the line on it. It works while the score plays — the notes do not change; what is sounding finishes on the old instrument and the next note is the new one's |
+| `M` / `S` | mute, solo (several lines can be soloed) |
+| Two squares | duplicate the line: **with notes**, or **empty** with the same instrument, clefs, transposition and mixer settings |
+| Slider | the line's volume (the mixer's fader); double-click for 0 dB |
+| Meter | the line's level while it plays, in decibels (empty at -48 dB, full at 0 dB; yellow from about -14 dB, red from -6 dB, a red cap over 0 dB) |
+
+Right-click a header for the rest: rename, instrument, add a line above or
+below, move up or down, mute, solo, remove. **Lines > Add Line** adds a line
+for any library instrument, written on the staff the instrument asks for (a
+grand staff for a piano, a percussion staff for a kit, a horn transposed);
+**Add Grand Staff** and **Add Percussion Staff** add a piano and a drum kit.
+Every line change is one undo step.
+
+On a **percussion staff** each drum has its place and notehead, after the
+usual drum-set notation: bass drum in the bottom space, snare in the third
+space, toms between, hi-hat as an x above the staff (open hi-hat circled),
+crash on the ledger line above, ride as an x on the top line. A click writes
+the drum on that line or space (the ghost note's label names it), stored as
+its General MIDI key, which is what the kit plays; letters and accidentals do
+not apply there. Keys outside the kit (35–59) show at their own letter's
+place.
+
+### Playing: the transport and the ruler
+
+| To | Do |
+| --- | --- |
+| Play / stop | `Space` or **Play**: from the play head (the green line across every staff), or from the loop's start when the loop is on and the head is outside it. Stopping leaves the head where the music stopped |
+| Play from the selection | `P` |
+| Move the play head | click the ruler (it snaps to the nearest beat), or click a note |
+| Back to the start | `Home` or **Start** (the loop's start when the loop is on) |
+| Loop | drag along the ruler between two beats; or select bars and press `L`. `L` with no bars selected, **Loop** and `Shift+L` switch the region on and off (off, it stays on the ruler, grey) |
+| Follow | **Follow** scrolls the score to keep the play head in sight |
+| Tempo | the **Tempo** slider plays at 25 %–200 % of the written tempo without changing the score (double-click: 100 %). **Write** puts it into the score: every tempo mark scaled to the slider, or one tempo mark at the selected bar (or the play head's) with the tempo heard there — then the slider goes back to 100 % |
+
+The readout shows the bar (with *x2* on a repeat's second time), the beat and
+the time as heard at the slider's speed; the ruler shows each bar's number
+and the time it first plays at.
+
+### The mixer
+
+The **Mixer** tab (`M`; `F10` in the MuseScore keymap) shows a strip per
+line — its reverb and delay sends and pan as knobs (drag up or down,
+double-click to reset), its fader with a meter, the level in dB, mute and
+solo — then the two send buses' returns (bus A's reverb, bus B's delay) and
+the master fader with the mix's meter. The faders are the same values the
+staff headers show, kept in the file, and they are heard at once while the
+score plays; each drag is one undo step. A line's insert effects are listed
+as the file has them (the effects rack that plays them comes later).
+
+### Exporting audio
+
+**File > Export Audio (WAV)** renders the whole score, the loop region or
+the selected bars — through the same scheduler the game uses, with the
+mixer's mutes and solos, at the written tempo or the slider's — plus a tail
+for the reverb to ring out, as a 48 kHz 24-bit stereo WAV. A score that
+loops (`loop: true`) exports one pass: the music stops at the end and the
+tail is its ring-out, not the top again. It goes to
+`exports/<name>.wav` beside `resources/` unless you type another path.
 
 ### The keypad, the keymap and F1
 
@@ -223,12 +296,132 @@ are not played yet.
 ## Instruments
 
 A line names a `.finst` from the shared instrument library under
-`resources/sounds/instruments/` (see [the instrument library](31-music-tracker.md#the-instrument-library)).
-The starter library includes an orchestral set: string sections with sustain,
-staccato, pizzicato, tremolo and muted articulations; woodwinds; brass; grand
-piano, celesta, harp and organ; choir; timpani and tuned percussion; synths.
-Each instrument carries its range, its default clef and its transposition.
-`foundry score inspect` flags notes outside the instrument's range.
+`resources/sounds/instruments/` by its path there without the extension
+(`strings/violin_section`). The Tracker's song slots name the same files, so
+a song and a score can share every instrument. The starter library includes an
+orchestral set: string sections with sustain, staccato, pizzicato, tremolo and
+muted articulations; woodwinds; brass; grand piano, celesta, harp and organ;
+choir; timpani and tuned percussion; a General MIDI drum kit; synths.
+
+A `.finst` is YAML: the instrument's samples (named from `sounds/samples/`),
+its keymap zones with velocity layers and round-robin takes, its envelopes,
+filter and vibrato, its **articulations**, and its **playback** defaults:
+
+```yaml
+version: 1
+name: Violin Section
+samples: [orchestral/vln_sus_soft_g3, orchestral/vln_sus_loud_g3]
+zones:
+  - sample: 1
+    layers:
+      - {sample: 0, velocity: [0, 96]}
+      - {sample: 1, velocity: [64, 127], gain: -1}
+articulations:
+  - {name: pizzicato, triggers: [pizz., pizz], zones: [...]}
+playback:
+  range: [G-3, E-7]      # sounding
+  transposition: 0       # written to sounding, semitones
+  clef: treble           # the staff Lines > Add Line writes it on (grand, percussion …)
+  gliss: slide           # slide, chromatic or diatonic
+  staccato: 0.4          # fraction of its length a staccato note sounds
+  release: 0             # seconds a note rings past its written end
+```
+
+How a score uses it:
+
+- **Velocity layers.** The dynamic a note is played at (from the marks) is
+  its velocity, which picks the layer, crossfading where layers overlap.
+- **Articulations.** A mark (`stacc`) or technique text (`tech=pizz.`) picks
+  the articulation whose name or `triggers` match; `arco` and `ord.` go back
+  to the instrument's own zones.
+- **Playback defaults.** The clef and transposition choose the staff a new
+  line gets, and the range is what `foundry score inspect` checks notes
+  against.
+
+The whole format — every key, and the `gen-instruments` command that builds
+the library — is in [the instrument library](31-music-tracker.md#the-instrument-library).
+
+## A score in a level
+
+A level's `music:` block names a score by its path under `sounds/` without
+the extension, exactly as it names a recording or a song, and
+`play_music("hangar_theme")` switches to one from a script. If a `.ftrk` and
+a `.fscore` share a name, the song plays. The score plays live, through the
+same scheduler the editor's transport uses, as one voice on the engine's
+**music** bus: the player's music slider, the fades, the master gain and the
+limiter reach it, and it never counts against the cap on looping sounds that
+ambience and engine loops share.
+
+| Key | |
+| --- | --- |
+| `track` | the score |
+| `section` | the rehearsal mark (one of `sections:`) to start at; the top when left out |
+| `params` | the score's params, 0 to 1, before the first note |
+| `gain`, `fade`, `loop` | as for any track. A score loops by its own `loop:`; `loop` here is ignored for scores and songs |
+
+A level load reads the score and every instrument its lines play, so the
+music starts without touching the disk. Scores are steered by the line names
+and the section names in the file, so renaming a line in the editor renames
+what a script mutes (the editor's bindings follow a rename; scripts do not).
+
+A release ships every score a level or a script names (a `music:` block,
+`play_music`, `play_song`, `song_stinger`), the library instruments their
+lines play and those instruments' samples, and nothing else from the
+library. **Window > Unused Assets** (`foundry find-unused`) follows the same
+references, so a score that nothing names is listed there, and the
+instruments only it plays with it.
+
+## Scripting a score
+
+A playing score is steered by the Tracker's song verbs, and it answers with
+the song events (see [Scripting a song](31-music-tracker.md#scripting-a-song)).
+For a score, the **sections** are its rehearsal marks, the **channels** its
+lines, and the **markers** its `markers:`. Every change waits for a boundary:
+`"beat"` (the default), `"bar"`, `"section"` (when the playing section ends;
+the end of the piece when it has none) or `"now"`. `"pattern"` is a bar.
+
+| Verb | With a score |
+| --- | --- |
+| `play_music(name, fade)` | switch the level's track to the score |
+| `play_song(name, section, fade)` | play the score from a rehearsal mark; if it is already playing, move there on the next beat instead |
+| `song_section(name, quantise)` | move to a rehearsal mark at the next boundary. A section with `loop: true` repeats until asked to move on, and one with `next:` goes there at its end |
+| `song_param(name, value, seconds)` | ramp one of the score's params (0–1). Its `bindings` turn it into a line's volume, pan, sends or low-pass cutoff |
+| `song_mute(line, on, fade)` | fade a line out (`true`) or back in; by name or number from 1 |
+| `song_tempo(bpm, seconds)` | the tempo slider: the bar playing now goes at `bpm` quarters a minute and every tempo mark follows in proportion (25 % to 200 % of the written tempo) |
+| `song_stinger(name, quantise)` | play a short score — or a song — once over this one, from its top, starting on the boundary (a loop or section jump counts as one) |
+| `play_note(line, note, volume, seconds)` | one note on a line's instrument, outside the score; `note` is `"C-4"` or `"C#4"` |
+| `song_position()` | `{playing, song, section, bar, pass, beat, tick, seconds}`: the written bar, the time through it (`pass` 2 on a repeat), the beat from 0 in the bar, the tick (960 a quarter, in playing order) and the score's seconds |
+
+| Event | Args | With a score |
+| --- | --- | --- |
+| `:song_marker:` | `name str, value int` | a marker played; `value` is the bar it is in |
+| `:song_section:` | `name str` | a rehearsal mark's section started (also at the start, when the score starts on one) |
+| `:song_beat:` | `beat int, section str` | every beat, counted from 0 in the bar; a score needs no `beat_events` switch. 6/8 has two beats, 3+2+2/8 three |
+| `:song_bar:` | `section str` | each bar's first beat, after its `:song_beat:` |
+| `:song_end:` | `song str` | a score without `loop: true` ran out |
+
+```
+-- in the level's script
+def on_fight(:fight_started:) -> null
+    song_section("battle", "bar")
+    song_param("intensity", 1, 4)
+    song_mute("Choir", false, 2)
+end
+
+def on_bar(:song_bar:, section str) -> null
+    if section == "battle"
+        play_sound("war_drum")
+    end
+end
+```
+
+The level's hard pause (`@level.prop.paused`) freezes the score where it is,
+silent, and it carries on mid-phrase when the game resumes. A save game
+records the score, the tick it was at, its section, whether it was playing,
+and the params and line mutes scripts set; loading it starts the score at
+that tick with those settings. A headless `foundry play` has no audio device,
+so no score sounds there, but `music.track` and `music.section` read what the
+level and its scripts asked for.
 
 ## Commands
 

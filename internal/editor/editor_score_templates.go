@@ -27,6 +27,7 @@ var scoreTemplates = []scoreTemplate{
 	{"Piano", "A grand staff: treble and bass, one piano.", scoreTemplatePiano},
 	{"String quartet", "Two violins, viola (alto clef) and cello.", scoreTemplateQuartet},
 	{"Chamber ensemble", "Flute, clarinet in Bb and horn in F (written transposed), violins and cello.", scoreTemplateChamber},
+	{"Rhythm section", "Piano on a grand staff, electric bass, and a drum kit on a percussion staff.", scoreTemplateRhythm},
 }
 
 // scoreTemplateBase is the empty score every template starts from.
@@ -77,5 +78,12 @@ func scoreTemplateChamber() *score.Score {
 		score.NewLine("Violins", "strings/violin_section", "treble"),
 		score.NewLine("Cello", "strings/cello_section", "bass"),
 	}
+	return s
+}
+
+func scoreTemplateRhythm() *score.Score {
+	s := scoreTemplateBase("Untitled")
+	s.Lines = []*score.Line{scoreGrandStaffLine(), score.NewLine("Bass", "bass/bass_finger", "bass"), scorePercussionLine()}
+	s.Lines[1].Pan = -0.1
 	return s
 }

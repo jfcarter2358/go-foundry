@@ -102,11 +102,14 @@ func (e *engraver) drawEvent(sc *staffCtx, x *ev) {
 		return
 	}
 	s := x.size
-	hg := headGlyph(x.base)
-	o := e.headOrigin(x.base) * s
+	o := e.headOrigin(x.head) * s
 	for _, n := range x.notes {
 		ref := x.ref
 		ref.Note = n.idx
+		hg := x.head
+		if n.head != "" {
+			hg = n.head
+		}
 		e.add(sc, x, e.glyphItem(RoleNotehead, ref, hg, x.x+n.dx-o, n.y, s))
 		if n.acc {
 			base := x.col.x

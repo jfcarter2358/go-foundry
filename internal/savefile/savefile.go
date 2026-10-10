@@ -285,6 +285,10 @@ type MusicState struct {
 	Playing    bool
 	Params     map[string]float32
 	Mutes      map[string]bool
+	// Tick is where a score was (internal/score/play's 960 a quarter, in
+	// playing order); its Section, Playing, Params and Mutes (lines) are
+	// the song's.
+	Tick int64
 }
 
 // ---------- player ----------

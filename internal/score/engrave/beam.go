@@ -233,7 +233,7 @@ func (e *engraver) groupUp(evs []*ev, voice int, forced bool) bool {
 // stemX is the centre of an event's stem.
 func (e *engraver) stemX(x *ev) float64 {
 	t := e.d.StemThickness * x.size
-	g := headGlyph(x.base)
+	g := x.head
 	if x.up {
 		a, _ := e.f.Anchor(g, "stemUpSE")
 		return x.x + a.X*x.size - t/2
@@ -244,7 +244,7 @@ func (e *engraver) stemX(x *ev) float64 {
 
 // stemBase is where an event's stem leaves its far notehead.
 func (e *engraver) stemBase(x *ev) float64 {
-	g := headGlyph(x.base)
+	g := x.head
 	if x.up {
 		a, _ := e.f.Anchor(g, "stemUpSE")
 		return x.notes[0].y + a.Y*x.size

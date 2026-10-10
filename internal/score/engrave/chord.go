@@ -36,10 +36,42 @@ func headGlyph(b score.DurBase) string {
 	return "noteheadBlack"
 }
 
+// DrumHeadGlyph is the notehead a percussion staff draws a drum's shape
+// with at a value: what an editor's ghost note shows.
+func DrumHeadGlyph(h score.DrumHead, b score.DurBase) string { return drumHeadGlyph(h, b) }
+
+// drumHeadGlyph is a percussion notehead shape for a value.
+func drumHeadGlyph(h score.DrumHead, b score.DurBase) string {
+	var name string
+	switch h {
+	case score.DrumHeadX:
+		name = "noteheadX"
+	case score.DrumHeadCircleX:
+		name = "noteheadCircleX"
+	case score.DrumHeadDiamond:
+		name = "noteheadDiamond"
+	case score.DrumHeadTriangle:
+		name = "noteheadTriangleUp"
+	default:
+		return headGlyph(b)
+	}
+	switch {
+	case b <= score.Breve:
+		return name + "DoubleWhole"
+	case b == score.WholeNote:
+		return name + "Whole"
+	case b == score.Half:
+		return name + "Half"
+	case h == score.DrumHeadCircleX:
+		return name // SMuFL's black circle-x has no suffix
+	}
+	return name + "Black"
+}
+
 // headOrigin is how far left of the head's oval its glyph starts (a breve's
 // side bars), at size 1.
-func (e *engraver) headOrigin(b score.DurBase) float64 {
-	if p, ok := e.f.Anchor(headGlyph(b), "noteheadOrigin"); ok {
+func (e *engraver) headOrigin(head string) float64 {
+	if p, ok := e.f.Anchor(head, "noteheadOrigin"); ok {
 		return p.X
 	}
 	return 0
@@ -280,7 +312,7 @@ func (e *engraver) voiceShift(p, x *ev) (float64, bool) {
 	}
 	// A unison of the same value on the outer notes shares a head.
 	if p.up && !x.up && xh == pl && x.notes[len(x.notes)-1].p == p.notes[0].p &&
-		headGlyph(x.base) == headGlyph(p.base) && x.dots == p.dots {
+		x.head == p.head && x.dots == p.dots {
 		return 0, false
 	}
 	_, pr := headSpan(p)

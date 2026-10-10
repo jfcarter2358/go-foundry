@@ -55,6 +55,7 @@ var goldenCases = []goldenCase{
 	{"grandstaff", "grandstaff", engrave.Options{}},
 	{"transposing", "transposing", engrave.Options{}},
 	{"transposing_concert", "transposing", engrave.Options{Concert: true}},
+	{"percussion", "percussion", engrave.Options{}},
 	{"demo_bars_9_12", "../../../../resources/sounds/score_demo", engrave.Options{From: 9, To: 12, BarNumbers: 1}},
 }
 

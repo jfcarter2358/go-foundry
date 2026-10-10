@@ -25,6 +25,7 @@ import (
 	"math"
 	"sync/atomic"
 
+	"foundry/internal/audio"
 	"foundry/internal/score"
 	"foundry/internal/score/interpret"
 	"foundry/internal/tracker"
@@ -81,6 +82,10 @@ const (
 	cmdNote
 	cmdNoteOff
 	cmdPause
+	cmdMix
+	cmdGain
+	cmdReturns
+	cmdStinger
 )
 
 type command struct {
@@ -92,6 +97,8 @@ type command struct {
 	q    tracker.Quantize
 	tick int64
 	prog *Program
+	mix  LineMix
+	gen  audio.Generator
 }
 
 // maxActive is how many scheduled notes can sound at once; past it the one
@@ -108,6 +115,12 @@ type activeNote struct {
 	line int
 }
 
+// LineMix is a line's mixer strip as the editor's faders set it: the
+// score's own Volume, Pan, SendA and SendB, overridden live.
+type LineMix struct {
+	Volume, Pan, SendA, SendB float32
+}
+
 type paramState struct {
 	cur, target, rate float32
 }
@@ -116,6 +129,19 @@ type resolvedBind struct {
 	param, line int
 	target      tracker.BindTarget
 	from, to    float32
+}
+
+// maxStingers is how many stingers can play (or wait) at once; past it a
+// new one is refused.
+const maxStingers = 4
+
+// stinger is a generator mixed over the score. delay is the frames into
+// the coming block it starts at; at, while it waits, the score time it
+// starts at.
+type stinger struct {
+	g     audio.Generator
+	delay int
+	at    float64
 }
 
 type previewKey struct {
@@ -164,6 +190,13 @@ type Player struct {
 
 	params []paramState
 	binds  []resolvedBind
+	// faders are each line's strip before curves and bindings: the
+	// score's, until SetMix moves one.
+	faders []LineMix
+
+	// stingers play over the score; waiting ones start on their boundary.
+	stingers, waiting []stinger
+	stingerBuf        []float32
 }
 
 // New prepares a score to play. It does not start the transport: call
@@ -187,6 +220,8 @@ func NewFromProgram(prog *Program) *Player {
 		pendingSection: -1,
 		scale:          1,
 		scaleTarget:    1,
+		stingers:       make([]stinger, 0, maxStingers),
+		waiting:        make([]stinger, 0, maxStingers),
 	}
 	p.install(prog)
 	p.game = prog
@@ -274,6 +309,25 @@ func (p *Player) TempoScale(scale, secs float64) bool {
 	return p.send(command{kind: cmdTempoScale, f: math.Max(0.25, math.Min(2, scale)), g: secs})
 }
 
+// SetMix moves a line's fader, pan and sends now, without preparing the
+// score again — what the editor's mixer does while a fader is dragged. The
+// next SetScore (or SetInstrument) takes the score's own values again, so
+// the editor writes the same values into the score it hands over.
+func (p *Player) SetMix(line int, m LineMix) bool {
+	return p.send(command{kind: cmdMix, i: line, mix: m})
+}
+
+// SetGain sets the master level now (the score's Gain until then).
+func (p *Player) SetGain(g float32) bool {
+	return p.send(command{kind: cmdGain, f: float64(g)})
+}
+
+// SetReturns sets the two send buses' return levels now (the score's
+// Buses.A.Return and Buses.B.Return until then).
+func (p *Player) SetReturns(a, b float32) bool {
+	return p.send(command{kind: cmdReturns, f: float64(a), g: float64(b)})
+}
+
 // SetScore swaps in an edited score, keeping the play head at the same
 // tick. It interprets the score and loads its instruments here, on the
 // caller's thread. The caller must not change s afterwards.
@@ -301,6 +355,20 @@ func (p *Player) SetInstrument(line int, name string) error {
 		return fmt.Errorf("score player: command queue full")
 	}
 	return nil
+}
+
+// Stinger mixes another generator over the score from the next q boundary
+// (a beat, a bar, the end of the playing section, or now) until it reports
+// it is done: a short score or tracker song played once, the musical
+// answer to something that happened. A jump of the play head (a section
+// change, a loop) is a boundary too, so a waiting stinger never waits
+// through a whole loop. The generator must be started and must not be
+// playing anywhere else — the score renders it on the mixer goroutine.
+func (p *Player) Stinger(g audio.Generator, q tracker.Quantize) bool {
+	if g == nil {
+		return false
+	}
+	return p.send(command{kind: cmdStinger, gen: g, q: q})
 }
 
 // PlayFrom starts (or moves) the transport at a tick.
@@ -423,12 +491,19 @@ func (p *Player) install(prog *Program) {
 	p.prog = prog
 	s := prog.Score
 	p.eng.SetStripCount(len(s.Lines))
-	for i, l := range s.Lines {
-		if old == nil || i >= len(old.Score.Lines) || old.Score.Lines[i].Mute != l.Mute || old.Score.Lines[i].Solo != l.Solo {
+	// A strip is re-muted only where the score's own mixer silences it
+	// differently from the last program's (a mute, or a solo on any line),
+	// so a script's live mute of a line the edit did not touch stands.
+	for i := range s.Lines {
+		if old == nil || i >= len(old.Score.Lines) || LineSilenced(old.Score, i) != LineSilenced(s, i) {
 			p.eng.SetMuteNow(i, p.scoreMute(i))
 		}
 	}
 	p.eng.SetBuses(prog.reverb, prog.delay, prog.comp, s.Gain)
+	p.faders = make([]LineMix, len(s.Lines))
+	for i, l := range s.Lines {
+		p.faders[i] = LineMix{Volume: l.Volume, Pan: l.Pan, SendA: l.SendA, SendB: l.SendB}
+	}
 	params := make([]paramState, len(s.Params))
 	for i, prm := range s.Params {
 		params[i] = paramState{cur: prm.Default, target: prm.Default}
@@ -460,10 +535,13 @@ func (p *Player) install(prog *Program) {
 	}
 }
 
-// scoreMute is whether the score itself mutes a line: its own mute, or
-// another line's solo.
-func (p *Player) scoreMute(i int) bool {
-	lines := p.prog.Score.Lines
+// scoreMute is whether the score itself mutes a line.
+func (p *Player) scoreMute(i int) bool { return LineSilenced(p.prog.Score, i) }
+
+// LineSilenced reports whether a score's own mixer silences a line: its
+// mute, or another line's solo while it has none.
+func LineSilenced(s *score.Score, i int) bool {
+	lines := s.Lines
 	if i < 0 || i >= len(lines) {
 		return false
 	}
@@ -553,6 +631,7 @@ func (p *Player) apply(c command) {
 	case cmdStop:
 		p.playing = false
 		p.pendingSection = -1
+		p.waiting = p.waiting[:0]
 		p.releaseAll(0)
 	case cmdLoop:
 		a, b := clampTick(c.tick, perf.Length), clampTick(int64(c.i), perf.Length)
@@ -566,6 +645,23 @@ func (p *Player) apply(c command) {
 		p.previewOff(c.i)
 	case cmdPause:
 		p.paused = c.b
+	case cmdMix:
+		if c.i >= 0 && c.i < len(p.faders) {
+			p.faders[c.i] = c.mix
+		}
+	case cmdGain:
+		p.eng.SetGain(float32(c.f))
+	case cmdReturns:
+		p.eng.SetReturns(float32(c.f), float32(c.g))
+	case cmdStinger:
+		if len(p.stingers)+len(p.waiting) >= maxStingers {
+			return
+		}
+		if c.q == tracker.QuantNow || !p.playing {
+			p.stingers = append(p.stingers, stinger{g: c.gen})
+			return
+		}
+		p.waiting = append(p.waiting, stinger{g: c.gen, at: p.quantized(c.q)})
 	}
 	p.publish()
 }
@@ -613,6 +709,7 @@ func (p *Player) reindex(sec float64) {
 // jump moves the play head, releasing what sounds at frame at, and tells
 // scripts the section it lands in.
 func (p *Player) jump(at int, sec float64) {
+	p.startWaiting(math.Inf(1), at, 0)
 	p.releaseAll(at)
 	p.reindex(sec)
 	p.pendingSection = -1
@@ -654,14 +751,71 @@ func (p *Player) Render(dst []float32, frames, rate int) bool {
 		p.schedule(frames)
 	}
 	more := p.eng.Render(out, frames, rate)
+	p.mixStingers(out, frames, rate)
 	p.publish()
 	if p.finished && !p.playing {
 		p.tail -= frames
-		if p.tail <= 0 && !more {
+		if p.tail <= 0 && !more && len(p.stingers) == 0 {
 			return false
 		}
 	}
 	return true
+}
+
+// startWaiting starts every waiting stinger due by bound: at frame at, or
+// (at < 0) on the frame its own time falls on in this block.
+func (p *Player) startWaiting(bound float64, at int, fpos float64) {
+	for k := 0; k < len(p.waiting); {
+		w := p.waiting[k]
+		if w.at > bound+1e-9 {
+			k++
+			continue
+		}
+		f := at
+		if f < 0 {
+			f = p.frameAt(math.Max(w.at, p.sec), fpos)
+		}
+		p.stingers = append(p.stingers, stinger{g: w.g, delay: max(f, 0)})
+		last := len(p.waiting) - 1
+		p.waiting[k] = p.waiting[last]
+		p.waiting[last] = stinger{}
+		p.waiting = p.waiting[:last]
+	}
+}
+
+// mixStingers adds the playing stingers into out, each from the frame it
+// starts at, and drops the ones that have finished.
+func (p *Player) mixStingers(out []float32, frames, rate int) {
+	if len(p.stingers) == 0 {
+		return
+	}
+	if cap(p.stingerBuf) < frames*2 {
+		p.stingerBuf = make([]float32, frames*2)
+	}
+	k := 0
+	for _, st := range p.stingers {
+		more := true
+		if st.delay >= frames {
+			st.delay -= frames
+		} else {
+			n := frames - st.delay
+			buf := p.stingerBuf[:n*2]
+			more = st.g.Render(buf, n, rate)
+			dst := out[st.delay*2:]
+			for j := range buf {
+				dst[j] += buf[j]
+			}
+			st.delay = 0
+		}
+		if more {
+			p.stingers[k] = st
+			k++
+		}
+	}
+	for j := k; j < len(p.stingers); j++ {
+		p.stingers[j] = stinger{}
+	}
+	p.stingers = p.stingers[:k]
 }
 
 type action uint8
@@ -703,6 +857,7 @@ func (p *Player) schedule(frames int) {
 		p.cueOns(bound, fpos)
 		p.cueOffs(bound, fpos)
 		p.postTimed(bound)
+		p.startWaiting(bound, -1, fpos)
 		fpos += (bound - p.sec) / p.scale * rate
 		p.sec = bound
 		at := int(math.Round(fpos))
@@ -867,8 +1022,9 @@ func (p *Player) rampControls(dt float64) {
 		p.engBPM = bpm
 		p.eng.SetTempo(float32(bpm))
 	}
-	for li, l := range prog.Score.Lines {
-		c := tracker.StripControls{Volume: l.Volume, Pan: l.Pan, SendA: l.SendA, SendB: l.SendB}
+	for li := range prog.Score.Lines {
+		f := p.faders[li]
+		c := tracker.StripControls{Volume: f.Volume, Pan: f.Pan, SendA: f.SendA, SendB: f.SendB}
 		if k := prog.volCurve[li]; k >= 0 {
 			c.Volume *= prog.Perf.Curves[k].At(tick)
 		}

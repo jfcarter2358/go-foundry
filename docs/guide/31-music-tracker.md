@@ -17,7 +17,7 @@ music:
 ```
 
 `play_music("combat_theme")` works too. A recording and a song with the same
-name can't both exist: the `.ftrk` wins.
+name can't both exist: the `.ftrk` wins (over a `.fscore` of that name too).
 
 ## The Tracker editor
 
@@ -154,7 +154,8 @@ the player's music slider, fades and the limiter apply to it as to any track.
 
 ## Scripting a song
 
-Every change waits for a boundary, so a switch lands on the beat. The quantise
+These verbs and events steer a [score](32-score-editor.md#scripting-a-score)
+the same way. Every change waits for a boundary, so a switch lands on the beat. The quantise
 word is `"beat"` (the default), `"bar"`, `"pattern"`, `"section"` (when the
 playing section ends) or `"now"`.
 
@@ -165,7 +166,7 @@ playing section ends) or `"now"`.
 | `song_param(name, value, seconds)` | ramp a param (0–1) |
 | `song_mute(channel, on, fade)` | fade a channel out (`true`) or back in; by name or number from 1 |
 | `song_tempo(bpm, seconds)` | ramp the tempo |
-| `song_stinger(name, quantise)` | play a short song once over this one |
+| `song_stinger(name, quantise)` | play a short song (or score) once over this one |
 | `play_note(instrument, note, volume, seconds)` | play one note on the song's instrument, outside its patterns, for a musical pickup or UI sound |
 | `song_position()` | `{playing, song, section, order, row, beat}` |
 

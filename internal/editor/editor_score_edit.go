@@ -25,6 +25,7 @@ import (
 	"foundry/internal/score"
 	"foundry/internal/score/edit"
 	"foundry/internal/score/engrave"
+	"foundry/internal/score/interpret"
 )
 
 // scoreSelKind is what is selected.
@@ -101,6 +102,23 @@ type scoreState struct {
 
 	// Rev counts edits — the save chip's and the player's change signal.
 	Rev uint64
+	// MixRev counts mixer changes (faders, pan, sends, returns, the master,
+	// mute, solo, an instrument swap): the window hands those to the player
+	// live (play.Player.SetMix …) instead of preparing the score again.
+	MixRev uint64
+	// mixKey is the mixer control the newest undo step is a drag of: one
+	// drag of one fader is one step (editor_score_lines.go).
+	mixKey string
+
+	// Transport is the play head, the loop, the tempo slider and follow.
+	Transport scoreTransport
+	// ops are requests for the player the window has not taken yet.
+	ops []scorePlayerOp
+	// perfCache is the score interpreted, for the transport's arithmetic.
+	perfCache    *interpret.Performance
+	perfScore    *score.Score
+	perfRev      uint64
+	perfComputed bool
 
 	undo, redo boundedStack[scoreSnapshot]
 
@@ -115,7 +133,7 @@ type scoreState struct {
 
 // newScoreState starts an editor on a score.
 func newScoreState(s *score.Score) *scoreState {
-	e := &scoreState{Dur: score.Duration{Base: score.Quarter}}
+	e := &scoreState{Dur: score.Duration{Base: score.Quarter}, Transport: newScoreTransport()}
 	e.setScore(s)
 	return e
 }
@@ -128,6 +146,8 @@ func (e *scoreState) setScore(s *score.Score) {
 	e.redo.clear()
 	e.Input = false
 	e.Armed = false
+	e.mixKey = ""
+	e.Transport.Loop, e.Transport.Head = scoreLoop{}, 0
 	e.Rev++
 }
 
@@ -149,7 +169,9 @@ func (e *scoreState) change(f func() error) bool {
 	e.undo.push(snap)
 	e.redo.clear()
 	e.touch()
+	e.mixKey = ""
 	e.Reveal = true
+	e.Transport.Loop = scoreFitLoop(e.Score, e.Transport.Loop)
 	return true
 }
 
@@ -173,6 +195,8 @@ func (e *scoreState) undoStep() bool {
 	e.redo.push(scoreSnapshot{Score: e.Score.Clone(), Sel: e.Sel})
 	e.Score, e.Sel = snap.Score, snap.Sel
 	e.touch()
+	e.mixKey = ""
+	e.Transport.Loop = scoreFitLoop(e.Score, e.Transport.Loop)
 	e.Status = "Undo"
 	return true
 }
@@ -186,6 +210,8 @@ func (e *scoreState) redoStep() bool {
 	e.undo.push(scoreSnapshot{Score: e.Score.Clone(), Sel: e.Sel})
 	e.Score, e.Sel = snap.Score, snap.Sel
 	e.touch()
+	e.mixKey = ""
+	e.Transport.Loop = scoreFitLoop(e.Score, e.Transport.Loop)
 	e.Status = "Redo"
 	return true
 }
@@ -433,7 +459,7 @@ func (e *scoreState) write(l edit.Loc, at score.Frac, written *score.Pitch) bool
 	var concert score.Pitch
 	if written != nil {
 		p := *written
-		if e.Armed {
+		if e.Armed && !e.percussion(l.Line, l.Staff) {
 			p = edit.Accidental(p, e.ArmedAcc)
 		}
 		concert = e.toConcert(l.Line, l.Staff, p)
@@ -468,15 +494,43 @@ func (e *scoreState) write(l edit.Loc, at score.Frac, written *score.Pitch) bool
 }
 
 // clickWrite is a click in note input: the written staff position at a
-// place, spelled as the key there implies.
+// place, spelled as the key there implies — or, on a percussion staff, the
+// drum that sits there.
 func (e *scoreState) clickWrite(line, staff, bar int, at score.Frac, diatonic int) bool {
+	if e.percussion(line, staff) {
+		d, ok := score.DrumAt(diatonic - score.PercussionBottom)
+		if !ok {
+			e.Status = "No drum sits on that line or space of a percussion staff"
+			return false
+		}
+		p := score.DrumPitch(d)
+		return e.write(edit.Loc{Line: line, Staff: staff, Voice: e.Voice, Bar: bar}, at, &p)
+	}
 	p := score.InKey(diatonic, e.writtenFifths(line, staff, bar))
 	return e.write(edit.Loc{Line: line, Staff: staff, Voice: e.Voice, Bar: bar}, at, &p)
 }
 
+// percussion reports a percussion staff: its notes are drums by place
+// (score.GMDrums), not pitches.
+func (e *scoreState) percussion(line, staff int) bool {
+	st := edit.Staff(e.Score, line, staff)
+	return st != nil && st.Clef == "percussion"
+}
+
+// ghostDrum is the drum a click at a percussion staff position writes.
+func (e *scoreState) ghostDrum(diatonic int) (score.Drum, bool) {
+	return score.DrumAt(diatonic - score.PercussionBottom)
+}
+
 // ghost is what a click at a staff position would write, as written: the
-// key's spelling, and the armed accidental if there is one.
+// key's spelling, and the armed accidental if there is one (a percussion
+// staff's drum there).
 func (e *scoreState) ghost(line, staff, bar, diatonic int) score.Pitch {
+	if e.percussion(line, staff) {
+		if d, ok := e.ghostDrum(diatonic); ok {
+			return score.DrumPitch(d)
+		}
+	}
 	p := score.InKey(diatonic, e.writtenFifths(line, staff, bar))
 	if e.Armed {
 		p = edit.Accidental(p, e.ArmedAcc)
@@ -518,6 +572,10 @@ func (e *scoreState) letter(step int) {
 	l, at, ok := e.caret()
 	if !ok {
 		e.Status = "Select a bar or a note first"
+		return
+	}
+	if e.percussion(l.Line, l.Staff) {
+		e.Status = "A percussion staff takes drums, not letters: click the drum's line or space"
 		return
 	}
 	p := edit.NearestLetter(step, ptrPitch(e.prevPitch(l, at)), e.writtenFifths(l.Line, l.Staff, l.Bar))
@@ -1384,8 +1442,13 @@ func scoreEventText(e *scoreState, line, staff int, ev *score.Event) string {
 	}
 	var names []string
 	tied := false
+	drums := e.percussion(line, staff)
 	for _, n := range ev.Notes {
-		names = append(names, edit.PitchName(e.toWritten(line, staff, n.Pitch)))
+		if drums {
+			names = append(names, score.DrumName(n.Pitch))
+		} else {
+			names = append(names, edit.PitchName(e.toWritten(line, staff, n.Pitch)))
+		}
 		tied = tied || n.Tie
 	}
 	extra := edit.DurName(ev.Dur)
