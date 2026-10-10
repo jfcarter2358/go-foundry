@@ -1,0 +1,10 @@
+base_note: C-4
+loop: forward
+loop_start: 28873
+loop_end: 172712
+tags:
+- pads
+- air
+- noise
+- stereo
+description: 'Air: noise tuned to the note'

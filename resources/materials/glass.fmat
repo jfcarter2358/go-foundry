@@ -1,0 +1,10 @@
+# glass.fmat — a constant alpha, as a material.
+#
+# This was `alpha:` per face. Under a name it is a decision about what glass is
+# in this project, made once.
+kind: surface
+texture: hull_glass
+doc: Window glass. Below 1 it draws in the sorted transparent pass.
+effects:
+  - effect: alpha
+    value: 0.32

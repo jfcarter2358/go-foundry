@@ -1,0 +1,423 @@
+package editor
+
+// editor_scenery_panel.go — the brush's controls and a placed prop's fields.
+//
+// Two blocks, and the split between them is the whole idea of the tool. The
+// brush section says what the *next* prop will be — model, facing, size,
+// solidity — and is the only section in this panel that stays relevant after
+// the click that used it. The properties section says what the *selected* prop
+// is, and looks like every other object's: identity, transform, actions.
+//
+// The level's scenery list lives in the Explorer with everything else the level
+// contains (editor_panel_explorer.go); this file is the Add-menu entry, the
+// brush block and the selected prop's properties.
+
+import (
+	"fmt"
+	"foundry/internal/imguibackend"
+	"foundry/internal/nanitecook"
+	"foundry/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
+	imgui "github.com/inkyblackness/imgui-go/v4"
+)
+
+// ---------- the Add menu's Scenery entry ----------
+
+// editorSceneryAddMenu draws the scenery half of the Explorer's Add menu.
+//
+// There is no "place by clicking" row here as there is for every other kind,
+// because arming the brush *is* that row and the brush is not a one-shot: the
+// model picker turns it on, and it stays on until Escape. That asymmetry is
+// deliberate and is the one thing worth saying in the menu itself.
+func editorSceneryAddMenu() {
+	imgui.SetNextItemWidth(240)
+	path := Editor.BrushModel
+	if sceneryModelFileCombo("Model##brushmodel", &path) {
+		editorArmBrush(path)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Picking a model arms the brush.\nA ghost follows the cursor; every click places a copy.")
+	}
+	imgui.Separator()
+	if Editor.BrushActive {
+		if imgui.MenuItem("Stop Brushing") {
+			editorDisarmBrush()
+		}
+	} else if imgui.MenuItemV("Start Brushing", "", false, Editor.BrushModel != "") {
+		editorArmBrush(Editor.BrushModel)
+	}
+}
+
+// ---------- the brush block ----------
+
+// editorSceneryBrushSection draws the brush's own controls.
+//
+// Unlike every other properties block in this panel it is not selection-driven:
+// it is drawn whenever the brush has a model, because what it shows is about
+// the next click rather than about anything currently selected. Hidden entirely
+// when there is no model, so a panel that is not scattering anything does not
+// carry a block about scattering.
+func editorSceneryBrushSection() {
+	if Editor.BrushModel == "" && !Editor.BrushActive {
+		return
+	}
+	imgui.Separator()
+	// No editorFocusOpen here, unlike every block around it: this one is not
+	// about the selection, so a click that selected a prop has no business
+	// unfolding it.
+	if !imgui.CollapsingHeaderV("Scenery Brush##brushhdr", imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+	editorSceneryBrushBody()
+}
+
+// editorSceneryBrushBody is the controls themselves, split out so a test can
+// reason about the state they write without an imgui frame around them.
+func editorSceneryBrushBody() {
+	path := Editor.BrushModel
+	if sceneryModelFileCombo("Model##brushmodel2", &path) {
+		editorArmBrush(path)
+	}
+
+	if Editor.BrushActive {
+		editorTextColored(imgui.Vec4{X: 0.2, Y: 0.9, Z: 1, W: 1},
+			"Armed — click in the 3D view to place")
+		if imgui.Button("Stop##brushstop") {
+			editorDisarmBrush()
+		}
+	} else {
+		imguibackend.EditorPushDisabled(Editor.BrushModel == "")
+		if imgui.Button("Start##brushstart") {
+			editorArmBrush(Editor.BrushModel)
+		}
+		imguibackend.EditorPopDisabled()
+	}
+
+	yaw := mgl32.RadToDeg(Editor.BrushRotation.Y())
+	if editorDragFloatStep("Yaw (deg)##brushyaw", &yaw, -180, 180, "%.1f", 1) {
+		Editor.BrushRotation[1] = mgl32.DegToRad(yaw)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Or [ and ] in the 3D view, in 15-degree steps\n(5 with Shift held).")
+	}
+
+	scale := editorBrushScale()
+	if editorDragFloat("Scale##brushscale", &scale, 0.05, 100, "%.3f") {
+		Editor.BrushScale = scale
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Uniform. Or - and = in the 3D view.\nThe placed prop's own panel has per-axis scale.")
+	}
+
+	if imgui.Checkbox("Random yaw per copy##brushrandyaw", &Editor.BrushRandomYaw) {
+		// Nothing to rebuild: the ghost keeps the dialled-in facing, and the
+		// randomness is applied at the stamp — see brushRotationFor.
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Each copy gets its own facing, so a scattered field\ndoes not read as one model repeated.\nThe ghost still shows the yaw above.")
+	}
+
+	imgui.Checkbox("Solid##brushsolid", &Editor.BrushSolid)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Whether copies stop the player and entities.\nCollision is the model's own bounding box.")
+	}
+
+	if lvl := Editor.level; lvl != nil {
+		editorTextMuted(fmt.Sprintf("%d in level, %d drawn", len(lvl.Scenery), sceneryDrawnCount()))
+	}
+}
+
+// ---------- the selected prop ----------
+
+// editorSceneryPropertiesSection draws the selected prop's fields. Nothing is
+// drawn when none is selected, so the caller can call it unconditionally.
+func editorSceneryPropertiesSection() {
+	s := activeScenery()
+	if s == nil {
+		return
+	}
+	imgui.Separator()
+	editorFocusOpen(panelFocusScenery)
+	if !imgui.CollapsingHeaderV("Scenery: "+s.ID+"##schdr", imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+	editorFocusScroll(panelFocusScenery)
+	editorSceneryProperties(s)
+}
+
+// editorSceneryProperties draws the prop's editable state, in the group order
+// every other object uses.
+func editorSceneryProperties(s *world.Scenery) {
+	editorPropGroupOpen("Identity##scidgrp", func() { editorSceneryIdentity(s) })
+	editorPropGroupOpen("Transform##sctfgrp", func() { editorSceneryTransform(s) })
+	editorPropGroupOpen("Collision##sccolgrp", func() { editorSceneryCollision(s) })
+	editorPropGroupOpen("Streaming##scstreamgrp", func() { editorSceneryStreaming(s) })
+	if s.Nanite != nil || nanitecook.IsSourcePath(s.Model) {
+		editorPropGroupOpen("Nanite##scnanite", func() { editorSceneryNanite(s) })
+		editorPropGroupOpen("Wind##scwind", func() { editorSceneryWind(s) })
+	}
+	editorPropGroup("Actions##scactions", 0, func() { editorSceneryActions(s) })
+}
+
+// editorSceneryIdentity draws the ID field and the model picker.
+//
+// The rename commits on Enter rather than per keystroke, for the reason every
+// other ID field in this editor does: renaming through every half-typed
+// spelling would fire a uniqueness check against each one.
+func editorSceneryIdentity(s *world.Scenery) {
+	id := s.ID
+	if imgui.InputTextV("ID##scid", &id, imgui.InputTextFlagsEnterReturnsTrue, nil) && id != s.ID {
+		if id == "" {
+			editorSetStatus("A scenery placement needs an ID to be listed by")
+		} else if world.LevelIDTaken(Editor.level, id) {
+			editorSetStatus("%q is already used by something else in this level", id)
+		} else {
+			EditorPushUndo()
+			s.ID = id
+		}
+	}
+
+	path := s.Model
+	if sceneryModelFileCombo("Model##scmodel", &path) {
+		// The undo snapshot is of the state being left, so the path is put back
+		// before it is taken — the same dance editorEntitySetModelPath does.
+		next := path
+		s.Model = path
+		EditorPushUndo()
+		s.Model = next
+		editorSceneryReload(s)
+	}
+	if imgui.Button("Reload##screload") {
+		editorSceneryReload(s)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Re-read the mesh from disk — what picks up a .fmdl\nre-saved by the model editor.")
+	}
+	imgui.SameLine()
+	if imgui.Button("Use As Brush##scasbrush") {
+		Editor.BrushRotation = s.Rotation
+		Editor.BrushScale = s.EffectiveScale().X()
+		Editor.BrushSolid = s.Solid
+		editorArmBrush(s.Model)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Point the brush at this prop's model, facing and size,\nso the next thirty match the one you just got right.")
+	}
+}
+
+// editorSceneryTransform draws position, rotation and scale.
+func editorSceneryTransform(s *world.Scenery) {
+	pos := [3]float32{s.Position.X(), s.Position.Y(), s.Position.Z()}
+	if editorDragFloat3("Position##scpos", &pos, 0, 0, "%.3f") {
+		s.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
+	}
+
+	rot := vec3ToDegrees(s.Rotation)
+	if editorDragFloat3Step("Rotation (deg)##scrot", &rot, -360, 360, "%.1f", 1) {
+		s.Rotation = vec3FromDegrees(rot)
+	}
+
+	sc := s.EffectiveScale()
+	scale := [3]float32{sc.X(), sc.Y(), sc.Z()}
+	if editorDragFloat3("Scale##scscale", &scale, 0, 0, "%.3f") {
+		s.Scale = mgl32.Vec3{
+			world.EntityScaleClamp(scale[0]),
+			world.EntityScaleClamp(scale[1]),
+			world.EntityScaleClamp(scale[2]),
+		}
+	}
+}
+
+// editorSceneryStreaming draws the chunk the prop streams with
+// (world.Scenery.Chunk).
+func editorSceneryStreaming(s *world.Scenery) {
+	editorStreamingGroup(pickScenery, s.Chunk, "sc",
+		"Switched off with this chunk: not drawn, not solid and not\nin the nav while it is disabled, and unloaded with it when it\nis unload_when_disabled. The prop stays where it is placed.")
+}
+
+// streamedPlacement is one selected prop or tree, as the streaming group
+// edits it: its chunk field and where it stands.
+type streamedPlacement struct {
+	chunk *string
+	pos   mgl32.Vec3
+}
+
+// selectedStreamed is every selected placement of kind (pickScenery or
+// pickTree), so a Ctrl+clicked field of rocks joins a chunk in one go.
+func selectedStreamed(kind pickKind) []streamedPlacement {
+	lvl := Editor.level
+	var out []streamedPlacement
+	for _, r := range selectedObjRefs() {
+		switch {
+		case r.kind != kind || r.idx < 0:
+		case kind == pickScenery && r.idx < len(lvl.Scenery):
+			out = append(out, streamedPlacement{&lvl.Scenery[r.idx].Chunk, lvl.Scenery[r.idx].Position})
+		case kind == pickTree && r.idx < len(lvl.Trees):
+			out = append(out, streamedPlacement{&lvl.Trees[r.idx].Chunk, lvl.Trees[r.idx].Position})
+		}
+	}
+	return out
+}
+
+// editorStreamingGroup draws the chunk a prop or tree streams with: a pick
+// that applies to the whole selection of that kind, a containing-chunk
+// button, and one that assigns every unassigned placement in the level.
+func editorStreamingGroup(kind pickKind, current, tag, tip string) {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	label := current
+	if label == "" {
+		label = "(none)"
+	}
+	pick, picked := "", false
+	if imguibackend.BeginCombo("Chunk##"+tag+"chunk", label) {
+		if imguibackend.SelectableV("(none)", current == "", 0, imgui.Vec2{}) {
+			pick, picked = "", true
+		}
+		for i := range lvl.Chunks {
+			ch := &lvl.Chunks[i]
+			if ch.InFrame() {
+				continue // carried by a vehicle: not an area anything streams with
+			}
+			if imguibackend.SelectableV(ch.ID, current == ch.ID, 0, imgui.Vec2{}) {
+				pick, picked = ch.ID, true
+			}
+		}
+		imguibackend.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip(tip)
+	}
+	if picked {
+		editorSetPlacementChunks(kind, func(mgl32.Vec3) string { return pick })
+	}
+	if imgui.Button("Containing Chunk##" + tag + "chunkat") {
+		editorSetPlacementChunks(kind, func(p mgl32.Vec3) string { return world.SceneryChunkAt(lvl, p) })
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Stream each selected placement with the chunk whose footprint it stands in.")
+	}
+	imgui.SameLine()
+	if imgui.Button("All Unassigned##" + tag + "chunkall") {
+		editorAssignAllPlacementChunks()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Every prop and tree in the level with no chunk yet streams\nwith the chunk whose footprint it stands in.")
+	}
+	if current != "" && world.FindChunkByID(lvl, current) == nil {
+		editorTextWrapped("No chunk has this ID, so it is always in.")
+	}
+}
+
+// editorSetPlacementChunks gives every selected placement of kind the chunk
+// chunkFor names for where it stands, as one undo step, and brings their
+// switch into line at once — a placement put into a disabled chunk
+// disappears now rather than next frame.
+func editorSetPlacementChunks(kind pickKind, chunkFor func(mgl32.Vec3) string) {
+	targets := selectedStreamed(kind)
+	changed := 0
+	for _, t := range targets {
+		if chunkFor(t.pos) != *t.chunk {
+			changed++
+		}
+	}
+	if changed == 0 {
+		return
+	}
+	EditorPushUndo()
+	// The undo snapshot re-reads nothing, so the pointers are still live.
+	for _, t := range targets {
+		*t.chunk = chunkFor(t.pos)
+	}
+	world.SyncPlacementChunks(Editor.level, true)
+	editorSetStatus("%d placement(s) moved to a new chunk", changed)
+}
+
+// editorAssignAllPlacementChunks streams every unassigned prop and tree in
+// the level with the chunk it stands in, as one undo step.
+func editorAssignAllPlacementChunks() {
+	lvl := Editor.level
+	var targets []streamedPlacement
+	for i := range lvl.Scenery {
+		targets = append(targets, streamedPlacement{&lvl.Scenery[i].Chunk, lvl.Scenery[i].Position})
+	}
+	for i := range lvl.Trees {
+		targets = append(targets, streamedPlacement{&lvl.Trees[i].Chunk, lvl.Trees[i].Position})
+	}
+	picks := make([]string, len(targets))
+	n := 0
+	for i, t := range targets {
+		if *t.chunk == "" {
+			if picks[i] = world.SceneryChunkAt(lvl, t.pos); picks[i] != "" {
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		editorSetStatus("No unassigned prop or tree stands in a chunk")
+		return
+	}
+	EditorPushUndo()
+	for i, id := range picks {
+		if id != "" {
+			*targets[i].chunk = id
+		}
+	}
+	world.SyncPlacementChunks(lvl, true)
+	editorSetStatus("%d placement(s) assigned to the chunk they stand in", n)
+}
+
+// editorSceneryWind draws a cooked prop's wind (world.SceneryWind): whether
+// it sways, how far its top leans and how far its leaves shake.
+func editorSceneryWind(s *world.Scenery) {
+	on := s.Wind.Active()
+	if imgui.Checkbox("Sway in the wind##scwindon", &on) {
+		EditorPushUndo()
+		if on {
+			s.Wind = world.DefaultSceneryWind
+		} else {
+			s.Wind = world.SceneryWind{}
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Bend with the level's wind, in time with the grass.\nCollision and picking keep the still mesh.")
+	}
+	if !on {
+		return
+	}
+	bend := s.Wind.Bend * 100
+	if editorDragFloatStep("Bend (% of height)##scwindbend", &bend, 0, 25, "%.1f", 0.1) {
+		s.Wind.Bend = max(bend, 0) / 100
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far the top leans over in a full gust.\nThe trunk's foot stays put.")
+	}
+	if editorDragFloatStep("Flutter (m)##scwindflutter", &s.Wind.Flutter, 0, 2, "%.3f", 0.005) {
+		s.Wind.Flutter = max(s.Wind.Flutter, 0)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far branch tips at the crown's edge bob and leaves shake.\nNothing on the trunk's axis, the full amount at the bounds' edge.")
+	}
+	if !s.NaniteGPU && s.Nanite != nil {
+		editorTextMutedWrapped("Drawn on the classic path here, which does not sway: the wind shows only through the GPU cull.")
+	}
+	if !s.Wind.Active() {
+		// Both dragged to nothing: the checkbox reads off next frame.
+		s.Wind = world.SceneryWind{}
+	}
+}
+
+// editorSceneryActions draws the whole-object buttons.
+func editorSceneryActions(s *world.Scenery) {
+	if imgui.Button("Duplicate##scdup") {
+		duplicateActiveScenery()
+	}
+	imgui.SameLine()
+	if imgui.Button("Delete##scdel") {
+		deleteActiveScenery()
+	}
+	_ = s
+}

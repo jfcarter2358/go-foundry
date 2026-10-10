@@ -1,15 +1,140 @@
-#version 330
+#version 430
 
 uniform mat4 projection;
 uniform mat4 camera;
 uniform mat4 model;
 
-in vec3 vert;
-in vec2 vertTexCoord;
+// Instanced drawing (render/scenery_instanced.go): many placements of one mesh
+// in one draw, each carrying its model matrix as a per-instance attribute in
+// locations 7-10. Off — the zero an unwritten uniform holds — every draw reads
+// `model` as it always has, and the attribute is never looked at.
+uniform int instanced;
+layout(location = 7) in mat4 instanceModel;
+// A cooked placement's wind (wind_common.glsl, render/nanite_scenery.go):
+// its mesh's bounding sphere and its wind, beside its matrix in the instance
+// record. Never enabled on any other draw, so they read (0,0,0,1) there,
+// which is no wind.
+layout(location = 13) in vec4 instanceSphere;
+layout(location = 14) in vec4 instanceWind;
+
+// Water animation. isWater gates the whole path; time is seconds since start.
+uniform int   isWater;
+uniform float time;
+uniform float waveAmplitude;
+uniform float waveLength;
+uniform float waveSpeed;
+
+// Smooth shading: 1 = shade from vertNormal, 0 = let the fragment stage recover
+// a flat facet normal from screen-space derivatives. Locations are pinned so the
+// same VAO also feeds the detail tessellation program (see detail_vert.glsl).
+uniform int smoothShading;
+
+// Slides the texture across the surface (gfx.Geometry.UVOffset): a scrolling
+// attachment such as a tank's track belt, or a material's uv_scroll. Zero for
+// everything else.
+uniform vec2 uvOffset;
+
+// The rest of a material's UV transform (material.KindUVTransform): a tiling
+// and a turn, applied before the offset.
+//
+// The scale arrives as a BIAS from 1 rather than as the scale, so that the
+// value GL gives an uninitialised uniform — zero — is the identity. A program
+// that links this shader without knowing about either (the shadow passes, the
+// detail tessellation stage, a GL test that looks up only what it needs) tiles
+// the texture exactly as it did before materials existed. Same reasoning as
+// fragment.glsl's normalColor and unlit, and as alphaCutoffBias.
+uniform vec2  uvScaleBias;
+uniform float uvRotation; // radians, about the UV origin
+
+layout(location = 0) in vec3 vert;
+layout(location = 1) in vec2 vertTexCoord;
+// Per-vertex normal, present only on surfaces built with smoothing on. The
+// attribute array is disabled otherwise, so this reads (0,0,0) and is ignored.
+layout(location = 2) in vec3 vertNormal;
+// Baked lighting, present only on a compiled level's static surfaces.
+// Locations 3 and 4 belong to skinning (skin_common.glsl), so this takes 5.
+// The attribute array is disabled otherwise; bakedLight is what gates reading
+// it, for the same reason `skinned` gates the bone attributes — an unenabled
+// attribute reads a driver default, not zero.
+// xyz is the baked colour; w the baked sun's share (see fragment.glsl).
+layout(location = 5) in vec4 vertLight;
+// The part of vertLight.xyz that is ambient and bounce rather than a static
+// light's own (compile.Face.Indirect): what live GI takes back off before
+// adding its own. Read from the same buffer as vertLight, under the same gate.
+layout(location = 6) in vec3 vertLightIndirect;
+
+// Invariant: the GPU-driven cull's depth prepass (render/nanite_prepass.go)
+// links this same stage into a program of its own, and the colour pass after
+// it tests at LEQUAL against the depth it wrote — which only works if both
+// programs compute exactly the same position. Without the qualifier GLSL lets
+// two programs compiled from one source differ in the last bit.
+invariant gl_Position;
 
 out vec2 fragTexCoord;
+out vec3 fragWorldPos;
+out vec3 fragNormal;
+// View-axis distance; the fragment stage uses it to select a shadow cascade.
+out float fragViewDepth;
+// The baked value, passed through and interpolated across the triangle.
+out vec4 fragBakedLight;
+out vec3 fragBakedIndirect;
+
+// Sum of three travelling sine waves at different headings, so the surface
+// never reads as a single repeating ripple. Driven by world XZ, which keeps
+// wave size independent of how far the plane is scaled up.
+//
+// MUST stay identical to waterHeight() in fragment.glsl — the vertex stage
+// displaces geometry with it and the fragment stage differentiates it for the
+// shading normal. If they drift, lit highlights slide off the actual crests.
+float waterHeight(vec2 p) {
+    float k = 6.2831853 / max(waveLength, 0.001);
+    float t = time * waveSpeed * 6.2831853;
+
+    float h = 0.0;
+    h += sin(p.x * k + t) * 0.50;
+    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
+    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
+    return h * waveAmplitude;
+}
 
 void main() {
-    fragTexCoord = vertTexCoord;
-    gl_Position = projection * camera * model * vec4(vert, 1);
+    vec2 uv = vertTexCoord * (vec2(1.0) + uvScaleBias);
+    if (uvRotation != 0.0) {
+        float cs = cos(uvRotation);
+        float sn = sin(uvRotation);
+        uv = vec2(uv.x * cs - uv.y * sn, uv.x * sn + uv.y * cs);
+    }
+    fragTexCoord = uv + uvOffset;
+    fragBakedLight = vertLight;
+    fragBakedIndirect = vertLightIndirect;
+    // skinPosition is the identity unless this draw call set `skinned`
+    // (skin_common.glsl), so every static surface takes the same path it always
+    // did.
+    mat4 M = instanced != 0 ? instanceModel : model;
+    vec4 localPos = skinPosition(vert);
+    vec4 worldPos = M * localPos;
+    if (instanced != 0) {
+        worldPos.xyz += windOffset(localPos.xyz, M, instanceWind, instanceSphere);
+    }
+
+    // Vertical displacement only, so worldPos.xz still carries the undisplaced
+    // surface coordinate the fragment stage needs to re-derive the normal.
+    if (isWater != 0) {
+        worldPos.y += waterHeight(worldPos.xz);
+    }
+
+    fragWorldPos = worldPos.xyz;
+
+    // Inverse-transpose rather than mat3(model): primitives carry per-axis
+    // scale, which skews a plain rotation of the normal off the surface. Only
+    // paid for on smoothed surfaces.
+    fragNormal = vec3(0.0);
+    if (smoothShading != 0) {
+        fragNormal = transpose(inverse(mat3(M))) * skinNormal(vertNormal);
+    }
+
+    vec4 viewPos = camera * worldPos;
+    fragViewDepth = -viewPos.z;
+
+    gl_Position = projection * viewPos;
 }

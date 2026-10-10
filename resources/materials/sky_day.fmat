@@ -1,0 +1,22 @@
+# sky_day.fmat — a cubemap sky, as a material.
+#
+# A level's `sky:` block carried six texture names, a tint, an intensity and a
+# rotation. Six levels sharing one sky spelled all nine out six times. Naming
+# this instead is one line in the level file.
+#
+# Only the +X face is given: the other five are filled in by the <base>_px
+# naming convention when the material resolves, and what the engine ends up with
+# is all six spelled out — which is what lets the release packer see them.
+#
+# A sky material is the ONE domain that is folded into the level's own sky
+# rather than overlaid at draw time, because `ease_sky` blends two complete sky
+# values over time and a sky whose numbers moved under it would ease toward a
+# moving target.
+kind: sky
+doc: Clear daylight.
+effects:
+  - effect: sky_cubemap
+    px: sky_day_px
+  - effect: tint
+    color: {r: 1, g: 1, b: 1}
+    intensity: 1

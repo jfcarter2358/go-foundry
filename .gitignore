@@ -1,1 +1,7 @@
 bak
+dist
+build
+saves
+
+# Tracker editor WAV exports
+/exports/

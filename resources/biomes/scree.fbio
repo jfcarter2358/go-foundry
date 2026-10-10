@@ -1,0 +1,49 @@
+# scree.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Rocky Scree
+doc: Broken rock and gravel below cliffs with a little hardy grass.
+ground:
+  texture: ground_scree
+  tint: [0.46, 0.45, 0.42]
+  cover: 0.35
+species:
+- shape: rock
+  spacing: 1.4
+  where: [ground]
+  slope: [0, 85]
+  scale: [0.25, 1.1]
+  colors: [[0.42, 0.41, 0.39], [0.6, 0.58, 0.54]]
+  sink: 0.35
+  cluster: 0.4
+  cluster_size: 6
+  edge: 1.5
+  color_noise: 0.2
+- shape: pebbles
+  spacing: 0.55
+  where: [ground]
+  slope: [0, 60]
+  scale: [0.8, 1.4]
+  colors: [[0.42, 0.41, 0.39], [0.6, 0.58, 0.54]]
+  sink: 0.2
+  cluster: 0.3
+  cluster_size: 4
+  edge: 0.8
+- shape: grass
+  spacing: 0.9
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.5, 0.85]
+  colors: [[0.4, 0.46, 0.2], [0.54, 0.54, 0.28]]
+  upright: 0.6
+  light: [0.4, 1]
+  cluster: 0.8
+  cluster_size: 3
+  edge: 0.4
+  color_noise: 0.3
+- shape: moss
+  spacing: 1.2
+  where: [wall, ceiling]
+  scale: [0.5, 1]
+  colors: [[0.4, 0.44, 0.3], [0.55, 0.56, 0.4]]
+  cluster: 0.6
+  cluster_size: 3

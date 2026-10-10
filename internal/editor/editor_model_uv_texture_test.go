@@ -1,0 +1,163 @@
+package editor
+
+import (
+	"foundry/internal/model"
+	"strings"
+	"testing"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
+
+// A texture name becomes a file stem under textures/, so anything that could
+// steer a write out of that directory has to be stripped.
+func TestSanitizeTextureNameRejectsPathEscapes(t *testing.T) {
+	cases := map[string]string{
+		"crate":            "crate",
+		"  crate  ":        "crate",
+		"my crate":         "my_crate",
+		"../../etc/passwd": "etcpasswd",
+		"a/b":              "ab",
+		`c:\win`:           "cwin",
+		"weird!@#$%":       "weird",
+		"":                 "",
+		"...":              "",
+		"keep-_09":         "keep-_09",
+	}
+	for in, want := range cases {
+		if got := sanitizeTextureName(in); got != want {
+			t.Errorf("sanitizeTextureName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, in := range []string{"../../etc/passwd", "a/b", `c:\win`} {
+		got := sanitizeTextureName(in)
+		if strings.ContainsAny(got, `/\.`) {
+			t.Errorf("sanitizeTextureName(%q) = %q still carries a path character", in, got)
+		}
+	}
+}
+
+// The suggested name has to be usable as a file stem even when the model's ID
+// is not, and must never come back empty.
+func TestModelUnwrapSuggestedNameIsAlwaysUsable(t *testing.T) {
+	prev := modelDoc
+	defer func() { modelDoc = prev }()
+
+	for _, id := range []string{"crate", "my model", "!!!", ""} {
+		modelDoc = model.NewCubeDoc()
+		modelDoc.ID = id
+		got := modelUnwrapSuggestedName()
+		if got == "" {
+			t.Errorf("ID %q gave an empty name", id)
+		}
+		if got != sanitizeTextureName(got) {
+			t.Errorf("ID %q gave unsanitised name %q", id, got)
+		}
+	}
+}
+
+// The overlay is what tells a painter which texels belong to which face, so it
+// has to report the model's real UVs — and stay silent about a texture this
+// model does not wear, or it would draw someone else's layout over an
+// unrelated image.
+func TestModelUVLayoutOnlyForTheModelsOwnTexture(t *testing.T) {
+	prev := modelDoc
+	defer func() { modelDoc = prev }()
+
+	modelDoc = model.NewCubeDoc()
+	modelDoc.SetTexture("crate_atlas")
+
+	if got := modelUVLayoutFor("crate_atlas"); len(got) != 6 {
+		t.Errorf("layout loops = %d, want 6", len(got))
+	}
+	if got := modelUVLayoutFor("something_else"); got != nil {
+		t.Errorf("layout returned %d loops for a texture the model does not wear", len(got))
+	}
+	if got := modelUVLayoutFor(""); got != nil {
+		t.Error("layout returned loops for an unbound document")
+	}
+
+	// An untextured model wears nothing, so no texture in the editor gets its
+	// layout drawn over it.
+	modelDoc = model.NewCubeDoc()
+	if got := modelUVLayoutFor("crate_atlas"); got != nil {
+		t.Errorf("layout returned %d loops for a model wearing no texture", len(got))
+	}
+}
+
+// The loops must be the document's actual UVs, not a re-derivation — that is
+// what makes the overlay follow a vertex the moment it moves.
+func TestModelUVLayoutReflectsLiveUVs(t *testing.T) {
+	prev := modelDoc
+	defer func() { modelDoc = prev }()
+
+	modelDoc = model.NewCubeDoc()
+	modelDoc.SetTexture("crate_atlas")
+	modelDoc.Faces[0].UVs[0] = mgl32.Vec2{0.125, 0.875}
+
+	loops := modelUVLayoutFor("crate_atlas")
+	if len(loops) == 0 {
+		t.Fatal("no loops")
+	}
+	if loops[0][0] != (mgl32.Vec2{0.125, 0.875}) {
+		t.Errorf("loop corner = %v, want the document's own UV", loops[0][0])
+	}
+}
+
+// A degenerate face has no outline to draw and would render as a stray line.
+func TestModelUVLayoutSkipsDegenerateFaces(t *testing.T) {
+	prev := modelDoc
+	defer func() { modelDoc = prev }()
+
+	modelDoc = model.NewCubeDoc()
+	modelDoc.SetTexture("crate_atlas")
+	modelDoc.Faces = append(modelDoc.Faces, model.ModelFace{
+		Verts: []int{0, 1},
+		UVs:   make([]mgl32.Vec2, 2),
+	})
+	modelDoc.Invalidate()
+
+	if got := modelUVLayoutFor("crate_atlas"); len(got) != 6 {
+		t.Errorf("layout loops = %d, want 6 (the two-vertex face must be skipped)", len(got))
+	}
+}
+
+// A nil document must not panic the texture editor's canvas draw.
+func TestModelUVLayoutHandlesNoDocument(t *testing.T) {
+	prev := modelDoc
+	defer func() { modelDoc = prev }()
+
+	modelDoc = nil
+	if got := modelUVLayoutFor("anything"); got != nil {
+		t.Error("layout returned loops with no document open")
+	}
+}
+
+// The texture editor highlights exactly the faces picked in face mode, with the
+// same loops the layout draws for them — and nothing for a vertex selection,
+// which names no region to paint.
+func TestModelUVSelectionIsTheSelectedFacesLoops(t *testing.T) {
+	prevDoc, prevSel := modelDoc, modelSelection
+	defer func() { modelDoc, modelSelection = prevDoc, prevSel }()
+
+	modelDoc = model.NewCubeDoc()
+	modelDoc.SetTexture("crate_atlas")
+	modelSelection = modelSelectionState{Mode: modelSelFace, Faces: []int{2, 99}}
+
+	layout := modelUVLayoutFor("crate_atlas")
+	got := modelUVSelectionFor("crate_atlas")
+	if len(got) != 1 {
+		t.Fatalf("selection loops = %d, want 1 (the out-of-range face skipped)", len(got))
+	}
+	for i := range got[0] {
+		if got[0][i] != layout[2][i] {
+			t.Errorf("corner %d = %v, want face 2's %v", i, got[0][i], layout[2][i])
+		}
+	}
+	if got := modelUVSelectionFor("something_else"); got != nil {
+		t.Error("selection highlighted on a texture the model does not wear")
+	}
+	modelSelection.Mode = modelSelVertex
+	if got := modelUVSelectionFor("crate_atlas"); len(got) != 0 {
+		t.Errorf("vertex mode highlighted %d faces", len(got))
+	}
+}

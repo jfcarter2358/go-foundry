@@ -1,0 +1,216 @@
+-- dropship.flang — walk in, the door shuts, the floor falls away.
+--
+-- Attached to the `dropship` entity type, which binds the one ref it needs:
+-- `door` is the blast door, a DYNAMIC BRUSH of the ship's own hold
+-- (entities/dropship.yaml). A dynamic brush's position and its collision move
+-- together, so sliding it down both draws the door and seals the way out with
+-- nothing arranged per frame.
+--
+-- The position it is written in is the SHIP's, not the world's: a brush an
+-- entity carries is addressed in that entity's own coordinates. That is the
+-- whole reason this works while the ship is two hundred metres into a fall —
+-- the door stays where it was put relative to the deck, and the ship's motion
+-- carries it, rather than the two fighting over the same numbers.
+--
+-- Nothing here steers. The drop is a scripted descent, not a flight model: the
+-- ship is not a vehicle, has no seats, and the passenger rides it because they
+-- are standing in its frame, which carries them exactly with no work from this
+-- file at all.
+--
+-- The phase lives in `@self.state` rather than in an attribute because it is
+-- bookkeeping: the door's real state is where the leaf is, and a saved phase
+-- could only ever disagree with it.
+
+param door ref                    -- the blast door; a dynamic brush of the hold
+param engine ref                  -- a placed sound to run while it flies; optional
+
+param door_open_x float = -4.4    -- the leaf's centre when stowed, to port
+param door_shut_x float = 0.0     -- …and seated, filling the aft opening
+param door_speed float = 1.6      -- metres a second
+
+param drop_height float = 200.0   -- how far below the ship the surface is
+param drop_speed float = 26.0
+param shake float = 0.05          -- how far the hull wanders while under way
+
+param launch_delay float = 2.0    -- seconds aboard before the door starts to shut
+param auto_launch bool = true     -- false leaves it to the interact key
+
+-- ---------------------------------------------------------------- the door --
+
+-- set_door is the only place the leaf is moved. It slides in X and in nothing
+-- else, so the other two axes are read back rather than restated: the brush was
+-- authored filling the aft opening and has no business drifting out of it.
+--
+-- The position it is written in is the SHIP's own, so this is "so many metres to
+-- port" and stays true wherever the ship is and whichever way it is facing.
+def set_door(x float) -> null
+    if ?door == null
+        return
+    end
+    p = ?door.prop.position
+    ?door.prop.position = <x, p.y, p.z>
+end
+
+def door_x() -> float
+    if ?door == null
+        return ?door_open_x
+    end
+    p = ?door.prop.position
+    return p.x
+end
+
+-- ------------------------------------------------------------- who is where --
+
+-- aboard is true for a player standing inside the ship's own solid.
+--
+-- One test rather than the two this used to need. A body is handed into an
+-- entity's frame by CONTAINMENT in that entity's geometry, so being in the
+-- ship's frame is already being inside its brushes — there is no aft vestibule
+-- outside the sealed volume to tell apart from the hold, because the volume and
+-- the geometry are the same region.
+def aboard() -> bool
+    if @player == null
+        return false
+    end
+    return @player.prop.frame == @self
+end
+
+-- ------------------------------------------------------------------- easing --
+
+-- ease ramps the descent up at the top and down at the bottom, so the ride
+-- starts and finishes as a push rather than a jolt. Never zero: a drop that
+-- eased all the way to nothing would never arrive.
+def ease(t float) -> float
+    e = 1.0
+    if t < 0.12
+        e = t / 0.12
+    elif t > 0.88
+        e = (1.0 - t) / 0.12
+    end
+    return clamp(e, 0.15, 1.0)
+end
+
+-- wobble is the ride: two sine waves at rates that do not divide into each
+-- other, so the hull wanders rather than oscillating. Driven off play time
+-- rather than off anything random, which makes a drop repeatable — a shake that
+-- differs every run is one nobody can tune.
+def wobble(amount float, rate float, phase float) -> float
+    return amount * sin(time() * rate + phase)
+end
+
+-- -------------------------------------------------------------- the phases --
+
+-- Authored shut, so the first thing a parked ship does is open up.
+def on_spawn(:spawn:) -> null
+    @self.state["phase"] = :parked:
+    @self.state["wait"] = 0.0
+    set_door(?door_open_x)
+end
+
+def on_tick(:tick:, dt float) -> null
+    phase = @self.state["phase"]
+    if phase == :parked:
+        tick_parked(dt)
+    elif phase == :closing:
+        tick_closing(dt)
+    elif phase == :dropping:
+        tick_dropping(dt)
+    elif phase == :opening:
+        tick_opening(dt)
+    end
+end
+
+-- Parked: count how long someone has been aboard, and go when they have stood
+-- still long enough. Stepping back out resets the count rather than cancelling
+-- a launch, because the launch has not started.
+def tick_parked(dt float) -> null
+    if not ?auto_launch
+        return
+    end
+    if not aboard()
+        @self.state["wait"] = 0.0
+        return
+    end
+    @self.state["wait"] = @self.state["wait"] + dt
+    if @self.state["wait"] >= ?launch_delay
+        @self <- (:launch:,)
+    end
+end
+
+-- The interact key is the other way in, and the only one when `auto_launch` is
+-- off. The guard is what makes pressing it mid-drop do nothing.
+def on_interact(:interact:, src ref) -> null
+    if @self.state["phase"] == :parked: and aboard()
+        @self <- (:launch:,)
+    end
+end
+
+def on_launch(:launch:) when @self.state["phase"] == :parked: -> null
+    @self.state["phase"] = :closing:
+    play_sound("click", @self)
+    log("dropship: closing up")
+end
+
+-- Closing: run the leaf down. Reaching the stop is what releases the ship, so
+-- the drop can never start with the door still open.
+def tick_closing(dt float) -> null
+    h = door_x() + ?door_speed * dt
+    if h >= ?door_shut_x
+        h = ?door_shut_x
+        p = @self.prop.position
+        @self.state["x"] = p.x
+        @self.state["y"] = p.y
+        @self.state["z"] = p.z
+        @self.state["fallen"] = 0.0
+        @self.state["phase"] = :dropping:
+        if ?engine != null
+            play(?engine)
+        end
+        log("dropship: away")
+    end
+    set_door(h)
+end
+
+-- Dropping: the position is written outright rather than integrated from a
+-- velocity, so the ship arrives exactly where it was aimed however the frame
+-- rate wandered on the way down. The wander in X and Z is the ride.
+def tick_dropping(dt float) -> null
+    fallen = @self.state["fallen"]
+    step = ?drop_speed * dt * ease(fallen / ?drop_height)
+    if fallen + step > ?drop_height
+        step = ?drop_height - fallen
+    end
+    fallen = fallen + step
+    @self.state["fallen"] = fallen
+
+    if fallen >= ?drop_height
+        @self.prop.position = <@self.state["x"], @self.state["y"] - ?drop_height, @self.state["z"]>
+        @self.state["phase"] = :settling:
+        if ?engine != null
+            stop(?engine)
+        end
+        play_sound("click", @self)
+        @self <- after(900, :open_up:)
+        log("dropship: touchdown")
+        return
+    end
+
+    a = ?shake * ease(fallen / ?drop_height)
+    @self.prop.position = <@self.state["x"] + wobble(a, 11.3, 0.0),
+                           @self.state["y"] - fallen,
+                           @self.state["z"] + wobble(a, 7.7, 1.7)>
+end
+
+def on_open(:open_up:) -> null
+    @self.state["phase"] = :opening:
+end
+
+def tick_opening(dt float) -> null
+    h = door_x() - ?door_speed * dt
+    if h <= ?door_open_x
+        h = ?door_open_x
+        @self.state["phase"] = :landed:
+        log("dropship: ramp clear")
+    end
+    set_door(h)
+end

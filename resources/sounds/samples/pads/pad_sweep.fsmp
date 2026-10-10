@@ -1,0 +1,10 @@
+base_note: C-4
+loop: forward
+loop_start: 14449
+loop_end: 206357
+tags:
+- pads
+- sweep
+- analog
+- stereo
+description: Saws with a slow filter sweep baked in

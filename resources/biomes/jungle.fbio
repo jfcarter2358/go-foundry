@@ -1,0 +1,153 @@
+# jungle.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Dense Jungle
+doc: 'Shaded, crowded rainforest: tall trees, palms, big-leaved understory, ferns,
+  flowers and thick vines.'
+ground:
+  texture: ground_jungle
+  tint: [0.2, 0.26, 0.1]
+  cover: 1
+species:
+- shape: broadleaf_tree
+  spacing: 4.5
+  where: [ground]
+  slope: [0, 45]
+  scale: [1, 1.7]
+  colors: [[0.12, 0.3, 0.08], [0.24, 0.44, 0.12]]
+  upright: 1
+  light: [0.35, 1]
+  cluster: 0.1
+  cluster_size: 16
+  edge: -0.3
+  clearance: 7
+  color_noise: 0.3
+- shape: palm
+  variants: [0, 1]
+  spacing: 7
+  where: [ground]
+  slope: [0, 40]
+  scale: [0.8, 1.2]
+  colors: [[0.26, 0.42, 0.14], [0.4, 0.52, 0.2]]
+  accents: [[0.56, 0.49, 0.4], [0.62, 0.56, 0.46], [0.5, 0.44, 0.36]]
+  upright: 0.9
+  light: [0.45, 1]
+  cluster: 0.5
+  cluster_size: 10
+  clearance: 7
+  color_noise: 0.2
+- shape: jungle_plant
+  spacing: 1.5
+  where: [ground]
+  slope: [0, 55]
+  scale: [0.8, 1.5]
+  colors: [[0.12, 0.3, 0.08], [0.24, 0.44, 0.12]]
+  upright: 0.7
+  light: [0, 1]
+  cluster: 0.35
+  cluster_size: 5
+  edge: 0.6
+  moisture: 0.4
+  clearance: 2
+  color_noise: 0.2
+- shape: fern
+  spacing: 0.7
+  where: [ground]
+  slope: [0, 60]
+  scale: [0.9, 1.6]
+  colors: [[0.12, 0.3, 0.08], [0.24, 0.44, 0.12]]
+  upright: 0.6
+  light: [0, 1]
+  cluster: 0.3
+  cluster_size: 4
+  edge: 0.6
+  moisture: 0.5
+  color_noise: 0.2
+- shape: shrub
+  spacing: 2.2
+  where: [ground]
+  slope: [0, 50]
+  scale: [0.6, 1.2]
+  colors: [[0.12, 0.3, 0.08], [0.24, 0.44, 0.12]]
+  upright: 0.9
+  light: [0.1, 1]
+  cluster: 0.4
+  cluster_size: 6
+  edge: 0.8
+  clearance: 2
+- shape: flower
+  variants: [0, 2]
+  spacing: 2.5
+  where: [ground]
+  slope: [0, 40]
+  scale: [1, 1.5]
+  colors: [[0.12, 0.3, 0.08], [0.24, 0.44, 0.12]]
+  accents: [[0.92, 0.2, 0.25], [0.97, 0.55, 0.12], [0.85, 0.3, 0.65], [0.98, 0.85,
+      0.25]]
+  upright: 0.8
+  light: [0.2, 1]
+  cluster: 0.85
+  cluster_size: 4
+  moisture: 0.3
+- shape: leaf_litter
+  spacing: 0.5
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.8, 1.4]
+  colors: [[0.36, 0.28, 0.14], [0.5, 0.38, 0.18]]
+  accents: [[0.46, 0.32, 0.14], [0.36, 0.34, 0.16], [0.3, 0.22, 0.1]]
+  light: [0, 1]
+  cluster: 0.3
+  cluster_size: 3
+- shape: mushroom
+  spacing: 4
+  where: [ground]
+  slope: [0, 35]
+  scale: [0.7, 1.3]
+  colors: [[0.85, 0.82, 0.74], [0.92, 0.88, 0.8]]
+  accents: [[0.6, 0.4, 0.25], [0.85, 0.8, 0.7], [0.75, 0.2, 0.15]]
+  light: [0, 1]
+  cluster: 0.85
+  cluster_size: 3
+  moisture: 0.6
+- shape: deadwood
+  spacing: 8
+  where: [ground]
+  slope: [0, 30]
+  scale: [0.8, 1.4]
+  colors: [[0.26, 0.22, 0.14], [0.36, 0.32, 0.2]]
+  sink: 0.15
+  cluster: 0.3
+  cluster_size: 10
+- shape: moss
+  spacing: 0.45
+  where: [ground, wall, ceiling]
+  slope: [25, 90]
+  scale: [0.7, 1.4]
+  colors: [[0.22, 0.34, 0.1], [0.36, 0.46, 0.14]]
+  cluster: 0.35
+  cluster_size: 3
+  moisture: 0.4
+  color_noise: 0.2
+- shape: fern
+  spacing: 1.6
+  where: [wall]
+  scale: [0.5, 0.9]
+  colors: [[0.12, 0.3, 0.08], [0.24, 0.44, 0.12]]
+  upright: 0.3
+  cluster: 0.5
+  cluster_size: 4
+- shape: vine
+  spacing: 0.7
+  where: [wall]
+  scale: [1, 2]
+  colors: [[0.16, 0.3, 0.1], [0.28, 0.42, 0.14]]
+  cluster: 0.25
+  cluster_size: 3
+  top_edge: true
+- shape: vine
+  spacing: 0.6
+  where: [ceiling]
+  scale: [0.8, 1.8]
+  colors: [[0.16, 0.3, 0.1], [0.28, 0.42, 0.14]]
+  cluster: 0.25
+  cluster_size: 3

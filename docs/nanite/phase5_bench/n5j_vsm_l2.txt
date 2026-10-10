@@ -1,0 +1,149 @@
+bench level2 (compiled) — load 3.3s, 1600x900, AA taa, window MSAA 0x, visibility buffer true, virtual shadow map true, compute raster "0"
+
+=== pose spawn
+frame  avg 9.65 ms (103.6 fps)  p50 9.63  p95 10.67  p99 11.39  max 13.58
+scene  static 84756  brushes 75 in 272 calls  chunks 5  scenery 0  sprites 0 (864 particles, 594 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+sun shadow  virtual in 100% of frames: 423 pages resident, 76.6 drawn in 6.1 rects, 0.0 starved a frame
+gi  bricks built 90, still waiting 0; probes traced 2592 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   9.16     13.93      9.54     10.09
+  update                                3.61      5.50      0.02      0.03
+    player input                        0.00      0.01      0.00      0.00
+    player & vehicles                   0.05      0.16      0.00      0.00
+    ai                                  0.55      1.20      0.00      0.00
+    entity update                       1.72      2.25      0.00      0.00
+      props: resolve                    0.00      0.00      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.00      0.00      0.00
+    emitters                            0.14      0.20      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.02      0.78      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.00
+    ui tick                             0.02      0.05      0.00      0.00
+    scripts                             0.94      1.53      0.00      0.00
+    debug stats                         0.12      0.22      0.00      0.00
+    drains                              0.02      1.70      0.00      0.00
+  shadows: sun                          0.85      1.78      0.70      1.04
+    vsm                                 0.85      1.78      0.70      1.03
+      compiled                          0.13      0.31      0.10      0.19
+        nanite: cull                    0.02      0.08      0.09      0.16
+          nanite: lod                   0.00      0.01      0.02      0.03
+      chunks                            0.01      0.02      0.00      0.00
+      scenery                           0.00      0.00      0.00      0.00
+      nanite: scenery                   0.00      0.00      0.00      0.00
+      entities                          0.18      0.27      0.15      0.40
+        nanite: cull                    0.00      0.00      0.00      0.00
+  shadows: clouds                       0.00      0.00      0.00      0.01
+  gi                                    1.42      2.70      1.81      2.45
+    gi: field                           1.38      2.57      0.23      0.53
+    gi: probes                          0.05      0.13      1.57      2.27
+  shadows: point                        0.00      0.02      0.00      0.00
+  clear                                 0.00      0.01      0.04      0.28
+  world: compiled                       0.82      1.66      0.39      0.65
+    nanite: cull                        0.02      0.03      0.10      0.37
+      nanite: lod                       0.00      0.01      0.01      0.02
+    nanite: vis                         0.60      1.04      0.28      0.54
+  world: chunks                         0.10      0.22      0.19      0.44
+    nanite: cull                        0.03      0.04      0.09      0.23
+    nanite: vis                         0.02      0.04      0.05      0.17
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              0.99      2.09      1.30      1.60
+  scenery                               0.00      0.00      0.00      0.00
+  nanite: scenery                       0.00      0.00      0.00      0.00
+  nanite: occlusion                     0.00      0.00      0.00      0.00
+  nanite: material                      0.58      1.01      3.79      4.32
+    nanite: classify                    0.00      0.01      0.07      0.07
+  foliage                               0.00      0.00      0.00      0.00
+  scatter                               0.00      0.01      0.00      0.00
+  sprites: cutout                       0.18      0.46      0.00      0.00
+  vsm: mark                             0.01      0.03      0.16      0.41
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.01      0.02      0.01      0.14
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.06      0.19      0.00      0.00
+  sprites: blended                      0.27      0.57      0.06      0.33
+  taa: motion                           0.11      0.31      0.13      0.40
+  viewmodel                             0.02      0.13      0.61      0.93
+  taa: resolve                          0.00      0.00      0.20      0.46
+  taa: output                           0.00      0.00      0.07      0.33
+  ui                                    0.04      0.08      0.00      0.00
+swap                                    0.04      0.25      0.07      0.32
+gpu wait                                0.43      1.54      0.04      3.73
+
+=== pose 0,8,10,-1.5708,-0.12
+frame  avg 9.87 ms (101.4 fps)  p50 9.80  p95 10.93  p99 12.46  max 15.07
+scene  static 84756  brushes 75 in 272 calls  chunks 5  scenery 0  sprites 0 (933 particles, 1584 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+sun shadow  virtual in 100% of frames: 529 pages resident, 101.0 drawn in 11.0 rects, 0.0 starved a frame
+gi  bricks built 45, still waiting 0; probes traced 2592 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   9.09     15.07      9.69     11.09
+  update                                3.56      6.63      0.02      0.03
+    player input                        0.00      0.01      0.00      0.00
+    player & vehicles                   0.05      0.16      0.00      0.00
+    ai                                  0.51      1.35      0.00      0.00
+    entity update                       1.70      3.18      0.00      0.00
+      props: resolve                    0.00      0.00      0.00      0.00
+      props: rays                       0.00      0.00      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.01      0.00      0.00
+    emitters                            0.16      0.25      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.02      1.13      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.01
+    ui tick                             0.02      0.05      0.00      0.00
+    scripts                             0.91      1.66      0.00      0.00
+    debug stats                         0.12      0.19      0.00      0.00
+    drains                              0.02      1.76      0.00      0.00
+  shadows: sun                          0.85      1.22      0.83      1.14
+    vsm                                 0.84      1.21      0.82      1.13
+      compiled                          0.00      0.00      0.00      0.00
+        nanite: cull                    0.00      0.00      0.00      0.00
+          nanite: lod                   0.00      0.00      0.00      0.00
+      chunks                            0.00      0.00      0.00      0.00
+      scenery                           0.00      0.00      0.00      0.00
+      nanite: scenery                   0.00      0.00      0.00      0.00
+      entities                          0.16      0.26      0.15      0.28
+        nanite: cull                    0.00      0.00      0.00      0.00
+  shadows: clouds                       0.00      0.00      0.00      0.01
+  gi                                    1.30      2.36      1.75      2.55
+    gi: field                           1.25      2.23      0.21      1.06
+    gi: probes                          0.05      0.30      1.54      1.93
+  shadows: point                        0.01      0.03      0.00      0.00
+  clear                                 0.00      0.01      0.03      0.15
+  world: compiled                       0.84      1.57      0.43      0.69
+    nanite: cull                        0.02      0.09      0.10      0.11
+      nanite: lod                       0.00      0.01      0.01      0.02
+    nanite: vis                         0.61      1.07      0.32      0.58
+  world: chunks                         0.10      0.21      0.19      0.47
+    nanite: cull                        0.03      0.05      0.09      0.11
+    nanite: vis                         0.02      0.05      0.05      0.29
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              1.01      2.27      1.30      1.65
+  scenery                               0.00      0.01      0.00      0.00
+  nanite: scenery                       0.00      0.00      0.00      0.00
+  nanite: occlusion                     0.00      0.00      0.00      0.00
+  nanite: material                      0.60      2.33      3.84      5.08
+    nanite: classify                    0.00      0.01      0.09      1.43
+  foliage                               0.00      0.00      0.00      0.01
+  scatter                               0.00      0.01      0.00      0.00
+  sprites: cutout                       0.19      0.43      0.00      0.00
+  vsm: mark                             0.01      0.05      0.17      0.41
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.01      0.02      0.01      0.01
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.07      0.24      0.00      0.00
+  sprites: blended                      0.28      0.74      0.06      0.31
+  taa: motion                           0.13      0.40      0.14      0.40
+  viewmodel                             0.02      0.05      0.59      0.94
+  taa: resolve                          0.00      0.01      0.20      0.46
+  taa: output                           0.00      0.00      0.08      0.33
+  ui                                    0.04      0.11      0.00      0.00
+swap                                    0.04      0.22      0.07      0.31
+gpu wait                                0.70      1.58      0.10      3.86

@@ -1,0 +1,11 @@
+base_note: C-4
+loop: forward
+loop_start: 4943
+loop_end: 148782
+tags:
+- fx
+- radio
+- static
+- bed
+- noise
+description: 'Radio static bed: band-limited hiss, crackle, a drifting whine'

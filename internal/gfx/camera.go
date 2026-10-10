@@ -1,0 +1,267 @@
+package gfx
+
+import (
+	"foundry/internal/platform"
+	"math"
+
+	"github.com/go-gl/gl/v4.3-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
+	"github.com/veandco/go-sdl2/sdl"
+)
+
+type Camera struct {
+	Matrix    mgl32.Mat4
+	Uniform   int32
+	Position  mgl32.Vec3
+	Direction mgl32.Vec3
+	Yaw       float32
+	Pitch     float32
+	// Up is the camera's up vector. It is WorldUp on foot, and the frame's
+	// rotated up when the viewer is riding something that can pitch or roll —
+	// gfx cannot see a frame, so whoever owns the viewer writes it here.
+	// The zero value reads as WorldUp so a Camera that never sets it behaves
+	// exactly as it did before there was one.
+	Up        mgl32.Vec3
+	MouseLock bool
+	// MouseLockWanted is the lock state the current mode asks for.  MouseLock
+	// itself is dropped temporarily whenever the window loses focus; on regaining
+	// focus we restore this rather than assuming gameplay.  Without it, any
+	// focus-lost/gained cycle (which X11/WSL2 can emit on a right or middle
+	// click) would grab the cursor while the editor is in a 2D mode.
+	MouseLockWanted bool
+}
+
+var Cam Camera
+
+// WorldUp is the engine-wide up direction (Y-up convention).
+var WorldUp = mgl32.Vec3{0.0, 1.0, 0.0}
+
+// DirectionFromAngles converts yaw/pitch to a unit direction vector.
+func DirectionFromAngles(yaw, pitch float32) mgl32.Vec3 {
+	y64 := float64(yaw)
+	p64 := float64(pitch)
+	return mgl32.Vec3{
+		float32(math.Cos(y64) * math.Cos(p64)),
+		float32(math.Sin(p64)),
+		float32(math.Sin(y64) * math.Cos(p64)),
+	}
+}
+
+// SetMouseLock enables or disables mouse-look capture and records the request
+// so focus changes can restore it.  Locking hides the cursor, grabs the window
+// so it stays confined, and warps to centre; see the warp-to-center note in
+// LoadCamera for why SDL relative mouse mode is avoided.
+func SetMouseLock(lock bool) {
+	Cam.MouseLockWanted = lock
+	ApplyMouseLock(lock)
+}
+
+// ApplyMouseLock changes the actual capture state without touching the wanted
+// state — used when focus is lost and regained.
+func ApplyMouseLock(lock bool) {
+	Cam.MouseLock = lock
+	if lock {
+		sdl.ShowCursor(sdl.DISABLE)
+		platform.Window.SetGrab(true)
+		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
+	} else {
+		sdl.ShowCursor(sdl.ENABLE)
+		platform.Window.SetGrab(false)
+	}
+}
+
+func LoadCamera(position mgl32.Vec3, pitch, yaw float32) {
+	Cam.Yaw = yaw
+	Cam.Pitch = pitch
+	Cam.Position = position
+	Cam.Direction = DirectionFromAngles(yaw, pitch)
+
+	// Use the warp-to-center approach instead of SDL relative mouse mode.
+	// SetRelativeMouseMode is unreliable on WSL2/X11 and can produce huge
+	// accumulated deltas on the first event.  Instead we:
+	//   1. Hide the cursor explicitly
+	//   2. Grab the window so the cursor stays confined
+	//   3. Warp to center; after each motion event we warp back to center and
+	//      measure delta as (t.X - halfW, t.Y - halfH)
+	SetMouseLock(true)
+
+	Cam.Up = WorldUp
+	Cam.Uniform = gl.GetUniformLocation(Program, gl.Str("camera\x00"))
+	UpdateCamMatrix()
+}
+
+func MoveCamera(f, u, r float32) {
+	Cam.Direction = DirectionFromAngles(Cam.Yaw, Cam.Pitch)
+	forward := mgl32.Vec3{Cam.Direction.X(), 0.0, Cam.Direction.Z()}
+	right := mgl32.Vec3{Cam.Direction.Z(), 0.0, -Cam.Direction.X()}
+	delta := forward.Mul(f).Add(WorldUp.Mul(u)).Add(right.Mul(r))
+	Cam.Position = Cam.Position.Add(delta)
+}
+
+// UpdateCamDirection and UpdateCamMatrix recompute the camera basis and upload
+// the view matrix. They live here rather than with the editor toggle that first
+// needed them: the spawn-point preview and the 3D fly camera call them too.
+// ---------- camera helpers used by editor toggle ----------
+
+func UpdateCamDirection() {
+	yaw64 := float64(Cam.Yaw)
+	pitch64 := float64(Cam.Pitch)
+	Cam.Direction = mgl32.Vec3{
+		float32(math.Cos(yaw64) * math.Cos(pitch64)),
+		float32(math.Sin(pitch64)),
+		float32(math.Sin(yaw64) * math.Cos(pitch64)),
+	}
+}
+
+// CamUp is the up vector to build the view matrix with: Cam.Up when it has
+// been set, WorldUp otherwise. The fallback is what lets every caller that
+// predates a tiltable camera keep working untouched.
+func CamUp() mgl32.Vec3 {
+	if Cam.Up == (mgl32.Vec3{}) {
+		return WorldUp
+	}
+	return Cam.Up
+}
+
+// UpdateCamMatrix rebuilds the view matrix from Cam.Position/Direction/Up and
+// uploads it. This is the only place the gameplay/editor view matrix is built —
+// the sites that used to inline LookAtV all route through here, which is what
+// keeps the up vector from silently disagreeing between them.
+//
+// The simulation half of the frame calls RebuildCamMatrix instead, which is the
+// first half of this alone: the frame's draw (render.DrawWorld) uploads the
+// matrix before anything reads it, so the sim makes no GL call (sim_gl.go).
+func UpdateCamMatrix() {
+	RebuildCamMatrix()
+	UploadCamMatrix()
+}
+
+// RebuildCamMatrix rebuilds the view matrix from Cam.Position/Direction/Up, on
+// the CPU only. Everything that reads Cam.Matrix on the CPU — picking, the
+// listener, the culls — sees it at once; the world program sees it at the next
+// UploadCamMatrix.
+func RebuildCamMatrix() {
+	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), CamUp())
+}
+
+// UploadCamMatrix writes Cam.Matrix into the world program's view matrix.
+func UploadCamMatrix() {
+	if glBlocked("UploadCamMatrix") {
+		return
+	}
+	if Program == 0 {
+		// No world shader, so nowhere to upload to. Only a headless test gets
+		// here — a GL call with no context current segfaults in the driver
+		// rather than returning an error, so the guard has to be on this side.
+		return
+	}
+	// Written to the world program by name rather than to whatever program
+	// happens to be bound. The camera moves during the simulation half of the
+	// frame, where the bound program is whatever the last pass of the last
+	// frame left — so the old spelling was writing the view matrix into some
+	// other program's uniform slot whenever that order came out differently,
+	// which is exactly what a headless frame (no UI pass, no imgui) does.
+	gl.ProgramUniformMatrix4fv(Program, Cam.Uniform, 1, false, &Cam.Matrix[0])
+}
+
+// MaxPitch prevents the camera from crossing vertical (avoids gimbal flip).
+const MaxPitch = float32(math.Pi/2 - 0.01)
+
+// HandleInput applies this frame's held keys to the camera.
+//
+// It lives with the camera rather than with the rest of input handling because
+// that is all it touches, and because the editor's free-fly mode calls it too —
+// putting it in the application shell made the editor depend on the shell for
+// what is really a camera operation.
+//
+// This is the free-fly spelling: the camera *is* the thing being moved.
+// Gameplay uses MoveIntent instead and moves the player, because a body and the
+// eyes riding it stop agreeing the moment the body is standing on something
+// that can rotate.
+//
+// The editor flies on the default layout, not the player's: see
+// platform/bindings.go.
+func HandleInput(keyStates []uint8) {
+	HandleInputScaled(keyStates, 1)
+}
+
+// HandleInputScaled is HandleInput with the step multiplied by scale, for a
+// viewport that offers a "fly faster" latch. Only the displacement is scaled:
+// the look keys turn at their own rate either way, because going somewhere
+// quickly is not a reason to lose the ability to aim.
+func HandleInputScaled(keyStates []uint8, scale float32) {
+	Cam.Position = Cam.Position.Add(moveIntent(keyStates, &platform.DefaultBindings, true).Mul(scale))
+	UpdateCamMatrix()
+}
+
+// MoveIntent reads this frame's keys and returns the displacement they ask for,
+// without applying it.
+//
+// Look keys are applied directly — a rotation is not a displacement, and
+// nothing downstream wants to defer it — and Cam.Direction is refreshed before
+// the basis is built so a turn takes effect on the same frame it was made. The
+// look stick is not read here: it turns by how far it is pushed, with its own
+// curve and aim assist, in app/pad_look.go.
+//
+// The returned vector is in the camera's own yaw-relative basis with WorldUp as
+// its vertical, which is world space while the viewer is standing on the world.
+// A caller whose viewer is standing in a rotating frame rotates it first.
+//
+// The keys are the player's own layout (platform.Bindings).
+func MoveIntent(keyStates []uint8) mgl32.Vec3 {
+	// A body flies when it has been put in free-fly; the editor's camera always
+	// does. This used to read "gravity is off", which made weightlessness and
+	// noclip the same thing — see platform.FlyMode.
+	return moveIntent(keyStates, &platform.Bindings, platform.FlyMode)
+}
+
+// freeFly is whether the vertical keys move the viewer. A camera with nothing to
+// stand on is always flying, so the editor passes true rather than reading
+// FlyMode — that global says whether the *player* is being flown, and the
+// editor's own camera is not the player.
+func moveIntent(keyStates []uint8, b *platform.BindingTable, freeFly bool) mgl32.Vec3 {
+	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
+	// while preserving the same feel as the original 60 FPS-tuned constants.
+	dtScale := platform.DeltaTime * 60.0
+	moveSpeed := platform.MovementSpeed * dtScale
+	rotSpeed := platform.KeyRotationSpeed * dtScale
+
+	fMove := float32(0.0)
+	uMove := float32(0.0)
+	rMove := float32(0.0)
+
+	// How far each way, not just whether: a key is all the way and a stick is
+	// as far as it is pushed, so half a stick walks at half speed. A stick's
+	// four directions come off one radial dead zone, so pushed diagonally it
+	// is no faster than pushed straight.
+	fMove += moveSpeed * (b.Value(platform.ActMoveForward, keyStates) - b.Value(platform.ActMoveBack, keyStates))
+	rMove += moveSpeed * (b.Value(platform.ActMoveLeft, keyStates) - b.Value(platform.ActMoveRight, keyStates))
+	if b.Held(platform.ActJump, keyStates) {
+		if freeFly {
+			uMove += moveSpeed // free-fly up
+		}
+		// jump is handled via KEYDOWN event in HandleEvent
+	}
+	if b.Held(platform.ActSprint, keyStates) {
+		if freeFly {
+			uMove -= moveSpeed // free-fly down, on the sprint key
+		}
+	}
+	if b.KeyHeld(platform.ActLookLeft, keyStates) {
+		Cam.Yaw -= rotSpeed
+	}
+	if b.KeyHeld(platform.ActLookRight, keyStates) {
+		Cam.Yaw += rotSpeed
+	}
+	if b.KeyHeld(platform.ActLookUp, keyStates) {
+		Cam.Pitch += rotSpeed
+	}
+	if b.KeyHeld(platform.ActLookDown, keyStates) {
+		Cam.Pitch -= rotSpeed
+	}
+
+	Cam.Direction = DirectionFromAngles(Cam.Yaw, Cam.Pitch)
+	forward := mgl32.Vec3{Cam.Direction.X(), 0.0, Cam.Direction.Z()}
+	right := mgl32.Vec3{Cam.Direction.Z(), 0.0, -Cam.Direction.X()}
+	return forward.Mul(fMove).Add(WorldUp.Mul(uMove)).Add(right.Mul(rMove))
+}

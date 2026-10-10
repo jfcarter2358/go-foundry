@@ -1,0 +1,103 @@
+# torch.fpar — a worked example, and the shape a hand-written effect takes.
+#
+# Three layers, because that is what a torch is: a bright core that lives less
+# than a second, a slower smoke plume above it, and the occasional spark that
+# actually falls. Every key not mentioned takes its default, which is why this
+# is forty lines rather than two hundred.
+id: torch
+seed: 1
+
+layers:
+  - name: flame
+    rate: 45
+    duration: 1
+    life_min: 0.35
+    life_max: 0.6
+    speed_min: 0.8
+    speed_max: 1.4
+    size_min: 0.18
+    size_max: 0.3
+    shape: cone
+    radius: 0.06
+    angle: 14
+    gravity: -0.15    # negative: fire rises
+    drag: 1.2
+    turbulence: 0.8
+    turbulence_freq: 3
+    blend: additive
+    max: 120
+    alpha_ramp:
+      - {t: 0, v: 0}
+      - {t: 0.15, v: 1}
+      - {t: 1, v: 0}
+    size_ramp:
+      - {t: 0, v: 0.6}
+      - {t: 0.3, v: 1}
+      - {t: 1, v: 0.4}
+    color_ramp:
+      - {t: 0, c: {r: 1, g: 0.95, b: 0.7}}
+      - {t: 0.4, c: {r: 1, g: 0.55, b: 0.1}}
+      - {t: 1, c: {r: 0.5, g: 0.08, b: 0}}
+
+  - name: smoke
+    rate: 8
+    duration: 1
+    life_min: 1.6
+    life_max: 2.6
+    speed_min: 0.4
+    speed_max: 0.7
+    size_min: 0.25
+    size_max: 0.45
+    rot_min: -3.14
+    rot_max: 3.14
+    rot_vel_min: -0.6
+    rot_vel_max: 0.6
+    shape: cone
+    radius: 0.08
+    angle: 22
+    gravity: -0.05
+    drag: 0.8
+    turbulence: 0.5
+    turbulence_freq: 1.5
+    blend: alpha
+    max: 60
+    alpha_ramp:
+      - {t: 0, v: 0}
+      - {t: 0.2, v: 0.35}
+      - {t: 1, v: 0}
+    size_ramp:
+      - {t: 0, v: 0.7}
+      - {t: 1, v: 2.2}
+    color_ramp:
+      - {t: 0, c: {r: 0.35, g: 0.32, b: 0.3}}
+      - {t: 1, c: {r: 0.18, g: 0.17, b: 0.17}}
+
+  - name: sparks
+    rate: 6
+    duration: 1
+    life_min: 0.7
+    life_max: 1.3
+    speed_min: 1.2
+    speed_max: 2.4
+    size_min: 0.03
+    size_max: 0.06
+    shape: cone
+    radius: 0.05
+    angle: 35
+    gravity: 0.6      # the one layer that actually falls
+    drag: 0.2
+    blend: additive
+    max: 40
+    # The only layer that meets the world: a spark that skips off the floor is
+    # the whole reason the simulation runs on the CPU.
+    collision: bounce
+    collide_radius: 0.02
+    bounce: 0.35
+    friction: 0.4
+    alpha_ramp:
+      - {t: 0, v: 1}
+      - {t: 0.7, v: 1}
+      - {t: 1, v: 0}
+    color_ramp:
+      - {t: 0, c: {r: 1, g: 0.9, b: 0.6}}
+      - {t: 1, c: {r: 1, g: 0.4, b: 0.05}}

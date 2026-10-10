@@ -1,0 +1,75 @@
+# volcanic.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Volcanic Plains
+doc: 'An Icelandic lava field: black rubble under woolly grey-green moss, with purple
+  lupine drifts.'
+ground:
+  texture: ground_volcanic
+  tint: [0.3, 0.34, 0.24]
+  cover: 0.7
+species:
+- shape: moss
+  spacing: 0.35
+  where: [ground]
+  slope: [0, 60]
+  scale: [0.9, 1.5]
+  colors: [[0.5, 0.58, 0.36], [0.64, 0.7, 0.44]]
+  cluster: 0.2
+  cluster_size: 6
+  moisture: 0.2
+  color_noise: 0.35
+- shape: rock
+  spacing: 2
+  where: [ground]
+  slope: [0, 85]
+  scale: [0.25, 1]
+  colors: [[0.16, 0.16, 0.16], [0.26, 0.25, 0.24]]
+  sink: 0.3
+  cluster: 0.35
+  cluster_size: 6
+  edge: 1.3
+  color_noise: 0.15
+- shape: pebbles
+  spacing: 0.9
+  where: [ground]
+  slope: [0, 60]
+  scale: [0.8, 1.4]
+  colors: [[0.16, 0.16, 0.16], [0.26, 0.25, 0.24]]
+  sink: 0.2
+  cluster: 0.4
+  cluster_size: 4
+  edge: 0.8
+- shape: flower
+  variants: [1]
+  spacing: 0.9
+  where: [ground]
+  slope: [0, 35]
+  scale: [1, 1.5]
+  colors: [[0.26, 0.4, 0.18], [0.34, 0.46, 0.22]]
+  accents: [[0.45, 0.32, 0.85], [0.55, 0.36, 0.88], [0.4, 0.4, 0.9], [0.85, 0.55,
+      0.85]]
+  upright: 0.9
+  light: [0.5, 1]
+  cluster: 0.7
+  cluster_size: 9
+  moisture: 0.2
+- shape: grass
+  spacing: 0.8
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.5, 0.85]
+  colors: [[0.4, 0.46, 0.22], [0.54, 0.54, 0.3]]
+  upright: 0.6
+  light: [0.3, 1]
+  cluster: 0.7
+  cluster_size: 4
+  moisture: 0.4
+  color_noise: 0.3
+- shape: moss
+  spacing: 0.8
+  where: [wall, ceiling]
+  scale: [0.6, 1.2]
+  colors: [[0.5, 0.58, 0.36], [0.64, 0.7, 0.44]]
+  cluster: 0.6
+  cluster_size: 3
+  moisture: 0.3

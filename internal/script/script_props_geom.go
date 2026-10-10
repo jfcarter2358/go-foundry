@@ -1,0 +1,732 @@
+package script
+
+// script_props_geom.go — properties of the world's geometry and lights.
+//
+// Split from script_props.go purely by length: the entity and volume tables
+// there and these are the same idea. The traps named in that file's header all
+// live here — the inverted Visible, the derived light Direction, and the
+// zero-Alpha default — so each is guarded at the point it applies.
+
+import (
+	"fmt"
+
+	"foundry/internal/flang"
+	"foundry/internal/world"
+)
+
+func init() {
+	propTables = map[flang.Kind_]map[string]propAccess{
+		flang.RefEntity:  mergeProps(entityProps(), aiEntityProps()),
+		flang.RefVolume:  mergeProps(volumeProps(), objectiveVolumeProps()),
+		flang.RefBrush:   brushProps(),
+		flang.RefChunk:   chunkProps(),
+		flang.RefLight:   lightProps(),
+		flang.RefSprite:  spriteProps(),
+		flang.RefLevel:   levelProps(),
+		flang.RefEmitter: emitterProps(),
+		flang.RefScreen:  screenProps(),
+		flang.RefWidget:  widgetProps(),
+		flang.RefSound:   soundProps(),
+		flang.RefEffect:  effectProps(),
+		flang.RefDecal:   decalProps(),
+		flang.RefModel:   modelProps(),
+	}
+}
+
+// ---------- brushes ----------
+
+// brushProps is what a script can ask a brush about itself. Its textures, UVs
+// and shading live on its individual faces, and faces have no address of their
+// own yet (RefFace is not here), so what is left is the brush as an object:
+// whether it is solid, and — for one marked dynamic — where it is.
+//
+// The placement properties are gated on Dynamic rather than allowed on any
+// brush. A static brush's corners are baked into the compiled level's BSP and
+// its faces have been clipped against their neighbours, so moving one at run
+// time would move a shape the compiled world no longer agrees exists. The
+// toggle is what tells the compiler to leave a brush out of that bake, so it is
+// also what makes writing a position meaningful; writing one without it is an
+// error the author can see rather than a move that silently works in the editor
+// and does nothing in the shipped game. See world/brush_dynamic.go.
+func brushProps() map[string]propAccess {
+	// A brush's verts are chunk-local. What a script reads and writes is that
+	// carried out into the space the chunk is PLACED in — which for a level's
+	// own geometry is the world, the space @player.prop.position and every
+	// volume's centre are in, and for a brush an ENTITY carries is that
+	// entity's own.
+	//
+	// The entity case is the one that had to be chosen deliberately, and local
+	// is the only reading that works. A door on a ship is authored, drawn and
+	// collided relative to the ship; a script closing it means "slide two
+	// metres to port", not "slide two metres along world −X", and the two stop
+	// agreeing the moment the ship turns. Local also composes the way an author
+	// expects — the ship's own motion carries the door along, and the velocity
+	// written here is on top of it — which is exactly what makes it possible to
+	// write a lift inside a moving hull at all.
+	//
+	// For every chunk that is not frame-owned the two spaces are the same
+	// matrix, so nothing about a level's own brushes changed. See
+	// Chunk.LocalToPlacement.
+	getOwner := func(fn func(*world.Chunk, *world.Brush) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+			ch, b := c.brushOwnerFor(r)
+			if b == nil {
+				return nil, false
+			}
+			return fn(ch, b), true
+		}
+	}
+	// setDynamic resolves the brush, refuses the write unless it is dynamic,
+	// and hands the setter a level it can re-bucket through — the same
+	// arrangement chunkProps makes for `origin`, and for the same reason: a
+	// brush that moved is in different spatial-hash cells than it was.
+	setDynamic := func(name string, fn func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+		return func(c *refCache, r flang.RefVal, v flang.Value) error {
+			ch, b := c.brushOwnerFor(r)
+			if b == nil {
+				return &scriptMissingError{r.String()}
+			}
+			if !b.Dynamic {
+				return fmt.Errorf("%s: cannot write %s on a brush that is not dynamic; "+
+					"tick Dynamic in its properties panel first", r.String(), name)
+			}
+			return fn(c, ch, b, v)
+		}
+	}
+	// rebucket is what every placement write ends with. A moved brush grows or
+	// shrinks its chunk's bounds, and the spatial hash keys off those, so a
+	// brush that slid out of its chunk's old footprint would stop being found
+	// by every world-space lookup — collision included, which would make a
+	// closing door pass straight through the player it was meant to crush.
+	rebucket := func(c *refCache, ch *world.Chunk) {
+		ch.RecomputeBounds()
+		world.RebuildSpatialHash(c.lvl)
+	}
+	return map[string]propAccess{
+		"solid": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				b := c.brushFor(r)
+				if b == nil {
+					return nil, false
+				}
+				return flang.BoolVal(b.Solid), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				bo, ok := toBool(v)
+				if !ok {
+					return propErr("solid", "bool", v)
+				}
+				b := c.brushFor(r)
+				if b == nil {
+					return &scriptMissingError{r.String()}
+				}
+				b.Solid = bo
+				return nil
+			},
+			Dirty: true,
+			Doc:   "whether the brush blocks movement",
+		},
+		"dynamic": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				b := c.brushFor(r)
+				if b == nil {
+					return nil, false
+				}
+				return flang.BoolVal(b.Dynamic), true
+			},
+			Doc: "read-only: whether this brush can be moved by a script (authored, not switchable)",
+		},
+		// The placement properties below mark nothing for rebuild: a moved
+		// brush is drawn out of its chunk's batch under its placement matrix
+		// (render/chunk_batch.go), and collision and raycasts carry the same
+		// matrix, so no mesh is stale — exactly as when AdvanceBrushes moves
+		// one by its velocity. Rebuilding the mesh every frame a script
+		// animated a door would re-upload the door's whole material batch.
+		"position": {
+			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(ch.LocalToPlacement(b.Position()))
+			}),
+			Set: setDynamic("position", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("position", "vec", v)
+				}
+				want := ch.PlacementToLocal(p)
+				if want == b.Position() {
+					// A script animating one door writes this every frame; one
+					// holding it still should not pay for a rehash.
+					return nil
+				}
+				b.MoveTo(want)
+				rebucket(c, ch)
+				return nil
+			}),
+			Doc: "the brush's centre, in the space its chunk sits in — world space for a level's own geometry, the entity's own for a brush an entity carries; writing it moves the brush and its collision together",
+		},
+		"rotation": {
+			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(b.Rotation)
+			}),
+			Set: setDynamic("rotation", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				rot, ok := toVec3(v)
+				if !ok {
+					return propErr("rotation", "vec", v)
+				}
+				if rot == b.Rotation {
+					return nil
+				}
+				b.Rotation = rot
+				rebucket(c, ch)
+				return nil
+			}),
+			Doc: "euler angles in radians, turning the brush about its own centre",
+		},
+		"velocity": {
+			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(ch.LocalToPlacementDirection(b.Velocity))
+			}),
+			// No re-bucketing here, unlike `position`: writing a rate moves
+			// nothing this instant. The move it produces happens in
+			// world.AdvanceBrushes at the top of the next tick, which
+			// re-buckets the hash itself once every mover has been integrated.
+			Set: setDynamic("velocity", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				vel, ok := toVec3(v)
+				if !ok {
+					return propErr("velocity", "vec", v)
+				}
+				b.Velocity = ch.PlacementToLocalDirection(vel)
+				return nil
+			}),
+			Doc: "units per second added to this brush's position during play, in the same space `position` is in; the engine keeps it moving",
+		},
+		"angular_velocity": {
+			// Read and written raw, with no chunk conversion — unlike
+			// `velocity`, which is world-space because a script aiming a move
+			// thinks in world directions. This is the rate of change of
+			// `rotation`, and `rotation` is the brush's own Euler angles about
+			// its own pivot, so the two have to be in the same basis or a
+			// script could not integrate one into the other by hand.
+			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(b.AngularVelocity)
+			}),
+			// No re-bucketing, for the same reason `velocity` does none: a
+			// rate turns nothing this instant. world.AdvanceBrushes applies it
+			// at the top of the next tick and re-buckets the hash itself.
+			Set: setDynamic("angular_velocity", func(_ *refCache, _ *world.Chunk, b *world.Brush, v flang.Value) error {
+				av, ok := toVec3(v)
+				if !ok {
+					return propErr("angular_velocity", "vec", v)
+				}
+				b.AngularVelocity = av
+				return nil
+			}),
+			Doc: "radians per second added to this brush's rotation during play; the engine keeps it turning",
+		},
+		"scale": {
+			// Raw, like `rotation`: a multiplier on the brush's own authored
+			// size about its own centre, so there is no space to convert into.
+			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(b.EffectiveScale())
+			}),
+			Set: setDynamic("scale", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				s, ok := toVec3(v)
+				if !ok {
+					return propErr("scale", "vec", v)
+				}
+				// Refused rather than clamped: a zero axis collapses the solid
+				// and a negative one turns it inside out, and neither is a
+				// value an author means to get a slightly different version of.
+				if s.X() <= 0 || s.Y() <= 0 || s.Z() <= 0 {
+					return fmt.Errorf("scale: every axis must be greater than zero, got <%g, %g, %g>", s.X(), s.Y(), s.Z())
+				}
+				s = world.ClampBrushScale(s)
+				if s == b.EffectiveScale() {
+					return nil
+				}
+				b.Scale = s
+				rebucket(c, ch)
+				return nil
+			}),
+			Doc: "per-axis size multiplier on the brush as authored, growing about its own centre; <1, 1, 1> is its authored size",
+		},
+		"waypoints": waypointsProp(),
+	}
+}
+
+// compiledChunkMoveWarning explains a write that moves a chunk whose surfaces
+// were baked into the compiled level: its collision moves, and what is drawn
+// stays where the compiler put it. Only a compiled level has such a chunk; the
+// linter (bakedChunkMove) says the same thing at author time, in every build.
+func compiledChunkMoveWarning(c *refCache, r flang.RefVal) string {
+	if ch := c.chunkFor(r); ch != nil && ch.Compiled {
+		return bakedChunkMoveReason(ch.ID)
+	}
+	return ""
+}
+
+// bakedChunkMoveReason is the one wording of the problem, for the runtime
+// warning, the linter and foundrycompile -strict.
+func bakedChunkMoveReason(chunk string) string {
+	return fmt.Sprintf("chunk %q is baked into the compiled level, so its surfaces stay where they were compiled "+
+		"while its collision moves; mark it `moves: true` (Moves in its properties panel) to draw it live", chunk)
+}
+
+func chunkProps() map[string]propAccess {
+	get := func(fn func(*world.Chunk) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+			ch := c.chunkFor(r)
+			if ch == nil {
+				return nil, false
+			}
+			return fn(ch), true
+		}
+	}
+	// The cache is handed to the setter as well as the chunk: a write that
+	// moves a chunk has to re-bucket the level's spatial hash, and the cache is
+	// where the setter can reach the level from.
+	set := func(fn func(c *refCache, ch *world.Chunk, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+		return func(c *refCache, r flang.RefVal, v flang.Value) error {
+			ch := c.chunkFor(r)
+			if ch == nil {
+				return &scriptMissingError{r.String()}
+			}
+			return fn(c, ch, v)
+		}
+	}
+	return map[string]propAccess{
+		"enabled": {
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.BoolVal(ch.IsEnabled()) }),
+			// Only the flag is written here. The frame loop's
+			// SyncChunkGeometry picks the change up between frames and
+			// rebuilds the spatial hash with it — and, for a chunk with
+			// unload_when_disabled, releases or rebuilds its buffers, which is
+			// gl.* work a script tick is not allowed to do. See
+			// world/chunk_enable.go.
+			Set: set(func(_ *refCache, ch *world.Chunk, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("enabled", "bool", v)
+				}
+				ch.Disabled = !b
+				return nil
+			}),
+			Doc: "a disabled chunk is not drawn and not collided with; its geometry stays loaded unless the chunk sets unload_when_disabled",
+		},
+		"origin": {
+			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Origin) }),
+			// Writing it is the whole of moving a chunk. Points, sector
+			// heights, biome paint and every other per-chunk coordinate are
+			// chunk-local and never baked with Origin (see world.Chunk), so
+			// they ride along through ModelMatrix with no geometry to rebuild
+			// — which is exactly what the editor's own move does. Any entity
+			// with AttachedChunk naming this chunk rides along too, by the
+			// same distance (world.CarryAttachedEntities).
+			//
+			// What does not ride along is the spatial hash: its keys are world
+			// cells derived from ModelMatrix, so a moved chunk drops out of
+			// every world-space lookup until it is re-bucketed. Done here
+			// rather than deferred like `enabled` is, because re-bucketing is
+			// pure CPU (~40us on a 56-sector level, the same call the editor
+			// makes on every frame of a drag) where releasing vertex buffers is
+			// gl.* work. Deferring it would leave the rest of this tick's
+			// location verbs answering from the chunk's old footprint.
+			Set: set(func(c *refCache, ch *world.Chunk, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("origin", "vec", v)
+				}
+				if p == ch.Origin {
+					// A script animating one chunk writes this every frame;
+					// one holding it still should not pay for a rehash.
+					return nil
+				}
+				delta := p.Sub(ch.Origin)
+				ch.Origin = p
+				world.CarryAttachedEntities(c.lvl, ch, delta)
+				world.RebuildSpatialHash(c.lvl)
+				return nil
+			}),
+			Warn: compiledChunkMoveWarning,
+			Doc:  "this chunk's placement: writing it moves the chunk and everything authored in it",
+		},
+		"velocity": {
+			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Velocity) }),
+			// No re-bucketing here, unlike `origin`: writing a rate moves
+			// nothing this instant. The move it produces happens in
+			// world.AdvanceChunks at the top of the next tick, which re-buckets
+			// the hash itself once every mover has been integrated.
+			Set: set(func(_ *refCache, ch *world.Chunk, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("velocity", "vec", v)
+				}
+				ch.Velocity = p
+				return nil
+			}),
+			Warn: compiledChunkMoveWarning,
+			Doc:  "units per second added to this chunk's origin during play; the engine keeps it moving",
+		},
+		"rotation": {
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Rotation) }),
+			// Rebuckets on every actual change, same as `origin`'s own Set:
+			// a turn changes ModelMatrix exactly as a move does, so the
+			// chunk's world-space bucket goes stale the same way. Unlike
+			// `origin` this does NOT call CarryAttachedEntities — a rider
+			// pinned via AttachedChunk is nudged by the distance the chunk's
+			// Origin moves, and a turn alone moves no distance, so it is not
+			// repositioned around the chunk's new orientation. A known gap
+			// (see Chunk.rotateTo), not a regression.
+			Set: set(func(c *refCache, ch *world.Chunk, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("rotation", "number", v)
+				}
+				if f == ch.Rotation {
+					return nil
+				}
+				ch.Rotation = f
+				world.RebuildSpatialHash(c.lvl)
+				return nil
+			}),
+			Warn: compiledChunkMoveWarning,
+			Doc:  "this chunk's Y rotation, in radians — writing it turns the chunk and everything authored in it",
+		},
+		"angular_velocity": {
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.AngularVelocity) }),
+			// No re-bucketing here, unlike `rotation`, on `velocity`'s own
+			// reasoning: writing a rate turns nothing this instant.
+			Set: set(func(_ *refCache, ch *world.Chunk, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("angular_velocity", "number", v)
+				}
+				ch.AngularVelocity = f
+				return nil
+			}),
+			Warn: compiledChunkMoveWarning,
+			Doc:  "radians per second added to this chunk's rotation during play; the engine keeps it turning",
+		},
+		"scale": {
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Scale) }),
+			Doc: "read-only: this chunk's uniform scale",
+		},
+		"waypoints": waypointsProp(),
+	}
+}
+
+// ---------- lights ----------
+
+// lightProps is what a script can ask a light about itself. Every write is
+// gated on the light being dynamic (see staticLightGate), so a property added
+// here is refused on a static light without having to remember to be.
+func lightProps() map[string]propAccess {
+	props := map[string]propAccess{
+		"enabled": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					return flang.BoolVal(!d.Disabled), true
+				case p != nil:
+					return flang.BoolVal(!p.Disabled), true
+				}
+				return nil, false
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("enabled", "bool", v)
+				}
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					d.Disabled = !b
+				case p != nil:
+					p.Disabled = !b
+				default:
+					return &scriptMissingError{r.String()}
+				}
+				return nil
+			},
+			Doc: "whether the light shines; a static light refuses the write unless it is left out of the bake (no_bake)",
+		},
+		"dynamic": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					return flang.BoolVal(d.Dynamic), true
+				case p != nil:
+					return flang.BoolVal(p.Dynamic), true
+				}
+				return nil, false
+			},
+			// Read-only: a static light's contribution is already in the
+			// compiled level's vertices, and nothing at run time can take it
+			// back out again.
+			Doc: "read-only: whether this light is lit live and may be changed by a script; a static light is baked into the level",
+		},
+		"color": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					return vecValue(d.Color), true
+				case p != nil:
+					return vecValue(p.Color), true
+				}
+				return nil, false
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				col, ok := toVec3(v)
+				if !ok {
+					return propErr("color", "vec", v)
+				}
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					d.Color = col
+				case p != nil:
+					p.Color = col
+				default:
+					return &scriptMissingError{r.String()}
+				}
+				return nil
+			},
+			Doc: "RGB, as a vec",
+		},
+		"brightness": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					return flang.FloatVal(d.Brightness), true
+				case p != nil:
+					return flang.FloatVal(p.Brightness), true
+				}
+				return nil, false
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("brightness", "float", v)
+				}
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					d.Brightness = f
+				case p != nil:
+					p.Brightness = f
+				default:
+					return &scriptMissingError{r.String()}
+				}
+				return nil
+			},
+			Doc: "intensity",
+		},
+		"position": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				_, p := c.lightFor(r)
+				if p == nil {
+					return nil, false
+				}
+				return vecValue(p.Position), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				_, p := c.lightFor(r)
+				if p == nil {
+					return &scriptMissingError{r.String() + " is not a point light"}
+				}
+				pos, ok := toVec3(v)
+				if !ok {
+					return propErr("position", "vec", v)
+				}
+				p.Position = pos
+				return nil
+			},
+			Doc: "point lights only — world-space, or an offset in the carrier's space while attached",
+		},
+		"attach": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case p != nil:
+					return flang.StrVal(p.Attach.Describe()), true
+				case d != nil:
+					return flang.StrVal(""), true
+				}
+				return nil, false
+			},
+			Doc: "what the light rides, as the editor names it; empty when it is in world space (read-only; see attach())",
+		},
+		"carrier": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case p != nil:
+					return carrierValue(c, p.Attach), true
+				case d != nil:
+					return flang.NullVal{}, true
+				}
+				return nil, false
+			},
+			Doc: "a ref to the entity the light rides, or null (read-only)",
+		},
+		"radius": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				_, p := c.lightFor(r)
+				if p == nil {
+					return nil, false
+				}
+				return flang.FloatVal(p.Radius), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				_, p := c.lightFor(r)
+				if p == nil {
+					return &scriptMissingError{r.String() + " is not a point light"}
+				}
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("radius", "float", v)
+				}
+				p.Radius = f
+				return nil
+			},
+			Doc: "point lights only: falloff radius",
+		},
+		// Yaw and pitch, never Direction. Writing the vector directly is how a
+		// light reaches {0,0,0}, whose Normalize() is NaN — which poisons the
+		// direction uniform and the shadow matrix permanently (light.go).
+		"yaw": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, _ := c.lightFor(r)
+				if d == nil {
+					return nil, false
+				}
+				return flang.FloatVal(d.Yaw), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				d, _ := c.lightFor(r)
+				if d == nil {
+					return &scriptMissingError{r.String() + " is not a directional light"}
+				}
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("yaw", "float", v)
+				}
+				d.Yaw = f
+				d.SyncDirection()
+				return nil
+			},
+			Doc: "directional lights only: degrees about +Y",
+		},
+		"pitch": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, _ := c.lightFor(r)
+				if d == nil {
+					return nil, false
+				}
+				return flang.FloatVal(d.Pitch), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				d, _ := c.lightFor(r)
+				if d == nil {
+					return &scriptMissingError{r.String() + " is not a directional light"}
+				}
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("pitch", "float", v)
+				}
+				d.Pitch = f
+				d.SyncDirection()
+				return nil
+			},
+			Doc: "directional lights only: degrees of elevation",
+		},
+		"waypoints": waypointsProp(),
+		"cast_shadows": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					return flang.BoolVal(d.CastShadows), true
+				case p != nil:
+					return flang.BoolVal(p.CastShadows), true
+				}
+				return nil, false
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("cast_shadows", "bool", v)
+				}
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					d.CastShadows = b
+				case p != nil:
+					p.CastShadows = b
+				default:
+					return &scriptMissingError{r.String()}
+				}
+				return nil
+			},
+			Doc: "whether this light casts shadows",
+		},
+	}
+	for name, acc := range props {
+		if acc.Set != nil {
+			acc.Set = staticLightGate(name, acc.Set)
+			props[name] = acc
+		}
+	}
+	return props
+}
+
+// staticLightGate refuses set on a light that is not dynamic, and otherwise
+// hands the write on.
+//
+// A static light is baked into a compiled level's static geometry, so a write
+// would change it on the props and entities, which are lit live, and not on
+// the walls and floors, which were lit at compile time. It is refused in every
+// build rather than only a compiled one, so a script that works in the editor
+// cannot stop working in the release. The same refusal a static brush gets.
+func staticLightGate(name string, set func(*refCache, flang.RefVal, flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	return func(c *refCache, r flang.RefVal, v flang.Value) error {
+		if d, p := c.lightFor(r); lightRefusesWrite(d, p, name) {
+			if name == "enabled" {
+				return staticLightSwitchError(r.String())
+			}
+			return staticLightError(r.String(), "cannot write "+name+" on")
+		}
+		return set(c, r, v)
+	}
+}
+
+// lightRefusesWrite is the gate's rule: a static light refuses every write,
+// except that one left out of the bake (NoBake) may still be switched on and
+// off — none of it is in the vertices, so off is off everywhere.
+func lightRefusesWrite(d *world.DirectionalLight, p *world.PointLight, prop string) bool {
+	switch {
+	case d != nil:
+		return !d.Dynamic && !(d.NoBake && prop == "enabled")
+	case p != nil:
+		return !p.Dynamic && !(p.NoBake && prop == "enabled")
+	}
+	return false
+}
+
+// staticLightError is the one wording of the refusal, shared by the property
+// gate, play_waypoints and the linter: what cannot be done to the static light
+// named, and what to do about it.
+func staticLightError(light, what string) error {
+	return fmt.Errorf("%s: %s a static light, whose light is baked into the level; tick Dynamic in its properties panel first", light, what)
+}
+
+// staticLightSwitchError is the refusal for `enabled`, which has a second way
+// out: a light left out of the bake may be switched even though it is static.
+// That is the fix a light belonging to geometry that goes away wants, and
+// "tick Dynamic" alone sends the author to the heavier one.
+func staticLightSwitchError(light string) error {
+	return fmt.Errorf("%s: cannot switch a static light on or off, because its light is baked into the level; tick \"Leave out of bake\" (no_bake) in its properties panel to let a script switch it, or Dynamic to let a script change anything on it", light)
+}

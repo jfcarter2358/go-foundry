@@ -1,0 +1,15 @@
+# hologram.fmat — three effects that only read as one thing together.
+#
+# Self-lit so it is not shaded by the room it is standing in, scrolling so it
+# reads as a signal rather than a decal, and part-transparent so what is behind
+# it shows through. Each was reachable before; having them under one name is
+# what makes it a hologram rather than three settings that have to be repeated
+# on every panel.
+kind: surface
+doc: A projected display — self-lit, drifting, see-through.
+effects:
+  - effect: unlit
+  - effect: uv_scroll
+    rate: [0, 0.18]
+  - effect: alpha
+    value: 0.55

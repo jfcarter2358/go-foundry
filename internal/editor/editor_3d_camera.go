@@ -1,0 +1,405 @@
+package editor
+
+// editor_3d_camera.go — the 3D view's two camera modes.
+//
+// The 3D view used to fly and only fly. It now carries the same pair the model
+// editor does (editor_model_window.go): fly for travelling a level, orbit for
+// turning around whatever is selected. The gestures are deliberately the same
+// in both viewports — V swaps modes, RMB/MMB turns, Shift+MMB pans, the wheel
+// zooms, F frames the selection — so the two editors are driven alike.
+//
+// Unlike the model editor this camera cannot own its own state: Cam (camera.go)
+// is global and every pass in the frame reads it. So only the orbit half lives
+// here, and it is projected onto Cam rather than replacing it — Yaw and Pitch
+// stay the *look* direction, and orbit derives the eye from them
+// (eye = Target - look*Dist) exactly as modelCamera.position() does. That is
+// what lets a mode switch happen without the view jumping, and it leaves fly
+// mode behaving precisely as it did before.
+
+import (
+	"foundry/internal/geom"
+	"foundry/internal/gfx"
+	"foundry/internal/platform"
+	"math"
+
+	"github.com/go-gl/mathgl/mgl32"
+	"github.com/veandco/go-sdl2/sdl"
+)
+
+// editorCam3D is the orbit half of the 3D view's camera. Fly is the mode
+// switch; Target and Dist are only read while orbiting.
+var editorCam3D = struct {
+	Fly    bool
+	Target mgl32.Vec3
+	Dist   float32
+}{Fly: true, Dist: 8}
+
+const (
+	editorCamMinDist float32 = 0.2
+	editorCamMaxDist float32 = 500
+	// editorCamFastScale multiplies every camera move while Caps Lock is on.
+	// Caps Lock rather than a held modifier because crossing a level takes far
+	// longer than a finger wants to stay down, and because Shift and Ctrl are
+	// both already spoken for in this viewport (fly down, multi-select).
+	editorCamFastScale float32 = 4
+)
+
+// editorCamSpeedScale is the multiplier the travel keys and the wheel dolly
+// move at. Caps Lock is read as a latch (KMOD_CAPS is the light on the
+// keyboard, not the key being held), so it stays on until it is turned off.
+func editorCamSpeedScale() float32 {
+	if sdl.GetModState()&sdl.KMOD_CAPS != 0 {
+		return editorCamFastScale
+	}
+	return 1
+}
+
+// editorApplyCamAngles rebuilds Cam from Yaw/Pitch. Flying leaves the eye where
+// it is and only turns the look; orbiting swings the eye around the pivot,
+// which is the whole difference between the two modes.
+func editorApplyCamAngles() {
+	gfx.UpdateCamDirection()
+	if !editorCam3D.Fly {
+		editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
+		gfx.Cam.Position = editorCam3D.Target.Sub(gfx.Cam.Direction.Mul(editorCam3D.Dist))
+	}
+	gfx.UpdateCamMatrix()
+}
+
+// editorSetFlyCam switches modes without moving the eye or changing where it
+// looks. Only the derived half of the state is recomputed: fly simply keeps the
+// eye the orbit left it at, orbit puts its pivot back out in front at the
+// current distance.
+func editorSetFlyCam(fly bool) {
+	if editorCam3D.Fly == fly {
+		return
+	}
+	editorCam3D.Fly = fly
+	gfx.UpdateCamDirection()
+	if !fly {
+		editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
+		editorCam3D.Target = gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(editorCam3D.Dist))
+	}
+	editorApplyCamAngles()
+}
+
+// editorCamEnter re-derives the orbit pivot from wherever the camera ended up.
+// Called when the editor is opened, so an orbit left over from the last session
+// in the editor does not pull the view back to a pivot the player has since
+// walked away from.
+func editorCamEnter() {
+	gfx.UpdateCamDirection()
+	editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
+	editorCam3D.Target = gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(editorCam3D.Dist))
+}
+
+// editorCamLook applies a mouse-look delta. One path for both modes: the angles
+// change either way, and editorApplyCamAngles decides whether that turns the
+// head or swings the eye.
+func editorCamLook(dx, dy int32) {
+	gfx.Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
+	gfx.Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
+	gfx.Cam.Pitch = geom.ClampValue(gfx.Cam.Pitch, -gfx.MaxPitch, gfx.MaxPitch)
+	editorApplyCamAngles()
+}
+
+// editorCamRight and editorCamUp are the camera's screen-aligned axes, so a pan
+// slides the view in the plane being looked at rather than along world axes.
+func editorCamRight() mgl32.Vec3 {
+	r := gfx.Cam.Direction.Cross(gfx.WorldUp)
+	if r.Len() < 1e-5 {
+		return mgl32.Vec3{1, 0, 0}
+	}
+	return r.Normalize()
+}
+
+func editorCamUp() mgl32.Vec3 {
+	return editorCamRight().Cross(gfx.Cam.Direction).Normalize()
+}
+
+// editorCamPan slides the view sideways and vertically by a mouse delta. Scaled
+// by the orbit radius so the world tracks the cursor at any zoom level.
+func editorCamPan(dx, dy int32) {
+	scale := editorCam3D.Dist * 0.0015
+	delta := editorCamRight().Mul(-float32(dx) * scale).
+		Add(editorCamUp().Mul(float32(dy) * scale))
+	editorCamTranslate(delta)
+}
+
+// editorCamTranslate moves the view by a world-space delta, moving whichever of
+// the eye and the pivot is the authoritative one in the current mode.
+func editorCamTranslate(delta mgl32.Vec3) {
+	if editorCam3D.Fly {
+		gfx.Cam.Position = gfx.Cam.Position.Add(delta)
+	} else {
+		editorCam3D.Target = editorCam3D.Target.Add(delta)
+	}
+	editorApplyCamAngles()
+}
+
+// editorCamZoom handles a wheel notch. Orbiting shrinks the radius, which walks
+// the eye towards the pivot; flying has no radius, so the wheel dollies the eye
+// along the look direction instead — the same split the model editor makes.
+func editorCamZoom(wheelY int32) {
+	if wheelY == 0 {
+		return
+	}
+	if editorCam3D.Fly {
+		speed := platform.MovementSpeed * platform.DeltaTime * 60
+		if speed <= 0 {
+			speed = platform.MovementSpeed
+		}
+		speed *= editorCamSpeedScale()
+		gfx.Cam.Position = gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(float32(wheelY) * speed * 4))
+		editorApplyCamAngles()
+		return
+	}
+	// Multiplicative, so each notch covers the same visual fraction whether the
+	// camera is close in or far out.
+	factor := float32(math.Pow(0.88, float64(wheelY)))
+	editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist*factor, editorCamMinDist, editorCamMaxDist)
+	editorApplyCamAngles()
+}
+
+// editorCamMove is WASD and the panel's navigation buttons. Flying moves the
+// eye through MoveCamera, as it always has. Orbiting moves the *pivot* instead
+// of doing nothing (which is what the model editor does): a level is far larger
+// than one model, and dead movement keys in half the modes would be a
+// regression from a viewport whose only way to travel is to fly.
+func editorCamMove(f, u, r float32) {
+	if editorCam3D.Fly {
+		gfx.MoveCamera(f, u, r)
+		return
+	}
+	// Flattened forward and world up, matching MoveCamera, so orbiting and
+	// flying answer the keys the same way.
+	d := gfx.Cam.Direction
+	forward := mgl32.Vec3{d.X(), 0, d.Z()}
+	if forward.Len() > 1e-6 {
+		forward = forward.Normalize()
+	}
+	right := mgl32.Vec3{d.Z(), 0, -d.X()}
+	if right.Len() > 1e-6 {
+		right = right.Normalize()
+	}
+	editorCamTranslate(forward.Mul(f).Add(gfx.WorldUp.Mul(u)).Add(right.Mul(r)))
+}
+
+// editorOrbitKeys is EditorTick's keyboard path while orbiting. Fly mode hands
+// straight to HandleInput (input.go) and behaves as it always has; this is the
+// same set of keys read against editorCamMove, so they slide the pivot instead
+// of the eye.
+func editorOrbitKeys(keyStates []uint8) {
+	dtScale := platform.DeltaTime * 60.0
+	moveSpeed := platform.MovementSpeed * dtScale * editorCamSpeedScale()
+	rotSpeed := platform.KeyRotationSpeed * dtScale
+
+	var f, u, r float32
+	if keyStates[sdl.SCANCODE_W] != 0 {
+		f += moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_S] != 0 {
+		f -= moveSpeed
+	}
+	// A and D carry the same signs MoveCamera gives them, so strafing points
+	// the same way in both camera modes.
+	if keyStates[sdl.SCANCODE_A] != 0 {
+		r += moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_D] != 0 {
+		r -= moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_SPACE] != 0 {
+		u += moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_LSHIFT] != 0 {
+		u -= moveSpeed
+	}
+
+	if keyStates[sdl.SCANCODE_LEFT] != 0 {
+		gfx.Cam.Yaw -= rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_RIGHT] != 0 {
+		gfx.Cam.Yaw += rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_UP] != 0 {
+		gfx.Cam.Pitch += rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_DOWN] != 0 {
+		gfx.Cam.Pitch -= rotSpeed
+	}
+	gfx.Cam.Pitch = geom.ClampValue(gfx.Cam.Pitch, -gfx.MaxPitch, gfx.MaxPitch)
+
+	editorCamMove(f, u, r)
+	editorApplyCamAngles()
+}
+
+// ---------- framing ----------
+
+// editorFrameSelection points the camera at whatever is selected, falling back
+// to the active chunk when nothing is. Always lands in orbit mode: the point of
+// framing something is to look at it from the outside.
+func editorFrameSelection() {
+	min, max, ok := editorSelectionBounds()
+	if !ok {
+		return
+	}
+	editorFrameBounds(min, max)
+}
+
+// editorFrameBounds points the camera at a world-space box. Split out of
+// editorFrameSelection so that something with bounds but no selection — a region
+// Claude was asked to look at — can be framed without taking the selection away
+// from whoever is using the editor.
+func editorFrameBounds(min, max mgl32.Vec3) {
+	center := min.Add(max).Mul(0.5)
+	radius := max.Sub(min).Len() / 2
+	if radius < 0.25 {
+		radius = 0.25
+	}
+	// The main projection is a 45 degree vertical FOV, so half of it is 22.5;
+	// the margin keeps the subject off the window edges.
+	dist := radius / float32(math.Tan(float64(mgl32.DegToRad(22.5)))) * 1.4
+
+	editorCam3D.Fly = false
+	editorCam3D.Target = center
+	editorCam3D.Dist = geom.ClampValue(dist, editorCamMinDist, editorCamMaxDist)
+	editorApplyCamAngles()
+}
+
+// editorSelectionBounds is the world AABB of the current selection, in the same
+// priority order the panel shows it: vertices, then the spawn point, then the
+// selected entity, then the selected volume, then the selected prop, then the
+// water body, then the sector, then the active chunk.
+func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
+	lvl := Editor.level
+	if lvl == nil {
+		return mgl32.Vec3{}, mgl32.Vec3{}, false
+	}
+
+	if len(Editor.SelectedVertices) > 0 {
+		var min, max mgl32.Vec3
+		found := false
+		for _, sel := range Editor.SelectedVertices {
+			pos, ok := vertexSelPos(sel)
+			if !ok {
+				continue
+			}
+			if !found {
+				min, max, found = pos, pos, true
+				continue
+			}
+			min, max = geom.VecMin(min, pos), geom.VecMax(max, pos)
+		}
+		if found {
+			return min, max, true
+		}
+	}
+
+	// Object mode's own selection, ahead of the active-brush fallback below:
+	// framing has to reach every brush in a multi-selection, not only the one
+	// the Active* fields happen to name.
+	if len(Editor.SelectedBrushes) > 0 {
+		if bmin, bmax, ok := selectedBrushesBounds(); ok {
+			return bmin, bmax, true
+		}
+	}
+
+	if Editor.SpawnSelected && lvl.Spawn != nil {
+		smin, smax := lvl.Spawn.WorldAABB()
+		return smin, smax, true
+	}
+
+	if s := activeSeal(); s != nil {
+		lo, hi := s.Bounds()
+		return lo, hi, true
+	}
+
+	if e := activeEntity(); e != nil {
+		if emin, emax, ok := e.WorldAABB(); ok {
+			return emin, emax, true
+		}
+		// No authored volume to frame, so frame the point it sits at and let
+		// the caller's minimum radius decide how close that ends up.
+		return e.Position, e.Position, true
+	}
+
+	if v := activeVolume(); v != nil {
+		if vmin, vmax, ok := v.WorldAABB(lvl); ok {
+			return vmin, vmax, true
+		}
+		p := v.WorldPosition(lvl)
+		return p, p, true
+	}
+
+	if sc := activeScenery(); sc != nil {
+		if smin, smax, ok := sc.WorldAABB(); ok {
+			return smin, smax, true
+		}
+		// The model never loaded, so there is no volume to frame — the point it
+		// stands at, and the caller's minimum radius, is all there is.
+		return sc.Position, sc.Position, true
+	}
+
+	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
+		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
+		// Both of these are chunk-local (Brush.LocalAABB and
+		// Chunk.MinBound/MaxBound alike), and this function's whole contract is
+		// world-space bounds — so they go out through the chunk's own placement
+		// or "frame selection" flies the camera to where the chunk would be if
+		// it had never been moved.
+		if _, b := editor3DActiveBrush(); b != nil {
+			bmin, bmax := b.WorldAABB(ch)
+			return bmin, bmax, true
+		}
+		lo, hi := ch.WorldBounds()
+		return lo, hi, true
+	}
+
+	return mgl32.Vec3{}, mgl32.Vec3{}, false
+}
+
+// editorCameraLabel names the camera toggle by the mode it is in, matching the
+// model editor's button.
+func editorCameraLabel() string {
+	if editorCam3D.Fly {
+		return "Fly [V]"
+	}
+	return "Orbit [V]"
+}
+
+// editorCamState is the whole of the 3D view's camera: the global eye and look
+// that every render pass reads, plus the orbit half kept here. Saved and put
+// back as a unit — see EditorToggle, which restores the view an author left
+// when they pressed Play.
+type editorCamState struct {
+	pos    mgl32.Vec3
+	yaw    float32
+	pitch  float32
+	fly    bool
+	target mgl32.Vec3
+	dist   float32
+	valid  bool
+}
+
+// editorCamSave captures the current view.
+func editorCamSave() editorCamState {
+	return editorCamState{
+		pos: gfx.Cam.Position, yaw: gfx.Cam.Yaw, pitch: gfx.Cam.Pitch,
+		fly: editorCam3D.Fly, target: editorCam3D.Target, dist: editorCam3D.Dist,
+		valid: true,
+	}
+}
+
+// editorCamRestore puts a saved view back, and reports whether there was one.
+// An unset state restores nothing, so the first entry into the editor still
+// falls through to editorCamEnter.
+func editorCamRestore(s editorCamState) bool {
+	if !s.valid {
+		return false
+	}
+	gfx.Cam.Position, gfx.Cam.Yaw, gfx.Cam.Pitch = s.pos, s.yaw, s.pitch
+	editorCam3D.Fly, editorCam3D.Target, editorCam3D.Dist = s.fly, s.target, s.dist
+	editorApplyCamAngles()
+	return true
+}

@@ -1,0 +1,820 @@
+package compile
+
+// pvs.go — portals, and what can be seen through them.
+//
+// The BSP left the world as convex empty cells. Two cells that share part of a
+// plane are joined by a PORTAL — the overlap of their two boundary polygons on
+// that plane — and every sight line in the level passes through some sequence
+// of them. That reduces visibility, which is a question about an infinite set
+// of rays, to a question about a finite graph.
+//
+// The answer is a POTENTIALLY VISIBLE SET: one row of bits per empty cell,
+// saying which other cells could possibly be seen from anywhere within it. The
+// runtime looks up the row for the cell the camera is in and skips everything
+// outside it, before any frustum test, before any draw call. That is what a
+// sealed level buys — a room you are not in costs nothing, not even a rejected
+// bounding box.
+//
+// # Conservative, and why that is the right kind of wrong
+//
+// The set is potentially visible, not exactly visible. Marking a cell visible
+// that turns out not to be costs a few wasted draws; failing to mark one that
+// is costs a hole in the world. So every approximation here errs toward
+// visible, and the two places it does so are called out where they happen.
+//
+// # How the flow works
+//
+// From a cell A, look through each portal leaving it. Everything immediately
+// beyond is visible. To see further, light must pass through a SECOND portal,
+// and the part of that second portal A can actually see through the first is
+// found by clipping it against SEPARATING PLANES: planes through an edge of the
+// source and a vertex of the pass portal, which no ray from source to target
+// can cross. Clip until nothing is left, and the search stops on its own.
+//
+// This is Quake's algorithm with its optimisations left out. It is the
+// expensive stage of the compile and it is meant to be — it runs once, offline,
+// and every frame of the shipped game spends the result.
+
+import (
+	"foundry/internal/bsp"
+
+	"math/bits"
+	"runtime"
+	"sort"
+	"sync"
+	"sync/atomic"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
+
+// Portal is an opening between two empty cells: the polygon they share, seen
+// from A looking toward B.
+//
+// Portals come in pairs — every A->B has a B->A with the same polygon and the
+// opposite plane — because the flow always walks forward through one and a
+// single undirected record would have to be re-oriented at every step.
+type Portal struct {
+	Points []mgl32.Vec3
+	// bsp.Plane faces from A into B, so "in front of this plane" is the direction
+	// the flow is travelling.
+	Plane bsp.Plane
+	A, B  int
+}
+
+// BuildPortals finds every opening between two empty cells.
+//
+// Pairwise over the empty leaves, which is quadratic, and deliberately so for
+// now: the bounding-box reject in front of the plane test throws out almost
+// every pair in a level of any size, and the honest expensive stage is the
+// visibility flood below rather than this. A leaf's boundary polygons are
+// computed once each rather than per pair, which is the part that would
+// actually hurt.
+func BuildPortals(t *BSPTree) []Portal {
+	polys := make([][][]mgl32.Vec3, len(t.Leaves))
+	for i := range t.Leaves {
+		if t.Leaves[i].Solid {
+			continue
+		}
+		polys[i] = bsp.RegionPolygons(t.Leaves[i].Planes, t.Lo, t.Hi)
+	}
+
+	var out []Portal
+	for a := range t.Leaves {
+		if t.Leaves[a].Solid {
+			continue
+		}
+		for b := a + 1; b < len(t.Leaves); b++ {
+			if t.Leaves[b].Solid {
+				continue
+			}
+			if !bsp.BoxesOverlap(t.Leaves[a].Lo, t.Leaves[a].Hi, t.Leaves[b].Lo, t.Leaves[b].Hi) {
+				continue
+			}
+			for i, pa := range polys[a] {
+				if pa == nil {
+					continue
+				}
+				pl := t.Leaves[a].Planes[i]
+				for j, pb := range polys[b] {
+					if pb == nil || !t.Leaves[b].Planes[j].SameAs(pl.Flip()) {
+						continue
+					}
+					shared := intersectCoplanar(pa, pl.N, pb, pl.N.Mul(-1))
+					if len(shared) < 3 || bsp.PolygonArea(shared) < minPortalArea {
+						continue
+					}
+					out = append(out,
+						Portal{Points: shared, Plane: pl.Flip(), A: a, B: b},
+						Portal{Points: shared, Plane: pl, A: b, B: a})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// minPortalArea is the smallest opening worth treating as one. Two cells
+// touching along an edge or at a corner produce a sliver of a shared polygon
+// that nothing can actually see through, and admitting it would connect
+// everything to everything through the level's own grid lines.
+const minPortalArea = float32(1e-4)
+
+// intersectCoplanar is the overlap of two convex polygons on the same plane.
+//
+// a is clipped by b's edges rather than either being triangulated: both are
+// convex, so the intersection is a's winding cut by b's half-planes, which is
+// the same ClipPolygon every other stage uses.
+//
+// Each polygon is wound about its OWN normal — a leaf's boundary polygon faces
+// out of that leaf, so the two sides of a shared plane wind opposite ways — so
+// the normal to build b's edge planes from is passed in rather than derived.
+func intersectCoplanar(a []mgl32.Vec3, aN mgl32.Vec3, b []mgl32.Vec3, bN mgl32.Vec3) []mgl32.Vec3 {
+	out := a
+	for i := range b {
+		if out == nil {
+			return nil
+		}
+		p, q := b[i], b[(i+1)%len(b)]
+		e := q.Sub(p)
+		n := bN.Cross(e)
+		if n.Len() < 1e-9 {
+			continue
+		}
+		n = n.Normalize()
+		out = bsp.ClipPolygon(out, bsp.Plane{N: n, D: n.Dot(p)})
+	}
+	return out
+}
+
+// maxFlowDepth bounds the portal chain the flood will follow, and maxFlowSteps
+// bounds the total work one source portal may do.
+//
+// Neither should ever fire. The clipping and the mightSee pruning below both
+// terminate on their own, and a level that reaches either has something
+// pathological about it — an enormous open region carved into hundreds of cells
+// that all see each other. They are backstops against a compile that never
+// finishes, and both fall back to plain reachability rather than to silence.
+//
+// The step budget is also shared out across the level: a portal gets
+// maxFlowSteps, or totalFlowSteps divided among all of them if that is less.
+// A level of rooms never gets near it. A streamed outdoor level does — a canyon
+// is the "enormous open region" above, carved into thousands of cells — and
+// without a level-wide bound its compile ran for hours. There the floods that
+// run out fall back to reachability, which in open ground is close to the right
+// answer anyway, since open ground sees most of itself.
+const (
+	maxFlowDepth   = 64
+	maxFlowSteps   = 2000000
+	minFlowSteps   = 2000
+	totalFlowSteps = 400000000
+)
+
+// flowBudget is one portal's share of the step budget.
+func flowBudget(portals int) int {
+	if portals <= 0 {
+		return maxFlowSteps
+	}
+	return max(minFlowSteps, min(maxFlowSteps, totalFlowSteps/portals))
+}
+
+// visState is the whole of the visibility computation.
+//
+// Note that the bookkeeping is over PORTALS, not cells. That is the difference
+// between a flood that finishes and one that does not: cells are what the
+// answer is about, but a sight line is characterised by the apertures it passed
+// through, and it is the shrinking set of still-reachable apertures that lets a
+// branch be abandoned. Marking cells alone gives no such handle, and the search
+// then explores every distinct PATH through the portal graph — which for a few
+// dozen cells in an open region is already astronomically many.
+type visState struct {
+	portals []Portal
+	byLeaf  [][]int
+	// row is the visibility row being filled: the cells the current source
+	// portal's cell can see. A flood writes only here, so floods running side
+	// by side never touch the same memory; BuildPVS merges each row into the
+	// PVS when its wave is finished.
+	row []byte
+	// might is the source portal's working candidate set.
+	might []byte
+
+	portalBytes int
+	// mightSee is the coarse answer: for each portal, which portals could
+	// conceivably be seen through it, by orientation and connectivity alone.
+	// It is what every finer step is a subset of.
+	mightSee []byte
+	// baseSeen is the portals the source portal currently being flooded has
+	// been shown to see. Reset per source.
+	baseSeen []byte
+	// portalVis is baseSeen kept, per portal, once that portal's own flood has
+	// finished, and done says which of those are filled in. A finished portal's
+	// exact set is far tighter than its mightSee, and using it to bound a later
+	// flood is the single biggest saving here — which is why portals are
+	// processed cheapest-first, so that the tight answers exist before the
+	// expensive floods need them.
+	portalVis []byte
+	done      []bool
+	// scratch holds one might-set per recursion depth, so the inner loop does
+	// not allocate. Depth d's buffer is only ever the "might" of depth d+1, and
+	// that call has its own, so reusing it across candidates at one depth is
+	// safe.
+	scratch [][]byte
+	budget  int
+	// aborted latches once a source portal has exhausted its budget: the whole
+	// flood for that source unwinds without doing any more work, having already
+	// fallen back to plain reachability. Without the latch the give-up path
+	// runs at every level on the way out, which costs more than the flood it
+	// was supposed to cut short.
+	aborted bool
+	// flowSteps is the budget each source portal starts with; see flowBudget.
+	flowSteps  int
+	reachSeen  []bool
+	reachQueue []int
+}
+
+func bitSet(b []byte, i int)      { b[i>>3] |= 1 << uint(i&7) }
+func bitGet(b []byte, i int) bool { return b[i>>3]&(1<<uint(i&7)) != 0 }
+
+// BuildPVS floods visibility through the portals.
+func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
+	v := bsp.NewPVS(len(t.Leaves))
+	for i := range t.Leaves {
+		// Every cell can see itself; the flood below only ever adds to that.
+		// A filled-in exterior cell is not one of them: nothing is ever there,
+		// and giving it a row would invite a runtime to draw from it.
+		if !t.Leaves[i].Solid && !t.Leaves[i].Outside {
+			v.Set(i, i)
+		}
+	}
+	if len(portals) == 0 {
+		return v
+	}
+
+	byLeaf := make([][]int, len(t.Leaves))
+	for i := range portals {
+		byLeaf[portals[i].A] = append(byLeaf[portals[i].A], i)
+	}
+	s := &visState{
+		portals:     portals,
+		byLeaf:      byLeaf,
+		portalBytes: (len(portals) + 7) / 8,
+	}
+	s.buildMightSee()
+	if len(portals) >= coarseVisPortals {
+		s.coarseRows(v)
+		return v
+	}
+	s.portalVis = make([]byte, len(portals)*s.portalBytes)
+	s.done = make([]bool, len(portals))
+	order := s.floodOrder()
+
+	// Floods run in waves. Every flood in a wave sees the exact answers of
+	// every portal finished in an earlier wave, and none from its own, so the
+	// result depends on the wave size alone and not on how many threads ran
+	// it: the same level compiles the same way on any machine. Below
+	// parallelWavePortals a wave is one portal — exactly the sequential flood,
+	// each one tightened by all before it. Above it, an open level has tens of
+	// thousands of portals and the sequential flood alone took most of an hour.
+	wave := 1
+	if len(portals) >= waveFromPortals {
+		wave = len(portals) / flowWaves
+	}
+	leafBytes := v.RowBytes
+	workers := 1
+	if wave > 1 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	states := make([]*visState, workers)
+	for w := range states {
+		ws := *s
+		ws.reachSeen = make([]bool, len(t.Leaves))
+		ws.scratch = make([][]byte, maxFlowDepth+1)
+		for i := range ws.scratch {
+			ws.scratch[i] = make([]byte, s.portalBytes)
+		}
+		ws.might = make([]byte, s.portalBytes)
+		ws.flowSteps = flowBudget(len(portals))
+		states[w] = &ws
+	}
+	// Each flood in a wave fills its own row of rows. Rows a cache line apart
+	// at least, so floods on different cores are not writing into one line;
+	// the padding is never read.
+	stride := leafBytes
+	if workers > 1 && padWaveRows {
+		stride = (leafBytes + 63) &^ 63
+	}
+	rows := make([]byte, wave*stride)
+	for start := 0; start < len(order); start += wave {
+		end := min(len(order), start+wave)
+		for i := range rows {
+			rows[i] = 0
+		}
+		if workers == 1 {
+			for k := start; k < end; k++ {
+				states[0].row = rows[(k-start)*stride : (k-start)*stride+leafBytes]
+				states[0].flood(order[k])
+			}
+		} else {
+			var next atomic.Int64
+			next.Store(int64(start))
+			var wg sync.WaitGroup
+			for _, ws := range states {
+				wg.Add(1)
+				go func(ws *visState) {
+					defer wg.Done()
+					for {
+						k := int(next.Add(1) - 1)
+						if k >= end {
+							return
+						}
+						ws.row = rows[(k-start)*stride : (k-start)*stride+leafBytes]
+						ws.flood(order[k])
+					}
+				}(ws)
+			}
+			wg.Wait()
+		}
+		for k := start; k < end; k++ {
+			pi := order[k]
+			dst := v.Bits[portals[pi].A*leafBytes : (portals[pi].A+1)*leafBytes]
+			for j, b := range rows[(k-start)*stride : (k-start)*stride+leafBytes] {
+				dst[j] |= b
+			}
+			s.done[pi] = true
+		}
+	}
+	return v
+}
+
+// coarseVisPortals is the portal count from which the exact flood is not run
+// at all. Its inner loop ANDs portal sets a portal-count of bits wide, so its
+// cost grows with the square of the portals before any flood has done anything
+// — and a level with this many is open ground, whose cells see most of each
+// other whatever the flood finds. Such a level takes the coarse answer.
+const coarseVisPortals = 16384
+
+// CoarseVisibility reports whether a level with this many portals is given
+// coarse visibility rather than the exact flood (coarseRows).
+func CoarseVisibility(portals int) bool { return portals >= coarseVisPortals }
+
+// coarseRows fills the PVS from the candidate sets alone: a cell sees the far
+// side of every portal that orientation and connectivity leave possible from a
+// portal out of it. Never a hole — every exact answer is a subset of this —
+// just more drawn.
+//
+// A portal only ever sets bits in its own cell's row, so the cells are filled
+// in parallel, each from its own portals (byLeaf): setting bits is the same
+// whatever order it happens in.
+func (s *visState) coarseRows(v *bsp.PVS) {
+	cell := func(a int) {
+		for _, pi := range s.byLeaf[a] {
+			v.Set(a, s.portals[pi].B)
+			row := s.mightSee[pi*s.portalBytes : (pi+1)*s.portalBytes]
+			for j, b := range row {
+				for b != 0 {
+					k := bits.TrailingZeros8(b)
+					b &^= 1 << uint(k)
+					v.Set(a, s.portals[j*8+k].B)
+				}
+			}
+		}
+	}
+	if parallelCoarseRows {
+		parallelFor(len(s.byLeaf), cell)
+	} else {
+		for a := range s.byLeaf {
+			cell(a)
+		}
+	}
+}
+
+// parallelWavePortals is the portal count from which floods run in parallel
+// waves, and flowWaves how many waves the floods are then split into. Both
+// are constants rather than anything machine-dependent, which is what keeps a
+// compile reproducible.
+const (
+	parallelWavePortals = 4096
+	flowWaves           = 512
+)
+
+// waveFromPortals is parallelWavePortals, as a variable only so a test can run
+// the wave path on a level small enough to flood in a test; padWaveRows spaces
+// a wave's rows a cache line apart (BuildPVS), switchable for the test that
+// compares against unpadded rows.
+var (
+	waveFromPortals = parallelWavePortals
+	padWaveRows     = true
+)
+
+// flood fills the visibility row for one source portal.
+func (s *visState) flood(pi int) {
+	s.see(s.portals[pi].B)
+	s.baseSeen = s.portalVis[pi*s.portalBytes : (pi+1)*s.portalBytes]
+	bitSet(s.baseSeen, pi)
+	s.budget, s.aborted = s.flowSteps, false
+	copy(s.might, s.mightSee[pi*s.portalBytes:(pi+1)*s.portalBytes])
+	s.flow(pi, s.portals[pi].B, s.might, s.portals[pi].Points, s.portals[pi].Points, 1)
+}
+
+// see marks a cell visible from the current source portal's cell.
+func (s *visState) see(leaf int) {
+	if leaf >= 0 && leaf>>3 < len(s.row) {
+		bitSet(s.row, leaf)
+	}
+}
+
+// floodOrder is the order to flood the portals in: fewest candidates first.
+//
+// A portal with a small mightSee is cheap to resolve exactly, and its exact
+// answer then bounds every later flood that passes through it. Doing the
+// expensive ones first would mean every one of them ran against nothing but
+// coarse bounds. Ties break on the portal index so the compile stays
+// reproducible.
+func (s *visState) floodOrder() []int {
+	order := make([]int, len(s.portals))
+	counts := make([]int, len(s.portals))
+	for i := range order {
+		order[i] = i
+		row := s.mightSee[i*s.portalBytes : (i+1)*s.portalBytes]
+		for _, b := range row {
+			counts[i] += bits.OnesCount8(b)
+		}
+	}
+	sort.SliceStable(order, func(a, b int) bool { return counts[order[a]] < counts[order[b]] })
+	return order
+}
+
+// buildMightSee fills the coarse per-portal candidate sets.
+//
+// Two filters, and they are cheap on purpose — this runs over every ordered
+// pair of portals, so it has to be. First orientation: a portal entirely behind
+// the source's plane is behind it, and one whose own plane the source is
+// entirely in front of faces the wrong way. Then connectivity: flood forward
+// from the source's far cell through the surviving candidates and keep only
+// what the flood actually reaches, which is what stops a sealed room from ever
+// being a candidate for anything outside it.
+func (s *visState) buildMightSee() {
+	n := len(s.portals)
+	pairs := make([]byte, n*s.portalBytes)
+
+	// A bounding sphere per portal settles nearly every orientation test with
+	// one distance: a sphere clear of a plane puts the whole polygon on that
+	// side. Only a sphere the plane passes through needs the polygon walked,
+	// and the answer is the same as walking it every time. A streamed open
+	// level has tens of thousands of portals, and the walk was all of a
+	// compile that took the better part of an hour.
+	centre := make([]mgl32.Vec3, n)
+	radius := make([]float32, n)
+	for i := range s.portals {
+		pts := s.portals[i].Points
+		var c mgl32.Vec3
+		for _, p := range pts {
+			c = c.Add(p)
+		}
+		c = c.Mul(1 / float32(len(pts)))
+		r := float32(0)
+		for _, p := range pts {
+			r = max(r, p.Sub(c).Len())
+		}
+		centre[i], radius[i] = c, r
+	}
+	side := func(pl bsp.Plane, j int) bsp.Side {
+		d := pl.Distance(centre[j])
+		reach := radius[j] + bsp.OnPlaneEps + 1e-4
+		switch {
+		case d > reach:
+			return bsp.SideFront
+		case d < -reach:
+			return bsp.SideBack
+		}
+		return pl.ClassifyPolygon(s.portals[j].Points)
+	}
+
+	// Rows are independent, so they are filled in parallel; each worker writes
+	// only its own rows.
+	workers := runtime.GOMAXPROCS(0)
+	var wg sync.WaitGroup
+	var next atomic.Int64
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= n {
+					return
+				}
+				row := pairs[i*s.portalBytes : (i+1)*s.portalBytes]
+				pi := s.portals[i].Plane
+				for j := 0; j < n; j++ {
+					if i == j {
+						continue
+					}
+					if side(pi, j) == bsp.SideBack {
+						continue
+					}
+					if side(s.portals[j].Plane, i) == bsp.SideFront {
+						continue
+					}
+					bitSet(row, j)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// The connectivity floods: one per portal, each reading only its own
+	// candidate row and writing only its own mightSee row, so they run in
+	// parallel too, each worker with its own seen-set. A row is a set of
+	// bits whoever fills it, so the answer is the serial one exactly. Workers
+	// take runs of rows at least a cache line long, so two of them are not
+	// writing into the same line; and a flood clears only the cells it
+	// marked, rather than the whole level's worth for every portal — on an
+	// open level that reset alone was most of the pass.
+	s.mightSee = make([]byte, n*s.portalBytes)
+	run := max(1, (64+s.portalBytes-1)/s.portalBytes)
+	floodRows := func(seen []bool, touched []int, first int) []int {
+		for i := first; i < min(n, first+run); i++ {
+			cand := pairs[i*s.portalBytes : (i+1)*s.portalBytes]
+			out := s.mightSee[i*s.portalBytes : (i+1)*s.portalBytes]
+			touched = s.simpleFlood(s.portals[i].B, cand, out, seen, touched[:0])
+			for _, l := range touched {
+				seen[l] = false
+			}
+		}
+		return touched
+	}
+	runs := (n + run - 1) / run
+	if !parallelMightSee || workers <= 1 {
+		seen := make([]bool, len(s.byLeaf))
+		var touched []int
+		for r := 0; r < runs; r++ {
+			touched = floodRows(seen, touched, r*run)
+		}
+		return
+	}
+	next.Store(0)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			seen := make([]bool, len(s.byLeaf))
+			var touched []int
+			for {
+				r := int(next.Add(1) - 1)
+				if r >= runs {
+					return
+				}
+				touched = floodRows(seen, touched, r*run)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// parallelMightSee runs buildMightSee's connectivity floods across cores, and
+// parallelCoarseRows fills coarseRows' cells across cores. Switches for the
+// tests, which compare against the serial loops.
+var (
+	parallelMightSee   = true
+	parallelCoarseRows = true
+)
+
+// simpleFlood marks every candidate portal reachable from a cell, ignoring
+// geometry entirely. It returns touched with every cell it marked in seen
+// appended, for the caller to clear.
+func (s *visState) simpleFlood(leaf int, cand, out []byte, seen []bool, touched []int) []int {
+	if seen[leaf] {
+		return touched
+	}
+	seen[leaf] = true
+	touched = append(touched, leaf)
+	for _, qi := range s.byLeaf[leaf] {
+		if !bitGet(cand, qi) {
+			continue
+		}
+		bitSet(out, qi)
+		touched = s.simpleFlood(s.portals[qi].B, cand, out, seen, touched)
+	}
+	return touched
+}
+
+// flow walks forward from a source portal, marking what its own cell can see.
+//
+// base is the portal the flood started at, and base.A the cell whose row is
+// being filled. source is that portal's polygon, narrowed by everything passed
+// through so far; pass is the polygon of the portal just stepped through,
+// likewise narrowed. might is the set of portals still reachable along this
+// path.
+//
+// The pruning that makes this finish is the "nothing new" test: a candidate
+// that has already been seen from this source, and through which nothing
+// unseen is still reachable, is skipped without descending. Without it the
+// search enumerates paths rather than reachable sets, and an open region of a
+// few dozen cells takes minutes.
+func (s *visState) flow(base, leaf int, might []byte, source, pass []mgl32.Vec3, depth int) {
+	if s.aborted {
+		return
+	}
+	s.see(leaf)
+	if s.budget <= 0 {
+		s.aborted = true
+		s.markReachable(s.portals[base].A)
+		return
+	}
+	if depth >= maxFlowDepth {
+		s.markReachable(leaf)
+		return
+	}
+	s.budget--
+
+	next := s.scratch[depth]
+	for _, qi := range s.byLeaf[leaf] {
+		if !bitGet(might, qi) {
+			continue
+		}
+		more := false
+		// A portal whose own flood has finished bounds this one exactly; one
+		// that has not falls back to its coarse candidate set.
+		qRow := s.mightSee[qi*s.portalBytes : (qi+1)*s.portalBytes]
+		if s.done[qi] {
+			qRow = s.portalVis[qi*s.portalBytes : (qi+1)*s.portalBytes]
+		}
+		for j := 0; j < s.portalBytes; j++ {
+			next[j] = might[j] & qRow[j]
+			if next[j]&^s.baseSeen[j] != 0 {
+				more = true
+			}
+		}
+		if !more && bitGet(s.baseSeen, qi) {
+			continue
+		}
+
+		// Only ever move away from the source and forward through the next
+		// portal, and only through the part of each that the other can
+		// actually reach. Both tests demand a STRICTLY forward part: a target
+		// merely touching the source's plane is coplanar with it, and two
+		// apertures in the same plane see each other edge-on, which is to say
+		// not at all. That case is not exotic — a U-bend has both its corners
+		// on one plane, and admitting it makes the two ends of the U visible
+		// to each other through a wall.
+		if side := s.portals[base].Plane.ClassifyPolygon(s.portals[qi].Points); side == bsp.SideBack || side == bsp.SideOn {
+			continue
+		}
+		target := bsp.ClipPolygon(s.portals[qi].Points, s.portals[base].Plane)
+		if len(target) < 3 {
+			continue
+		}
+		if side := s.portals[qi].Plane.ClassifyPolygon(source); side == bsp.SideFront || side == bsp.SideOn {
+			continue
+		}
+		narrowed := bsp.ClipPolygon(source, s.portals[qi].Plane.Flip())
+		if len(narrowed) < 3 {
+			continue
+		}
+
+		// What of the target can the source see through the aperture just
+		// stepped through? Clipped from both ends: a separating plane derived
+		// from the source and the aperture bounds the target, and one derived
+		// from the target and the aperture bounds the source the same way, so
+		// a pair that only appears to see each other from one end is caught.
+		// The narrowed source is what carries forward, which is what makes a
+		// long corridor close off rather than merely getting no wider.
+		target = clipToSeparators(narrowed, pass, target)
+		if len(target) < 3 {
+			continue
+		}
+		narrowed = clipToSeparators(target, pass, narrowed)
+		if len(narrowed) < 3 {
+			continue
+		}
+
+		bitSet(s.baseSeen, qi)
+		s.see(s.portals[qi].B)
+		s.flow(base, s.portals[qi].B, next, narrowed, target, depth+1)
+		// next is scratch[depth] and the recursion used scratch[depth+1], so it
+		// still holds this candidate's set — but the next candidate overwrites
+		// it from the top, so nothing has to be restored.
+	}
+}
+
+// markReachable is the give-up path, used when the flood hits its depth or step
+// bound: mark every cell reachable from here through any portal at all.
+//
+// That is the answer visibility would give if no wall ever blocked anything, so
+// it is the most conservative thing that is still finite. It costs draws, never
+// holes, and a level that triggers it is one to look at rather than one that is
+// broken.
+//
+// The reused scratch is not an optimisation for the common case — it is for the
+// pathological one, where this is called at every node of a flood that has run
+// out of budget and a freshly allocated map each time is most of the compile.
+func (s *visState) markReachable(leaf int) {
+	for i := range s.reachSeen {
+		s.reachSeen[i] = false
+	}
+	s.reachSeen[leaf] = true
+	queue := append(s.reachQueue[:0], leaf)
+	for len(queue) > 0 {
+		l := queue[0]
+		queue = queue[1:]
+		s.see(l)
+		for _, qi := range s.byLeaf[l] {
+			if n := s.portals[qi].B; !s.reachSeen[n] {
+				s.reachSeen[n] = true
+				queue = append(queue, n)
+			}
+		}
+	}
+	s.reachQueue = queue[:0]
+}
+
+// clipToSeparators cuts target down to the part a ray from source through pass
+// could reach.
+//
+// For each edge of source and each vertex of pass, the plane through the two is
+// a candidate SEPARATOR: source is convex and planar and the plane contains one
+// of its edges, so all of source lies on one side of it. If all of pass lies on
+// the other side, then no ray leaving source and crossing pass can come back
+// across that plane, and the part of target behind it is unreachable.
+//
+// A candidate that pass STRADDLES separates nothing and is skipped — that is
+// where the conservatism lives, and it is the right way round: a skipped
+// candidate leaves target larger than it strictly has to be.
+func clipToSeparators(source, pass, target []mgl32.Vec3) []mgl32.Vec3 {
+	out := target
+	for i := range source {
+		a, b := source[i], source[(i+1)%len(source)]
+		for _, p := range pass {
+			if len(out) < 3 {
+				return nil
+			}
+			pl, ok := separatorPlane(a, b, p, source, pass)
+			if !ok {
+				continue
+			}
+			out = bsp.ClipPolygon(out, pl)
+		}
+	}
+	if len(out) < 3 {
+		return nil
+	}
+	return out
+}
+
+// separatorPlane builds the plane through edge a->b and point p, oriented so
+// that pass is in FRONT of it, and reports whether it separates at all.
+func separatorPlane(a, b, p mgl32.Vec3, source, pass []mgl32.Vec3) (bsp.Plane, bool) {
+	n := b.Sub(a).Cross(p.Sub(a))
+	l := n.Len()
+	if l < 1e-6 {
+		return bsp.Plane{}, false // the edge and the point are collinear
+	}
+	n = n.Mul(1 / l)
+	pl := bsp.Plane{N: n, D: n.Dot(a)}
+
+	// Orient so source is behind. Source cannot straddle — the plane contains
+	// one of its edges and it is convex and planar — but it can lie in the
+	// plane entirely, which separates nothing.
+	sf, sb := sidesOf(pl, source)
+	switch {
+	case sf > 0 && sb > 0:
+		return bsp.Plane{}, false
+	case sf > 0:
+		pl = pl.Flip()
+	case sb == 0:
+		return bsp.Plane{}, false
+	}
+
+	// A separator has all of pass strictly on the other side from source.
+	pf, pb := sidesOf(pl, pass)
+	if pb > 0 || pf == 0 {
+		return bsp.Plane{}, false
+	}
+	return pl, true
+}
+
+// sidesOf counts how many of pts are in front of and behind a plane; points ON
+// it count for neither.
+func sidesOf(pl bsp.Plane, pts []mgl32.Vec3) (front, back int) {
+	for _, p := range pts {
+		switch pl.ClassifyPoint(p) {
+		case bsp.SideFront:
+			front++
+		case bsp.SideBack:
+			back++
+		}
+	}
+	return front, back
+}
+
+// ComputeVisibility runs the whole visibility stage for a built tree: portals,
+// then the void fill that makes the flood tractable, then the flood.
+//
+// The tree is modified — MarkOutside labels its leaves — which is why this
+// takes a pointer and why the returned portals are the interior ones only.
+func ComputeVisibility(t *BSPTree) ([]Portal, *bsp.PVS) {
+	portals := BuildPortals(t)
+	MarkOutside(t, portals)
+	portals = InteriorPortals(t, portals)
+	return portals, BuildPVS(t, portals)
+}

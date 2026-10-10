@@ -1,0 +1,19 @@
+# poster.fmat — a flat picture on a wall, as a SPRITE.
+#
+# `fixed` does not billboard at all, leaving the quad facing wherever its
+# authored rotation put it, which is the one sprite mode that is about placement
+# rather than about the viewer.
+#
+# This was called `decal.fmat` until decals became a real object. It is not one:
+# a decal is a texture PROJECTED onto the level's surfaces, so it follows their
+# shape and bends around their corners, where this is a free-standing quad that
+# will clip into any wall it is not exactly parallel to. Use a decal for anything
+# lying ON a surface — a sign, a sticker, a scorch mark. This is still right for
+# a picture that hangs in space: a holographic panel, a floating waypoint plate.
+kind: sprite
+doc: A flat, unbillboarded quad — faces where it was placed, blends, unlit. For a decal on a surface, use a decal.
+effects:
+  - effect: blend_mode
+    mode: alpha
+  - effect: billboard
+    mode: fixed

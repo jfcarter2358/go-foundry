@@ -1,0 +1,21 @@
+# smoke.fmat — the volumetric look of a particle layer, as a material.
+#
+# This was the `volume:` block inside a .fpar: eight numbers describing how a
+# ball of participating medium is shaped and shaded, repeated in every effect
+# that has smoke in it. Under a name, "what smoke looks like here" is one file.
+#
+# The two ramps — erosion over life, emission over life — stay on the layer,
+# for the reason ember.fmat gives.
+kind: particle
+doc: Grey smoke, marched rather than drawn as quads. Lit by the sun like a cloud.
+effects:
+  - effect: blend_mode
+    mode: alpha
+  - effect: volume
+    density: 3.5
+    noise_scale: 1.1
+    displacement: 0.4
+    billow: 0.5
+    erosion: 0.35
+    albedo: {r: 0.45, g: 0.43, b: 0.4}
+    absorption: 1.2

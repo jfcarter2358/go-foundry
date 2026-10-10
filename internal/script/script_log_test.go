@@ -1,0 +1,386 @@
+package script
+
+// script_log_test.go — the log ring and the window's filtering.
+//
+// The ring is the part worth testing carefully: it is bounded, it wraps, and the
+// window reads it while the runtime writes to it. All three are places where a
+// buffer quietly loses or reorders entries, and a log that lies about what
+// happened is worse than no log.
+
+import (
+	"bytes"
+	"strings"
+	"sync"
+	"testing"
+
+	"foundry/internal/flang"
+	"foundry/internal/world"
+)
+
+// newTestRing returns a ring of the given size that echoes nowhere.
+func newTestRing(t *testing.T, size int) *logRing {
+	t.Helper()
+	return &logRing{entries: make([]LogEntry, size)}
+}
+
+// withScriptLog swaps the global ring for a test one, restoring it afterwards in
+// the style of withTempTextureDir.
+func withScriptLog(t *testing.T, size int) *logRing {
+	t.Helper()
+	prev := ScriptLog
+	ScriptLog = newTestRing(t, size)
+	t.Cleanup(func() { ScriptLog = prev })
+	return ScriptLog
+}
+
+func TestLogRingKeepsOrder(t *testing.T) {
+	r := newTestRing(t, 10)
+	for _, s := range []string{"one", "two", "three"} {
+		r.Infof("a.flang", "%s", s)
+	}
+	got := r.Snapshot()
+	if len(got) != 3 {
+		t.Fatalf("got %d entries, want 3", len(got))
+	}
+	for i, want := range []string{"one", "two", "three"} {
+		if got[i].Text != want {
+			t.Errorf("entry %d is %q, want %q", i, got[i].Text, want)
+		}
+	}
+	// Sequence numbers are what the window uses to notice new arrivals, so they
+	// have to be monotonic even after the ring wraps.
+	for i := 1; i < len(got); i++ {
+		if got[i].Seq <= got[i-1].Seq {
+			t.Errorf("sequence went backwards: %d then %d", got[i-1].Seq, got[i].Seq)
+		}
+	}
+}
+
+func TestLogRingWrapsAndKeepsTheNewest(t *testing.T) {
+	// A `log()` in a :tick: handler produces sixty lines a second. Wrapping is
+	// the normal case, not the exceptional one, and what must survive is the
+	// recent past rather than the distant one.
+	r := newTestRing(t, 4)
+	for _, s := range []string{"a", "b", "c", "d", "e", "f"} {
+		r.Infof("s", "%s", s)
+	}
+	got := r.Snapshot()
+	if len(got) != 4 {
+		t.Fatalf("got %d entries, want the ring's capacity of 4", len(got))
+	}
+	want := []string{"c", "d", "e", "f"}
+	for i := range want {
+		if got[i].Text != want[i] {
+			t.Errorf("entry %d is %q, want %q", i, got[i].Text, want[i])
+		}
+	}
+	if r.Dropped() != 2 {
+		t.Errorf("reported %d evicted, want 2", r.Dropped())
+	}
+}
+
+func TestLogRingClearKeepsTheSequenceRising(t *testing.T) {
+	// The window compares sequence numbers to decide whether to scroll. If Clear
+	// reset them, the window would think the log had jumped backwards.
+	r := newTestRing(t, 4)
+	r.Infof("s", "before")
+	before := r.Seq()
+	r.Clear()
+	if r.Len() != 0 {
+		t.Errorf("Clear left %d entries", r.Len())
+	}
+	r.Infof("s", "after")
+	if r.Seq() <= before {
+		t.Errorf("sequence went backwards across Clear: %d then %d", before, r.Seq())
+	}
+}
+
+func TestLogRingEchoesToItsWriter(t *testing.T) {
+	// Losing the terminal would be a downgrade for anyone running from a shell.
+	var buf bytes.Buffer
+	r := newTestRing(t, 4)
+	r.echo = &buf
+	r.Warnf("door.flang", "something odd")
+
+	out := buf.String()
+	if !strings.Contains(out, "something odd") {
+		t.Errorf("the message did not reach the echo: %q", out)
+	}
+	if !strings.Contains(out, "warn") {
+		t.Errorf("the level is missing from the echoed line: %q", out)
+	}
+}
+
+func TestLogRingIsSafeUnderConcurrentWrites(t *testing.T) {
+	// The standard logger can be called from anywhere, and the window reads
+	// while the runtime writes. Run with -race, this is the test that catches it.
+	r := newTestRing(t, 64)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				r.Infof("s", "%d-%d", n, j)
+			}
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for j := 0; j < 100; j++ {
+			_ = r.Snapshot()
+			_ = r.Len()
+		}
+	}()
+	wg.Wait()
+
+	if r.Seq() != 400 {
+		t.Errorf("got %d writes, want 400", r.Seq())
+	}
+}
+
+func TestPositionedErrorsAreClickable(t *testing.T) {
+	r := newTestRing(t, 8)
+	r.ErrorAt("door.flang", flang.Pos{File: "door.flang", Line: 12, Col: 4}, "boom")
+	r.Infof("door.flang", "ordinary")
+
+	got := r.Snapshot()
+	if !got[0].HasPos() {
+		t.Error("a positioned error reported no position")
+	}
+	if got[1].HasPos() {
+		t.Error("an ordinary message claimed a position")
+	}
+}
+
+func TestDiagnosticsBecomeOneEntryEach(t *testing.T) {
+	// One entry per problem rather than one blob: each keeps its own position,
+	// which is what makes the window able to open the right line.
+	r := newTestRing(t, 8)
+	r.Diagnostics("a.flang", flang.ErrorList{
+		{Pos: flang.Pos{File: "a.flang", Line: 1}, Msg: "first"},
+		{Pos: flang.Pos{File: "a.flang", Line: 9}, Msg: "second"},
+	})
+	got := r.Snapshot()
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2", len(got))
+	}
+	if got[0].Pos.Line != 1 || got[1].Pos.Line != 9 {
+		t.Errorf("positions are %d and %d, want 1 and 9", got[0].Pos.Line, got[1].Pos.Line)
+	}
+}
+
+// ---------- the standard-logger tee ----------
+
+func TestLogDecorationIsStripped(t *testing.T) {
+	// The window shows the source and the time in columns of its own, so the
+	// logger's copies would be noise.
+	cases := []struct{ in, want string }{
+		{"12:34:56 [foundry] scanned 4 textures", "scanned 4 textures"},
+		{"[foundry] no time prefix", "no time prefix"},
+		{"neither", "neither"},
+		// A line that only looks like a timestamp must not lose its first
+		// characters: a cosmetic loss is fine, a real one is not.
+		{"ab:cd:ef not a time", "ab:cd:ef not a time"},
+	}
+	for _, tc := range cases {
+		if got := stripLogDecoration(tc.in); got != tc.want {
+			t.Errorf("stripLogDecoration(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestEngineFailuresAreRaisedToWarnings(t *testing.T) {
+	// Every engine line looking equally unimportant is how a real problem hides.
+	if !looksLikeFailure("could not load texture") {
+		t.Error("a failure was not recognised")
+	}
+	if looksLikeFailure("scanned 12 textures") {
+		t.Error("an ordinary line was treated as a failure")
+	}
+}
+
+func TestTeeRecordsAsEngineOutput(t *testing.T) {
+	r := withScriptLog(t, 8)
+	if _, err := (logTee{}).Write([]byte("hello from the engine\n")); err != nil {
+		t.Fatal(err)
+	}
+	got := r.Snapshot()
+	if len(got) != 1 {
+		t.Fatalf("got %d entries, want 1", len(got))
+	}
+	if got[0].Source != "" {
+		t.Errorf("source is %q, want empty (engine output)", got[0].Source)
+	}
+	if got[0].Text != "hello from the engine" {
+		t.Errorf("text is %q", got[0].Text)
+	}
+}
+
+func TestScriptLogReceivesScriptOutput(t *testing.T) {
+	// The end of the chain: a script's `log()` has to reach the buffer the
+	// window reads, attributed to the script that said it.
+	r := withScriptLog(t, 32)
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "talker.flang", `def on_spawn(:spawn:) -> null
+    log("hello from the script")
+end`)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
+	})
+	runTicks(t, lvl, 1)
+
+	var found *LogEntry
+	for _, e := range r.Snapshot() {
+		if strings.Contains(e.Text, "hello from the script") {
+			found = &e
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("the script's output never reached the log: %+v", r.Snapshot())
+	}
+	if found.Source != path {
+		t.Errorf("attributed to %q, want %q", found.Source, path)
+	}
+	if found.Level != LogInfo {
+		t.Errorf("logged at %s, want info", found.Level)
+	}
+}
+
+func TestScriptErrorsReachTheLogWithAPosition(t *testing.T) {
+	r := withScriptLog(t, 32)
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "boom.flang", `def on_spawn(:spawn:) -> null
+    x = 1 / 0
+end`)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
+	})
+	runTicks(t, lvl, 1)
+
+	for _, e := range r.Snapshot() {
+		if e.Level == LogError && e.HasPos() && strings.Contains(e.Text, "zero") {
+			return
+		}
+	}
+	t.Errorf("no positioned error reached the log: %+v", r.Snapshot())
+}
+
+func TestBrokenScriptDiagnosticsReachTheLog(t *testing.T) {
+	r := withScriptLog(t, 32)
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "broken.flang", "def oops( -> null\n    return\nend")
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
+	})
+	runTicks(t, lvl, 1)
+
+	for _, e := range r.Snapshot() {
+		if e.Level == LogError && e.Source == path {
+			return
+		}
+	}
+	t.Errorf("a broken script produced no log entry: %+v", r.Snapshot())
+}
+
+// A failed handler's entry says which handler stopped and that the rest of it
+// was skipped. The failing line is rarely what anyone notices going wrong:
+// level1's :skybox: handler failed on a light write, and what went missing was
+// the ground, switched on further down the same handler.
+func TestAHandlerErrorSaysTheRestOfTheHandlerDidNotRun(t *testing.T) {
+	r := withScriptLog(t, 32)
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "boom.flang", `def on_spawn(:spawn:) -> null
+    x = 1 / 0
+end`)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
+	})
+	runTicks(t, lvl, 1)
+
+	for _, e := range r.Snapshot() {
+		if e.Level == LogError && strings.Contains(e.Text, ":spawn: handler") &&
+			strings.Contains(e.Text, "crate") && strings.Contains(e.Text, "nothing after this line") {
+			return
+		}
+	}
+	t.Errorf("no error named the handler that stopped: %+v", r.Snapshot())
+}
+
+// ---------- the tail the developer console follows ----------
+
+func TestSinceReturnsOnlyWhatIsNewer(t *testing.T) {
+	r := newTestRing(t, 8)
+
+	_, seq := r.Since(0)
+	if seq != 0 {
+		t.Fatalf("an empty ring reported sequence %d", seq)
+	}
+
+	r.Infof("a", "one")
+	r.Infof("a", "two")
+	got, seq := r.Since(0)
+	if len(got) != 2 || got[0].Text != "one" || got[1].Text != "two" {
+		t.Fatalf("Since(0) = %v", entryTexts(got))
+	}
+	if seq != 2 {
+		t.Fatalf("sequence = %d, want 2", seq)
+	}
+
+	// Nothing has happened since, so a tail that asks again gets nothing.
+	got, seq2 := r.Since(seq)
+	if len(got) != 0 {
+		t.Fatalf("Since(%d) = %v, want nothing", seq, entryTexts(got))
+	}
+	if seq2 != seq {
+		t.Fatalf("the sequence moved without an entry: %d -> %d", seq, seq2)
+	}
+
+	r.Infof("a", "three")
+	got, _ = r.Since(seq)
+	if len(got) != 1 || got[0].Text != "three" {
+		t.Fatalf("Since(%d) = %v, want just \"three\"", seq, entryTexts(got))
+	}
+}
+
+func TestSinceIsBoundedByWhatTheRingStillHolds(t *testing.T) {
+	r := newTestRing(t, 4)
+	for i := 0; i < 10; i++ {
+		r.Infof("a", "line %d", i)
+	}
+	// Asked for all ten, the ring can only give the four it kept — the newest
+	// four, in order.
+	got, seq := r.Since(0)
+	if len(got) != 4 {
+		t.Fatalf("Since(0) returned %d entries from a ring of 4: %v", len(got), entryTexts(got))
+	}
+	if got[0].Text != "line 6" || got[3].Text != "line 9" {
+		t.Fatalf("Since(0) = %v, want the newest four in order", entryTexts(got))
+	}
+	if seq != 10 {
+		t.Fatalf("sequence = %d, want 10", seq)
+	}
+	if r.Dropped() == 0 {
+		t.Error("the ring did not report that it had evicted anything")
+	}
+}
+
+// entryTexts is what a run of entries said, for an assertion that reads as a
+// list rather than as a loop.
+func entryTexts(entries []LogEntry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.Text
+	}
+	return out
+}

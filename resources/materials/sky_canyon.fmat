@@ -1,0 +1,14 @@
+# sky_canyon.fmat — the canyon-country sky, warmed.
+#
+# The same effect as sky_day.fmat with different art and a tint, which is the
+# case tint and intensity exist for: one set of sky art serving several times of
+# day without being repainted.
+kind: sky
+doc: Canyon country, late afternoon.
+effects:
+  - effect: sky_cubemap
+    px: sky_canyon_px
+    rotation: 15
+  - effect: tint
+    color: {r: 1, g: 0.93, b: 0.84}
+    intensity: 1.05

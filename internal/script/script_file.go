@@ -1,0 +1,55 @@
+package script
+
+// script_file.go — reading .flang files, and resolving imports safely.
+//
+// The one rule worth stating: an import may not escape the scripts root. A
+// script tree that can read arbitrary files is a script tree that becomes
+// dangerous the moment someone hands you a level, and the check costs one
+// filepath.Rel.
+
+import (
+	"fmt"
+	"foundry/internal/fileutil"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// readScriptFile reads a .flang source file.
+func ReadScriptFile(path string) ([]byte, error) {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", fileutil.RelAssetPath(path), err)
+	}
+	return src, nil
+}
+
+// resolveScriptImport turns an `import("…")` path into an absolute one, relative
+// to the importing file and rooted at the scripts folder.
+func ResolveScriptImport(fromFile, importPath string) (string, error) {
+	if importPath == "" {
+		return "", fmt.Errorf("import needs a path")
+	}
+	if !strings.HasSuffix(importPath, fileutil.ScriptExt) {
+		importPath += fileutil.ScriptExt
+	}
+	dir := filepath.Dir(fromFile)
+	resolved := filepath.Clean(filepath.Join(dir, filepath.FromSlash(importPath)))
+
+	root := fileutil.ScriptsDir()
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("import %q leaves the scripts folder", importPath)
+	}
+	return resolved, nil
+}
+
+// ImportLoader resolves a script's `import(...)` the way the runtime does, for
+// a tool that links a script outside a play session — `foundry ai check
+// -script`, above all, which has to see the functions an import brings in.
+type ImportLoader struct{}
+
+// Load reads one imported file.
+func (ImportLoader) Load(fromFile, importPath string) ([]byte, string, error) {
+	return scriptLoader{}.Load(fromFile, importPath)
+}

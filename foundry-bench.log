@@ -1,0 +1,1737 @@
+10:52:29 [foundry] scanned 56 textures
+10:52:29 [foundry] material conveyor.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/conveyor.fmat.fmat: no such file or directory
+10:52:29 [foundry] material deck_tiled.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/deck_tiled.fmat.fmat: no such file or directory
+10:52:29 [foundry] material ember.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/ember.fmat.fmat: no such file or directory
+10:52:29 [foundry] material fireball.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fireball.fmat.fmat: no such file or directory
+10:52:29 [foundry] material flipbook.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/flipbook.fmat.fmat: no such file or directory
+10:52:29 [foundry] material fog_bank.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fog_bank.fmat.fmat: no such file or directory
+10:52:29 [foundry] material foliage.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage.fmat.fmat: no such file or directory
+10:52:29 [foundry] material foliage_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage_sprite.fmat.fmat: no such file or directory
+10:52:29 [foundry] material glass.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glass.fmat.fmat: no such file or directory
+10:52:29 [foundry] material glow_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glow_sprite.fmat.fmat: no such file or directory
+10:52:29 [foundry] material hologram.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/hologram.fmat.fmat: no such file or directory
+10:52:29 [foundry] material mossy_rock.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/mossy_rock.fmat.fmat: no such file or directory
+10:52:29 [foundry] material poster.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/poster.fmat.fmat: no such file or directory
+10:52:29 [foundry] material sky_canyon.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_canyon.fmat.fmat: no such file or directory
+10:52:29 [foundry] material sky_day.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_day.fmat.fmat: no such file or directory
+10:52:29 [foundry] material sky_overcast.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_overcast.fmat.fmat: no such file or directory
+10:52:29 [foundry] material sky_space.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_space.fmat.fmat: no such file or directory
+10:52:29 [foundry] material smoke.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/smoke.fmat.fmat: no such file or directory
+10:52:29 [foundry] material unlit.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/unlit.fmat.fmat: no such file or directory
+10:52:29 [foundry] material water.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water.fmat.fmat: no such file or directory
+10:52:29 [foundry] material water_rough.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water_rough.fmat.fmat: no such file or directory
+10:52:29 [foundry] loaded 0 materials
+10:52:29 [foundry] loaded 18 biome files
+10:52:29 [foundry] executable directory: /tmp/claude-1000/-home-jfcarter2358-personal-code-main-foundry/3c207bc1-b922-4ba8-858e-9137f0b53d29/scratchpad/RENDER-B
+10:52:29 [foundry] project: /home/jfcarter2358/personal/code/main/foundry (opened last)
+10:52:29 [foundry] resources directory: /home/jfcarter2358/personal/code/main/foundry/resources
+10:52:32 [foundry] audio: 48000 Hz stereo, 10 ms chunks, 60 ms target
+10:52:33 [foundry] OpenGL version : 4.6 (Core Profile) Mesa 26.2.3 - kisak-mesa PPA
+10:52:33 [foundry] GLSL version   : 4.60
+10:52:33 [foundry] GPU renderer   : D3D12 (NVIDIA GeForce GTX 1070)
+10:52:33 [foundry] anti-aliasing: TAA (window without multisampling)
+10:52:33 [foundry] WARNING: sdl.GLSetSwapInterval(1): That operation is not supported — vsync is not ours to set on this driver
+10:52:33 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/vertex.glsl (5624 bytes)
+10:52:33 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/fragment.glsl (34368 bytes)
+10:52:33 [foundry] texture filtering: mipmaps on, anisotropic 16x (driver max 16x)
+10:52:33 [foundry] --- vertex shader source ---
+#version 430
+
+// skin_common.glsl — GPU linear blend skinning, shared by every pass that draws
+// an animated entity.
+//
+// This is injected after the #version line (injectAfterVersion, detail_render.go)
+// into vertex.glsl, shadow_vert.glsl and shadow_cube_vert.glsl. All three, not
+// just the colour pass: an entity whose shadow were still drawn from its rest
+// pose would cast a stationary silhouette while the model moved.
+//
+// The editor's own model_vert.glsl deliberately does NOT include this. The model
+// editor skins on the CPU, into the vertex array its wireframe and picking
+// already read (editor_model_pose.go), so a second implementation there would be
+// a second thing to keep in step for no gain.
+//
+// ---------- why `skinned` is a uniform and not inferred ----------
+//
+// When a VAO does not enable a vertex attribute, GL supplies the *default*
+// generic value for its type — and for a vec4 that default is (0, 0, 0, 1), not
+// zero. Inferring "unskinned" from a zero weight sum would therefore read every
+// ordinary wall as fully bound to bone 0 with weight 1 and collapse the level
+// onto that bone's delta. The uniform is the only safe gate.
+
+#define MAX_BONES 48
+
+// Bone indices and weights, four each — the budget modelMaxInfluences was
+// chosen to fit. Enabled only on submeshes built from a skinned model.
+layout(location = 3) in vec4 boneIdx;
+layout(location = 4) in vec4 boneWt;
+
+// The palette: one delta per bone, taking that bone's rest space to where the
+// pose puts it. Matches PoseDeltas (model_pose.go).
+uniform mat4 bones[MAX_BONES];
+uniform int  skinned;
+
+// skinMatrix blends this vertex's influences into one transform.
+//
+// Blending the matrices and applying once — rather than transforming the
+// position by each and averaging the results — is the same arithmetic for
+// positions, and it is what lets the normal reuse the result instead of running
+// the whole loop a second time.
+mat4 skinMatrix() {
+    mat4 m = mat4(0.0);
+    float total = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        float w = boneWt[i];
+        if (w <= 0.0) {
+            continue;
+        }
+        int b = int(boneIdx[i]);
+        if (b < 0 || b >= MAX_BONES) {
+            continue;
+        }
+        m += bones[b] * w;
+        total += w;
+    }
+    if (total <= 0.0) {
+        return mat4(1.0);
+    }
+    // Rescaling by the total covers weights that do not sum to 1 instead of
+    // dragging the vertex toward the origin — the same guard skinVerts applies
+    // on the CPU side (model_skin.go).
+    return m * (1.0 / total);
+}
+
+vec4 skinPosition(vec3 p) {
+    if (skinned == 0) {
+        return vec4(p, 1.0);
+    }
+    return skinMatrix() * vec4(p, 1.0);
+}
+
+// skinNormal rotates a normal by the same blend. mat3 of the blend rather than
+// its inverse-transpose: a bone delta is a rigid motion plus whatever stretch
+// the pose asked for, and the caller already applies the model matrix's own
+// inverse-transpose afterwards.
+vec3 skinNormal(vec3 n) {
+    if (skinned == 0) {
+        return n;
+    }
+    return mat3(skinMatrix()) * n;
+}
+
+uniform mat4 projection;
+uniform mat4 camera;
+uniform mat4 model;
+
+// Instanced drawing (render/scenery_instanced.go): many placements of one mesh
+// in one draw, each carrying its model matrix as a per-instance attribute in
+// locations 7-10. Off — the zero an unwritten uniform holds — every draw reads
+// `model` as it always has, and the attribute is never looked at.
+uniform int instanced;
+layout(location = 7) in mat4 instanceModel;
+
+// Water animation. isWater gates the whole path; time is seconds since start.
+uniform int   isWater;
+uniform float time;
+uniform float waveAmplitude;
+uniform float waveLength;
+uniform float waveSpeed;
+
+// Smooth shading: 1 = shade from vertNormal, 0 = let the fragment stage recover
+// a flat facet normal from screen-space derivatives. Locations are pinned so the
+// same VAO also feeds the detail tessellation program (see detail_vert.glsl).
+uniform int smoothShading;
+
+// Slides the texture across the surface (gfx.Geometry.UVOffset): a scrolling
+// attachment such as a tank's track belt, or a material's uv_scroll. Zero for
+// everything else.
+uniform vec2 uvOffset;
+
+// The rest of a material's UV transform (material.KindUVTransform): a tiling
+// and a turn, applied before the offset.
+//
+// The scale arrives as a BIAS from 1 rather than as the scale, so that the
+// value GL gives an uninitialised uniform — zero — is the identity. A program
+// that links this shader without knowing about either (the shadow passes, the
+// detail tessellation stage, a GL test that looks up only what it needs) tiles
+// the texture exactly as it did before materials existed. Same reasoning as
+// fragment.glsl's normalColor and unlit, and as alphaCutoffBias.
+uniform vec2  uvScaleBias;
+uniform float uvRotation; // radians, about the UV origin
+
+layout(location = 0) in vec3 vert;
+layout(location = 1) in vec2 vertTexCoord;
+// Per-vertex normal, present only on surfaces built with smoothing on. The
+// attribute array is disabled otherwise, so this reads (0,0,0) and is ignored.
+layout(location = 2) in vec3 vertNormal;
+// Baked lighting, present only on a compiled level's static surfaces.
+// Locations 3 and 4 belong to skinning (skin_common.glsl), so this takes 5.
+// The attribute array is disabled otherwise; bakedLight is what gates reading
+// it, for the same reason `skinned` gates the bone attributes — an unenabled
+// attribute reads a driver default, not zero.
+// xyz is the baked colour; w the baked sun's share (see fragment.glsl).
+layout(location = 5) in vec4 vertLight;
+// The part of vertLight.xyz that is ambient and bounce rather than a static
+// light's own (compile.Face.Indirect): what live GI takes back off before
+// adding its own. Read from the same buffer as vertLight, under the same gate.
+layout(location = 6) in vec3 vertLightIndirect;
+
+// Invariant: the GPU-driven cull's depth prepass (render/nanite_prepass.go)
+// links this same stage into a program of its own, and the colour pass after
+// it tests at LEQUAL against the depth it wrote — which only works if both
+// programs compute exactly the same position. Without the qualifier GLSL lets
+// two programs compiled from one source differ in the last bit.
+invariant gl_Position;
+
+out vec2 fragTexCoord;
+out vec3 fragWorldPos;
+out vec3 fragNormal;
+// View-axis distance; the fragment stage uses it to select a shadow cascade.
+out float fragViewDepth;
+// The baked value, passed through and interpolated across the triangle.
+out vec4 fragBakedLight;
+out vec3 fragBakedIndirect;
+
+// Sum of three travelling sine waves at different headings, so the surface
+// never reads as a single repeating ripple. Driven by world XZ, which keeps
+// wave size independent of how far the plane is scaled up.
+//
+// MUST stay identical to waterHeight() in fragment.glsl — the vertex stage
+// displaces geometry with it and the fragment stage differentiates it for the
+// shading normal. If they drift, lit highlights slide off the actual crests.
+float waterHeight(vec2 p) {
+    float k = 6.2831853 / max(waveLength, 0.001);
+    float t = time * waveSpeed * 6.2831853;
+
+    float h = 0.0;
+    h += sin(p.x * k + t) * 0.50;
+    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
+    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
+    return h * waveAmplitude;
+}
+
+void main() {
+    vec2 uv = vertTexCoord * (vec2(1.0) + uvScaleBias);
+    if (uvRotation != 0.0) {
+        float cs = cos(uvRotation);
+        float sn = sin(uvRotation);
+        uv = vec2(uv.x * cs - uv.y * sn, uv.x * sn + uv.y * cs);
+    }
+    fragTexCoord = uv + uvOffset;
+    fragBakedLight = vertLight;
+    fragBakedIndirect = vertLightIndirect;
+    // skinPosition is the identity unless this draw call set `skinned`
+    // (skin_common.glsl), so every static surface takes the same path it always
+    // did.
+    mat4 M = instanced != 0 ? instanceModel : model;
+    vec4 worldPos = M * skinPosition(vert);
+
+    // Vertical displacement only, so worldPos.xz still carries the undisplaced
+    // surface coordinate the fragment stage needs to re-derive the normal.
+    if (isWater != 0) {
+        worldPos.y += waterHeight(worldPos.xz);
+    }
+
+    fragWorldPos = worldPos.xyz;
+
+    // Inverse-transpose rather than mat3(model): primitives carry per-axis
+    // scale, which skews a plain rotation of the normal off the surface. Only
+    // paid for on smoothed surfaces.
+    fragNormal = vec3(0.0);
+    if (smoothShading != 0) {
+        fragNormal = transpose(inverse(mat3(M))) * skinNormal(vertNormal);
+    }
+
+    vec4 viewPos = camera * worldPos;
+    fragViewDepth = -viewPos.z;
+
+    gl_Position = projection * viewPos;
+}
+---
+10:52:33 [foundry] vertex shader compiled OK
+10:52:33 [foundry] --- fragment shader source ---
+#version 430
+
+// vsm.glsl — the virtual shadow map's lookup (render/vsm.go; Phase 5 of the
+// Nanite plan, component 10). Spliced into every program that shades with
+// the sun's shadow: the world program (gfx.WorldProgramSources), and the
+// biome, sprite and foliage programs with biome_light.glsl. The marking pass
+// (vsm_mark_comp.glsl) compiles it too, so a receiver reads exactly the page
+// it asked for.
+//
+// The map is a clipmap of VSM_LEVELS levels in light space, each twice the
+// last one's width, each VSM_PAGES × VSM_PAGES pages of VSM_PAGE_TEXELS²
+// texels round the camera (render/vsm_pages.go). A point reads the level
+// whose texel is about its own pixel's footprint (vsmLevelFor) — the level is
+// chosen by distance, not view depth, so turning on the spot keeps every
+// point on the same page. A page that is not resident (not asked for yet,
+// or something in it just changed) falls back to the next coarser level, and
+// a point no level holds is lit.
+//
+// The page table is a usampler2DArray, a layer a level: the physical page's
+// layer in vsmAtlas + 1, or 0. vsmAtlas is one page a layer, so a bilinear
+// compare never mixes two pages' texels; a filter tap across a page's edge
+// finds its own page.
+//
+// vsmAtlas is a plain sampler2DArray, compared by hand (vsmCompare: a
+// textureGather of the 2x2 texels and the bilinear weights a comparison
+// sampler would use), NOT a sampler2DArrayShadow: on Mesa's D3D12 driver a
+// second comparison sampler array in one program — fragment.glsl already has
+// the cascades' shadowMapArray — leaves the first reading as lit everywhere,
+// whether or not the second is ever sampled.
+//
+// Must match render/vsm_pages.go.
+#define VSM_LEVELS 11
+#define VSM_PAGES 32
+#define VSM_PAGE_TEXELS 128.0
+
+// One more than the directional light the map shadows; 0 (what a program
+// nobody told holds) for none — the cascades as before.
+uniform int vsmLightSlot;
+
+// vsmShadows is whether light lightIdx reads the virtual map.
+bool vsmShadows(int lightIdx) {
+    return lightIdx + 1 == vsmLightSlot;
+}
+uniform sampler2DArray vsmAtlas;
+uniform usampler2DArray vsmPageTable;
+// World to light space, about the camera: rows across the light (x, y) and
+// along it (z, growing away from the light).
+uniform mat3 vsmRot;
+uniform vec3 vsmCamPos;
+// The camera's place in each level's window, in that level's texels.
+uniform vec2 vsmCamTexel[VSM_LEVELS];
+// Level 0's texel in world units, and log2 of (a pixel's footprint at unit
+// distance / level 0's texel): a point d away wants level log2(d) + this.
+uniform float vsmTexel0;
+uniform float vsmLevelBias;
+// Light-space z about the camera to the map's [0, 1] depth.
+uniform float vsmDepthOffset;
+uniform float vsmDepthScale;
+// The receiver's depth bias and normal offset, in its level's texels.
+uniform float vsmBias;
+uniform float vsmNormalOffset;
+
+// vsmLevelFor is the level a point at distance d from the camera reads.
+int vsmLevelFor(float d) {
+    return clamp(int(floor(log2(max(d, 1e-3)) + vsmLevelBias + 0.5)), 0, VSM_LEVELS - 1);
+}
+
+// vsmWindowTexel is where light-space point ls (about the camera) falls in
+// level l's window, in texels.
+vec2 vsmWindowTexel(vec3 ls, int l) {
+    return ls.xy / (vsmTexel0 * exp2(float(l))) + vsmCamTexel[l];
+}
+
+// vsmLayer is the atlas layer of window page pg on level l, -1 for none.
+int vsmLayer(ivec2 pg, int l) {
+    if (any(lessThan(pg, ivec2(0))) || any(greaterThanEqual(pg, ivec2(VSM_PAGES)))) {
+        return -1;
+    }
+    return int(texelFetch(vsmPageTable, ivec3(pg, l), 0).r) - 1;
+}
+
+// vsmCompare is the fraction of the bilinear footprint at uv in layer that
+// is at least ref deep: what a comparison sampler's lookup returns, from a
+// gather of its 2x2 texels.
+float vsmCompare(vec2 uv, float layer, float ref) {
+    vec4 lit = vec4(greaterThanEqual(textureGather(vsmAtlas, vec3(uv, layer), 0), vec4(ref)));
+    vec2 f = fract(uv * VSM_PAGE_TEXELS - 0.5);
+    // Gather's order: (0,1), (1,1), (1,0), (0,0).
+    return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
+}
+
+// vsmSampleLevel is the occlusion (0 lit .. 1 shadowed) at worldPos from
+// level l, or -1 when the pages its filter needs are not all resident: nine
+// bilinear comparison taps a texel apart, each on the page it falls in.
+//
+// (Four gathers with per-texel weights would do the same work in fewer
+// fetches, but measured, the shape of this function is what the world
+// program and the material pass pay for on every pixel, the virtual map on
+// or not: the four-gather forms cost the material pass 0.9 and 5.4 ms more
+// on level1 with the map off, and this one nothing measurable. docs/nanite/PHASE_5.md.)
+float vsmSampleLevel(vec3 worldPos, vec3 normal, vec3 lightDir, int l) {
+    float texel = vsmTexel0 * exp2(float(l));
+    // Pushed off the surface by a texel or so along its normal, and its
+    // depth biased by more where the sun grazes it: one texel of a slope seen
+    // edge-on spans that much depth.
+    vec3 p = worldPos + normal * (texel * vsmNormalOffset);
+    vec3 ls = vsmRot * (p - vsmCamPos);
+    vec2 t = vsmWindowTexel(ls, l);
+    // The filter's bilinear taps reach 1.5 texels each way.
+    ivec2 lo = ivec2(floor((t - 1.5) / VSM_PAGE_TEXELS));
+    ivec2 hi = ivec2(floor((t + 1.5) / VSM_PAGE_TEXELS));
+    for (int y = lo.y; y <= hi.y; y++) {
+        for (int x = lo.x; x <= hi.x; x++) {
+            if (vsmLayer(ivec2(x, y), l) < 0) {
+                return -1.0;
+            }
+        }
+    }
+    float cosTheta = clamp(abs(dot(normal, lightDir)), 0.05, 1.0);
+    float slope = min(sqrt(1.0 - cosTheta * cosTheta) / cosTheta, 8.0);
+    float ref = (ls.z + vsmDepthOffset) * vsmDepthScale - texel * (vsmBias + 0.5 * slope) * vsmDepthScale;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 tt = t + vec2(x, y);
+            ivec2 pg = ivec2(floor(tt / VSM_PAGE_TEXELS));
+            vec2 uv = (tt - vec2(pg) * VSM_PAGE_TEXELS) / VSM_PAGE_TEXELS;
+            lit += vsmCompare(uv, float(vsmLayer(pg, l)), ref);
+        }
+    }
+    return 1.0 - lit / 9.0;
+}
+
+// vsmShadow is the occlusion at worldPos (geometric normal, the light's
+// direction of travel): its level's pages, or the nearest coarser level's
+// that are resident, or lit.
+float vsmShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+    for (int l = vsmLevelFor(distance(worldPos, vsmCamPos)); l < VSM_LEVELS; l++) {
+        float s = vsmSampleLevel(worldPos, normal, lightDir, l);
+        if (s >= 0.0) {
+            return s;
+        }
+    }
+    return 0.0;
+}
+
+// light_model.glsl — how light falls across a surface, for every pass that
+// lights one.
+//
+// Spliced after the #version line of the world fragment stage (fragment.glsl,
+// via gfx.InjectLightModel) and ahead of biome_light.glsl (render's
+// biomeLightSnippet), so the walls, the ground patches, the scatter and lit
+// sprites are one lighting model rather than one per pass. The level compiler
+// bakes with the same one (world.GlobalLight.LightWrap/AmbientAt) — change a
+// term here and change it there, or a baked surface stops matching a live one.
+
+// The level's lighting-model knobs, world.GlobalLight's Wrap and Hemisphere,
+// uploaded with the rest of the lights (world.UploadLightsTo).
+uniform float lightWrap;
+uniform float ambientHemisphere;
+
+// Wrapped Lambert: how much of a light a surface at cosine ndl to it takes. At
+// lightWrap 0 it is max(N.L, 0), the hard terminator; above that the light
+// carries on round the curve and eases out instead of stopping at side-on.
+float lightWrapTerm(float ndl) {
+    return max((ndl + lightWrap) / (1.0 + lightWrap), 0.0);
+}
+
+// Hemispheric ambient: the ambient colour brighter facing the sky and darker
+// facing the ground, averaging to the colour itself.
+vec3 ambientAt(vec3 ambient, vec3 n) {
+    return ambient * (1.0 + 0.5 * clamp(ambientHemisphere, 0.0, 1.0) * n.y);
+}
+
+// ---------- Live global illumination (render/gi.go) ----------
+//
+// Bounce light from a grid of probes around the camera, traced every frame
+// against a distance-field copy of the level. Where it is on, it takes the
+// place of ambientAt: ambientLight below is what every pass calls, and with
+// giEnabled 0 — what an unwritten uniform holds, and what a program GI never
+// uploads to gets — it IS ambientAt, so nothing that does not know about GI
+// changes.
+//
+// The probes are DDGI's: each stores irradiance (light arriving, cosine-
+// weighted, by direction) and the mean and mean-square distance to what its
+// rays hit, both octahedrally mapped into a tile of an atlas with a one-texel
+// border so bilinear filtering never reads a neighbour. A point is lit by the
+// eight probes around it, each weighted by how far it is (trilinear), whether
+// the point is behind it, and whether it could see the point at all (a
+// Chebyshev test on its distances) — the last is what keeps light from
+// leaking through a wall.
+
+#define GI_MAX_CASCADES 3
+#define GI_IRR_TILE 8   // 6 x 6 interior + border
+#define GI_VIS_TILE 16  // 14 x 14 interior + border
+
+uniform int   giEnabled;
+uniform int   giDebug;       // 1: the lighting alone, on an albedo of 1
+uniform float giIntensity;
+uniform float giAmbientFloor;
+uniform int   giCascades;
+uniform ivec3 giDims;        // probes per cascade on each axis
+// xyz is the cascade's first probe as a world probe index (exact in a float);
+// w its spacing in world units.
+uniform vec4  giCascade[GI_MAX_CASCADES];
+uniform vec3  giCamPos;
+uniform sampler2D giIrradianceAtlas;
+uniform sampler2D giVisibilityAtlas;
+// Per probe: xyz how far it was moved out of the geometry it sat in, w its
+// state (render/gi.go: giStateActive).
+uniform sampler2D giProbeData;
+// Each probe's nearest surface where it has one close by (render/gi.go, surf):
+// the normal facing the probe and the distance to it; zero where none is.
+uniform sampler2D giProbeSurface;
+
+vec2 giOctEncode(vec3 n) {
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 e = n.xz;
+    if (n.y < 0.0) {
+        e = (1.0 - abs(e.yx)) * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return e;
+}
+
+vec3 giOctDecode(vec2 e) {
+    vec3 n = vec3(e.x, 1.0 - abs(e.x) - abs(e.y), e.y);
+    if (n.y < 0.0) {
+        vec2 f = (1.0 - abs(n.zx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.z >= 0.0 ? 1.0 : -1.0);
+        n.x = f.x;
+        n.z = f.y;
+    }
+    return normalize(n);
+}
+
+// giSlot is where world probe index wi is stored: the grid scrolls by
+// wrapping, so a probe keeps its slot for as long as it stays in range.
+// (GLSL's % is undefined for a negative operand, hence the floor.)
+ivec3 giSlot(ivec3 wi) {
+    return wi - giDims * ivec3(floor(vec3(wi) / vec3(giDims)));
+}
+
+ivec2 giTile(ivec3 slot, int c) {
+    return ivec2(slot.x + slot.z * giDims.x, slot.y + c * giDims.y);
+}
+
+vec2 giAtlasUV(ivec2 tile, vec3 dir, int tileSize, vec2 atlasSize) {
+    float inner = float(tileSize - 2);
+    vec2 oct = giOctEncode(dir) * 0.5 + 0.5;
+    return (vec2(tile * tileSize) + 1.0 + oct * inner) / atlasSize;
+}
+
+// giCascadeCover is how fully cascade c covers p: 1 well inside it, falling to
+// 0 a probe from its edge, where the eight probes around p stop all existing.
+float giCascadeCover(int c, vec3 p) {
+    vec3 q = p / giCascade[c].w - giCascade[c].xyz;
+    vec3 hi = vec3(giDims) - 1.0;
+    vec3 d = min(q, hi - q);
+    return clamp(min(d.x, min(d.y, d.z)) - 1.0, 0.0, 1.0);
+}
+
+vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
+    float s = giCascade[c].w;
+    // Off the surface, toward the viewer and along the normal, so a probe the
+    // point sits exactly level with does not see it as half buried.
+    vec3 bp = p + (n * 0.2 + v * 0.8) * (0.3 * s);
+    vec3 q = bp / s;
+    ivec3 base = ivec3(floor(q));
+    vec3 a = q - vec3(base);
+    ivec3 lo = ivec3(giCascade[c].xyz);
+    vec2 irrSize = vec2(textureSize(giIrradianceAtlas, 0));
+    vec2 visSize = vec2(textureSize(giVisibilityAtlas, 0));
+
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < 8; i++) {
+        ivec3 off = ivec3(i, i >> 1, i >> 2) & ivec3(1);
+        ivec3 wi = base + off;
+        ivec3 local = wi - lo;
+        if (any(lessThan(local, ivec3(0))) || any(greaterThanEqual(local, giDims))) {
+            continue;
+        }
+        ivec2 tile = giTile(giSlot(wi), c);
+        vec4 pd = texelFetch(giProbeData, tile, 0);
+        if (mod(pd.w, 2.0) < 0.5) {
+            continue; // buried in geometry: it has nothing true to say
+        }
+        vec3 probe = vec3(wi) * s + pd.xyz;
+        // On the far side of the surface the probe is up against: under the
+        // floor the point stands on, behind the wall it is lit in front of.
+        // Its visibility moments are least to be trusted there (see
+        // gi_probe_update_comp.glsl), and the surface is between them.
+        vec4 plane = texelFetch(giProbeSurface, tile, 0);
+        if (dot(plane.xyz, plane.xyz) > 0.25 && dot(bp - probe, plane.xyz) < -plane.w) {
+            continue;
+        }
+        vec3 tri = mix(1.0 - a, a, vec3(off));
+        float w = 1.0;
+
+        // Behind the surface: a probe on the far side of a wall from the
+        // point weighs little, smoothly, so a point never snaps between sets.
+        vec3 toProbe = normalize(probe - p);
+        float wrap = (dot(toProbe, n) + 1.0) * 0.5;
+        w *= wrap * wrap + 0.2;
+
+        // Could the probe see the point? Chebyshev on its distance moments.
+        vec3 fromProbe = bp - probe;
+        float d = length(fromProbe);
+        vec2 m = textureLod(giVisibilityAtlas, giAtlasUV(tile, fromProbe / max(d, 1e-4), GI_VIS_TILE, visSize), 0.0).rg;
+        if (d > m.x) {
+            float var = abs(m.y - m.x * m.x);
+            float dd = d - m.x;
+            float cheb = var / (var + dd * dd);
+            w *= max(cheb * cheb * cheb, 0.0);
+        }
+        w = max(w, 1e-6);
+        // Crush the faintest weights, which are almost always a leak.
+        const float crush = 0.2;
+        if (w < crush) {
+            w *= w * w / (crush * crush);
+        }
+        w *= tri.x * tri.y * tri.z;
+
+        vec3 irr = textureLod(giIrradianceAtlas, giAtlasUV(tile, n, GI_IRR_TILE, irrSize), 0.0).rgb;
+        sum += irr * w;
+        wsum += w;
+    }
+    return wsum > 0.0 ? sum / wsum : vec3(0.0);
+}
+
+// giSampleFar is the outermost cascade's light for a point beyond its reach:
+// the probes around the nearest place inside it, by position and by the
+// surface's facing alone. The visibility test is left out — a probe a
+// hundred metres from the point has nothing to say about whether it can see
+// it — and so are probes buried in geometry. found is 0 when every one of
+// them was buried.
+//
+// It is a guess, and a much better one than the flat ambient it replaces:
+// that ignores everything the probes know about how much sky a place sees, so
+// a shadow beyond the cascades came out as bright as an open field and
+// darkened as the player walked up to it and the probes took it over.
+vec3 giSampleFar(int c, vec3 p, vec3 n, out float found) {
+    float s = giCascade[c].w;
+    vec3 lo = giCascade[c].xyz;
+    // A probe clear of the edge, so all eight around it are in the grid.
+    vec3 q = clamp(p / s, lo + 1.0, lo + vec3(giDims) - 2.001);
+    ivec3 base = ivec3(floor(q));
+    vec3 a = q - vec3(base);
+    vec2 irrSize = vec2(textureSize(giIrradianceAtlas, 0));
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < 8; i++) {
+        ivec3 off = ivec3(i, i >> 1, i >> 2) & ivec3(1);
+        ivec3 wi = base + off;
+        ivec2 tile = giTile(giSlot(wi), c);
+        if (mod(texelFetch(giProbeData, tile, 0).w, 2.0) < 0.5) {
+            continue;
+        }
+        vec3 tri = mix(1.0 - a, a, vec3(off));
+        float w = max(tri.x * tri.y * tri.z, 1e-4);
+        sum += textureLod(giIrradianceAtlas, giAtlasUV(tile, n, GI_IRR_TILE, irrSize), 0.0).rgb * w;
+        wsum += w;
+    }
+    found = wsum > 0.0 ? 1.0 : 0.0;
+    return wsum > 0.0 ? sum / wsum : vec3(0.0);
+}
+
+// giIrradiance is the probes' light at p for a surface facing n, and how much
+// of the answer the probes gave (cover): the cascades where they reach, then
+// the outermost one's edge (giSampleFar) for everything past it — so a
+// surface's light does not change as the cascades, which follow the camera,
+// arrive at it. cover falls short of 1 only where there are no probes to ask,
+// and the caller makes up the rest.
+vec3 giIrradiance(vec3 p, vec3 n, out float cover) {
+    vec3 v = normalize(giCamPos - p);
+    vec3 total = vec3(0.0);
+    float left = 1.0;
+    for (int c = 0; c < giCascades && c < GI_MAX_CASCADES; c++) {
+        float w = giCascadeCover(c, p) * left;
+        if (w <= 0.0) {
+            continue;
+        }
+        total += giSampleCascade(c, p, n, v) * w;
+        left -= w;
+        if (left <= 0.0) {
+            break;
+        }
+    }
+    int outer = min(giCascades, GI_MAX_CASCADES) - 1;
+    if (left > 0.0 && outer >= 0) {
+        float found;
+        vec3 far = giSampleFar(outer, p, n, found);
+        total += far * left * found;
+        left -= left * found;
+    }
+    cover = 1.0 - left;
+    return total;
+}
+
+// ambientLight is the light a surface gets from everything but the lights
+// themselves: GI where it is on and reaches, ambientAt where it does not.
+// giDebugAlbedo is a surface's colour as the lighting view (gi_debug lighting,
+// the `lighting` view) sees it: white, so what is left on screen is the light
+// alone. Every shader that multiplies a colour by its lighting goes through
+// this, or that view shows its textures as if it were the normal one.
+vec3 giDebugAlbedo(vec3 albedo) {
+    return giDebug == 1 ? vec3(1.0) : albedo;
+}
+
+vec3 ambientLight(vec3 ambient, vec3 p, vec3 n) {
+    vec3 sky = ambientAt(ambient, n);
+    if (giEnabled == 0) {
+        return sky;
+    }
+    float cover;
+    vec3 gi = giIrradiance(p, n, cover) * giIntensity;
+    return gi + sky * mix(1.0, giAmbientFloor, cover);
+}
+
+// cloud_shadow.glsl — the shadow clouds cast on everything under them.
+//
+// Spliced into every stage that lights world geometry, beside fog.glsl and for
+// the same reason fog is shared: fragment.glsl (see InjectCloudShadow in
+// gfx/fog_shader.go) and every consumer of biome_light.glsl (the scatter, the
+// ground patch and sprites — see biomeLightSnippet). A cloud's shadow that
+// darkened the floor but not the grass standing on it would read as the grass
+// floating.
+//
+// The map is baked once a frame by render/cloud_shadow.go: a top-down view
+// along the sun of every shadow-casting cloud volume and the sky's deck, each
+// texel holding two numbers about the line of sunlight through it —
+//
+//   R  how much light survives the whole line (transmittance), and
+//   G  how far along it the cloud mass sits, as a 0..1 light-space depth.
+//
+// G is what lets a cloud shadow only what is UNDER it. A single transmittance
+// would darken the top of a mountain standing in a cloud and the valley below
+// it alike; comparing the receiver's own light depth against where the mass is
+// puts the shadow below the cloud and nowhere above it.
+//
+// The uniforms are uploaded by UploadShadowUniformsTo, which every program
+// that includes this already calls, and cloudShadowMap is always bound to a
+// real texture (a white dummy when there are no clouds) on its own unit — see
+// CloudShadowTexUnit — so a program never samples an unbound unit.
+
+uniform int       cloudShadowOn;     // 0 = no map this frame
+uniform int       cloudShadowLight;  // the directional light the map was baked for
+uniform sampler2D cloudShadowMap;
+uniform mat4      cloudShadowMatrix; // world -> [0,1]^3 in the bake's light space
+
+// How much of a compiled level's BAKED light the cloud shadow takes away.
+// Baked light is the sun and everything else summed offline, and which share
+// of it the sun contributed is not kept, so a fixed share is removed instead:
+// enough for the shadow of a passing cloud to read, not so much that a surface
+// lit mostly by lamps goes dark under one.
+#define CLOUD_SHADOW_BAKED_SHARE 0.55
+
+// cloudShadowFactor is the fraction of directional light lightIdx that reaches
+// worldPos past the clouds: 1 in the open, lower under cloud.
+//
+// textureLod rather than texture, because biome_light.glsl compiles this into a
+// VERTEX stage too, where there are no derivatives to pick a mip from.
+float cloudShadowFactor(int lightIdx, vec3 worldPos) {
+    if (cloudShadowOn == 0 || lightIdx != cloudShadowLight) {
+        return 1.0;
+    }
+    vec3 p = (cloudShadowMatrix * vec4(worldPos, 1.0)).xyz;
+    // Faded out over the outer tenth of the map, so the edge of the baked area
+    // is a gradient rather than a line across the ground.
+    vec2 edge = min(p.xy, 1.0 - p.xy);
+    float inside = clamp(min(edge.x, edge.y) * 10.0, 0.0, 1.0);
+    if (inside <= 0.0) {
+        return 1.0;
+    }
+    vec2 s = textureLod(cloudShadowMap, p.xy, 0.0).rg;
+    float below = smoothstep(s.g - 0.01, s.g + 0.01, p.z);
+    return mix(1.0, s.r, below * inside);
+}
+
+// fog.glsl — fog, shared by every stage that shades world geometry.
+//
+// Two kinds, one file. DISTANCE fog is the air of the whole level: a
+// function of how far away a point is, with no position of its own. A FOG
+// VOLUME is a placed region that is full of fog, and its term is the length
+// of the view ray that was inside it. They compose — see applyFog at the
+// bottom, which is the one entry point every pass calls.
+//
+// Injected after the #version line of fragment.glsl (world geometry, water and
+// the detail tessellation/scatter programs that reuse it), of biome_light.glsl's
+// consumers (the scatter in biome_frag.glsl, the ground patch in
+// ground_frag.glsl and sprites in sprite_frag.glsl) and of sky_frag.glsl — see
+// InjectFog in gfx/graphics.go and biomeLightSnippet in render/biome_light.go.
+//
+// The same trick biome_light.glsl uses: ONE declaration of the uniform names,
+// compiled into every program that shades, so world.UploadFogTo drives all of
+// them and there is no per-pass fog model to keep in step with the others. A
+// wall, the grass in front of it, the rock scattered over that grass and the
+// sprite standing on it all fade at exactly the same rate, which is the whole
+// point — fog that disagreed between passes would read as the passes
+// disagreeing about where things are.
+//
+// Distance is RADIAL (from the eye), not the view-axis depth a fixed-function
+// fog would use. Planar depth makes the fog on a fixed object change as the
+// camera turns its head, which reads as the world breathing.
+
+// 0 = off, 1 = linear, 2 = exponential, 3 = exponential-squared. Must match
+// world.FogMode's values (fog.go).
+uniform int   fogMode;
+uniform vec3  fogColor;
+uniform float fogStart;      // where fog begins, in world units, for every mode
+uniform float fogEnd;        // linear only: where it reaches fogMaxOpacity
+uniform float fogDensity;    // exp/exp2 only
+uniform float fogMaxOpacity; // ceiling on the blend, so distant geometry can be
+                             // left legible rather than erased
+uniform vec3  fogCamPos;     // the eye the radial distance is measured from
+
+// fogFactor is how much of fogColor this point has turned into: 0 = untouched,
+// 1 = the fog and nothing else.
+float fogFactor(vec3 worldPos) {
+    if (fogMode == 0) {
+        return 0.0;
+    }
+    float d = distance(worldPos, fogCamPos);
+    float f;
+    if (fogMode == 1) {
+        f = (d - fogStart) / max(fogEnd - fogStart, 1e-4);
+    } else if (fogMode == 2) {
+        f = 1.0 - exp(-fogDensity * max(d - fogStart, 0.0));
+    } else {
+        float t = fogDensity * max(d - fogStart, 0.0);
+        f = 1.0 - exp(-t * t);
+    }
+    return clamp(f, 0.0, 1.0) * fogMaxOpacity;
+}
+
+// ---------- fog volumes ----------
+//
+// A fog volume is a placed region that is FULL of fog, as against the distance
+// fog above which is everywhere. The two are different questions: distance fog
+// asks "how far away is this", a volume asks "how much of the air between the
+// eye and this point was inside that box".
+//
+// So the term is not a function of distance at all — it is the LENGTH of the
+// eye-to-fragment segment that lies inside the volume, run through the same
+// exponential extinction. That is what makes a fog bank behave like a bank: it
+// thickens as you look along it and thins as you look across it, a wall seen
+// through a corner of it is only lightly touched, and walking in fills the
+// screen because the segment now starts inside. A "distance from the centre"
+// falloff gets all four of those wrong, and gets them wrong in a way that looks
+// fine standing still.
+//
+// Every shape is solved in NORMALIZED space, where the volume is the unit box,
+// unit sphere or unit cylinder: fogVolBasis maps a world-space offset from the
+// centre through the inverse rotation and then divides by the half-extents, so
+// one intersection routine per shape covers every size and orientation. The ray
+// direction is carried through that same matrix WITHOUT renormalizing, which is
+// what keeps the parameter t measured in world units — the span has to come out
+// in metres, not in half-extents, or a wide volume would fog less than a narrow
+// one at the same density.
+
+#define MAX_FOG_VOLUMES 8
+
+// Shape values match world.VolumeShape (volume.go): 0 box, 1 sphere, 2 cylinder.
+#define FOG_VOL_BOX      0
+#define FOG_VOL_SPHERE   1
+#define FOG_VOL_CYLINDER 2
+
+uniform int   numFogVolumes;
+uniform mat3  fogVolBasis[MAX_FOG_VOLUMES];  // world offset -> normalized shape space
+uniform vec3  fogVolCenter[MAX_FOG_VOLUMES];
+uniform int   fogVolShape[MAX_FOG_VOLUMES];
+uniform vec3  fogVolColor[MAX_FOG_VOLUMES];
+uniform float fogVolDensity[MAX_FOG_VOLUMES];    // per world unit travelled inside
+uniform float fogVolMaxOpacity[MAX_FOG_VOLUMES];
+
+// fogShapeInterval narrows [t0, t1] to the part of the ray ro + t*dir that lies
+// inside a volume shape, and reports whether anything is left. dir must be a
+// unit vector for t to be in world units. The shape is given as its basis (see
+// the note above), centre and kind, so the volumetric passes
+// (volume_common.glsl) solve their cloud volumes with the SAME intersection a
+// fog bank uses — a cloud and a fog bank placed in one box cannot disagree
+// about where its walls are.
+//
+// The interval arrives already clamped by the caller, which is what makes the
+// two cases that matter fall out with no special-casing: a ray starting INSIDE
+// the shape keeps t0 at the caller's 0 (the fog starts at the eye), and a shape
+// behind the fragment is clipped away by the caller's t1 rather than fogging
+// things in front of it.
+bool fogShapeInterval(int shape, mat3 basis, vec3 center, vec3 ro, vec3 dir,
+                      inout float t0, inout float t1) {
+    vec3 o = basis * (ro - center);
+    vec3 d = basis * dir;
+
+    if (shape == FOG_VOL_SPHERE) {
+        // Unit sphere. |o + t*d| = 1.
+        float a = dot(d, d);
+        float b = 2.0 * dot(o, d);
+        float c = dot(o, o) - 1.0;
+        float disc = b * b - 4.0 * a * c;
+        if (a < 1e-12 || disc <= 0.0) {
+            return false;
+        }
+        float sq = sqrt(disc);
+        t0 = max(t0, (-b - sq) / (2.0 * a));
+        t1 = min(t1, (-b + sq) / (2.0 * a));
+    } else {
+        // Box and cylinder share the |y| <= 1 slab; the box adds the other two
+        // slabs, the cylinder a unit disc in XZ.
+        int lo = (shape == FOG_VOL_CYLINDER) ? 1 : 0;
+        int hi = (shape == FOG_VOL_CYLINDER) ? 1 : 2;
+        for (int ax = lo; ax <= hi; ++ax) {
+            if (abs(d[ax]) < 1e-6) {
+                // Parallel to this pair of planes: either always between them
+                // or never, and never means the whole ray misses.
+                if (abs(o[ax]) > 1.0) {
+                    return false;
+                }
+            } else {
+                float inv = 1.0 / d[ax];
+                float ta = (-1.0 - o[ax]) * inv;
+                float tb = ( 1.0 - o[ax]) * inv;
+                t0 = max(t0, min(ta, tb));
+                t1 = min(t1, max(ta, tb));
+            }
+        }
+        if (shape == FOG_VOL_CYLINDER) {
+            vec2 o2 = o.xz;
+            vec2 d2 = d.xz;
+            float a = dot(d2, d2);
+            float c = dot(o2, o2) - 1.0;
+            if (a < 1e-12) {
+                // Straight up the axis: inside for its whole length, or outside
+                // for all of it.
+                if (c > 0.0) {
+                    return false;
+                }
+            } else {
+                float b = 2.0 * dot(o2, d2);
+                float disc = b * b - 4.0 * a * c;
+                if (disc <= 0.0) {
+                    return false;
+                }
+                float sq = sqrt(disc);
+                t0 = max(t0, (-b - sq) / (2.0 * a));
+                t1 = min(t1, (-b + sq) / (2.0 * a));
+            }
+        }
+    }
+    return t1 > t0;
+}
+
+// fogVolumeSpan is how far the segment from fogCamPos to worldPos travels inside
+// volume i, in world units. 0 when the segment misses it entirely.
+float fogVolumeSpan(int i, vec3 worldPos) {
+    vec3 seg = worldPos - fogCamPos;
+    float segLen = length(seg);
+    if (segLen < 1e-5) {
+        return 0.0;
+    }
+    float t0 = 0.0;
+    float t1 = segLen;
+    if (!fogShapeInterval(fogVolShape[i], fogVolBasis[i], fogVolCenter[i],
+                          fogCamPos, seg / segLen, t0, t1)) {
+        return 0.0;
+    }
+    return max(t1 - t0, 0.0);
+}
+
+// fogVolumeOpacity is volume i's share of this pixel: how much of its colour has
+// replaced what was behind it.
+float fogVolumeOpacity(int i, vec3 worldPos) {
+    float span = fogVolumeSpan(i, worldPos);
+    if (span <= 0.0) {
+        return 0.0;
+    }
+    return clamp(1.0 - exp(-fogVolDensity[i] * span), 0.0, 1.0) * fogVolMaxOpacity[i];
+}
+
+// applyFogVolumes blends every volume the segment crosses over the surface,
+// in level order.
+//
+// Level order, rather than sorted back-to-front: two overlapping volumes are the
+// one case the order is visible, sorting per-pixel is not something a fragment
+// shader can do to a uniform array, and volumes are authored to fill rooms
+// rather than to be stacked. Each one composites correctly against everything
+// already there, so a single volume — which is the case that exists — is exact.
+vec3 applyFogVolumes(vec3 color, vec3 worldPos) {
+    for (int i = 0; i < MAX_FOG_VOLUMES; ++i) {
+        if (i >= numFogVolumes) {
+            break;
+        }
+        color = mix(color, fogVolColor[i], fogVolumeOpacity(i, worldPos));
+    }
+    return color;
+}
+
+// fogVolumeTransmittance is how much of an ADDITIVE surface survives the
+// volumes in front of it — the same reasoning as applyFogAdditive: the
+// framebuffer already holds them, so a spark deep in a fog bank is swallowed
+// rather than tinted.
+float fogVolumeTransmittance(vec3 worldPos) {
+    float t = 1.0;
+    for (int i = 0; i < MAX_FOG_VOLUMES; ++i) {
+        if (i >= numFogVolumes) {
+            break;
+        }
+        t *= 1.0 - fogVolumeOpacity(i, worldPos);
+    }
+    return t;
+}
+
+// ---------- what a shading pass calls ----------
+
+// applyFog is the ordinary case: the surface is replaced by the fog in front of
+// it, in proportion.
+vec3 applyFog(vec3 color, vec3 worldPos) {
+    // Volumes first, then the distance fog over the top of them. The distance
+    // fog fills the WHOLE segment, including the part in front of the nearest
+    // volume, so it is the outermost layer; doing it the other way round would
+    // let a fog bank tint the haze that is actually between the viewer and it.
+    color = applyFogVolumes(color, worldPos);
+    return mix(color, fogColor, fogFactor(worldPos));
+}
+
+// applyFogAdditive is the same physical answer for a surface drawn with an
+// ADDITIVE blend, where the framebuffer already holds the fog behind it. Mixing
+// toward fogColor there would add the fog a second time and make a distant
+// spark BRIGHTER than a near one; what fog does to something that only ever
+// adds light is swallow it, so the contribution is attenuated instead.
+vec3 applyFogAdditive(vec3 color, vec3 worldPos) {
+    return color * (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos);
+}
+
+// applyFogModulate is the same answer again for a surface drawn with a MULTIPLY
+// blend — a decal's scorch mask (gfx.SurfaceBlendModulate).
+//
+// Such a fragment is not a colour but a FACTOR on what is already in the
+// framebuffer, and what is already there is the wall, fogged. Mixing the factor
+// toward fogColor would darken a distant wall by a grey mask on top of the haze
+// that has already replaced it; what fog does to a mark on a surface is hide it,
+// so the factor is faded toward WHITE instead — white being the factor that
+// changes nothing.
+vec3 applyFogModulate(vec3 color, vec3 worldPos) {
+    return mix(vec3(1.0), color,
+               (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos));
+}
+
+uniform sampler2D tex;
+uniform float alpha; // per-geometry alpha multiplier (default 1.0)
+
+// Second-texture blending (texture "splatting"). When hasBlend is set, tex is
+// mixed with blendTex using blendMask's per-pixel luminance as the mix
+// factor (0 = tex, 1 = blendTex) — see applyBlendUniforms in geometry.go. Any
+// existing texture can serve as blendMask; it need not be literally
+// grayscale, since only luminance is read.
+uniform int       hasBlend;
+uniform sampler2D blendTex;
+uniform sampler2D blendMask;
+
+// Normal (bump) mapping. When hasNormalMap is set, normalMap holds a
+// tangent-space normal, RGB-encoded as n * 0.5 + 0.5, derived from the height
+// field painted on the texture's bump channel in the texture editor (see
+// texdoc/bump.go). Off (0) by default, so a program that links this shader
+// without knowing about it — and every texture with no <name>_normal.png
+// beside it — shades exactly as it did before.
+uniform int       hasNormalMap;
+uniform sampler2D normalMap;
+
+// Alpha-cutout anti-aliasing, set for the opaque pass only (see
+// AlphaSharpenUniform in main.go). Off (0) by default so any program that
+// links this shader without knowing about it — and the sorted transparent
+// pass, where alpha means blending, not coverage — behaves exactly as before.
+uniform int alphaSharpen;
+
+// TAA's stand-in for alpha-to-coverage (render/taa.go): in a TAA frame the
+// scene target has one sample a pixel, so a cutout's edge coverage becomes the
+// chance the pixel is kept, a different threshold each frame (coverageNoise),
+// and TAA's history averages the frames back into the coverage. 0 — what an
+// unwritten uniform holds — is off; otherwise one more than the frame's place
+// in the jitter sequence. MUST match coverageNoise in foliage_frag.glsl,
+// foliage_imp_frag.glsl, sprite_frag.glsl and nanite_vis_frag.glsl.
+uniform int coverageDither;
+float coverageNoise(vec2 p, int frame) {
+    float ign = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+    return fract(ign + float(frame) * 0.125);
+}
+
+// Where a cutout's edge sits once mip filtering has turned its hard 0/255
+// alpha into a ramp: the level set that best reproduces the original
+// silhouette is the halfway point, not "any alpha at all".
+//
+// alphaCutoffBias moves it, for a material carrying a `cutout` effect with a
+// threshold of its own (material_kinds.go). A BIAS rather than the threshold,
+// so that zero — what GL gives an uninitialised uniform, and what every
+// surface with no cutout effect sends — is the 0.5 this was a constant at.
+// Clamped away from both ends: a threshold of 0 discards nothing and one of 1
+// discards everything, and neither is a thing an author means.
+uniform float alphaCutoffBias;
+
+// tintBias multiplies the albedo, carried as a BIAS FROM WHITE so that the zero
+// an unwritten uniform holds is no tint at all — the trick uvScaleBias plays.
+// A projected decal is what sets it: one grey scorch texture tinted eight ways
+// is eight different marks (gfx.Geometry.Tint).
+uniform vec3 tintBias;
+
+// surfaceBlend says how the FRAMEBUFFER blend will combine this fragment, which
+// the shading stage has to know about because two of the three answers are not a
+// colour at all:
+//
+//   0  ordinary — the fragment replaces or alpha-blends over what is behind it
+//   1  additive — it only ever ADDS light, so fog swallows it rather than
+//      replacing it (applyFogAdditive)
+//   2  modulate — it is a FACTOR on what is already in the framebuffer: a decal's
+//      scorch mask, where white changes nothing and black blacks the wall out
+//
+// Only a projected decal sets it (gfx.Geometry.Blend); everything else in the
+// engine leaves it at the 0 an unwritten uniform holds.
+uniform int surfaceBlend;
+float alphaCutoffLevel() {
+    return clamp(0.5 + alphaCutoffBias, 0.01, 0.99);
+}
+
+// Untextured surfaces. A face that names no texture takes its albedo from its
+// own normal, encoded as a colour (n * 0.5 + 0.5), instead of from tex — so a
+// brush blocked out and not yet painted reads as shape, with every plane a
+// different colour, rather than as the one flat slab that binding no texture
+// gives. Off (0) by default, so a program that links this shader without
+// knowing about it shades exactly as it did before.
+uniform int normalColor;
+
+// Self-lit surfaces — a laser, a glowing readout. When set, the texture's own
+// colour is the result: no light, no shadow, no clamp to what the scene's
+// lights allow. Fog still applies. Off (0) by default, so a program that links
+// this shader without knowing about it shades exactly as it did before.
+uniform int unlit;
+
+// Water surface. isWater gates the whole path.
+uniform int   isWater;
+uniform float time;
+uniform float waveAmplitude;
+uniform float waveLength;
+uniform float waveSpeed;
+uniform float reflectivity;
+uniform vec3  reflectColor;
+uniform vec3  camPos;
+
+// bakedLight selects a compiled level's static-geometry path: the static
+// lights for this fragment were summed once, offline, and arrive interpolated
+// on fragBakedLight; only the dynamic lights (dirLightDynamic,
+// pointLightDynamic) are still summed here. Uniform rather than inferred from
+// the attribute, for the reason skin_common.glsl gives about `skinned`: a
+// disabled vertex attribute reads a driver default, not zero, so an unlit
+// surface would read as "baked to black" rather than as "not baked".
+uniform int   bakedLight;
+// bakedSunLight is the directional light whose share of a baked surface's
+// light is carried per vertex (fragBakedLight.w; world.LightSet.BakedSun), or
+// -1. Within its cascades' reach a baked surface takes that share back off and
+// lights itself with the sun shadowed by the cascades instead — exactly what
+// an uncompiled level does — because the bake's shadow is a per-vertex ramp a
+// grid step wide, which washes a small caster's shadow out to nothing beside a
+// face its own normal turns dark at full resolution. Past the cascades the
+// bake's sun stands: it is the only shadow there is out there.
+uniform int   bakedSunLight;
+
+// Global ambient light
+
+uniform vec3  globalLightColor;
+uniform float globalLightBrightness;
+
+// Directional lights (e.g. sun)
+#define MAX_DIR_LIGHTS 4
+uniform int   numDirLights;
+uniform vec3  dirLightDir[MAX_DIR_LIGHTS];
+uniform vec3  dirLightColor[MAX_DIR_LIGHTS];
+uniform float dirLightBrightness[MAX_DIR_LIGHTS];
+// 1 for a light left out of the bake — see PointLight.Dynamic in light.go.
+uniform int   dirLightDynamic[MAX_DIR_LIGHTS];
+
+// Directional cascaded shadow maps.
+//
+// SHADOW_CASCADES, SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION must match
+// ShadowCascades / ShadowCascadeBlend / shadowFadeFraction in shadow.go.
+#define SHADOW_CASCADES       3
+#define SHADOW_CASCADE_BLEND  0.25
+#define SHADOW_FADE_FRACTION  0.15
+
+// One array texture holds every cascade of every casting light — MAX_DIR_LIGHTS
+// * SHADOW_CASCADES separate sampler2Ds would blow the 16 fragment texture
+// units GL 4.1 guarantees.
+// A comparison sampler: each lookup passes the fragment's own depth as a
+// reference and gets back the fraction of the four filtered texels it is in
+// front of, so a tap is a smooth 0..1 rather than a per-texel yes/no. The
+// compare mode lives on the texture (EnsureCascadeArray in shadow.go).
+uniform sampler2DArrayShadow shadowMapArray;
+uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+// One texel of each cascade in world units (render.DirCascade.Texel).
+uniform float cascadeTexel[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+uniform float cascadeSplit[SHADOW_CASCADES]; // view-space distance each cascade ends at
+uniform int   dirLightShadowLayer[MAX_DIR_LIGHTS]; // first array layer, -1 = light doesn't cast
+uniform bool  dirLightCastShadows[MAX_DIR_LIGHTS];
+uniform float dirLightShadowStrength[MAX_DIR_LIGHTS];
+
+// Point lights
+#define MAX_POINT_LIGHTS 8
+uniform int   numPointLights;
+uniform vec3  pointLightPos[MAX_POINT_LIGHTS];
+uniform vec3  pointLightColor[MAX_POINT_LIGHTS];
+uniform float pointLightBrightness[MAX_POINT_LIGHTS];
+uniform float pointLightRadius[MAX_POINT_LIGHTS];
+uniform int   pointLightDynamic[MAX_POINT_LIGHTS];
+
+// Point light cubemap shadow maps
+uniform samplerCube pointShadowMap[MAX_POINT_LIGHTS];
+uniform bool        pointLightCastShadows[MAX_POINT_LIGHTS];
+uniform float       pointLightShadowStrength[MAX_POINT_LIGHTS];
+uniform float       pointLightFarPlane[MAX_POINT_LIGHTS];
+
+// Smooth shading. When set, the surface normal is the interpolated per-vertex
+// normal supplied by the vertex/tessellation stage instead of the flat facet
+// the derivatives below recover — see smooth.go.
+uniform int smoothShading;
+
+in vec2 fragTexCoord;
+in vec3 fragWorldPos;
+in vec3 fragNormal;
+// Distance along the view axis, used to pick a cascade. The light-space
+// positions themselves are derived here from fragWorldPos rather than passed as
+// varyings — a vec4 per light per cascade would be 48 float varyings against a
+// guaranteed budget of 60.
+in float fragViewDepth;
+// The compiled level's baked lighting, interpolated across the triangle: xyz
+// the colour, w the baked sun's share (bakedSunLight; -1 where the sun was not
+// baked into this surface at all). Junk unless bakedLight is set — see the
+// uniform.
+in vec4 fragBakedLight;
+// The part of fragBakedLight.rgb that is ambient and bounce (vertex.glsl).
+in vec3 fragBakedIndirect;
+
+out vec4 outputColor;
+
+// MUST stay identical to waterHeight() in vertex.glsl — see the note there.
+float waterHeight(vec2 p) {
+    float k = 6.2831853 / max(waveLength, 0.001);
+    float t = time * waveSpeed * 6.2831853;
+
+    float h = 0.0;
+    h += sin(p.x * k + t) * 0.50;
+    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
+    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
+    return h * waveAmplitude;
+}
+
+// Central-difference gradient of the wave field. Done per-pixel rather than
+// per-vertex so the swell stays smooth regardless of mesh density, and so no
+// extra varying is needed — this fragment shader is also linked against the
+// detail tessellation and scatter vertex stages, which know nothing of water.
+vec3 waterNormal(vec2 p) {
+    float e  = max(waveLength * 0.02, 0.01);
+    float hL = waterHeight(p - vec2(e, 0.0));
+    float hR = waterHeight(p + vec2(e, 0.0));
+    float hD = waterHeight(p - vec2(0.0, e));
+    float hU = waterHeight(p + vec2(0.0, e));
+    return normalize(vec3(hL - hR, 2.0 * e, hD - hU));
+}
+
+// Tangent frame reconstructed from screen-space derivatives, rather than from
+// per-vertex tangent attributes.
+//
+// Every mesh in the engine — walls, floors, surface meshes, skinned models,
+// tessellated detail patches, scattered rock instances — shares one 5-float
+// [X,Y,Z,U,V] vertex record (see Geometry in geometry.go). Adding a tangent to
+// it would mean touching every builder, every buffer and every shadow pass for
+// something the fragment stage can recover exactly here: dp/du and dp/dv are
+// what a tangent frame *is*, and dFdx/dFdy of position and UV give them.
+//
+// The cost is one frame per fragment instead of one per vertex; the gain is
+// that a normal map works on every surface in the engine the day it lands,
+// including the procedurally displaced ones that have no authored UVs to hang
+// a tangent off.
+mat3 cotangentFrame(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    // Scale both axes by the same factor so the frame stays orthonormal-ish
+    // rather than stretching the normal along whichever axis is denser.
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
+// 5x5 PCF sample of a single cascade layer, its taps spread texels apart.
+// Returns occlusion in 0..1, or -1.0 when the fragment falls outside this
+// cascade's box — the caller then falls through to a wider cascade rather than
+// reporting the fragment as lit.
+float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal, vec3 lightDir, float spread) {
+    vec4 posLS = cascadeMatrix[matIdx] * vec4(fragWorldPos, 1.0);
+    vec3 projCoords = posLS.xyz / posLS.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+        projCoords.z > 1.0) {
+        return -1.0;
+    }
+
+    // Quadratic slope-scaled bias — tighter than linear at seams. The base bias
+    // is per-cascade because each cascade normalizes the same world-space bias
+    // over its own depth range.
+    float base = cascadeBias[matIdx];
+    float cosTheta = abs(dot(normal, lightDir));
+    // Scaled by the spread: a tap further out along a slope reads a depth
+    // that much further from this fragment's, and would shadow the surface
+    // it stands on.
+    float bias = (base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05) * spread;
+    float currentDepth = projCoords.z;
+
+    // 5x5 PCF for softer edges. Every tap is itself bilinearly filtered by the
+    // comparison sampler, so the result is continuous across a texel rather
+    // than stepping from one whole texel to the next — which is what kept
+    // shadow edges on nearby geometry looking like a staircase of blocks, a
+    // cascade-0 texel being centimetres wide in the world but tens of pixels
+    // wide on screen when the surface is a couple of metres from the camera.
+    float ref = currentDepth - bias;
+    float lit = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(map, 0).xy);
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
+            lit += texture(map,
+                vec4(projCoords.xy + vec2(x, y) * texelSize * spread, float(layer), ref));
+        }
+    }
+    return 1.0 - lit / 25.0;
+}
+
+// dirShadowReach is how far the cascades can be believed at this fragment: 1
+// within their range, falling to 0 over the fade at its end and 0 beyond.
+float dirShadowReach() {
+    float maxDist = cascadeSplit[SHADOW_CASCADES - 1];
+    float fadeBegin = maxDist * (1.0 - SHADOW_FADE_FRACTION);
+    return 1.0 - clamp((fragViewDepth - fadeBegin) / max(maxDist - fadeBegin, 1e-4), 0.0, 1.0);
+}
+
+// cascadeSpread is how many of its own texels apart cascade c's PCF taps are,
+// at fraction t of the way through its depth range: one, its own resolution,
+// for the near part of it, widening to the next cascade's texel by the split.
+// Each cascade's texels are several times the last one's, so a fixed
+// footprint in texels made shadow edges jump that much softer at every
+// hand-over; matched like this, the two cascades filter alike where they meet
+// and the edges soften steadily with distance instead.
+float cascadeSpread(int matBase, int c, float t) {
+    if (c + 1 >= SHADOW_CASCADES) {
+        return 1.0;
+    }
+    float own = max(cascadeTexel[matBase + c], 1e-5);
+    float ratio = max(cascadeTexel[matBase + c + 1] / own, 1.0);
+    return mix(1.0, ratio, smoothstep(0.25, 1.0, t));
+}
+
+// calcDirShadowUnfaded is the cascades' shadow at this fragment for light
+// lightIdx, whose cascades in the array start at layerBase (-1: none), before
+// the fade at the end of their range.
+float calcDirShadowUnfaded(int layerBase, int lightIdx, vec3 normal, vec3 lightDir) {
+    // The sun's virtual shadow map, when the frame drew one for this light
+    // in place of its cascades (vsm.glsl, render/vsm.go).
+    if (vsmShadows(lightIdx)) {
+        return vsmShadow(fragWorldPos, normal, lightDir);
+    }
+    if (layerBase < 0) {
+        return 0.0;
+    }
+
+    int c = SHADOW_CASCADES;
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        if (fragViewDepth <= cascadeSplit[i]) {
+            c = i;
+            break;
+        }
+    }
+    if (c >= SHADOW_CASCADES) {
+        return 0.0; // beyond ShadowMaxDistance — unshadowed
+    }
+
+    int matBase = lightIdx * SHADOW_CASCADES;
+    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
+    float span = max(cascadeSplit[c] - prev, 1e-4);
+    float t = (fragViewDepth - prev) / span;
+    float shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir,
+        cascadeSpread(matBase, c, t));
+    if (shadow < 0.0) {
+        // A fragment at the corner of a slice can sit just outside its own
+        // cascade's box; the next one out always contains it.
+        if (c + 1 < SHADOW_CASCADES) {
+            c += 1;
+            shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir, 1.0);
+        }
+        if (shadow < 0.0) {
+            return 0.0;
+        }
+        return shadow;
+    }
+
+    // Cross-fade over the tail of this cascade, so what the filter matching
+    // in cascadeSpread leaves of the change in depth resolution reads as a
+    // softening rather than a seam.
+    if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
+        float next = sampleCascade(shadowMapArray, matBase + c + 1, layerBase + c + 1, normal, lightDir, 1.0);
+        if (next >= 0.0) {
+            shadow = mix(shadow, next, smoothstep(1.0 - SHADOW_CASCADE_BLEND, 1.0, t));
+        }
+    }
+
+    return shadow;
+}
+
+// Cascaded directional shadow lookup: pick the tightest cascade covering this
+// fragment, cross-fade into the next at the split, and fade out entirely as the
+// shadow range runs out, so the boundary isn't a hard line across the ground.
+float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
+    return calcDirShadowUnfaded(dirLightShadowLayer[lightIdx], lightIdx, normal, lightDir)
+        * dirShadowReach();
+}
+
+// Sample offsets for soft point light shadows (20 directions).
+const int NUM_POINT_SAMPLES = 20;
+const vec3 sampleOffsets[20] = vec3[](
+    vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
+    vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+    vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
+    vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
+    vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+);
+
+// Point light cubemap shadow sampling with PCF-like disk.
+float calcPointShadow(int lightIdx, vec3 fragPos) {
+    vec3 fragToLight = fragPos - pointLightPos[lightIdx];
+    float currentDist = length(fragToLight);
+    float farPlane = pointLightFarPlane[lightIdx];
+
+    // Disk radius scales with distance for consistent softness
+    float diskRadius = (1.0 + currentDist / farPlane) * 0.02;
+    float bias = 0.05;
+
+    float shadow = 0.0;
+    for (int i = 0; i < NUM_POINT_SAMPLES; i++) {
+        float closestDist = texture(pointShadowMap[lightIdx], fragToLight + sampleOffsets[i] * diskRadius).r;
+        closestDist *= farPlane; // stored as dist/farPlane, convert back
+        if (currentDist - bias > closestDist) {
+            shadow += 1.0;
+        }
+    }
+    shadow /= float(NUM_POINT_SAMPLES);
+
+    return shadow;
+}
+
+// dirLightContrib is directional light i's share of this fragment: wrapped
+// Lambert on the side facing the viewer (light_model.glsl), then its cascade
+// shadow and the clouds'. geoNormal is the unbumped normal the shadow bias
+// wants — see main.
+vec3 dirLightContrib(int i, vec3 normal, vec3 geoNormal) {
+    vec3 ldir = -normalize(dirLightDir[i]);
+    float diff = lightWrapTerm(dot(normal, ldir));
+    if (diff <= 0.0) {
+        return vec3(0.0); // facing away: no shadow lookup to pay for
+    }
+    vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
+
+    if (dirLightCastShadows[i]) {
+        float shadow = calcDirShadow(i, geoNormal, ldir);
+        // Shadow strength: 0 = no darkening, 1 = full shadow
+        contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
+    }
+    // The clouds' shadow, on top of the geometry's. Its own map, not a
+    // cascade: a cloud is a volume and casts a soft, partial shadow no depth
+    // map can hold. See cloud_shadow.glsl.
+    contrib *= cloudShadowFactor(i, fragWorldPos);
+    return contrib;
+}
+
+// pointLightContrib is point light i's share: wrapped Lambert, quadratic
+// falloff to nothing at its radius, then its cubemap shadow.
+vec3 pointLightContrib(int i, vec3 normal) {
+    vec3  toLight = pointLightPos[i] - fragWorldPos;
+    float dist    = length(toLight);
+    if (dist >= pointLightRadius[i]) {
+        return vec3(0.0);
+    }
+    float t           = 1.0 - (dist / pointLightRadius[i]);
+    float attenuation = t * t;
+    float diff        = lightWrapTerm(dot(normal, normalize(toLight)));
+    if (diff <= 0.0) {
+        return vec3(0.0);
+    }
+    vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
+
+    if (pointLightCastShadows[i]) {
+        float shadow = calcPointShadow(i, fragWorldPos);
+        contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
+    }
+    return contrib;
+}
+
+void main() {
+    // Screen-space derivatives, taken once at the top of main and outside every
+    // branch: derivatives are only defined under uniform control flow, and
+    // gl_FrontFacing below is anything but.
+    vec3 dPdx = dFdx(fragWorldPos);
+    vec3 dPdy = dFdy(fragWorldPos);
+    vec2 dUVdx = dFdx(fragTexCoord);
+    vec2 dUVdy = dFdy(fragTexCoord);
+
+    // Flat facet normal from screen-space position derivatives. Correct for a
+    // flat surface and the fallback whenever no better normal is available.
+    //
+    // The cross product of two screen-space derivatives says nothing about the
+    // triangle's winding: window x cross window y always comes out facing the
+    // eye. So it is turned OUTWARD by the winding (away from the eye on a back
+    // face), which is the orientation the interpolated normals below arrive
+    // in and the one everything after this reads. Lighting is one-sided
+    // (light_model.glsl), so a facet normal facing the wrong way would light a
+    // surface from behind — which abs(N.L) used to hide.
+    vec3 faceNormal = normalize(cross(dPdx, dPdy));
+    faceNormal *= gl_FrontFacing ? 1.0 : -1.0;
+
+    vec3 normal;
+    if (isWater != 0) {
+        // Re-derive from the wave field; the facet normal would only recover the
+        // flat triangle and lose the swell entirely.
+        normal = waterNormal(fragWorldPos.xz);
+    } else if (smoothShading != 0 && dot(fragNormal, fragNormal) > 1e-12) {
+        // Interpolated across the triangle, so lighting varies continuously
+        // instead of stepping at every shared edge.
+        normal = normalize(fragNormal);
+    } else {
+        normal = faceNormal;
+    }
+
+    // The outward normal as the polygon itself declares it, kept before the
+    // back-face flip below: it is what normalColor paints an untextured face
+    // with, and a face has to keep one colour whichever side it is seen from —
+    // flipping it would make the inside of a hollowed room the photographic
+    // negative of its outside.
+    vec3 albedoNormal = normal;
+
+    // Flip normal for back faces so double-sided surfaces are lit correctly.
+    if (!gl_FrontFacing) {
+        normal = -normal;
+    }
+
+    // The shape of the surface, before any normal map perturbs it. The shadow
+    // lookups keep shading off this one: their slope-scaled bias describes how
+    // far the *geometry* is tilted away from the light, and feeding it a
+    // per-texel bumped normal would make the bias flicker texel to texel and
+    // stipple acne across an otherwise clean surface. Same reasoning as the
+    // flat-normal shadow term in biome_frag.glsl.
+    vec3 geoNormal = normal;
+
+    vec2 uv = fragTexCoord;
+    if (isWater != 0) {
+        // Two layers scrolling at different speeds/headings so the texture
+        // never reads as a rigid sheet sliding across the surface.
+        float t = time * waveSpeed;
+        uv += vec2(t * 0.03, t * 0.02);
+    }
+
+    vec4 texColor;
+    if (normalColor != 0) {
+        // No texture named, so there is nothing to sample and nothing to blend
+        // over: the normal is the albedo. Opaque, whatever texture object
+        // happens to be bound.
+        texColor = vec4(albedoNormal * 0.5 + 0.5, 1.0);
+    } else {
+        texColor = texture(tex, uv);
+        if (isWater != 0) {
+            vec2 uv2 = fragTexCoord * 1.7 - vec2(time * waveSpeed * 0.021, time * waveSpeed * 0.034);
+            texColor = mix(texColor, texture(tex, uv2), 0.5);
+        }
+
+        if (hasBlend != 0) {
+            vec4 blendColor = texture(blendTex, uv);
+            vec3 maskColor = texture(blendMask, uv).rgb;
+            float maskLum = dot(maskColor, vec3(0.299, 0.587, 0.114));
+            texColor = mix(texColor, blendColor, maskLum);
+        }
+    }
+
+    // The albedo tint, on the sampled texture rather than on the shaded result:
+    // a tint says what colour the surface IS, so it has to be in place before
+    // the lighting multiplies it — tinting afterwards would scale the light as
+    // well and turn a dark red decal into an unlit patch. Applied to the
+    // normalColor path too, so an untextured surface can still be tinted.
+    texColor.rgb *= vec3(1.0) + tintBias;
+
+    // Normal mapping, on everything but water — water derives its normal from
+    // the wave field, which is the whole point of that path, and a tangent
+    // frame built on a surface that is displacing under the fragment would not
+    // describe it anyway. Both conditions are uniforms, so the texture() call
+    // inside stays under uniform control flow.
+    if (hasNormalMap != 0 && isWater == 0) {
+        mat3 tbn = cotangentFrame(normal, dPdx, dPdy, dUVdx, dUVdy);
+        vec3 tangentNormal = texture(normalMap, uv).xyz * 2.0 - 1.0;
+        if (dot(tangentNormal, tangentNormal) > 1e-6) {
+            normal = normalize(tbn * tangentNormal);
+        }
+    }
+
+    vec3 lighting;
+
+    // A compiled level's static geometry had the static lights summed once,
+    // offline, and interpolates that answer instead — the light loops, the
+    // cascade selection and the shadow-map samples for every one of them are
+    // what that buys. The dynamic lights were left out of the bake, so they
+    // are the only ones still summed for it.
+    if (bakedLight != 0) {
+        // Clouds still move over a baked level, so their shadow is taken off
+        // the baked answer here — see CLOUD_SHADOW_BAKED_SHARE in
+        // cloud_shadow.glsl for why a share rather than the whole of it. Unless
+        // the sun the map follows is dynamic: then none of the baked answer is
+        // its light, and its own term below takes the shadow in full.
+        lighting = fragBakedLight.rgb;
+        // Live GI replaces the ambient and the bounce the bake folded in
+        // (fragBakedIndirect is exactly that part), and keeps the static
+        // lights' own direct light. See render/gi.go.
+        if (giEnabled != 0) {
+            lighting = max(lighting - fragBakedIndirect, vec3(0.0))
+                + ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal);
+        }
+        // The baked sun, re-shadowed by the cascades where they reach (see
+        // bakedSunLight). What the bake put in comes off: the sun's unshadowed
+        // light on the unbumped normal the bake lit with, times the share it
+        // kept. What goes on is the sun as an uncompiled level has it: on the
+        // bumped normal, so a normal map shows in the sunlight, times what the
+        // cascades keep — and they hold everything that casts, the compiled
+        // world, entities and chunks drawn live, so this is the whole of the
+        // sun's shadow, crisp. Where they fade out, the bake's share stands.
+        if (bakedSunLight >= 0 && fragBakedLight.w >= 0.0) {
+            int s = bakedSunLight;
+            vec3 ldir = -normalize(dirLightDir[s]);
+            float baked = lightWrapTerm(dot(geoNormal, ldir));
+            float diff = lightWrapTerm(dot(normal, ldir));
+            if (baked > 0.0 || diff > 0.0) {
+                float kept = fragBakedLight.w;
+                float reach = dirShadowReach();
+                if (reach > 0.0) {
+                    float shadow = calcDirShadowUnfaded(dirLightShadowLayer[s], s, geoNormal, ldir);
+                    kept = mix(kept, 1.0 - shadow * dirLightShadowStrength[s], reach);
+                }
+                vec3 sun = dirLightColor[s] * dirLightBrightness[s];
+                lighting = max(lighting + sun * (diff * kept - baked * fragBakedLight.w), vec3(0.0));
+            }
+        }
+        if (dirLightDynamic[clamp(cloudShadowLight, 0, MAX_DIR_LIGHTS - 1)] == 0) {
+            lighting *= mix(1.0,
+                cloudShadowFactor(cloudShadowLight, fragWorldPos), CLOUD_SHADOW_BAKED_SHARE);
+        }
+        for (int i = 0; i < numDirLights; i++) {
+            if (dirLightDynamic[i] != 0) {
+                lighting += dirLightContrib(i, normal, geoNormal);
+            }
+        }
+        for (int i = 0; i < numPointLights; i++) {
+            if (pointLightDynamic[i] != 0) {
+                lighting += pointLightContrib(i, normal);
+            }
+        }
+    } else {
+        // Every light, static or dynamic, on anything that was not baked.
+        lighting = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal);
+        for (int i = 0; i < numDirLights; i++) {
+            lighting += dirLightContrib(i, normal, geoNormal);
+        }
+        for (int i = 0; i < numPointLights; i++) {
+            lighting += pointLightContrib(i, normal);
+        }
+    }
+
+    float finalAlpha = texColor.a * alpha;
+
+    if (alphaSharpen != 0) {
+        // Re-derive a crisp, roughly one-pixel-wide edge from the soft alpha
+        // ramp mip filtering leaves behind, and hand that to
+        // alpha-to-coverage (SetAlphaToCoverage, antialias.go) as the
+        // fraction of the pixel the cutout actually covers.
+        //
+        // Without this, mipmapping and cutouts fight each other: distant mip
+        // levels average a foliage texture's alpha down below the cutoff over
+        // more and more of the shape, so it thins and eventually dissolves —
+        // the classic regression from turning mipmaps on over alpha-tested
+        // art. Rescaling by fwidth is what makes the edge's *screen-space*
+        // width constant instead of its texture-space width: distance is
+        // divided back out, so the silhouette stays put and only the last
+        // pixel of it is partially covered.
+        //
+        // On a fully opaque texel fwidth is 0, the division saturates, and
+        // the clamp pins coverage at 1 — ordinary opaque geometry is
+        // untouched by this path, which is why it can stay on for the whole
+        // opaque pass rather than being switched per surface.
+        finalAlpha = clamp((finalAlpha - alphaCutoffLevel()) / max(fwidth(finalAlpha), 1e-5) + 0.5, 0.0, 1.0);
+        if (coverageDither != 0) {
+            if (finalAlpha <= coverageNoise(gl_FragCoord.xy, coverageDither)) discard;
+            finalAlpha = 1.0;
+        }
+    }
+
+    if (finalAlpha < 0.001) discard;
+
+    vec3 surface = unlit != 0 ? texColor.rgb : texColor.rgb * clamp(lighting, 0.0, 1.0);
+    // The GI debug view (gi_debug): the light alone, as if every surface
+    // were white, so what GI adds can be told from what the textures are.
+    if (giDebug == 1 && unlit == 0) {
+        surface = clamp(lighting, 0.0, 1.0);
+    }
+
+    if (isWater != 0) {
+        vec3 viewDir = normalize(camPos - fragWorldPos);
+
+        // Schlick fresnel: water is barely reflective looking straight down and
+        // near-mirror at grazing angles, which is what sells it as a surface.
+        float cosTheta = clamp(dot(normal, viewDir), 0.0, 1.0);
+        float fresnel  = reflectivity + (1.0 - reflectivity) * pow(1.0 - cosTheta, 5.0);
+
+        surface = mix(surface, reflectColor * clamp(lighting, 0.0, 1.0), fresnel);
+
+        // Blinn-Phong glint from each directional light — the moving specular
+        // highlight that reads as sun on water.
+        for (int i = 0; i < numDirLights; i++) {
+            vec3  ldir = -normalize(dirLightDir[i]);
+            vec3  halfVec = normalize(ldir + viewDir);
+            float spec = pow(max(dot(normal, halfVec), 0.0), 128.0);
+            surface += dirLightColor[i] * dirLightBrightness[i] * spec * fresnel;
+        }
+
+        // Grazing angles also read as more opaque, matching the reflection.
+        finalAlpha = clamp(finalAlpha + fresnel * (1.0 - finalAlpha) * 0.5, 0.0, 1.0);
+    }
+
+    if (surfaceBlend == 2) {
+        // A modulate decal is a MASK, not a surface. Three things follow, and
+        // all three are wrong if it is shaded like anything else here.
+        //
+        // It is never lit: the wall under it has already been lit, and lighting
+        // the mask as well would apply the room's light to that wall twice.
+        //
+        // Its alpha cannot be left to the framebuffer blend. The GL multiply
+        // blend can express `src * dst` and not `dst * mix(1, src, a)`, so a
+        // half-transparent WHITE texel would come out brighter than the wall it
+        // is supposed to leave alone. Folding the alpha toward white here is what
+        // makes a partly-faded mask fade instead of glowing — which is also what
+        // lets a decal's lifetime fade one out at all.
+        //
+        // And its fog fades it toward white rather than toward the fog colour,
+        // for the reason applyFogModulate gives.
+        surface = mix(vec3(1.0), texColor.rgb, finalAlpha);
+        surface = applyFogModulate(surface, fragWorldPos);
+        outputColor = vec4(surface, 1.0);
+        return;
+    }
+
+    // Distance fog, last: it acts on the shaded result, so a fogged surface
+    // loses its own lighting along with its colour rather than glowing through
+    // the fog. See fog.glsl, injected above this file's own #version line.
+    //
+    // An additive fragment takes the other form of the same answer: the
+    // framebuffer already holds the fog behind it, so mixing toward the fog
+    // colour would add the fog a second time and make a distant mark brighter
+    // than a near one.
+    surface = surfaceBlend == 1
+        ? applyFogAdditive(surface, fragWorldPos)
+        : applyFog(surface, fragWorldPos);
+
+    outputColor = vec4(surface, finalAlpha);
+}
+---
+10:52:33 [foundry] fragment shader compiled OK
+10:52:34 [foundry] dir shadow program linked OK (id=6)
+10:52:34 [foundry] cube shadow program linked OK (id=9)
+10:52:34 [foundry] dummy cubemap created (id=1)
+10:52:39 [foundry] foliage: GPU cull on
+10:52:42 [foundry] foliage: Nanite path on: 54 variants, 538 clusters, 1503 parts, 7959 bricks, voxel raster ray-marched boxes
+10:52:42 [foundry] shader program linked OK (id=3)
+10:52:42 [foundry] starting with blank level
+10:52:42 [foundry] level loaded: 0 chunk(s), 0 dir light(s), 0 point light(s)
+10:52:42 [foundry] uploading lights: global=1, directional=0, point=0
+10:52:42 [foundry] light uniforms uploaded
+10:52:42 [foundry] startup complete — entering game loop
+10:52:42 [foundry] bench: loading level3: open /home/jfcarter2358/personal/code/main/foundry/resources/levels/level3.fbsp: no such file or directory

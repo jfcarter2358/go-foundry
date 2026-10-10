@@ -1,0 +1,105 @@
+# Builds the editor distribution (`task dist-editor`) and attaches it to the
+# GitHub release for the tag that was pushed:
+#
+#   git tag v1.2.3 && git push origin v1.2.3
+#
+# The editor is stamped with the tag's semver (1.2.3, no leading v) and the
+# release gets:
+#
+#   foundry-editor-<version>-windows-amd64-setup.exe
+#   foundry-editor-<version>-windows-amd64.zip
+#   foundry-editor-<version>-linux-amd64.tar.gz
+#
+# If the release already exists (made by hand from the GitHub UI, say), the
+# files are uploaded onto it instead; re-running replaces them.
+
+name: Release editor
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v<major>.<minor>.<patch> tag to (re)build and publish
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-editor-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # The mingw development package the Windows editor links against. Matches the
+  # one the release builds have been made with locally.
+  SDL_MINGW_VERSION: 2.30.10
+
+jobs:
+  dist-editor:
+    # 24.04's mingw-w64 is gcc 13 with the win32 thread model, the same
+    # toolchain the Windows builds have shipped from.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Resolve version from tag
+        id: version
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::'$TAG' is not a v<major>.<minor>.<patch> tag"; exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: go-task/setup-task@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # libsdl2-dev + libgl-dev: the Linux editor and release runtime (cgo,
+          # pkg-config sdl2 / gl). mingw-w64: the Windows cross builds.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libsdl2-dev libgl-dev mingw-w64
+
+      - name: Install SDL2 for mingw
+        run: |
+          curl -fsSL -o sdl2-mingw.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_MINGW_VERSION}/SDL2-devel-${SDL_MINGW_VERSION}-mingw.tar.gz"
+          tar -xzf sdl2-mingw.tar.gz
+          # go-sdl2 links Windows with plain -lSDL2 and includes <SDL2/SDL.h>,
+          # so the headers and import libs just need to be in mingw's sysroot.
+          sudo cp -r "SDL2-${SDL_MINGW_VERSION}/x86_64-w64-mingw32/include/." /usr/x86_64-w64-mingw32/include/
+          sudo cp -r "SDL2-${SDL_MINGW_VERSION}/x86_64-w64-mingw32/lib/." /usr/x86_64-w64-mingw32/lib/
+          rm -rf sdl2-mingw.tar.gz "SDL2-${SDL_MINGW_VERSION}"
+
+      - name: Build editor distribution
+        run: task dist-editor EDITOR_VERSION=${{ steps.version.outputs.version }}
+
+      - name: Publish to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          shopt -s nullglob
+          files=(build/editor-dist/foundry-editor-"$VERSION"-*)
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::no editor artifacts in build/editor-dist"; exit 1
+          fi
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes --title "Foundry $TAG"
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber

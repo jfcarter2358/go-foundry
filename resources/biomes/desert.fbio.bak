@@ -1,0 +1,94 @@
+# desert.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Desert
+ground:
+  texture: ground_desert
+  tint: [0.78, 0.64, 0.44]
+  cover: 0.2
+species:
+- shape: cactus
+  variants: [0]
+  spacing: 11
+  where: [ground]
+  slope: [0, 30]
+  scale: [0.7, 1.3]
+  colors: [[0.42, 0.54, 0.34], [0.54, 0.64, 0.42]]
+  upright: 1
+  light: [0.6, 1]
+  cluster: 0.25
+  cluster_size: 20
+  edge: -0.5
+  moisture: -0.3
+  clearance: 4
+  color_noise: 0.15
+- shape: cactus
+  variants: [1, 2]
+  spacing: 5
+  where: [ground]
+  slope: [0, 40]
+  scale: [0.7, 1.3]
+  colors: [[0.42, 0.54, 0.34], [0.54, 0.64, 0.42]]
+  accents: [[0.95, 0.35, 0.45], [0.97, 0.8, 0.25], [0.92, 0.55, 0.2]]
+  upright: 1
+  light: [0.5, 1]
+  cluster: 0.6
+  cluster_size: 7
+  edge: 0.5
+  clearance: 1
+  color_noise: 0.15
+- shape: dead_bush
+  spacing: 3.2
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.6, 1.2]
+  colors: [[0.4, 0.36, 0.32], [0.54, 0.5, 0.44]]
+  accents: [[0.52, 0.56, 0.46], [0.6, 0.62, 0.52]]
+  upright: 0.9
+  light: [0.4, 1]
+  cluster: 0.4
+  cluster_size: 6
+  edge: 0.6
+  color_noise: 0.2
+- shape: grass
+  spacing: 1.3
+  where: [ground]
+  slope: [0, 40]
+  scale: [0.5, 0.9]
+  colors: [[0.66, 0.56, 0.3], [0.8, 0.68, 0.4]]
+  upright: 0.6
+  light: [0.4, 1]
+  cluster: 0.8
+  cluster_size: 3
+  edge: 0.8
+  moisture: 0.4
+  color_noise: 0.3
+- shape: rock
+  spacing: 5
+  where: [ground]
+  slope: [0, 80]
+  scale: [0.25, 1]
+  colors: [[0.66, 0.54, 0.4], [0.8, 0.68, 0.52]]
+  sink: 0.4
+  cluster: 0.55
+  cluster_size: 8
+  edge: 1.6
+  color_noise: 0.15
+- shape: pebbles
+  spacing: 2.2
+  where: [ground]
+  slope: [0, 55]
+  scale: [0.7, 1.3]
+  colors: [[0.66, 0.54, 0.4], [0.8, 0.68, 0.52]]
+  sink: 0.25
+  cluster: 0.5
+  cluster_size: 4
+  edge: 1
+- shape: deadwood
+  spacing: 16
+  where: [ground]
+  slope: [0, 30]
+  scale: [0.5, 0.9]
+  colors: [[0.6, 0.56, 0.5], [0.76, 0.72, 0.66]]
+  sink: 0.1
+  cluster: 0.3
+  cluster_size: 10

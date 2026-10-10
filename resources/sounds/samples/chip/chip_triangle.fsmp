@@ -1,0 +1,10 @@
+base_note: C-3
+loop: forward
+loop_start: 3932
+loop_end: 18609
+tags:
+- chip
+- triangle
+- nes
+- 8bit
+description: 'NES triangle: 4-bit staircase bass'

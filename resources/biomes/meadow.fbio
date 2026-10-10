@@ -1,0 +1,103 @@
+# meadow.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Meadow
+doc: 'Open grassland: grass, drifts of flowers, shrubs and stones at the foot of slopes,
+  moss and vines on cliffs.'
+ground:
+  texture: ground_meadow
+  tint: [0.34, 0.46, 0.16]
+  cover: 0.8
+species:
+- shape: grass
+  spacing: 0.3
+  where: [ground]
+  slope: [0, 55]
+  scale: [0.75, 1.2]
+  colors: [[0.28, 0.44, 0.12], [0.42, 0.54, 0.17]]
+  upright: 0.6
+  light: [0.25, 1]
+  cluster: 0.12
+  cluster_size: 5
+  edge: -0.3
+  color_noise: 0.35
+- shape: tall_grass
+  spacing: 0.75
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.8, 1.35]
+  colors: [[0.42, 0.5, 0.2], [0.6, 0.58, 0.3]]
+  upright: 0.8
+  light: [0.3, 1]
+  cluster: 0.65
+  cluster_size: 7
+  edge: 0.8
+  color_noise: 0.3
+- shape: flower
+  spacing: 0.9
+  where: [ground]
+  slope: [0, 35]
+  scale: [0.8, 1.25]
+  colors: [[0.26, 0.42, 0.14], [0.36, 0.5, 0.18]]
+  accents: [[0.95, 0.93, 0.85], [0.95, 0.8, 0.18], [0.55, 0.35, 0.8], [0.35, 0.45,
+      0.9], [0.9, 0.35, 0.4], [0.97, 0.6, 0.2]]
+  upright: 0.85
+  light: [0.5, 1]
+  cluster: 0.8
+  cluster_size: 6
+  color_noise: 0.15
+- shape: shrub
+  spacing: 7
+  where: [ground]
+  slope: [0, 40]
+  scale: [0.55, 1]
+  colors: [[0.2, 0.34, 0.12], [0.32, 0.42, 0.16]]
+  upright: 0.9
+  light: [0.35, 1]
+  cluster: 0.5
+  cluster_size: 10
+  edge: 1.2
+  clearance: 2
+- shape: rock
+  spacing: 6
+  where: [ground]
+  slope: [0, 70]
+  scale: [0.2, 0.65]
+  colors: [[0.42, 0.41, 0.39], [0.6, 0.58, 0.54]]
+  sink: 0.35
+  cluster: 0.45
+  cluster_size: 8
+  edge: 1.5
+- shape: pebbles
+  spacing: 3
+  where: [ground]
+  slope: [0, 50]
+  scale: [0.7, 1.2]
+  colors: [[0.42, 0.41, 0.39], [0.6, 0.58, 0.54]]
+  sink: 0.2
+  cluster: 0.6
+  cluster_size: 5
+  edge: 1
+- shape: moss
+  spacing: 0.9
+  where: [wall, ceiling]
+  scale: [0.6, 1.3]
+  colors: [[0.22, 0.34, 0.1], [0.36, 0.46, 0.14]]
+  light: [0, 0.85]
+  cluster: 0.55
+  cluster_size: 3
+  moisture: 0.4
+- shape: vine
+  spacing: 2.2
+  where: [wall]
+  scale: [0.6, 1.3]
+  colors: [[0.16, 0.3, 0.1], [0.28, 0.42, 0.14]]
+  cluster: 0.6
+  cluster_size: 4
+  top_edge: true
+- shape: vine
+  spacing: 1.6
+  where: [ceiling]
+  scale: [0.5, 1.1]
+  colors: [[0.16, 0.3, 0.1], [0.28, 0.42, 0.14]]
+  cluster: 0.5
+  cluster_size: 3

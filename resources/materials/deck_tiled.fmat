@@ -1,0 +1,12 @@
+# deck_tiled.fmat — the UV transform, as a material.
+#
+# A face's offset, scale and rotation were per-face fields, so a corridor of
+# plates tiled four-up meant setting the same scale on every one. The material's
+# transform is COMPOSED on top of the face's own, so a face that has been
+# nudged into place by hand keeps its nudge and gains the tiling.
+kind: surface
+texture: hull_deck
+doc: Deck plate at four repeats per face. Compose-on-top, so a face keeps its own placement.
+effects:
+  - effect: uv_transform
+    scale: [4, 4]

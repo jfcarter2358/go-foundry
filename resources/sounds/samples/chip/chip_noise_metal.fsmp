@@ -1,0 +1,11 @@
+base_note: C-4
+loop: forward
+loop_start: 4266
+loop_end: 18577
+tags:
+- chip
+- noise
+- nes
+- 8bit
+- metallic
+description: 'NES short-mode noise: pitched metallic buzz'

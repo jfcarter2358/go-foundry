@@ -1,0 +1,14 @@
+# unlit.fmat — self-lit, as a material.
+#
+# This was `unlit: true` on an entity attachment, and nothing else in the engine
+# could reach it: a brush face had no such field. As a material any surface can
+# have it.
+#
+# It takes no texture of its own, so the surface keeps whatever art it names and
+# simply stops being shaded. Fog still applies, and the surface goes to the
+# blended pass — which is what lets a texture's own alpha fade it off at the
+# edges.
+kind: surface
+doc: No light, no shadow — the texture's own colour. A beam, a readout, a sign.
+effects:
+  - effect: unlit

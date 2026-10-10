@@ -1,0 +1,742 @@
+package world
+
+// brush.go — Brush, the level's fundamental solid.
+//
+// Where the level used to be built from Sectors — 2D floorplan polygons with
+// a floor/ceiling height field — it is now built from Brushes: convex
+// polyhedra, authored as an explicit vertex + face list (the same shape as a
+// model's mesh) rather than as planes to be intersected. That is what makes
+// "edit it like the model editor" literal: a brush's faces are dragged,
+// extruded and inset the same way a mesh's are, not derived from clipping
+// half-spaces the way a classic Quake .map brush is.
+//
+// Brushes are required to be CONVEX. That is what keeps point/shape
+// collision cheap (GJK against the vertex list directly — every vertex of a
+// convex solid sits on its own hull, so no separate hull computation is
+// needed) and keeps compile-time CSG face-clipping a half-space problem
+// instead of a general polygon-boolean one. The editor is responsible for
+// keeping an authored brush convex; IsConvex below is the check it uses.
+//
+// A Brush's Verts are chunk-local, the same convention every other chunk
+// coordinate follows (see chunk.go) — Chunk.ModelMatrix is the one place
+// that carries them into world space (or a frame's space, for a frame-owned
+// chunk).
+
+import (
+	"math"
+
+	"foundry/internal/geom"
+	"foundry/internal/gfx"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
+
+// BrushMesh is a vertex pool and the faces indexing into it — the shape a
+// brush's hull and its detail geometry both have.
+//
+// A brush is TWO of these, or one and nil: the hull is what the level is made
+// of, and the detail mesh is what an author has since carved into its surface.
+// Everything a face needs to be drawn is here and nothing a solid needs to be
+// solid is, which is exactly the split — see brush_detail.go.
+type BrushMesh struct {
+	Verts []mgl32.Vec3
+	Faces []BrushFace
+}
+
+// Brush is a solid, convex polyhedron: a level's fundamental piece of
+// geometry, replacing the Sector.
+type Brush struct {
+	ID         string
+	ScriptData // tags, attributes and the attached script
+	// BrushMesh is the brush's HULL: the convex corners and faces that decide
+	// where the solid is. Embedded, so b.Verts and b.Faces still name it —
+	// every collision, CSG and sealing path reads those and means the hull.
+	//
+	// Its Verts are the brush's corners, chunk-local. Every vertex is expected
+	// to sit on the convex hull — see the file comment — so nothing here holds
+	// a separate hull; ConvexHull collision (internal/collision) reads these
+	// directly.
+	BrushMesh
+
+	// Detail is the brush's optional free-form SURFACE geometry: the same mesh
+	// again, but shaped without the convexity rule, and drawn INSTEAD of the
+	// hull. Nil for the ordinary case, where a brush looks exactly like the
+	// solid it is. See brush_detail.go.
+	Detail *BrushMesh
+
+	// Solid is whether the player and entities collide with this brush. On by
+	// default; a false brush is decorative geometry a body passes through —
+	// the brush counterpart of a wall with Collision off.
+	Solid bool
+
+	// Dynamic marks a brush a script moves at run time — a door, a lift, a
+	// crusher. It is what the compiler reads to leave the brush out of the
+	// static bake, and what the script runtime reads to allow a write to
+	// Offset/Rotation at all. See brush_dynamic.go.
+	Dynamic bool
+
+	// Offset, Rotation, Scale, Velocity and AngularVelocity are the brush's
+	// RUN-TIME placement: where a script has moved it to, relative to the
+	// verts above, and the rates it is still moving at. Runtime-only — never
+	// authored, never saved, and zero again the moment a level is reloaded, so
+	// the authored geometry is always the brush's rest state. See
+	// brush_dynamic.go.
+	//
+	// Scale is a per-axis multiplier on the authored size, about the brush's
+	// centre; its zero value means unscaled (EffectiveScale). Velocity is chunk
+	// units per second and integrates onto Offset; AngularVelocity is radians
+	// per second and integrates onto Rotation, in the same Euler basis
+	// Rotation itself is in.
+	Offset          mgl32.Vec3
+	Rotation        mgl32.Vec3
+	Scale           mgl32.Vec3
+	Velocity        mgl32.Vec3
+	AngularVelocity mgl32.Vec3
+
+	// Waypoints is the waypoint animation this brush is travelling, or nil.
+	// Runtime-only for the same reason as the placement it writes. See
+	// brush_waypoints.go.
+	Waypoints *WaypointPlayback
+
+	// Tweens are the channels of the placement a script is easing toward a
+	// target — `move_to`, `rotate_to`, `scale_to`. Runtime-only, like the
+	// placement they write. See tween.go.
+	Tweens Tweens
+}
+
+// BrushFace is one planar face of a brush: a convex n-gon (in practice
+// usually a triangle or a quad) wound CCW when viewed from outside the
+// solid, with its own texture and shading.
+type BrushFace struct {
+	// Indices lists this face's corners into the owning Brush's Verts, in
+	// winding order. A planar loop of at least 3.
+	Indices []int
+
+	Texture string
+	// Material is the .fmat this face wears, or "" for none. Overlaid on the
+	// fields around it rather than replacing them; see gfx.SurfaceState.
+	Material     string
+	BlendTexture string // optional second texture, mixed in by BlendMask's luminance
+	BlendMask    string // grayscale mask texture; 0 = Texture, 1 = BlendTexture
+	UVOffset     mgl32.Vec2
+	UVScale      mgl32.Vec2 // zero = {1,1}
+	UVRotation   float32    // radians
+	// UVs, when present, state the face's texture coordinates per corner —
+	// index-parallel to Indices — instead of deriving them by projecting the
+	// face onto its own plane. What an atlas unwrap writes, so that a face owns
+	// its own region of a painted texture; nil on every face that has not been
+	// through one. Honoured only while there is one per corner: see HasUVs and
+	// brush_uv.go.
+	UVs []mgl32.Vec2
+
+	// TextureOverride draws the face with OverrideTexture projected onto its
+	// own plane under the Override* transform, in place of Texture and UVs.
+	// Those stay authored underneath — the face keeps its atlas island and its
+	// place in a re-unwrap — so switching the override off restores the paint.
+	// See DrawTexture and brush_uv.go.
+	TextureOverride    bool
+	OverrideTexture    string
+	OverrideUVOffset   mgl32.Vec2
+	OverrideUVScale    mgl32.Vec2 // zero = {1,1}
+	OverrideUVRotation float32    // radians
+
+	Smooth      bool    // shade from interpolated vertex normals across the brush
+	SmoothAngle float32 // crease threshold in degrees; 0 = DefaultSmoothAngle
+	Alpha       float32 // 0 = fully transparent, 1 = fully opaque
+	DoubleSided bool    // render from both sides
+
+	// NoDraw makes the face invisible — no geometry is built or uploaded —
+	// while it still collides if the brush is Solid. For a brush face buried
+	// against a neighbour's, or a clip-only volume.
+	NoDraw bool
+	// NoCollide makes the face visible but non-solid, independent of the
+	// brush's own Solid flag. (Solid=false already makes every face
+	// non-solid; this is for the one-face exception — a window opening in an
+	// otherwise solid wall brush.)
+	NoCollide bool
+
+	// ---------- runtime, never authored and never saved ----------
+	Geometry gfx.Geometry
+}
+
+// NewBrushFace returns a face with the defaults an authored one should have.
+func NewBrushFace(indices []int, texture string) BrushFace {
+	return BrushFace{
+		Indices:     indices,
+		Texture:     texture,
+		UVScale:     mgl32.Vec2{1, 1},
+		Alpha:       1,
+		DoubleSided: false,
+	}
+}
+
+// LocalAABB returns the brush's chunk-local bounds, where the brush currently
+// IS — its authored corners carried through Placement.
+//
+// Every consumer of a brush's extent goes through here: the chunk's own bounds
+// (RecomputeBounds), and so the spatial hash and every frustum cull. A dynamic
+// brush that had moved would otherwise be culled, collided and bucketed at the
+// position it was authored in rather than the one it is drawn at.
+func (b *Brush) LocalAABB() (min, max mgl32.Vec3) {
+	if len(b.Verts) == 0 {
+		return mgl32.Vec3{}, mgl32.Vec3{}
+	}
+	// The detail mesh counts. It is drawn and shadow-mapped like any other
+	// geometry and a bump on a wall sticks out PAST the hull, so a box drawn
+	// around the corners alone would cull the very thing detail exists to add
+	// the moment the hull left the frustum.
+	pts := b.Verts
+	if b.Detail != nil && len(b.Detail.Verts) > 0 {
+		pts = append(append(make([]mgl32.Vec3, 0, len(b.Verts)+len(b.Detail.Verts)),
+			b.Verts...), b.Detail.Verts...)
+	}
+	if b.AtRest() {
+		min, max = pts[0], pts[0]
+		for _, p := range pts[1:] {
+			min, max = geom.VecMin(min, p), geom.VecMax(max, p)
+		}
+		return min, max
+	}
+	m := b.Placement()
+	first := mulPoint(m, pts[0])
+	min, max = first, first
+	for _, v := range pts[1:] {
+		p := mulPoint(m, v)
+		min, max = geom.VecMin(min, p), geom.VecMax(max, p)
+	}
+	return min, max
+}
+
+// WorldAABB is LocalAABB carried through ch's ModelMatrix.
+func (b *Brush) WorldAABB(ch *Chunk) (min, max mgl32.Vec3) {
+	lo, hi := b.LocalAABB()
+	return transformAABB(ch.ModelMatrix(), lo, hi)
+}
+
+// FacePoints resolves a face's corners to their brush-local positions.
+func (b *BrushMesh) FacePoints(f *BrushFace) []mgl32.Vec3 {
+	pts := make([]mgl32.Vec3, len(f.Indices))
+	for i, vi := range f.Indices {
+		if vi >= 0 && vi < len(b.Verts) {
+			pts[i] = b.Verts[vi]
+		}
+	}
+	return pts
+}
+
+// FaceNormal is a face's outward normal, from its first three corners.
+func (b *BrushMesh) FaceNormal(f *BrushFace) mgl32.Vec3 {
+	pts := b.FacePoints(f)
+	if len(pts) < 3 {
+		return mgl32.Vec3{0, 1, 0}
+	}
+	return geom.TriangleNormal(pts[0], pts[1], pts[2])
+}
+
+// concaveEps is the tolerance firstConcavePlane and IsConvex allow a vertex to
+// sit in front of a face's plane before calling the brush concave. Meaningful
+// as a world-space distance only because the plane's normal is normalized
+// first — see firstConcavePlane.
+const concaveEps = 1e-4
+
+// firstConcavePlane returns the plane of the first face some vertex lies
+// strictly in front of, and false if the brush is already convex.
+//
+// The normal is NORMALIZED before the half-space test. It used to not be
+// (geom.TriangleNormal is a bare cross product), which made the tolerance
+// below scale with the face's own size: a large or slanted face amplified
+// float32 rounding past a fixed epsilon and could misjudge a legitimately
+// coplanar corner as a convexity violation (see HANDOFF-streaming.md on the
+// generator's own workaround for this). Normalizing first makes eps an actual
+// world-space distance, which is what a fixed tolerance has to be to mean the
+// same thing on a small brush and a large one.
+func (b *BrushMesh) firstConcavePlane() (n mgl32.Vec3, d float32, ok bool) {
+	for fi := range b.Faces {
+		f := &b.Faces[fi]
+		pts := b.FacePoints(f)
+		if len(pts) < 3 {
+			continue
+		}
+		fn := geom.TriangleNormal(pts[0], pts[1], pts[2])
+		if fn.Len() < 1e-8 {
+			continue // degenerate (collinear) triangle: no plane to test against
+		}
+		fn = fn.Normalize()
+		fd := fn.Dot(pts[0])
+		for _, v := range b.Verts {
+			if fn.Dot(v)-fd > concaveEps {
+				return fn, fd, true
+			}
+		}
+	}
+	return mgl32.Vec3{}, 0, false
+}
+
+// IsConvex reports whether every vertex of the mesh lies on or behind every
+// face's plane (within a small tolerance) — the property collision and
+// compile-time CSG both depend on, for a brush's hull. The editor calls this
+// after any edit that could break it (a free vertex drag; extrude/inset on a
+// box start already preserve it). Defined on BrushMesh rather than Brush so
+// DecomposeConvex's recursion — which builds bare BrushMesh pieces, not full
+// Brush values — can call it directly; Brush.IsConvex is this, promoted.
+func (b *BrushMesh) IsConvex() bool {
+	_, _, concave := b.firstConcavePlane()
+	return !concave
+}
+
+// ApplyUVTransform transforms the UV coordinates of a vertex slice in-place.
+// Vertices are [X,Y,Z,U,V]. Applies scale around (0,0), then rotation, then
+// offset.
+func ApplyUVTransform(vertices [][]float32, offset mgl32.Vec2, scale mgl32.Vec2, rotation float32) {
+	if scale == (mgl32.Vec2{}) {
+		scale = mgl32.Vec2{1, 1}
+	}
+	if offset == (mgl32.Vec2{}) && scale == (mgl32.Vec2{1, 1}) && rotation == 0 {
+		return
+	}
+	cos := float32(math.Cos(float64(rotation)))
+	sin := float32(math.Sin(float64(rotation)))
+	for i := range vertices {
+		u := vertices[i][3] * scale.X()
+		v := vertices[i][4] * scale.Y()
+		ru := u*cos - v*sin
+		rv := u*sin + v*cos
+		vertices[i][3] = ru + offset.X()
+		vertices[i][4] = rv + offset.Y()
+	}
+}
+
+// planarBasis returns two orthonormal vectors spanning the plane
+// perpendicular to n, used to flatten a face's 3D corners into UV space.
+func planarBasis(n mgl32.Vec3) (u, v mgl32.Vec3) {
+	n = n.Normalize()
+	ref := mgl32.Vec3{0, 1, 0}
+	if math.Abs(float64(n.Dot(ref))) > 0.99 {
+		ref = mgl32.Vec3{1, 0, 0}
+	}
+	u = n.Cross(ref).Normalize()
+	v = n.Cross(u).Normalize()
+	return u, v
+}
+
+// BuildBrushFaceMesh triangulates a planar convex face — a fan from corner 0,
+// valid because a brush face is required convex — and derives UVs by
+// projecting each corner onto the face's own plane. doubleSided appends a
+// second, reverse-wound copy so the face draws from both sides.
+//
+// This is the brush counterpart of BuildSurfaceMesh: much simpler, because a
+// face has no openings and no per-vertex displacement mesh of its own —
+// organic shape comes from subdividing the brush's own vertex/face graph
+// (adding real geometry), not from a parametric layer riding on top of a
+// flat base the way a sector surface's SurfaceMesh did.
+func BuildBrushFaceMesh(pts []mgl32.Vec3, doubleSided bool) (verts [][]float32, indices []int) {
+	if len(pts) < 3 {
+		return nil, nil
+	}
+	return BuildBrushFaceMeshFrom(pts, doubleSided, geom.TriangleNormal(pts[0], pts[1], pts[2]), pts[0])
+}
+
+// BuildBrushFaceMeshFrom is BuildBrushFaceMesh with the projection stated
+// rather than derived, for a polygon that is a FRAGMENT of a face rather than
+// the whole of one.
+//
+// Both arguments matter and for the same reason. A compiled level's surfaces
+// have been cut — by CSG, by the BSP's splitting planes, by the light grid —
+// and every piece has to land on the same texture as its neighbours. Derive the
+// origin from the piece's own first corner and each piece restarts the texture
+// at its own edge, which is a visible seam along every cut in the level; derive
+// the normal from the piece's own first three corners and a sliver can flip it.
+// Passing the SOURCE face's corner and plane makes every fragment of one face
+// agree, because they are all given the same two.
+func BuildBrushFaceMeshFrom(pts []mgl32.Vec3, doubleSided bool, normal, origin mgl32.Vec3) (verts [][]float32, indices []int) {
+	n := len(pts)
+	if n < 3 {
+		return nil, nil
+	}
+	u, v := planarBasis(normal)
+
+	verts = make([][]float32, n)
+	for i, p := range pts {
+		rel := p.Sub(origin)
+		verts[i] = []float32{p.X(), p.Y(), p.Z(), rel.Dot(u), rel.Dot(v)}
+	}
+	for i := 1; i < n-1; i++ {
+		indices = append(indices, 0, i, i+1)
+	}
+
+	if doubleSided {
+		base := len(verts)
+		// Copies of the vertices, not of the slice headers. Copying only the
+		// headers leaves both sides pointing at one set of floats, and
+		// ApplyUVTransform — which walks every vertex — then moves each one
+		// twice, so a double-sided face drew at twice its offset, scale and
+		// rotation.
+		for i := 0; i < n; i++ {
+			verts = append(verts, append([]float32(nil), verts[i]...))
+		}
+		for i := 1; i < n-1; i++ {
+			indices = append(indices, base, base+i+1, base+i)
+		}
+	}
+	return verts, indices
+}
+
+// Load builds every visible face's render geometry — on the CPU only; the
+// renderer batches it per chunk. Call after any edit to the mesh's verts or
+// faces: the generation it bumps is what tells the batch to rebuild.
+func (m *BrushMesh) Load() error {
+	MarkBrushMeshesChanged()
+	meshes := make([]faceMesh, len(m.Faces))
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
+		f.Geometry.Delete()
+
+		if f.NoDraw {
+			continue
+		}
+		pts := m.FacePoints(f)
+		verts, indices := BuildBrushFaceMesh(pts, f.DoubleSided)
+		if len(verts) == 0 {
+			continue
+		}
+		meshes[fi] = faceMesh{verts, indices}
+	}
+	normals := brushSmoothNormals(m.Faces, meshes)
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
+		verts, indices := meshes[fi].verts, meshes[fi].indices
+		if len(verts) == 0 {
+			continue
+		}
+		if f.DrawsCornerUVs() {
+			applyCornerUVs(verts, f.UVs)
+		}
+		offset, scale, rotation := f.DrawUVTransform()
+		ApplyUVTransform(verts, offset, scale, rotation)
+		f.Geometry.Smooth, f.Geometry.SmoothAngle = f.Smooth, f.SmoothAngle
+		f.Geometry.AutoSmooth = true
+		f.Geometry.VertexNormals = normals[fi]
+		// A face has no buffers of its own: its chunk's batch uploads every
+		// face of a material together (render/chunk_batch.go), which is what
+		// keeps a big area a few dozen GL objects rather than one per face.
+		f.Geometry.CPUOnly = true
+		if err := f.Geometry.Load(verts, indices, f.DrawTexture(), mgl32.Vec3{}); err != nil {
+			return err
+		}
+		f.Geometry.Alpha = f.Alpha
+		f.Geometry.MaterialName = f.Material
+		f.Geometry.BlendTexture = f.BlendTexture
+		f.Geometry.BlendMask = f.BlendMask
+	}
+	return nil
+}
+
+// faceMesh is one face's triangulation as BuildBrushFaceMesh returns it.
+type faceMesh struct {
+	verts   [][]float32
+	indices []int
+}
+
+// brushSmoothNormals welds the smoothed normals of a whole brush: every drawn
+// face's triangles go into one mesh, so a corner averages with the faces on
+// the OTHER side of its edges — which is what makes a faceted cylinder read
+// round. Welding each face on its own, as Geometry.Load would, only ever sees
+// one flat polygon and hands back its plane. Each face keeps its own crease
+// angle for its own corners (geom.ComputeSmoothNormalsPerTriangle).
+//
+// The result is per face, per source vertex of that face's mesh — what
+// Geometry.VertexNormals takes. A corner shared by several of the face's
+// triangles takes the first one's answer: on a planar face they are all the
+// same triangle plane, so they agree.
+func brushSmoothNormals(faces []BrushFace, meshes []faceMesh) [][][]float32 {
+	var pool [][]float32
+	var indices []int
+	var angles []float32
+	first := make([]int, len(meshes)) // per face: where its corners start in indices
+	for fi, fm := range meshes {
+		first[fi] = len(indices)
+		base := len(pool)
+		pool = append(pool, fm.verts...)
+		for _, i := range fm.indices {
+			indices = append(indices, base+i)
+		}
+		for range len(fm.indices) / 3 {
+			angles = append(angles, faces[fi].SmoothAngle)
+		}
+	}
+	flat := geom.ComputeSmoothNormalsPerTriangle(pool, indices, func(t int) float32 { return angles[t] })
+	out := make([][][]float32, len(meshes))
+	if len(flat) != len(indices)*3 {
+		return out
+	}
+	for fi, fm := range meshes {
+		if len(fm.verts) == 0 {
+			continue
+		}
+		rows := make([][]float32, len(fm.verts))
+		for k, src := range fm.indices {
+			if rows[src] == nil {
+				c := (first[fi] + k) * 3
+				rows[src] = flat[c : c+3 : c+3]
+			}
+		}
+		out[fi] = rows
+	}
+	return out
+}
+
+// CornerNormals is the smoothed normal at each corner of each face of the mesh,
+// in the mesh's own space and in the order FacePoints lists the corners — what
+// Load gives the faces to shade with, for a caller that has the corners but
+// none of Load's geometry: the level compiler, which cuts every face into
+// fragments and has to hand each one the shading its face would have had. Nil
+// for a face Load would not draw.
+func (m *BrushMesh) CornerNormals() [][]mgl32.Vec3 {
+	meshes := make([]faceMesh, len(m.Faces))
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
+		if f.NoDraw {
+			continue
+		}
+		verts, indices := BuildBrushFaceMesh(m.FacePoints(f), f.DoubleSided)
+		meshes[fi] = faceMesh{verts, indices}
+	}
+	rows := brushSmoothNormals(m.Faces, meshes)
+	out := make([][]mgl32.Vec3, len(m.Faces))
+	for fi, fm := range meshes {
+		if len(fm.verts) == 0 || rows[fi] == nil {
+			continue
+		}
+		// The first len(points) source vertices are the front side's corners,
+		// in order; a double-sided face's back copies follow them.
+		n := len(m.FacePoints(&m.Faces[fi]))
+		out[fi] = make([]mgl32.Vec3, n)
+		for i := 0; i < n && i < len(rows[fi]); i++ {
+			if r := rows[fi][i]; len(r) == 3 {
+				out[fi][i] = mgl32.Vec3{r[0], r[1], r[2]}
+			}
+		}
+	}
+	return out
+}
+
+// Release frees the GPU buffers every face owns. For geometry being removed
+// from the level: overwriting or dropping the slice entry would leak the
+// handles rather than free them, which is the same hazard ReleaseGeometry
+// exists for at chunk scale.
+func (m *BrushMesh) Release() {
+	MarkBrushMeshesChanged()
+	for fi := range m.Faces {
+		m.Faces[fi].Geometry.Delete()
+	}
+}
+
+// Unload frees the GPU buffers and the CPU-side vertex copies with them, for a
+// mesh that is coming back later — a streamed-out chunk. Geometry.Unload is the
+// distinction; see chunk_enable.go.
+func (m *BrushMesh) Unload() {
+	MarkBrushMeshesChanged()
+	for fi := range m.Faces {
+		m.Faces[fi].Geometry.Unload()
+	}
+}
+
+// NewHollowRoom returns the six brushes bounding an axis-aligned walkable
+// room: a floor, a ceiling, and four walls, each wallThickness deep,
+// enclosing the space between min and max. This is the editor's "hollow"
+// primitive — the fast way to block out a room, rather than hand-placing six
+// brushes — and is also what a test fixture wanting somewhere to walk around
+// reaches for, since a single NewBoxBrush is a solid block with no interior.
+func NewHollowRoom(idPrefix string, min, max mgl32.Vec3, wallThickness float32, texture string) []Brush {
+	if wallThickness <= 0 {
+		wallThickness = 0.5
+	}
+	cx, cz := (min.X()+max.X())/2, (min.Z()+max.Z())/2
+	hx, hz := (max.X()-min.X())/2, (max.Z()-min.Z())/2
+	floorY, ceilY := min.Y(), max.Y()
+	midY := (floorY + ceilY) / 2
+	halfWallY := (ceilY - floorY) / 2
+	ht := wallThickness / 2
+
+	return []Brush{
+		NewBoxBrush(idPrefix+"_floor",
+			mgl32.Vec3{cx, floorY - ht, cz}, mgl32.Vec3{hx + wallThickness, ht, hz + wallThickness}, texture),
+		NewBoxBrush(idPrefix+"_ceiling",
+			mgl32.Vec3{cx, ceilY + ht, cz}, mgl32.Vec3{hx + wallThickness, ht, hz + wallThickness}, texture),
+		NewBoxBrush(idPrefix+"_wall_negx",
+			mgl32.Vec3{min.X() - ht, midY, cz}, mgl32.Vec3{ht, halfWallY, hz}, texture),
+		NewBoxBrush(idPrefix+"_wall_posx",
+			mgl32.Vec3{max.X() + ht, midY, cz}, mgl32.Vec3{ht, halfWallY, hz}, texture),
+		NewBoxBrush(idPrefix+"_wall_negz",
+			mgl32.Vec3{cx, midY, min.Z() - ht}, mgl32.Vec3{hx, halfWallY, ht}, texture),
+		NewBoxBrush(idPrefix+"_wall_posz",
+			mgl32.Vec3{cx, midY, max.Z() + ht}, mgl32.Vec3{hx, halfWallY, ht}, texture),
+	}
+}
+
+// CloneBrush returns a deep, independent copy. GPU geometry handles are
+// zeroed — the caller must Load the clone before it can be rendered, exactly
+// as Chunk.Clone's sector counterpart used to require.
+func CloneBrush(b *Brush, idSuffix string) Brush {
+	out := Brush{
+		ID:         b.ID + idSuffix,
+		ScriptData: CloneScriptData(b.ScriptData),
+		Solid:      b.Solid,
+		Dynamic:    b.Dynamic,
+		BrushMesh:  b.BrushMesh.Clone(),
+	}
+	if b.Detail != nil {
+		d := b.Detail.Clone()
+		out.Detail = &d
+	}
+	return out
+}
+
+// NewBoxBrush returns an axis-aligned box brush centred at center with the
+// given half-extents, one face per side, each defaulted with texture and
+// facing outward (CCW viewed from outside). The stamp the editor's brush tool
+// starts from, and a convenient way to hand-author a test level.
+func NewBoxBrush(id string, center mgl32.Vec3, half mgl32.Vec3, texture string) Brush {
+	hx, hy, hz := half.X(), half.Y(), half.Z()
+	cx, cy, cz := center.X(), center.Y(), center.Z()
+	// Corner i's bits are (x, y, z) signs, matching CornerSign's convention.
+	verts := make([]mgl32.Vec3, 8)
+	for i := 0; i < 8; i++ {
+		verts[i] = mgl32.Vec3{
+			cx + CornerSign(i, 0)*hx,
+			cy + CornerSign(i, 1)*hy,
+			cz + CornerSign(i, 2)*hz,
+		}
+	}
+	// Corner indices: 0=(---) 1=(+--) 2=(-+-) 3=(++-) 4=(--+) 5=(+-+) 6=(-++) 7=(+++)
+	faces := []BrushFace{
+		NewBrushFace([]int{0, 4, 6, 2}, texture), // -X
+		NewBrushFace([]int{5, 1, 3, 7}, texture), // +X
+		NewBrushFace([]int{0, 1, 5, 4}, texture), // -Y (floor)
+		NewBrushFace([]int{2, 6, 7, 3}, texture), // +Y (ceiling)
+		NewBrushFace([]int{1, 0, 2, 3}, texture), // -Z
+		NewBrushFace([]int{4, 5, 7, 6}, texture), // +Z
+	}
+	return Brush{ID: id, BrushMesh: BrushMesh{Verts: verts, Faces: faces}, Solid: true}
+}
+
+// ---------- serialization ----------
+
+// BrushFromRaw converts the YAML form. Follows the same conventions every
+// other FromRaw here does: an absent `solid:` is solid, an absent alpha is
+// opaque, and a zero UV scale reads as {1,1}.
+func BrushFromRaw(r RawBrush) (Brush, error) {
+	data, err := ScriptDataFromRaw(r.RawScriptData, "brush "+r.ID)
+	if err != nil {
+		return Brush{}, err
+	}
+	b := Brush{
+		ID:         r.ID,
+		ScriptData: data,
+		Solid:      BoolDefault(r.Solid, true),
+		Dynamic:    r.Dynamic,
+	}
+	b.BrushMesh = meshFromRaw(r.Verts, r.Faces)
+	if r.Detail != nil {
+		d := meshFromRaw(r.Detail.Verts, r.Detail.Faces)
+		b.Detail = &d
+	}
+	return b, nil
+}
+
+// BrushToRaw is the inverse.
+func BrushToRaw(b *Brush) RawBrush {
+	out := RawBrush{
+		ID:            b.ID,
+		RawScriptData: ScriptDataToRaw(b.ScriptData),
+		Solid:         BoolPtrIfFalse(b.Solid),
+		Dynamic:       b.Dynamic,
+	}
+	out.Verts, out.Faces = meshToRaw(&b.BrushMesh)
+	if b.Detail != nil && len(b.Detail.Faces) > 0 {
+		v, f := meshToRaw(b.Detail)
+		out.Detail = &RawBrushMesh{Verts: v, Faces: f}
+	}
+	return out
+}
+
+// meshFromRaw reads the vertex/face pair a brush's hull and its detail mesh are
+// both written as. One function rather than two so the two can never drift into
+// disagreeing about what a defaulted field means.
+func meshFromRaw(rawVerts []float32, rawFaces []RawBrushFace) BrushMesh {
+	var m BrushMesh
+	// Verts arrive flattened, three floats per vertex; a trailing partial
+	// triple is a malformed file rather than a vertex, and is dropped.
+	m.Verts = make([]mgl32.Vec3, 0, len(rawVerts)/3)
+	for i := 0; i+2 < len(rawVerts); i += 3 {
+		m.Verts = append(m.Verts, mgl32.Vec3{rawVerts[i], rawVerts[i+1], rawVerts[i+2]})
+	}
+	m.Faces = make([]BrushFace, 0, len(rawFaces))
+	for _, rf := range rawFaces {
+		m.Faces = append(m.Faces, BrushFace{
+			Indices:            append([]int(nil), rf.Indices...),
+			Texture:            rf.Texture,
+			Material:           rf.Material,
+			BlendTexture:       rf.BlendTexture,
+			BlendMask:          rf.BlendMask,
+			UVOffset:           mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
+			UVScale:            mgl32.Vec2{rf.UVScale.X, rf.UVScale.Y},
+			UVRotation:         rf.UVRotation,
+			UVs:                uvsFromRaw(rf.UVs),
+			TextureOverride:    rf.TextureOverride,
+			OverrideTexture:    rf.OverrideTexture,
+			OverrideUVOffset:   mgl32.Vec2{rf.OverrideUVOffset.X, rf.OverrideUVOffset.Y},
+			OverrideUVScale:    mgl32.Vec2{rf.OverrideUVScale.X, rf.OverrideUVScale.Y},
+			OverrideUVRotation: rf.OverrideUVRotation,
+			Smooth:             rf.Smooth,
+			SmoothAngle:        rf.SmoothAngle,
+			Alpha:              float32Default(rf.Alpha, 1.0),
+			DoubleSided:        rf.DoubleSided,
+			NoDraw:             rf.NoDraw,
+			NoCollide:          rf.NoCollide,
+		})
+	}
+	return m
+}
+
+// meshToRaw is meshFromRaw's inverse.
+func meshToRaw(m *BrushMesh) ([]float32, []RawBrushFace) {
+	verts := make([]float32, 0, len(m.Verts)*3)
+	for _, v := range m.Verts {
+		verts = append(verts, v.X(), v.Y(), v.Z())
+	}
+	faces := make([]RawBrushFace, 0, len(m.Faces))
+	for i := range m.Faces {
+		f := &m.Faces[i]
+		alpha := f.Alpha
+		var alphaPtr *float32
+		// Opaque is the default, so an opaque face writes no key at all and a
+		// level that never touched alpha round-trips unchanged.
+		if alpha != 1 {
+			alphaPtr = &alpha
+		}
+		faces = append(faces, RawBrushFace{
+			Indices:            append([]int(nil), f.Indices...),
+			Texture:            f.Texture,
+			Material:           f.Material,
+			BlendTexture:       f.BlendTexture,
+			BlendMask:          f.BlendMask,
+			UVOffset:           geom.Point{X: f.UVOffset.X(), Y: f.UVOffset.Y()},
+			UVScale:            geom.Point{X: f.UVScale.X(), Y: f.UVScale.Y()},
+			UVRotation:         f.UVRotation,
+			UVs:                uvsToRaw(f),
+			TextureOverride:    f.TextureOverride,
+			OverrideTexture:    f.OverrideTexture,
+			OverrideUVOffset:   geom.Point{X: f.OverrideUVOffset.X(), Y: f.OverrideUVOffset.Y()},
+			OverrideUVScale:    geom.Point{X: f.OverrideUVScale.X(), Y: f.OverrideUVScale.Y()},
+			OverrideUVRotation: f.OverrideUVRotation,
+			Smooth:             f.Smooth,
+			SmoothAngle:        f.SmoothAngle,
+			Alpha:              alphaPtr,
+			DoubleSided:        f.DoubleSided,
+			NoDraw:             f.NoDraw,
+			NoCollide:          f.NoCollide,
+		})
+	}
+	return verts, faces
+}

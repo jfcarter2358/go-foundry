@@ -1,0 +1,15 @@
+# game.yaml — what this install is, when the engine is built as a game.
+#
+# Read only by a release build (`go build -tags release`, or `task release-linux`); a
+# development build ignores it and boots into the editor on a blank level. See
+# internal/game/manifest.go and internal/app/startup_release.go.
+#
+# There is no start screen here. A main menu is put up by the level that lists
+# it in its own UI screens, or by a script — so a game can open on an intro
+# level and bring the menu up in the one after it.
+title: Foundry
+version: 0.1.0
+start_level: intro
+window:
+  width: 1600
+  height: 900

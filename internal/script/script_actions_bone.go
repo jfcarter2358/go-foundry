@@ -1,0 +1,132 @@
+package script
+
+// script_actions_bone.go — where a bone is, in the world.
+//
+// A socket is a bone (docs/guide/11-entities.md), and a muzzle flash, a spark
+// off a blade or a shell ejected from a breech all want the same answer: the
+// point that bone is at right now, posed and carried by its entity. Attaching
+// an emitter answers it continuously; this answers it once, for a one-shot
+// `spawn_effect` or `play_sound_at`.
+
+import (
+	"fmt"
+
+	"foundry/internal/flang"
+	"foundry/internal/gfx"
+	"foundry/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
+
+var boneVerbs = map[string]scriptVerb{
+	"bone_position": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		// Two spellings, the pair play_anim offers: an attachment ref and a
+		// bone, or an entity, an attachment name and a bone.
+		var entityRef flang.RefVal
+		var model, bone string
+		switch len(args) {
+		case 2:
+			r, ok := args[0].(flang.RefVal)
+			if !ok || r.Kind != flang.RefModel {
+				return nil, fmt.Errorf("bone_position takes (@entity.model.name, bone) or (entity, model, bone)")
+			}
+			entityRef = flang.RefVal{Kind: flang.RefEntity, A: r.A}
+			model = r.B
+			bone, _ = verbStrAt(args, 1)
+		case 3:
+			r, ok := args[0].(flang.RefVal)
+			if !ok {
+				return nil, fmt.Errorf("bone_position's first argument is an entity, not a %s", flang.TypeOf(args[0]))
+			}
+			entityRef = r
+			model, _ = verbStrAt(args, 1)
+			bone, _ = verbStrAt(args, 2)
+		default:
+			return nil, fmt.Errorf("bone_position takes (@entity.model.name, bone) or (entity, model, bone)")
+		}
+		e := rt.host.entityFor(entityRef)
+		if e == nil {
+			return nil, fmt.Errorf("bone_position: %s is not an entity in the level", entityRef)
+		}
+		p, err := bonePosition(rt.lvl, e, model, bone)
+		if err != nil {
+			return nil, err
+		}
+		return vecValue(p), nil
+	},
+	// recoil kicks the player's view: a shot climbing. Degrees up and right,
+	// and the share of the kick that eases back by itself.
+	"recoil": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) < 1 || len(args) > 3 {
+			return nil, fmt.Errorf("recoil takes (pitch), (pitch, yaw) or (pitch, yaw, recover)")
+		}
+		vals := [3]float32{0, 0, defaultRecoilRecover}
+		for i, a := range args {
+			f, ok := toFloat32(a)
+			if !ok {
+				return nil, fmt.Errorf("recoil's arguments are numbers, not a %s", flang.TypeOf(a))
+			}
+			vals[i] = f
+		}
+		gfx.AddRecoil(vals[0], vals[1], vals[2])
+		return flang.NullVal{}, nil
+	},
+	// look_at turns the player's view toward a point or an object over a
+	// number of seconds — a cutscene pointing the camera at what it is about.
+	// `look_at(null)` lets go. See gfx/look_at.go for how long it holds.
+	"look_at": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) < 1 || len(args) > 2 {
+			return nil, fmt.Errorf("look_at takes (place) or (place, seconds): a vec or an object, or null to let go")
+		}
+		if _, isNull := args[0].(flang.NullVal); isNull {
+			gfx.StopLookAt()
+			return flang.BoolVal(true), nil
+		}
+		target, ok := rt.positionOf(args[0])
+		if !ok {
+			return nil, fmt.Errorf("look_at takes a vec or an object with a position, not a %s", flang.TypeOf(args[0]))
+		}
+		seconds := float32(0)
+		if len(args) == 2 {
+			s, ok := toFloat32(args[1])
+			if !ok {
+				return nil, fmt.Errorf("look_at's seconds is a number, not a %s", flang.TypeOf(args[1]))
+			}
+			seconds = s
+		}
+		gfx.StartLookAt(target, seconds)
+		return flang.BoolVal(true), nil
+	},
+}
+
+// defaultRecoilRecover is how much of a kick eases back when recoil is not
+// told: most of it, leaving a held trigger a climb to fight.
+const defaultRecoilRecover = float32(0.7)
+
+// bonePosition is the world-space point one bone of one attachment is at.
+//
+// The player's attachments are the viewmodel, which RenderViewmodel draws with
+// the camera as their base rather than the body's own matrix, so the point has
+// to be carried out the same way or a flash would appear where the player's
+// feet are instead of at the gun on screen.
+func bonePosition(lvl *world.Level, e *world.Entity, model, bone string) (mgl32.Vec3, error) {
+	m := e.Model(model)
+	if m == nil {
+		return mgl32.Vec3{}, fmt.Errorf("bone_position: @%s has no attachment called %q", e.ID, model)
+	}
+	bm, ok := world.EntityBoneMatrix(e, model, bone)
+	if !ok {
+		return mgl32.Vec3{}, fmt.Errorf("bone_position: @%s.model.%s has no bone %q, or its model has not loaded", e.ID, model, bone)
+	}
+	var base mgl32.Mat4
+	switch {
+	case e == world.PlayerEntity:
+		base = gfx.Cam.Matrix.Inv()
+	case lvl != nil:
+		base = lvl.Frames.FrameFor(e).WorldMatrix().Mul4(e.ModelMatrix())
+	default:
+		base = e.ModelMatrix()
+	}
+	p := base.Mul4(bm).Mul4x1(mgl32.Vec4{0, 0, 0, 1})
+	return mgl32.Vec3{p.X(), p.Y(), p.Z()}, nil
+}

@@ -1,0 +1,10 @@
+base_note: C-4
+loop: forward
+loop_start: 4316
+loop_end: 18627
+tags:
+- chip
+- wavetable
+- gameboy
+- 8bit
+description: Game Boy 32-step 4-bit wavetable

@@ -1,0 +1,15 @@
+# water_rough.fmat — open water, for contrast with water.fmat.
+#
+# The same effect with the swell turned up and the reflection pushed toward the
+# sky. Two materials rather than two sets of numbers on two surfaces is the
+# whole point: change what "rough" means once.
+kind: surface
+texture: water
+doc: Open water — a sea, a wide river. Bigger swell, more mirror at grazing angles.
+effects:
+  - effect: water
+    wave_amplitude: 0.35
+    wave_length: 9
+    wave_speed: 0.22
+    reflectivity: 0.72
+    reflect_color: {r: 0.45, g: 0.62, b: 0.88}

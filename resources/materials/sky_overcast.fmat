@@ -1,0 +1,30 @@
+# sky_overcast.fmat — a gradient sky and a cloud deck together.
+#
+# The deck was world.SkyClouds: thirteen numbers under the level's `sky:`. It is
+# marched rather than drawn at infinity, which is why a mountain can push up
+# through it and why altitude, thickness and range are part of it.
+#
+# The same parameters describe a cloud VOLUME placed in a level; the three deck
+# fields are simply not read there. One kind for both, because it was one look
+# under two owners.
+kind: sky
+doc: Low grey overcast. Raise coverage for a storm, drop it for scattered cloud.
+effects:
+  - effect: sky_gradient
+    zenith: {r: 0.42, g: 0.46, b: 0.52}
+    horizon: {r: 0.68, g: 0.70, b: 0.73}
+    ground: {r: 0.18, g: 0.18, b: 0.17}
+  - effect: clouds
+    color: {r: 0.82, g: 0.83, b: 0.86}
+    coverage: 0.78
+    density: 0.09
+    scale: 520
+    detail: 80
+    erosion: 0.4
+    wind: [9, 0, 3]
+    absorption: 1.4
+    ambient: 0.9
+    cast_shadows: true
+    altitude: 160
+    thickness: 110
+    range: 3200

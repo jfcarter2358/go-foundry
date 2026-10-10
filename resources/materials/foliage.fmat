@@ -1,0 +1,15 @@
+# foliage.fmat — the alpha cutout, as a material.
+#
+# The cutout threshold was a CONSTANT in fragment.glsl — 0.5, the same for every
+# surface in the game — so there was nothing to author at all. As a parameter it
+# is how a leaf card is made to read fatter or thinner without repainting its
+# alpha.
+#
+# 0.5 is the level set that best reproduces a hard 0/255 silhouette once mip
+# filtering has turned it into a ramp. Lower fattens the shape; higher eats it.
+kind: surface
+doc: A leaf card or a grate — hard silhouette, writes depth, antialiased.
+effects:
+  - effect: cutout
+    threshold: 0.45
+  - effect: smooth
