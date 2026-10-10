@@ -1,0 +1,9 @@
+version: 1
+name: Pan Flute
+samples: [winds/pan_flute]
+fade_out: 0.12
+playback:
+  range: [C-3, C-7]
+  clef: treble
+  gliss: chromatic
+description: 'Pan flute: breathy stopped pipe with a strong chiff'

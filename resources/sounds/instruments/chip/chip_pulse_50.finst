@@ -1,0 +1,9 @@
+version: 1
+name: Chip Pulse 50
+samples: [chip/chip_pulse_50]
+fade_out: 0.02
+interp: nearest
+playback:
+  range: [C-2, C-8]
+  clef: treble
+description: 'NES pulse at 50% duty: hollow square'

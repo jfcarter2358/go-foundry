@@ -1,0 +1,8 @@
+version: 1
+name: Pad Bowed Metal
+samples: [pads/pad_bowed_metal]
+fade_out: 0.9
+playback:
+  range: [C-2, C-7]
+  clef: treble
+description: 'Bowed metal: resonant modes rubbed into singing'

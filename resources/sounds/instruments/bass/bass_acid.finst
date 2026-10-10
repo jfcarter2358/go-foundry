@@ -1,0 +1,8 @@
+version: 1
+name: Bass Acid
+samples: [bass/bass_acid]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: Raw saw for a resonant instrument filter to chew on

@@ -1,0 +1,8 @@
+version: 1
+name: Kick 909
+samples: [drums/kick_909]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Punchy, clicky kick with a short body

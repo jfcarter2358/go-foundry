@@ -27,11 +27,13 @@ const usage = `foundry tracker — work on tracker songs (sounds/*.ftrk) and the
 
   foundry tracker list                       songs and how long each runs
   foundry tracker inspect <song>             channels, sections, instruments, samples
-  foundry tracker check                      every song: does it parse, do its samples load
+  foundry tracker check                      every song and instrument: does it parse, do its samples load
   foundry tracker render <song> [flags]      render to a WAV (-o, -section, -seconds, -param k=v)
   foundry tracker samples                    the sample library under sounds/samples/
+  foundry tracker instruments                the instrument library under sounds/instruments/
   foundry tracker new <song>                 write an empty song
   foundry tracker gen-samples [-only a,b]    (re)generate the built-in sample library
+  foundry tracker gen-instruments [-only a]  (re)generate the starter instruments (.finst) and their samples
 
 Every verb takes -root <project> before its arguments.
 `
@@ -74,6 +76,8 @@ func Main(root string, args []string, out io.Writer) int {
 			fmt.Fprintln(out, n)
 		}
 		return 0
+	case "instruments":
+		return instruments(out)
 	case "new":
 		return newSong(rest, out)
 	case "gen-samples":
@@ -82,14 +86,42 @@ func Main(root string, args []string, out io.Writer) int {
 			return 1
 		}
 		return GenSamples(rest, out)
+	case "gen-instruments":
+		if GenInstruments == nil {
+			fmt.Fprintln(out, "tracker gen-instruments: the sample synthesizer is not built into this binary")
+			return 1
+		}
+		return GenInstruments(rest, out)
 	}
 	fmt.Fprintf(out, "tracker: unknown verb %q\n\n", sub)
 	fs.Usage()
 	return 2
 }
 
-// GenSamples is the synthesizer's entry point, installed by gen.go.
-var GenSamples func(args []string, out io.Writer) int
+// GenSamples and GenInstruments are the synthesizer's entry points,
+// installed by gen.go.
+var GenSamples, GenInstruments func(args []string, out io.Writer) int
+
+// instruments lists the instrument library: name, articulations, range.
+func instruments(out io.Writer) int {
+	for _, n := range tracker.ScanInstrumentNames() {
+		in, err := tracker.LoadInstrumentFile(tracker.InstrumentPath(n))
+		if err != nil {
+			fmt.Fprintf(out, "%-36s  error: %v\n", n, err)
+			continue
+		}
+		var arts []string
+		for _, a := range in.Articulations {
+			arts = append(arts, a.Name)
+		}
+		rng := ""
+		if pb := in.Playback; pb.Low != 0 || pb.High != 0 {
+			rng = tracker.NoteName(max(pb.Low, tracker.NoteMin)) + ".." + tracker.NoteName(max(pb.High, pb.Low))
+		}
+		fmt.Fprintf(out, "%-36s  %-24s %-10s %-11s %s\n", n, in.Name, in.Playback.Clef, rng, strings.Join(arts, ","))
+	}
+	return 0
+}
 
 func list(out io.Writer) int {
 	for _, n := range tracker.ScanSongNames() {
@@ -156,6 +188,10 @@ func inspect(rest []string, out io.Writer) int {
 		fmt.Fprintf(out, "  param %-18s default %.2f\n", p.Name, p.Default)
 	}
 	for i, in := range s.Instruments {
+		if in.Ref != "" {
+			fmt.Fprintf(out, "  instrument %02X %-18s library %s %v\n", i+1, in.Name, in.Ref, in.Samples)
+			continue
+		}
 		fmt.Fprintf(out, "  instrument %02X %-18s %v\n", i+1, in.Name, in.Samples)
 	}
 	for _, err := range errs {
@@ -187,11 +223,27 @@ func check(out io.Writer) int {
 			bad++
 		}
 	}
-	if bad > 0 {
-		fmt.Fprintf(out, "%d song(s) with problems\n", bad)
+	badInst := 0
+	for _, n := range tracker.ScanInstrumentNames() {
+		in, err := tracker.LoadInstrumentFile(tracker.InstrumentPath(n))
+		if err != nil {
+			fmt.Fprintf(out, "%s: %v\n", n, err)
+			badInst++
+			continue
+		}
+		errs := in.Resolve(tracker.SampleFor)
+		for _, e := range errs {
+			fmt.Fprintf(out, "instrument %s: %v\n", n, e)
+		}
+		if len(errs) > 0 {
+			badInst++
+		}
+	}
+	if bad > 0 || badInst > 0 {
+		fmt.Fprintf(out, "%d song(s) and %d instrument(s) with problems\n", bad, badInst)
 		return 1
 	}
-	fmt.Fprintln(out, "all songs ok")
+	fmt.Fprintln(out, "all songs and instruments ok")
 	return 0
 }
 

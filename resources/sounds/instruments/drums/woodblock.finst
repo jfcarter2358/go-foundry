@@ -1,0 +1,8 @@
+version: 1
+name: Woodblock
+samples: [drums/woodblock]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Woodblock knock

@@ -1,0 +1,8 @@
+version: 1
+name: Kick Sub
+samples: [drums/kick_sub]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Pure 55 Hz thump, no click

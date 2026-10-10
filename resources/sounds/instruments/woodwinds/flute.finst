@@ -1,0 +1,32 @@
+version: 1
+name: Flute
+samples: [winds/flute]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.12
+vibrato_rate: 5
+vibrato_depth: 0.1
+vibrato_delay: 0.3
+articulations:
+- name: staccato
+  triggers: [stacc., staccatissimo]
+  fade_out: 0.05
+- name: marcato
+  triggers: [accent, sfz, marc.]
+  gain: 1
+  volume_env:
+    points: [[0, 0], [0.01, 1.25], [0.12, 0.85], [0.3, 0]]
+    sustain: 2
+- name: tremolo
+  triggers: [flz., flutter, trem.]
+  volume_env:
+    points: [[0, 0], [0.012, 1], [0.042, 0.38], [0.072, 1], [0.3, 0]]
+    loop_start: 1
+    loop_end: 3
+playback:
+  range: [C-4, C-7]
+  clef: treble
+  gliss: chromatic
+description: 'Flute: pure tone, breath and chiff'

@@ -1,0 +1,8 @@
+version: 1
+name: Kick Acoustic
+samples: [drums/kick_acoustic]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Felt beater on a kick drum with a little shell ring

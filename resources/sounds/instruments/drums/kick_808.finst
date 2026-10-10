@@ -1,0 +1,8 @@
+version: 1
+name: Kick 808
+samples: [drums/kick_808]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Long sub boom with a deep pitch drop

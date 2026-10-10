@@ -1,0 +1,8 @@
+version: 1
+name: Clave
+samples: [drums/clave]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Clave: bright, pitched click'

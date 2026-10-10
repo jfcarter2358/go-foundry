@@ -1,0 +1,9 @@
+version: 1
+name: Banjo
+samples: [plucked/banjo]
+fade_out: 0.25
+polyphony: 4
+playback:
+  range: [E-2, E-6]
+  clef: treble
+description: 'Banjo: twangy string on a drumhead'

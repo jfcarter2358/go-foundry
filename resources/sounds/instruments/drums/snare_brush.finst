@@ -1,0 +1,8 @@
+version: 1
+name: Snare Brush
+samples: [drums/snare_brush]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Brush swish on a snare

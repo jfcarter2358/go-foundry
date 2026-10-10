@@ -1,0 +1,8 @@
+version: 1
+name: Ride Bell
+samples: [drums/ride_bell]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Ride bell: few strong, bell-like partials'

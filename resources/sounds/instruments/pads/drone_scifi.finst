@@ -1,0 +1,8 @@
+version: 1
+name: Drone Scifi
+samples: [pads/drone_scifi]
+fade_out: 0.9
+playback:
+  range: [C-1, C-5]
+  clef: bass
+description: Evolving inharmonic FM drone

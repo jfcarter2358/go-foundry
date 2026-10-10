@@ -1,0 +1,8 @@
+version: 1
+name: Snare Acoustic
+samples: [drums/snare_acoustic]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Stick on a snare: shell modes and rattling wires'

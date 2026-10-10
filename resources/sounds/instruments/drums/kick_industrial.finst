@@ -1,0 +1,8 @@
+version: 1
+name: Kick Industrial
+samples: [drums/kick_industrial]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Hard distorted kick with a rumbling tail

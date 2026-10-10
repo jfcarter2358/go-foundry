@@ -1,0 +1,9 @@
+version: 1
+name: Clarinet
+samples: [winds/clarinet]
+fade_out: 0.12
+playback:
+  range: [C-3, C-7]
+  clef: treble
+  gliss: chromatic
+description: 'Clarinet: hollow odd harmonics'

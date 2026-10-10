@@ -1,0 +1,19 @@
+version: 1
+name: Square Lead
+samples: [leads/lead_square]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.12
+vibrato_rate: 5.5
+vibrato_depth: 0.15
+vibrato_delay: 0.3
+articulations:
+- name: staccato
+  triggers: [stacc.]
+  fade_out: 0.04
+playback:
+  range: [C-3, C-7]
+  clef: treble
+description: A gently filtered square

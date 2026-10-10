@@ -1,0 +1,8 @@
+version: 1
+name: Triangle
+samples: [drums/triangle]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Orchestral triangle: long metallic ring'

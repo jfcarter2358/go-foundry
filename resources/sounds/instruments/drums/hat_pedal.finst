@@ -1,0 +1,8 @@
+version: 1
+name: Hat Pedal
+samples: [drums/hat_pedal]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Foot-closed hat: soft attack, band-limited chick'

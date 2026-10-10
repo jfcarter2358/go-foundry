@@ -72,20 +72,35 @@ func Load(name string) (*Song, error) {
 	return e.s, e.err
 }
 
-// ResolveSamples loads every instrument's samples from the library.
+// ResolveSamples loads every instrument's samples from the library, and
+// fills every slot that names a library instrument from its .finst.
 func ResolveSamples(s *Song) []error {
 	var errs []error
 	for _, in := range s.Instruments {
-		errs = append(errs, in.Resolve(SampleFor)...)
+		if in.Ref == "" {
+			errs = append(errs, in.Resolve(SampleFor)...)
+			continue
+		}
+		if err := in.resolveRef(); err != nil {
+			errs = append(errs, fmt.Errorf("instrument %s: %w", in.Name, err))
+			continue
+		}
+		for i, n := range in.Samples {
+			if in.Loaded(i) == nil {
+				errs = append(errs, fmt.Errorf("instrument %s (%s): no file for sample %q under %s", in.Name, in.Ref, n, SamplesDir()))
+			}
+		}
 	}
 	return errs
 }
 
-// ReloadSongs drops the song cache (and the sample cache with it).
+// ReloadSongs drops the song cache (and the instrument and sample caches
+// with it).
 func ReloadSongs() {
 	songMu.Lock()
 	songCache = map[string]songEntry{}
 	songMu.Unlock()
+	ReloadInstruments()
 	ReloadSamples()
 }
 
@@ -116,6 +131,14 @@ func SongSamples(path string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, in := range s.Instruments {
+		if in.Ref != "" {
+			// A library slot plays the samples its .finst names.
+			if p := InstrumentPath(in.Ref); p != "" {
+				if lib, err := LoadInstrumentFile(p); err == nil {
+					in = lib
+				}
+			}
+		}
 		for _, n := range in.Samples {
 			if n != "" && !seen[n] {
 				seen[n] = true

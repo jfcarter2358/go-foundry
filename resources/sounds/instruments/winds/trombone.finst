@@ -1,0 +1,8 @@
+version: 1
+name: Trombone
+samples: [winds/trombone]
+fade_out: 0.12
+playback:
+  range: [E-2, F-5]
+  clef: bass
+description: 'Trombone: brassy with a lip buzz'

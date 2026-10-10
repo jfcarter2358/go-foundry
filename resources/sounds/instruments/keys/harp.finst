@@ -1,0 +1,22 @@
+version: 1
+name: Harp
+samples: [orchestral/harp_c2, plucked/harp]
+zones:
+- sample: 0
+  low: C-0
+  high: B-2
+- sample: 1
+  low: C-3
+  high: B-9
+fade_out: 1.5
+polyphony: 8
+articulations:
+- name: muted
+  triggers: [étouffé, etouffe, damped]
+  fade_out: 0.12
+playback:
+  range: [B-0, G#7]
+  clef: grand
+  gliss: diatonic
+  release: 2.5
+description: 'Concert harp: rings until damped; glissandi run the scale'

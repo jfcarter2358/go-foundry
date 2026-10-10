@@ -1,0 +1,8 @@
+version: 1
+name: Clap Wide
+samples: [drums/clap_wide]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Wide stereo clap with offset, panned hands

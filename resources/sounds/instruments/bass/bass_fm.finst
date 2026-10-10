@@ -1,0 +1,8 @@
+version: 1
+name: Bass Fm
+samples: [bass/bass_fm]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: Two-operator FM bass with a plucky index envelope

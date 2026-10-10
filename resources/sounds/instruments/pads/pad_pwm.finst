@@ -1,0 +1,8 @@
+version: 1
+name: Pad Pwm
+samples: [pads/pad_pwm]
+fade_out: 0.9
+playback:
+  range: [C-2, C-7]
+  clef: treble
+description: Two pulses with opposed PWM

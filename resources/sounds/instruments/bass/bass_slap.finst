@@ -1,0 +1,8 @@
+version: 1
+name: Bass Slap
+samples: [bass/bass_slap]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: 'Slap bass: thumb pop and bright string'

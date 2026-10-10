@@ -1,0 +1,17 @@
+version: 1
+name: Shimmer Pad
+samples: [pads/pad_shimmer]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 1.1
+polyphony: 6
+articulations:
+- name: staccato
+  triggers: [stacc.]
+  fade_out: 0.12
+playback:
+  range: [C-2, C-7]
+  clef: grand
+description: Octaves that sparkle as they move

@@ -1,0 +1,8 @@
+version: 1
+name: Tambourine
+samples: [drums/tambourine]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Tambourine: jingles and skin'

@@ -1,0 +1,8 @@
+version: 1
+name: Snare Gated
+samples: [drums/snare_gated]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 80s snare through a plate, hard-gated

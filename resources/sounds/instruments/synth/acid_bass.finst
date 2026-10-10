@@ -1,0 +1,21 @@
+version: 1
+name: Acid Bass
+samples: [bass/bass_acid]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+filter_env:
+  points: [[0, 3], [0.25, 0.5], [0.6, 0]]
+filter: lowpass
+cutoff: 500
+resonance: 0.75
+fade_out: 0.06
+articulations:
+- name: staccato
+  triggers: [stacc.]
+  fade_out: 0.03
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: A raw saw through a resonant low-pass that snaps shut on every note

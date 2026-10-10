@@ -1,0 +1,8 @@
+version: 1
+name: Fx Laser
+samples: [fx/fx_laser]
+fade_out: 0.3
+playback:
+  clef: percussion
+  release: 6
+description: 'Laser zap: square with a fast pitch fall'

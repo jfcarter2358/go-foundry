@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("<score-partwise><part><measure><attributes><transpose><diatonic>02</attributes><note><duration>1</score-partwise>0")

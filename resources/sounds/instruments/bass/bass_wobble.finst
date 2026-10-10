@@ -1,0 +1,8 @@
+version: 1
+name: Bass Wobble
+samples: [bass/bass_wobble]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: 'Saw stack and square, unfiltered: wobble it with the filter'

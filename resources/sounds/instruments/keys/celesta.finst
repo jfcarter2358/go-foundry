@@ -1,0 +1,15 @@
+version: 1
+name: Celesta
+samples: [orchestral/celesta_c5]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.6
+polyphony: 6
+playback:
+  range: [C-4, C-8]
+  transposition: 12
+  clef: grand
+  gliss: diatonic
+description: 'Celesta: sounds an octave above where it is written'

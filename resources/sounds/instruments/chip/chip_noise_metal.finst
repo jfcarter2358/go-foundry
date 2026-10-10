@@ -1,0 +1,9 @@
+version: 1
+name: Chip Noise Metal
+samples: [chip/chip_noise_metal]
+fade_out: 0.02
+interp: nearest
+playback:
+  range: [C-2, C-8]
+  clef: percussion
+description: 'NES short-mode noise: pitched metallic buzz'

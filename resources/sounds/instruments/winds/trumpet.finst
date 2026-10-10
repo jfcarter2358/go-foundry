@@ -1,0 +1,9 @@
+version: 1
+name: Trumpet
+samples: [winds/trumpet]
+fade_out: 0.12
+playback:
+  range: [C-3, C-7]
+  clef: treble
+  gliss: chromatic
+description: 'Trumpet: brightness tied to how hard it is blown'

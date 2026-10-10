@@ -41,36 +41,16 @@ type chanState struct {
 	delayed                Cell
 	offset                 float32
 	reverse                bool
+	art                    int // 1-based articulation from @; 0 the default
 
-	voice int // primary voice, -1 none
+	voice NoteID // the note the channel is steering, 0 none
 
 	// effect memory: a zero parameter repeats the last
 	memVol, memPitch, memGlide, memVib, memTrem uint8
 }
 
 func newChanState() chanState {
-	return chanState{vol: 1, cutoff: 1, voice: -1, cutAt: -1, delayAt: -1}
-}
-
-// stripState is a channel's mixer strip: mute fade and bound values.
-type stripState struct {
-	mute, muteTarget, muteRate float32
-	vol, pan, sendA, sendB     float32
-	cutoffHz                   float32 // 0 = no bound cutoff
-	filt                       svf
-	filtOn                     bool
-	peak                       float32
-}
-
-func (st *stripState) setMute(on bool, secs float32) {
-	st.muteTarget = 1
-	if on {
-		st.muteTarget = 0
-	}
-	if secs <= 0.005 {
-		secs = 0.005
-	}
-	st.muteRate = 1 / secs
+	return chanState{vol: 1, cutoff: 1, cutAt: -1, delayAt: -1}
 }
 
 func (p *Player) doTick() {
@@ -128,10 +108,18 @@ func (p *Player) processRow() {
 func (p *Player) playCell(ci int, ch *chanState, cell Cell, glide bool) {
 	if cell.Instr != 0 {
 		if in := p.song.Instrument(cell.Instr); in != nil {
+			if cell.Instr != ch.instr {
+				ch.art = 0 // an articulation belongs to the instrument it was set on
+			}
 			ch.instr, ch.inst = cell.Instr, in
 			if cell.Note == NoteNone {
 				ch.vol = 1
 			}
+		}
+	}
+	for _, e := range cell.FX {
+		if e.Cmd == FxArticulation {
+			ch.art = int(e.Param)
 		}
 	}
 	switch {
@@ -140,16 +128,22 @@ func (p *Player) playCell(ci int, ch *chanState, cell Cell, glide bool) {
 	case cell.Note == NoteCut:
 		p.killChannel(ci)
 	case cell.Note >= NoteMin && cell.Note <= NoteMax:
-		if glide && ch.voice >= 0 && p.voices[ch.voice].active && !p.voices[ch.voice].released {
+		if v := p.eng.attachedLead(ch.voice); glide && v != nil && !v.released {
 			// Keep the sounding note and slide its pitch to the new one. The
 			// target is relative to the voice's own note, as ch.pitch is.
-			ch.glideTarget = float32(cell.Note) - p.voices[ch.voice].note
+			ch.glideTarget = float32(cell.Note) - v.note
 			ch.note = cell.Note
 		} else {
 			if cell.Vol == VolNone {
 				ch.vol = 1
 			}
-			p.trigger(ci, ch, cell.Note)
+			// The volume column is the note's velocity too: it picks the
+			// instrument's velocity layer as well as setting the level.
+			vel := ch.vol
+			if cell.Vol != VolNone {
+				vel = float32(cell.Vol) / float32(VolMax)
+			}
+			p.trigger(ci, ch, cell.Note, vel)
 		}
 	}
 	if cell.Vol != VolNone {
@@ -229,7 +223,7 @@ func (p *Player) rowEffect(ci int, ch *chanState, e Effect) {
 	case FxTempo:
 		if e.Param >= 20 {
 			p.bpm, p.bpmTarget, p.bpmRate = float32(e.Param), float32(e.Param), 0
-			p.dly.set(p.song.Delay, p.bpm, p.rate)
+			p.eng.SetTempo(p.bpm)
 		}
 	case FxParam:
 		if i := int(x); i < len(p.params) {
@@ -276,7 +270,7 @@ func (p *Player) tickEffects() {
 			ch.cutoff = clamp32(ch.cutoff+ch.cutSlide, 0, 1)
 		}
 		if ch.retrig > 0 && p.tick%ch.retrig == 0 && ch.note != NoteNone {
-			p.trigger(ci, ch, ch.note)
+			p.trigger(ci, ch, ch.note, ch.vol)
 		}
 		if ch.cutAt > 0 && p.tick == ch.cutAt {
 			p.killChannel(ci)
@@ -454,19 +448,20 @@ func (p *Player) finish() {
 
 // ---------- notes ----------
 
-// trigger starts a note on a channel, moving its old note off to fade.
-func (p *Player) trigger(ci int, ch *chanState, note uint8) {
+// trigger starts a note on a channel, moving its old note off to fade. vel
+// (0..1) picks the instrument's velocity layer.
+func (p *Player) trigger(ci int, ch *chanState, note uint8, vel float32) {
 	in := ch.inst
 	if in == nil {
 		return
 	}
-	if old := ch.voice; old >= 0 && p.voices[old].active {
-		v := &p.voices[old]
-		p.detach(v)
-		if in.Polyphony > 1 && p.channelVoices(ci) < in.Polyphony {
-			v.release()
+	e := p.eng
+	if old := ch.voice; e.attached(old) {
+		e.detach(old)
+		if in.Polyphony > 1 && e.stripNotes(ci) < in.Polyphony {
+			e.NoteOff(old)
 		} else {
-			v.kill()
+			e.Kill(old)
 		}
 	}
 	ch.note = note
@@ -474,100 +469,18 @@ func (p *Player) trigger(ci int, ch *chanState, note uint8) {
 	if !ch.sendSet && ci < len(p.song.Channels) {
 		ch.sendA, ch.sendB = p.song.Channels[ci].SendA, p.song.Channels[ci].SendB
 	}
-	ch.voice = p.startVoice(ci, in, note, ch.offset, ch.reverse)
-}
-
-// startVoice allocates and starts a voice; -1 when the instrument has no
-// sample for the note.
-func (p *Player) startVoice(ci int, in *Instrument, note uint8, offset float32, reverse bool) int {
-	smp, base := in.SampleFor(note)
-	if smp == nil || smp.Frames() == 0 {
-		return -1
-	}
-	i := p.allocVoice()
-	v := &p.voices[i]
-	p.age++
-	interp := in.Interp
-	if interp == InterpSong {
-		interp = p.song.Interp
-	}
-	*v = pvoice{
-		active: true, attached: true, ch: ci, inst: in, smp: smp,
-		base: base, note: float32(note), vol: 1, fade: 1, dir: 1,
-		age: p.age, interp: interp,
-	}
-	v.envT = [4]float32{}
-	if reverse {
-		v.dir = -1
-		v.pos = float64(smp.Frames()-1) * float64(1-offset)
-	} else {
-		v.pos = float64(smp.Frames()) * float64(offset)
-	}
-	// Starting mid-sample would click; ramp in over the first block.
-	v.primed = offset == 0 && !reverse
-	return i
-}
-
-func (p *Player) channelVoices(ci int) int {
-	n := 0
-	for i := range p.voices {
-		if p.voices[i].active && p.voices[i].ch == ci && !p.voices[i].killing {
-			n++
-		}
-	}
-	return n
-}
-
-// allocVoice finds a free voice, or steals the least audible.
-func (p *Player) allocVoice() int {
-	best, bestScore := 0, float32(math.MaxFloat32)
-	for i := range p.voices {
-		v := &p.voices[i]
-		if !v.active {
-			return i
-		}
-		score := v.curL + v.curR
-		if v.killing {
-			score -= 10
-		} else if v.released {
-			score -= 5
-		}
-		score -= float32(p.age-v.age) * 1e-6
-		if score < bestScore {
-			best, bestScore = i, score
-		}
-	}
-	p.detach(&p.voices[best])
-	return best
-}
-
-// detach stops a channel steering its voice; the voice keeps the last values.
-func (p *Player) detach(v *pvoice) {
-	if !v.active || !v.attached {
-		return
-	}
-	v.attached = false
-	if v.ch >= 0 && v.ch < len(p.chans) {
-		ch := &p.chans[v.ch]
-		if ch.voice >= 0 && &p.voices[ch.voice] == v {
-			ch.voice = -1
-		}
-	}
+	ch.voice = e.NoteOn(ci, in, float32(note), NoteOptions{
+		Velocity: vel, Articulation: ch.art, Offset: ch.offset, Reverse: ch.reverse, Follow: true,
+	})
 }
 
 func (p *Player) releaseChannel(ci int) {
-	ch := &p.chans[ci]
-	if ch.voice >= 0 && p.voices[ch.voice].active {
-		p.voices[ch.voice].release()
-	}
+	p.eng.releaseAttached(p.chans[ci].voice)
 }
 
 func (p *Player) killChannel(ci int) {
-	ch := &p.chans[ci]
-	if ch.voice >= 0 && p.voices[ch.voice].active {
-		v := &p.voices[ch.voice]
-		p.detach(v)
-		v.kill()
+	if id := p.chans[ci].voice; p.eng.attached(id) {
+		p.eng.Kill(id)
 	}
 }
 
@@ -581,22 +494,13 @@ func (p *Player) previewNote(key int, instr, note uint8, vol, hold float32) {
 	if key >= 0 {
 		p.previewOff(key)
 	}
-	i := p.startVoice(-1, in, note, 0, false)
-	if i < 0 {
-		return
-	}
-	if vol <= 0 {
-		vol = 1
-	}
-	p.voices[i].vol = vol
-	p.voices[i].attached = false
-	p.voices[i].hold = hold
-	if key < 0 {
+	id := p.eng.NoteOn(PreviewStrip, in, float32(note), NoteOptions{Volume: vol, Hold: hold})
+	if id == 0 || key < 0 {
 		return
 	}
 	for k := range p.keys {
 		if !p.keys[k].used {
-			p.keys[k] = previewKey{key: key, voice: i, used: true}
+			p.keys[k] = previewKey{key: key, voice: id, used: true}
 			return
 		}
 	}
@@ -607,10 +511,7 @@ func (p *Player) previewOff(key int) {
 	for k := range p.keys {
 		pk := &p.keys[k]
 		if pk.used && pk.key == key {
-			v := &p.voices[pk.voice]
-			if v.active && v.ch == -1 {
-				v.release()
-			}
+			p.eng.NoteOff(pk.voice)
 			pk.used = false
 		}
 	}

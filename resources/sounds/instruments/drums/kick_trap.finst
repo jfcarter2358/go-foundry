@@ -1,0 +1,8 @@
+version: 1
+name: Kick Trap
+samples: [drums/kick_trap]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Tuned long 808 that plays as a bass line

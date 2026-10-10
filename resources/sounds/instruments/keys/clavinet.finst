@@ -1,0 +1,9 @@
+version: 1
+name: Clavinet
+samples: [keys/clavinet]
+fade_out: 0.3
+polyphony: 4
+playback:
+  range: [A-0, C-8]
+  clef: grand
+description: 'Clavinet: bright, funky, percussive'

@@ -1,0 +1,8 @@
+version: 1
+name: Ride
+samples: [drums/ride]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Ride cymbal: stick ping over a shimmering wash'

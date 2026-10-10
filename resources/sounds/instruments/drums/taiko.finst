@@ -1,0 +1,8 @@
+version: 1
+name: Taiko
+samples: [drums/taiko]
+polyphony: 4
+playback:
+  clef: bass
+  release: 3
+description: 'Taiko: huge low drum in a room'

@@ -1,0 +1,211 @@
+version: 1
+title: Score Demo
+composer: Foundry
+bars: 16
+gain: 0.8
+tempo: [{bar: 1, bpm: 92, text: Andante con moto}, {bar: 15, bpm: 92, text: rit.,
+    ramp: true}, {bar: 16, bpm: 66}]
+meter: [{bar: 1, sig: 4/4}]
+key: [{bar: 1, fifths: 1, mode: major}]
+sections:
+- name: intro
+  bar: 1
+- name: theme
+  bar: 5
+- name: bridge
+  bar: 9
+- name: coda
+  bar: 13
+markers: [{name: climax, bar: 11}]
+repeats: [{start: 5, end: 8}]
+params: [{name: intensity, default: 1}]
+bindings:
+- param: intensity
+  line: Horn
+  target: volume
+  from: 0
+  to: 1
+lines:
+- name: Flute
+  instrument: woodwinds/flute
+  volume: 0.7
+  pan: -0.25
+  sends: {a: 0.3}
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | R
+      | R
+      | R
+      | R
+      | q.D5(mp) eE5 qD5 qB4
+      | /sB5 q.A5 eG5 qF#5 qD5
+      | hG5 qE5 qB4
+      | qC5 eE5 eG5 hF#5
+      | 3{eE5(mf) eD5 eC5} 3{eB4 eC5 eD5} hE5
+      | 3{eF#5 eE5 eD5} 3{eC5 eD5 eE5} hF#5
+      | 3{eG5(f) eF#5 eE5} 3{eD5 eE5 eF#5} hG5
+      | q.B5 eA5 hG5
+      | hE5 qG5 qE5
+      | hF#5 qA5 qF#5
+      | wG5~
+      | hG5(ferm) hr
+      |
+- name: Horn
+  instrument: brass/horn
+  volume: 0.55
+  pan: 0.2
+  sends: {a: 0.35}
+  staves:
+  - clef: treble
+    transpose: -P5
+    voices:
+    - |
+      | R
+      | R
+      | R
+      | R
+      | wD4(p)
+      | wD4
+      | wE4
+      | hE4 hF#4
+      | wE4(mp)
+      | wF#4
+      | wD4(mf)
+      | wE4
+      | wE4(f)
+      | wF#4
+      | wD4~
+      | hD4 hr
+      |
+- name: Violins
+  instrument: strings/violin_section
+  volume: 0.75
+  pan: -0.4
+  sends: {a: 0.4}
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | R
+      | R
+      | wE4(pp)
+      | hF#4 hA4
+      | hG4(p) hB4
+      | hA4 hF#4
+      | hG4 hB4
+      | hE4 hA4
+      | qE5(mf) qC5 qA4 qC5
+      | qD5 qC5 qA4 qF#4
+      | qG4 qB4 qD5 qB4
+      | 5{sE5 sF#5 sG5 sA5 sB5} qG5 hE5
+      | hC5(f) hE5
+      | hD5 hA4
+      | wB4~
+      | hB4 hr
+      |
+  lanes:
+    volume:
+    - at: "9"
+      value: 0.8
+    - at: "11"
+      value: 1
+- name: Cello
+  instrument: strings/cello_section
+  volume: 0.8
+  pan: 0.35
+  sends: {a: 0.3}
+  staves:
+  - clef: bass
+    voices:
+    - |
+      | R
+      | R
+      | R
+      | R
+      | hG2(mp) hD3
+      | hF#2 hD3
+      | hE2 hB2
+      | hC3 hD3
+      | hA2(mf) hE3
+      | hD3 hA2
+      | hG2(f) hD3
+      | hE2 hB2
+      | hC3 hG2
+      | hD3 hA2
+      | wG2~
+      | hG2(ferm) hr
+      |
+- name: Piano
+  instrument: keys/grand_piano
+  volume: 0.7
+  pan: 0.05
+  sends: {a: 0.25}
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qB4(p) qD5 qG5 qD5
+      | qB4 qE5 qG5 qE5
+      | qC5 qE5 qG5 qE5
+      | qA4 qD5 qF#5 eA5 eF#5
+      | er(mp) eB4+D5 er eB4+D5 er eB4+D5 er eB4+D5
+      | er eA4+D5 er eA4+D5 er eA4+D5 er eA4+D5
+      | er eG4+B4 er eG4+B4 er eG4+B4 er eG4+B4
+      | er eG4+C5 er eG4+C5 er eA4+D5 er eA4+D5
+      | 3{eA4(mf) eC5 eE5} 3{eA4 eC5 eE5} 3{eA4 eC5 eE5} 3{eA4 eC5 eE5}
+      | 3{eF#4 eA4 eC5} 3{eF#4 eA4 eC5} 3{eF#4 eA4 eC5} 3{eF#4 eA4 eC5}
+      | 3{eG4 eB4 eD5} 3{eG4 eB4 eD5} 3{eG4 eB4 eD5} 3{eG4 eB4 eD5}
+      | 3{eG4 eB4 eE5} 3{eG4 eB4 eE5} 3{eG4 eB4 eE5} 3{eG4 eB4 eE5}
+      | qE5+G5(f) qE5+G5 qE5+G5 qE5+G5
+      | qF#5+A5 qF#5+A5 qF#5+A5 qF#5+A5
+      | wG5+B5
+      | hG5+B5+D6(ferm) hr
+      |
+    - |
+      | hD4+G4 hD4+G4
+      | hE4+G4 hE4+G4
+      | hE4+G4 hE4+G4
+      | hD4+F#4 hD4+F#4
+      | qG4 qG4 qG4 qG4
+      | qF#4 qF#4 qF#4 qF#4
+      | qE4 qE4 qE4 qE4
+      | qE4 qE4 qF#4 qF#4
+      | hE4 hE4
+      | hD4 hD4
+      | hB3 hB3
+      | hE4 hE4
+      | hC5 hC5
+      | hD5 hD5
+      | wD5
+      | hD5 h_
+      |
+  - clef: bass
+    voices:
+    - |
+      | wG2+D3
+      | wE2+B2
+      | wC3+G3
+      | hD3+A3 hD2+A2
+      | wG2
+      | wF#2
+      | wE2
+      | hC2+C3 hD2+D3
+      | wA2
+      | hD3 hD2
+      | wG2
+      | wE2
+      | wC2+C3
+      | wD2+D3
+      | wG1+G2~
+      | hG1+G2 hr
+      |
+buses:
+  a:
+    fx: [{fx: reverb, size: 0.72, damping: 0.45, width: 1}]
+    return: 0.6
+  b:
+    fx: [{fx: delay, beats: 0.75, feedback: 0.3, tone: 0.6, ping_pong: 1}]
+    return: 0
+master: [{fx: compressor, enabled: 1, threshold: -10, ratio: 2.5, attack: 0.01, release: 0.2}]

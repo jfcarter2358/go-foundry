@@ -1,0 +1,16 @@
+version: 1
+name: Xylophone
+samples: [orchestral/xylophone_c5]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.2
+polyphony: 6
+playback:
+  range: [F-4, C-8]
+  transposition: 12
+  clef: treble
+  gliss: diatonic
+  release: 0.8
+description: 'Xylophone: sounds an octave above where it is written'

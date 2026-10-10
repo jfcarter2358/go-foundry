@@ -1,0 +1,8 @@
+version: 1
+name: Strings Section
+samples: [pads/strings_section]
+fade_out: 0.9
+playback:
+  range: [C-2, C-7]
+  clef: treble
+description: 'String section: six bowed strings with chorus'

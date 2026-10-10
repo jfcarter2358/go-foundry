@@ -56,6 +56,7 @@ and is always current.
 | [Decals](29-decals.md) | Textures projected onto the level's surfaces: posters, stencils, scorch marks, bullet holes |
 | [Audio](16-audio.md) | Placed sounds, music, attenuation, the mixer settings |
 | [Music tracker](31-music-tracker.md) | Songs as patterns and samples, the Tracker editor, steering music from scripts, the sample library |
+| [Scores](32-score-editor.md) | Music as notation: the .fscore file and its note text, how a score plays, importing MIDI and MusicXML, the `foundry score` commands |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
 | [Saves and checkpoints](26-saves-and-checkpoints.md) | Checkpoint volumes, Retry, save slots, per-level save mode |

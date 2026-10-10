@@ -52,14 +52,16 @@ var textExts = map[string]bool{
 	".fpar": true, // particle effects
 	".fai":  true, // AI decision trees, which name the animations and effects
 	//                their nodes play, and the tags they send to
-	".fmat":  true, // materials, which name the textures their effects use
-	".fbio":  true, // terrain biomes, which name their ground textures
-	".fmdl":  true, // models, which name the skeleton they are rigged to
-	".fskl":  true, // skeletons, whose clips name nothing but are scanned for consistency
-	".flang": true,
-	".ftrk":  true, // tracker songs, which name their library samples
-	".obj":   true, // model source, names its .mtl
-	".mtl":   true, // and that names its textures
+	".fmat":   true, // materials, which name the textures their effects use
+	".fbio":   true, // terrain biomes, which name their ground textures
+	".fmdl":   true, // models, which name the skeleton they are rigged to
+	".fskl":   true, // skeletons, whose clips name nothing but are scanned for consistency
+	".flang":  true,
+	".ftrk":   true, // tracker songs, which name their library samples and instruments
+	".finst":  true, // library instruments, which name their samples
+	".fscore": true, // notated scores, which name their library instruments
+	".obj":    true, // model source, names its .mtl
+	".mtl":    true, // and that names its textures
 }
 
 // indexAssets builds the reference index over the given content directories.
@@ -129,6 +131,12 @@ func referenceNames(slash string) []string {
 	if rel, ok := strings.CutPrefix(slash, trackerSamplesDir); ok {
 		names = append(names, rel, strings.TrimSuffix(rel, filepath.Ext(rel)))
 	}
+	// A library instrument is named the same way, relative to its library:
+	// a song slot's `ref: strings/violin_section` is
+	// sounds/instruments/strings/violin_section.finst.
+	if rel, ok := strings.CutPrefix(slash, trackerInstrumentsDir); ok {
+		names = append(names, rel, strings.TrimSuffix(rel, filepath.Ext(rel)))
+	}
 	// A normal map is never named by content: the engine derives its name from
 	// the albedo's and loads it alongside (gfx.ensureNormalMapLoaded). So it
 	// answers to the albedo's names too — otherwise every texture's relief
@@ -152,8 +160,12 @@ func referenceNames(slash string) []string {
 // same reason as LevelSourceExt: this tool does not depend on the engine.
 var cubemapFaceSuffixes = []string{"_px", "_nx", "_py", "_ny", "_pz", "_nz"}
 
-// trackerSamplesDir mirrors tracker.SamplesDir under the content root.
-const trackerSamplesDir = "sounds/samples/"
+// trackerSamplesDir and trackerInstrumentsDir mirror tracker.SamplesDir and
+// tracker.InstrumentsDir under the content root.
+const (
+	trackerSamplesDir     = "sounds/samples/"
+	trackerInstrumentsDir = "sounds/instruments/"
+)
 
 // manifestRoots is what a game reaches before any content says anything.
 //

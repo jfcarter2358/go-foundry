@@ -1,0 +1,8 @@
+version: 1
+name: Hat Open 808
+samples: [drums/hat_open_808]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 808 open hat, 450 ms

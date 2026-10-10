@@ -1,0 +1,8 @@
+version: 1
+name: Vox Ah
+samples: [vocal/vox_ah]
+fade_out: 0.4
+playback:
+  range: [C-3, C-6]
+  clef: treble
+description: Sung 'ah'

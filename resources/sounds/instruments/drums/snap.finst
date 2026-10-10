@@ -1,0 +1,8 @@
+version: 1
+name: Snap
+samples: [drums/snap]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Finger snap

@@ -1,11 +1,14 @@
 package tracker
 
-// voice.go — one sounding note, and the block mix around it.
+// voice.go — one sounding sample of a note.
 //
-// A voice attached to its channel follows the channel's live state (volume
-// slides, vibrato, pan) every control block. When the channel moves on — a
-// new note, a note-off with polyphony, a steal — the voice is detached and
-// keeps the last values it saw while it releases or declicks.
+// A note-on starts one voice, or two when its velocity falls in the overlap
+// of two layers. A voice attached to its strip follows the strip's follow
+// values (a Tracker channel's volume slides, vibrato, pan) every control
+// block. When the channel moves on — a new note, a note-off with polyphony,
+// a steal — the voice is detached and keeps the last values it saw while it
+// releases or declicks. A note the Score plays never follows: its sequencer
+// steers it directly (SetNoteControls).
 
 import "math"
 
@@ -14,18 +17,23 @@ const declickSeconds = 0.004
 
 type pvoice struct {
 	active   bool
-	attached bool
-	ch       int // song channel; -1 preview; -2 never used
+	attached bool // follows its strip's follow values
+	strip    int  // engine strip; PreviewStrip; -2 never used
 	inst     *Instrument
 	smp      *Sample
 	interp   Interp
+	group    NoteID // the note-on that started it
+	lead     bool   // the first voice of its note (the one polyphony counts)
+	env      *Envelope
+	fadeOut  float32
+	level    float32 // layer crossfade and articulation gain, 1 for most notes
 
 	pos  float64
 	dir  int
 	base uint8
 	note float32
 
-	// Last channel values, frozen once detached.
+	// Last strip values, frozen once detached; a non-following note's own.
 	vol, pitchOff, pan float32
 
 	released bool
@@ -49,12 +57,11 @@ func (v *pvoice) release() {
 		return
 	}
 	v.released = true
-	in := v.inst
-	env := &in.VolEnv
+	env := v.env
 	if env.On() && (env.Sustain >= 0 || env.LoopEnd > env.LoopStart) {
 		return // the envelope carries the release from its sustain point
 	}
-	fo := in.FadeOut
+	fo := v.fadeOut
 	if fo < declickSeconds {
 		fo = declickSeconds
 	}
@@ -67,253 +74,158 @@ func (v *pvoice) kill() {
 	v.fadeRate = 1 / declickSeconds
 }
 
-// renderBlock mixes n frames into out: voices into channel buffers, channel
-// strips into the dry and send buses, sends through their effects, then the
-// master compressor.
-func (p *Player) renderBlock(out []float32, n int) {
-	dt := float32(n) / float32(p.rate)
-	nn := n * 2
-	for i := range p.chans {
-		if p.used[i] {
-			clear(p.chanBuf[i][:nn])
-			p.used[i] = false
-		}
+// startNote starts the voices of one note-on: the sample the zone (or the
+// articulation's zone) maps the note to, one voice per velocity layer it
+// sounds — two across a crossfade — with the layer's round-robin turn.
+func (e *Engine) startNote(id NoteID, strip int, in *Instrument, pitch float32, o NoteOptions) NoteID {
+	if in == nil || id == 0 {
+		return 0
 	}
-	clear(p.prevBuf[:nn])
-	clear(p.dry[:nn])
-	clear(p.a[:nn])
-	clear(p.b[:nn])
+	key := int(math.Floor(float64(pitch) + 0.5))
+	key = clampInt(key, int(NoteMin), int(NoteMax))
+	vel := o.Velocity
+	if vel <= 0 {
+		vel = 1
+	}
+	var picks [2]voicePick
+	n := in.pick(uint8(key), vel, o.Articulation, e, &picks)
+	if n == 0 {
+		return 0
+	}
+	env, fadeOut, artGain := &in.VolEnv, in.FadeOut, float32(1)
+	if a := in.articulation(o.Articulation); a != nil {
+		if a.VolEnv.On() {
+			env = &a.VolEnv
+		}
+		if a.FadeOut > 0 {
+			fadeOut = a.FadeOut
+		}
+		artGain = dbGain(a.Gain)
+	}
+	if o.Release > 0 {
+		fadeOut = o.Release
+	}
+	vol := o.Volume
+	if vol <= 0 {
+		vol = 1
+	}
+	interp := in.Interp
+	if interp == InterpSong {
+		interp = e.interp
+	}
+	for k := 0; k < n; k++ {
+		pk := picks[k]
+		i := e.allocVoice()
+		v := &e.voices[i]
+		e.age++
+		*v = pvoice{
+			active: true, attached: o.Follow, strip: strip, inst: in, smp: pk.smp,
+			base: pk.base, note: pitch, vol: vol, pan: o.Pan, fade: 1, dir: 1,
+			age: e.age, interp: interp, group: id, lead: k == 0,
+			env: env, fadeOut: fadeOut, level: pk.level * artGain, hold: o.Hold,
+		}
+		if o.Reverse {
+			v.dir = -1
+			v.pos = float64(pk.smp.Frames()-1) * float64(1-o.Offset)
+		} else {
+			v.pos = float64(pk.smp.Frames()) * float64(o.Offset)
+		}
+		// Starting mid-sample would click; ramp in over the first block.
+		v.primed = o.Offset == 0 && !o.Reverse
+	}
+	return id
+}
 
-	p.rampControls(dt)
-
-	for i := range p.voices {
-		v := &p.voices[i]
+// allocVoice finds a free voice, or steals the least audible.
+func (e *Engine) allocVoice() int {
+	best, bestScore := 0, float32(math.MaxFloat32)
+	for i := range e.voices {
+		v := &e.voices[i]
 		if !v.active {
-			continue
+			return i
 		}
-		var buf []float32
-		switch {
-		case v.ch == -1:
-			buf = p.prevBuf
-		case v.ch >= 0 && v.ch < len(p.chans):
-			buf = p.chanBuf[v.ch]
-		default:
-			v.active = false
-			continue
+		score := v.curL + v.curR
+		if v.killing {
+			score -= 10
+		} else if v.released {
+			score -= 5
 		}
-		if v.attached {
-			ch := &p.chans[v.ch]
-			v.vol = p.volMod(ch)
-			v.pitchOff = p.pitchMod(ch)
-			v.pan = ch.pan
-		}
-		if v.ch >= 0 {
-			p.used[v.ch] = true
-		}
-		if done := p.renderVoice(v, buf[:nn], n, dt); done {
-			p.detach(v)
-			v.active = false
+		score -= float32(e.age-v.age) * 1e-6
+		if score < bestScore {
+			best, bestScore = i, score
 		}
 	}
+	e.voices[best].attached = false
+	return best
+}
 
-	for ci := range p.chans {
-		p.mixStrip(ci, n)
+// attached reports whether any voice of a note still follows its strip.
+func (e *Engine) attached(id NoteID) bool {
+	if id == 0 {
+		return false
 	}
-	for i := 0; i < nn; i++ {
-		p.dry[i] += p.prevBuf[i]
+	for i := range e.voices {
+		if v := &e.voices[i]; v.active && v.attached && v.group == id {
+			return true
+		}
 	}
+	return false
+}
 
-	revRet, dlyRet := p.song.Reverb.Return, p.song.Delay.Return
-	gain := p.song.Gain
-	if gain == 0 {
-		gain = 1
+// attachedLead is a following note's first voice, or nil.
+func (e *Engine) attachedLead(id NoteID) *pvoice {
+	if id == 0 {
+		return nil
 	}
-	for f := 0; f < n; f++ {
-		l, r := p.dry[f*2], p.dry[f*2+1]
-		if revRet > 0 {
-			wl, wr := p.rev.process(p.a[f*2], p.a[f*2+1])
-			l += wl * revRet
-			r += wr * revRet
+	for i := range e.voices {
+		if v := &e.voices[i]; v.active && v.attached && v.lead && v.group == id {
+			return v
 		}
-		if dlyRet > 0 {
-			wl, wr := p.dly.process(p.b[f*2], p.b[f*2+1])
-			l += wl * dlyRet
-			r += wr * dlyRet
-		}
-		l, r = p.comp.process(l, r)
-		out[f*2], out[f*2+1] = l*gain, r*gain
-		if f&3 == 0 {
-			p.scope[p.scopePos].Store(math.Float32bits((l + r) * 0.5 * gain))
-			p.scopePos = (p.scopePos + 1) % scopeLen
+	}
+	return nil
+}
+
+// detach stops a strip steering a note; its voices keep the last values.
+func (e *Engine) detach(id NoteID) {
+	for i := range e.voices {
+		if v := &e.voices[i]; v.active && v.group == id {
+			v.attached = false
 		}
 	}
 }
 
-// rampControls moves params, mutes and tempo toward their targets and works
-// out each strip's bound values for this block.
-func (p *Player) rampControls(dt float32) {
-	for i := range p.params {
-		ps := &p.params[i]
-		if ps.cur != ps.target {
-			step := ps.rate * dt
-			if ps.rate == 0 || absf(ps.target-ps.cur) <= step {
-				ps.cur = ps.target
-			} else if ps.target > ps.cur {
-				ps.cur += step
-			} else {
-				ps.cur -= step
-			}
-		}
-	}
-	if p.bpm != p.bpmTarget {
-		step := p.bpmRate * dt
-		if p.bpmRate == 0 || absf(p.bpmTarget-p.bpm) <= step {
-			p.bpm = p.bpmTarget
-		} else if p.bpmTarget > p.bpm {
-			p.bpm += step
-		} else {
-			p.bpm -= step
-		}
-		p.dly.set(p.song.Delay, p.bpm, p.rate)
-	}
-	for ci := range p.strip {
-		st := &p.strip[ci]
-		if st.mute != st.muteTarget {
-			step := st.muteRate * dt
-			if absf(st.muteTarget-st.mute) <= step {
-				st.mute = st.muteTarget
-			} else if st.muteTarget > st.mute {
-				st.mute += step
-			} else {
-				st.mute -= step
-			}
-		}
-		chn := p.song.Channels[ci]
-		ch := &p.chans[ci]
-		st.vol, st.pan = chn.Volume, chn.Pan
-		st.sendA, st.sendB = ch.sendA, ch.sendB
-		if !ch.sendSet {
-			st.sendA, st.sendB = chn.SendA, chn.SendB
-		}
-		st.cutoffHz = 0
-	}
-	for _, b := range p.binds {
-		v := p.params[b.param].cur
-		st := &p.strip[b.ch]
-		lin := b.from + (b.to-b.from)*v
-		switch b.target {
-		case BindVolume:
-			st.vol *= lin
-		case BindPan:
-			st.pan = clamp32(st.pan+lin, -1, 1)
-		case BindSendA:
-			st.sendA = lin
-		case BindSendB:
-			st.sendB = lin
-		case BindCutoff:
-			from, to := max(b.from, 16), max(b.to, 16)
-			hz := from * float32(math.Pow(float64(to/from), float64(v)))
-			if st.cutoffHz == 0 || hz < st.cutoffHz {
-				st.cutoffHz = hz
-			}
-		}
-	}
-	for ci := range p.strip {
-		st := &p.strip[ci]
-		ch := &p.chans[ci]
-		hz := st.cutoffHz
-		if ch.cutoff < 1 {
-			fx := 20 * float32(math.Pow(1000, float64(ch.cutoff)))
-			if hz == 0 || fx < hz {
-				hz = fx
-			}
-		}
-		if hz > 0 && hz < 19000 {
-			if !st.filtOn {
-				st.filt.reset()
-			}
-			st.filtOn = true
-			st.filt.set(FilterLowPass, hz, ch.reso, p.rate)
-		} else {
-			st.filtOn = false
+// releaseAttached and killAttached act on a note only while it still
+// follows its strip — a channel's hold on its note ends when it detaches.
+func (e *Engine) releaseAttached(id NoteID) {
+	for i := range e.voices {
+		if v := &e.voices[i]; v.active && v.attached && v.group == id {
+			v.release()
 		}
 	}
 }
 
-// mixStrip runs one channel buffer through its strip into the buses.
-func (p *Player) mixStrip(ci, n int) {
-	st := &p.strip[ci]
-	if !p.used[ci] {
-		// Nothing played into this channel: let its meter fall, skip the mix.
-		st.peak *= 0.9
-		if ci < MaxChannels {
-			p.levels[ci].Store(math.Float32bits(st.peak))
-		}
-		return
-	}
-	buf := p.chanBuf[ci]
-	g := st.vol * st.mute
-	gl, gr := g, g
-	if st.pan < 0 {
-		gr *= 1 + st.pan
-	} else if st.pan > 0 {
-		gl *= 1 - st.pan
-	}
-	peak := st.peak * 0.9
-	chn := &p.song.Channels[ci]
-	drive := chn.Drive > 0
-	// tanh saturation at unity small-signal gain: quiet passages pass as they
-	// are and only peaks above about 1/dk are squashed, so drive adds edge
-	// without the level jump a peak-normalised curve gives everything quiet.
-	dk := 1 + 9*chn.Drive
-	dnorm := 1 / dk
-	crush := chn.Crush > 0 && chn.Crush < 16
-	steps := float32(int(1) << max(chn.Crush-1, 0))
-	for f := 0; f < n; f++ {
-		l, r := buf[f*2], buf[f*2+1]
-		if st.filtOn {
-			l, r = st.filt.process(0, l), st.filt.process(1, r)
-		}
-		if drive {
-			l = float32(math.Tanh(float64(l*dk))) * dnorm
-			r = float32(math.Tanh(float64(r*dk))) * dnorm
-		}
-		if crush {
-			l = float32(math.Round(float64(l*steps))) / steps
-			r = float32(math.Round(float64(r*steps))) / steps
-		}
-		l, r = l*gl, r*gr
-		p.dry[f*2] += l
-		p.dry[f*2+1] += r
-		if st.sendA > 0 {
-			p.a[f*2] += l * st.sendA
-			p.a[f*2+1] += r * st.sendA
-		}
-		if st.sendB > 0 {
-			p.b[f*2] += l * st.sendB
-			p.b[f*2+1] += r * st.sendB
-		}
-		if a := absf(l) + absf(r); a*0.5 > peak {
-			peak = a * 0.5
+// stripNotes counts the notes sounding on a strip, by their lead voices.
+func (e *Engine) stripNotes(strip int) int {
+	n := 0
+	for i := range e.voices {
+		if v := &e.voices[i]; v.active && v.lead && v.strip == strip && !v.killing {
+			n++
 		}
 	}
-	st.peak = peak
-	if ci < MaxChannels {
-		p.levels[ci].Store(math.Float32bits(peak))
-	}
+	return n
 }
 
 // renderVoice adds n frames of one voice into buf and reports whether it ended.
-func (p *Player) renderVoice(v *pvoice, buf []float32, n int, dt float32) bool {
+func (e *Engine) renderVoice(v *pvoice, buf []float32, n int, dt float32) bool {
 	in, smp := v.inst, v.smp
 	ended := false
 
 	// ---- envelopes and release ----
 	env := float32(1)
-	if in.VolEnv.On() {
-		env = in.VolEnv.Value(v.envT[0])
-		v.envT[0] = in.VolEnv.Advance(v.envT[0], dt, v.released)
-		if v.released && in.VolEnv.Done(v.envT[0]) && in.VolEnv.Value(v.envT[0]) <= 0.0001 {
+	if ve := v.env; ve.On() {
+		env = ve.Value(v.envT[0])
+		v.envT[0] = ve.Advance(v.envT[0], dt, v.released)
+		if v.released && ve.Done(v.envT[0]) && ve.Value(v.envT[0]) <= 0.0001 {
 			ended = true
 		}
 	}
@@ -348,10 +260,10 @@ func (p *Player) renderVoice(v *pvoice, buf []float32, n int, dt float32) bool {
 			cut *= float32(math.Exp2(float64(in.FilterEnv.Value(v.envT[3]))))
 			v.envT[3] = in.FilterEnv.Advance(v.envT[3], dt, v.released)
 		}
-		v.filt.set(in.Filter, cut, in.Resonance, p.rate)
+		v.filt.set(in.Filter, cut, in.Resonance, e.rate)
 	}
 
-	gain := v.vol * in.Volume * smp.Volume * env * v.fade
+	gain := v.vol * in.Volume * smp.Volume * env * v.fade * v.level
 	if ended {
 		gain = 0
 	}
@@ -375,7 +287,7 @@ func (p *Player) renderVoice(v *pvoice, buf []float32, n int, dt float32) bool {
 	dl := (tl - v.curL) / float32(n)
 	dr := (tr - v.curR) / float32(n)
 
-	step := semitoneRatio(semis) * float64(smp.Rate) / float64(p.rate)
+	step := semitoneRatio(semis) * float64(smp.Rate) / float64(e.rate)
 	frames := smp.Frames()
 	looped := smp.Looped() && v.dir > 0 || smp.Loop == LoopPingPong && smp.Looped()
 	ls, le := float64(smp.LoopStart), float64(smp.LoopEnd)

@@ -1,0 +1,9 @@
+version: 1
+name: French Horn
+samples: [winds/french_horn]
+fade_out: 0.12
+playback:
+  range: [E-2, F-5]
+  clef: bass
+  gliss: chromatic
+description: 'French horn: dark and round'

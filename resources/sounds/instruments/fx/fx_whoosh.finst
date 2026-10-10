@@ -1,0 +1,8 @@
+version: 1
+name: Fx Whoosh
+samples: [fx/fx_whoosh]
+fade_out: 0.3
+playback:
+  clef: percussion
+  release: 6
+description: Swept noise passing left to right

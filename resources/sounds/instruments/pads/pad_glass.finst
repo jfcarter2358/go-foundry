@@ -1,0 +1,8 @@
+version: 1
+name: Pad Glass
+samples: [pads/pad_glass]
+fade_out: 0.9
+playback:
+  range: [C-2, C-7]
+  clef: treble
+description: Glassy bell partials, slowly beating

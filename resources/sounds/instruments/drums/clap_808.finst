@@ -1,0 +1,8 @@
+version: 1
+name: Clap 808
+samples: [drums/clap_808]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: '808 clap: stacked noise bursts and a short tail'

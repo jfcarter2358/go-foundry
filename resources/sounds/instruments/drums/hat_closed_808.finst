@@ -1,0 +1,8 @@
+version: 1
+name: Hat Closed 808
+samples: [drums/hat_closed_808]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: '808 closed hat: six metallic squares, 50 ms'

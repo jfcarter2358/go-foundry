@@ -1,0 +1,8 @@
+version: 1
+name: Tom 808
+samples: [drums/tom_808]
+polyphony: 4
+playback:
+  clef: bass
+  release: 3
+description: '808 tom: tuned sine with a pitch bend'

@@ -1,0 +1,8 @@
+version: 1
+name: Hat Closed Tight
+samples: [drums/hat_closed_tight]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: Very short, bright closed hat, 20 ms

@@ -1,0 +1,8 @@
+version: 1
+name: Pad Shimmer
+samples: [pads/pad_shimmer]
+fade_out: 0.9
+playback:
+  range: [C-2, C-7]
+  clef: treble
+description: Shimmering octaves that sparkle as they move

@@ -1,0 +1,18 @@
+version: 1
+name: Vibraphone
+samples: [keys/vibraphone]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.8
+polyphony: 6
+articulations:
+- name: muted
+  triggers: [dampened, damped, secco]
+  fade_out: 0.1
+playback:
+  range: [F-3, F-6]
+  clef: treble
+  gliss: diatonic
+description: 'Vibraphone: long-ringing metal bars'

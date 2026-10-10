@@ -1,0 +1,9 @@
+version: 1
+name: Harpsichord
+samples: [keys/harpsichord]
+fade_out: 0.3
+polyphony: 4
+playback:
+  range: [A-0, C-8]
+  clef: grand
+description: 'Harpsichord: plucked, bright, with jack noise'

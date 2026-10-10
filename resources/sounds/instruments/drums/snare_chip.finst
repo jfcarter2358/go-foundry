@@ -1,0 +1,8 @@
+version: 1
+name: Snare Chip
+samples: [drums/snare_chip]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: NES noise-channel snare burst

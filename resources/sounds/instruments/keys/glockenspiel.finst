@@ -1,0 +1,10 @@
+version: 1
+name: Glockenspiel
+samples: [keys/glockenspiel]
+fade_out: 0.3
+polyphony: 4
+playback:
+  range: [G-5, C-8]
+  transposition: 24
+  clef: treble
+description: 'Glockenspiel: bright steel bar'

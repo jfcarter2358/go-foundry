@@ -1,0 +1,9 @@
+version: 1
+name: Guitar Nylon
+samples: [plucked/guitar_nylon]
+fade_out: 0.25
+polyphony: 4
+playback:
+  range: [E-2, E-6]
+  clef: treble_8vb
+description: Nylon-string guitar, fingerpicked

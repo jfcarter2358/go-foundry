@@ -1,0 +1,8 @@
+version: 1
+name: Bass Growl
+samples: [bass/bass_growl]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: Growling FM feedback bass through a moving vowel

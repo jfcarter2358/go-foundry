@@ -32,7 +32,7 @@ All** saves the song with everything else.
 | **Toolbar** | Play song (`F5`), play pattern (`F6`), play from cursor (`F7`), stop (`F8`); BPM, rows per beat, octave, edit step, follow playback, edit mode, live voices and a scope |
 | **Order** (left) | The order list, coloured by section, with brackets beside it. Insert, repeat, duplicate, make unique, move, delete. Below it, the selected section's name, range, loop and next. |
 | **Pattern** (centre) | The grid. Beats and bars are shaded and the playing row follows. Channel headers rename on double-click and have mute, solo, a piano-roll toggle, a meter, and a mixer popup (volume, pan, sends, drive, crush). A strip above shows how busy each pattern is; click it to jump. **Edit**, the grid's right-click menu and the mixer popup insert a channel left or right of one, add one at the end, or delete one; double-click an instrument (or use **Name** above its settings) to rename it. |
-| **Instruments** (right) | The list (click a name to hear C-4) and the selected instrument: samples, keymap zones on a piano strip, levels, four envelopes, filter, auto-vibrato, polyphony, interpolation. |
+| **Instruments** (right) | The list (click a name to hear C-4) and the selected instrument: the **Library** it plays (or the song's own), samples, keymap zones on a piano strip, levels, four envelopes, filter, auto-vibrato, polyphony, interpolation. |
 | **Bottom tabs** | **Sample**: waveform, loop points that snap to zero crossings (hold `Alt` to place them exactly), normalize, fade, reverse, trim, base note with pitch detect, and **Generate…** from the built-in recipes. **Song**: tempo, ticks, beats per bar, effect columns, gain, loop, beat events, interpolation, channel count, reverb, delay, compressor. **Params & markers**: live sliders, bindings, marker names. |
 
 Effects read as words ("Vibrato 4/4"). The **hex** toggle shows the raw
@@ -82,7 +82,7 @@ groups them; the command under the grid's cursor is highlighted.
 | **Cell** | One channel on one row: a note, an instrument, a volume, and 1–4 effect commands. |
 | **Order** | The list of patterns to play, in order; a pattern can appear many times. |
 | **Section** | A named run of the order list (`intro`, `combat_loop`, `outro`). It either loops until a script asks for another, or goes on to its `next`. |
-| **Instrument** | One or more samples, plus a keymap, envelopes, a filter, vibrato and a release. |
+| **Instrument** | One or more samples, plus a keymap, envelopes, a filter, vibrato and a release. Either the song's own, or a **library instrument** (`.finst`) the slot names. |
 | **Sample** | A sound from the library, `sounds/samples/<category>/<name>.wav`, with a `.fsmp` sidecar holding its base note, loop and tags. |
 | **Param** | A named value from 0 to 1 that scripts ramp, such as `intensity`. **Bindings** connect a param to a channel's volume, pan, sends or low-pass cutoff. |
 | **Marker** | A name for an `E` command's number. Scripts hear `:song_marker:` when it plays. |
@@ -105,7 +105,7 @@ C-4 01 40 V44 ... | ... .. .. ... ...
 | --- | --- |
 | Note | `C-4`, `C#4`; `===` note off (release); `^^^` note cut; `...` empty |
 | Instrument | two hex digits, `01`–`FF`; `..` keeps the channel's last instrument |
-| Volume | `00`–`40` hex; `..` means full volume for a new note, unchanged otherwise |
+| Volume | `00`–`40` hex; `..` means full volume for a new note, unchanged otherwise. It is also the note's **velocity**: it picks the instrument's velocity layer |
 | Effect | a letter plus two hex digits, `V44`; `...` empty |
 
 Trailing empty rows are left out. The format is meant to be read and edited
@@ -141,6 +141,7 @@ vibrato, tremolo or volume slide repeats the channel's last value.
 | `Mxx` | Tempo | set BPM to xx (20–FF) |
 | `Hxy` | Set param | param number x to y/15 |
 | `Exx` | Marker | fire marker xx to scripts |
+| `@xx` | Articulation | play the instrument's articulation xx from this note on (00 its default, 01 the first in its list); type it with the `2` key |
 
 ### The mix
 
@@ -223,14 +224,99 @@ tags: [bass, analog]
 A release ships only the songs a level reaches and only the samples those
 songs name.
 
+## The instrument library
+
+An instrument can live on its own, in
+`sounds/instruments/<category>/<name>.finst`, and be shared: a song slot that
+names one plays it, and so does a Score line. Pick one in the instrument
+pane's **Library** combo. The slot then shows what the instrument carries and
+plays the file as it is — the same in every song that uses it — until **Make
+local copy** turns it into the song's own. **Save to library** does the
+reverse for an instrument you built in the song. In the song file a library
+slot is just its name and the instrument's:
+
+```yaml
+instruments:
+  - name: Violins
+    ref: strings/violin_section
+```
+
+A `.finst` is the same YAML as a song's instrument, plus three things the
+Tracker's own instruments never needed:
+
+```yaml
+version: 1
+name: Violin Section
+samples: [orchestral/vln_sus_soft_g3, orchestral/vln_sus_loud_g3, ...]
+zones:
+  - sample: 1
+    low: C-0
+    high: B-4
+    round_robin: [5]            # takes played in turn, one per note
+    layers:                     # velocity layers, MIDI velocity 0..127
+      - {sample: 0, velocity: [0, 96]}
+      - {sample: 1, velocity: [64, 127], gain: -1}
+fade_out: 0.28
+articulations:
+  - name: pizzicato
+    triggers: [pizz., pizz]     # technique text and marks that pick it
+    zones: [...]                # its own zone set (empty keeps the instrument's)
+    fade_out: 0.5               # and/or its own release, volume envelope, gain
+playback:
+  range: [G-3, E-7]             # playable range, sounding
+  transposition: 0              # written to sounding, semitones (B-flat clarinet -2)
+  clef: treble                  # treble bass alto tenor treble_8vb treble_8va bass_8vb bass_8va percussion grand
+  gliss: slide                  # slide, chromatic or diatonic
+  staccato: 0.4                 # fraction of its written length a staccato note sounds
+  release: 0                    # seconds a score note rings after its written end (0: the fade_out)
+```
+
+- **Velocity layers.** A zone can split by velocity. Layers whose ranges
+  overlap crossfade across the overlap at equal power, so a swell never steps
+  from one recording to the next. In the Tracker the volume column is the
+  velocity: `10` picks a soft layer, `40` the loudest.
+- **Round robin.** `round_robin` lists alternate takes of a zone's (or a
+  layer's) sample; each note plays the next, so a repeated note does not
+  machine-gun.
+- **Articulations.** Named ways of playing — `staccato`, `pizzicato`,
+  `tremolo`, `muted`, `ooh` — each a zone set and/or an envelope, release and
+  gain over the instrument's own. The Score picks one from a mark or technique
+  text; the Tracker from the `@` command. `sustain`, `arco` and `ord.` are the
+  instrument's own zones.
+- **Playback defaults** say how the instrument is written in notation and how
+  its marks play.
+
+The library ships 161 instruments, all built from the synth recipes by
+`foundry tracker gen-instruments`: one for each of the 128 samples, in the
+sample's own category, and an orchestral set — `strings/` (violin, viola,
+cello and contrabass sections with sustain, staccato, pizzicato, tremolo and
+muted), `woodwinds/` (flute, oboe, clarinet in B-flat, bassoon), `brass/`
+(horn in F, trumpet in B-flat, trombone, tuba), `keys/` (grand piano in three
+registers, celesta, harp, organ), `choir/`, `percussion/` (timpani,
+orchestral percussion and a drum kit on the General MIDI keys, xylophone,
+glockenspiel, marimba, vibraphone) and `synth/` pads, leads and basses. The
+orchestral set plays variants of the recipes — a section sampled at two
+pitches, soft and hard takes for its layers, short strokes for staccato —
+which `gen-instruments` renders into `sounds/samples/orchestral/`:
+
+```
+foundry tracker gen-instruments                   # every instrument and the variant samples
+foundry tracker gen-instruments -only strings/violin_section
+foundry tracker gen-instruments -no-samples       # the .finst files only
+foundry tracker instruments                       # the library: name, clef, range, articulations
+```
+
+A release ships the library instruments its songs name, and their samples.
+
 ## From the command line
 
 ```
 foundry tracker list                     songs and their length
 foundry tracker inspect combat_theme     channels, sections, instruments, missing samples
-foundry tracker check                    every song: does it parse, do its samples load
+foundry tracker check                    every song and library instrument: does it parse, do its samples load
 foundry tracker render combat_theme -section combat -param intensity=1 -o out.wav
 foundry tracker samples                  the library, as songs name it
+foundry tracker instruments              the instrument library
 foundry tracker new boss_theme           an empty song
 ```
 

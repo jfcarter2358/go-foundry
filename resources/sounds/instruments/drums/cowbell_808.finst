@@ -1,0 +1,8 @@
+version: 1
+name: Cowbell 808
+samples: [drums/cowbell_808]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: '808 cowbell: two squares through a bandpass'

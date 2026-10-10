@@ -1,0 +1,8 @@
+version: 1
+name: Crash
+samples: [drums/crash]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Crash cymbal: dense partials and a noise bloom'

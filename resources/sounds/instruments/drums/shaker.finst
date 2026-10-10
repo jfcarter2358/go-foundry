@@ -1,0 +1,8 @@
+version: 1
+name: Shaker
+samples: [drums/shaker]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+description: 'Shaker: bright noise in two pushes'

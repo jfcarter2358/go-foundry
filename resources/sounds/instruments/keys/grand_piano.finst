@@ -1,0 +1,40 @@
+version: 1
+name: Grand Piano
+samples: [orchestral/piano_loud_c2, orchestral/piano_soft_c2, keys/piano, orchestral/piano_soft_c4,
+  orchestral/piano_loud_c6, orchestral/piano_soft_c6]
+zones:
+- sample: 0
+  low: C-0
+  high: F#2
+  layers:
+  - sample: 1
+    velocity: [0, 96]
+  - sample: 0
+    velocity: [64, 127]
+- sample: 2
+  low: G-2
+  high: F#5
+  layers:
+  - sample: 3
+    velocity: [0, 96]
+  - sample: 2
+    velocity: [64, 127]
+- sample: 4
+  low: G-5
+  high: B-9
+  layers:
+  - sample: 5
+    velocity: [0, 96]
+  - sample: 4
+    velocity: [64, 127]
+fade_out: 0.35
+polyphony: 8
+articulations:
+- name: staccato
+  triggers: [stacc., staccatissimo]
+  fade_out: 0.08
+playback:
+  range: [A-0, C-8]
+  clef: grand
+  gliss: diatonic
+description: Grand piano in three registers, each with a soft and a hard hammer

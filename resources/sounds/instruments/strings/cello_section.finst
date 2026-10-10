@@ -1,0 +1,75 @@
+version: 1
+name: Cello Section
+samples: [orchestral/vc_sus_loud_c2, orchestral/vc_sus_soft_c2, orchestral/vc_sus_loud_g3,
+  orchestral/vc_sus_soft_g3, orchestral/vc_short_c2, orchestral/vc_short_g3, orchestral/pizz_c2,
+  pads/strings_pizz]
+zones:
+- sample: 0
+  low: C-0
+  high: D-3
+  layers:
+  - sample: 1
+    velocity: [0, 96]
+  - sample: 0
+    velocity: [64, 127]
+- sample: 2
+  low: D#3
+  high: B-9
+  layers:
+  - sample: 3
+    velocity: [0, 96]
+  - sample: 2
+    velocity: [64, 127]
+fade_out: 0.28
+polyphony: 2
+articulations:
+- name: staccato
+  triggers: [stacc., spiccato, spicc., staccatissimo]
+  zones:
+  - sample: 4
+    low: C-0
+    high: D-3
+  - sample: 5
+    low: D#3
+    high: B-9
+  fade_out: 0.07
+- name: pizzicato
+  triggers: [pizz., pizz]
+  zones:
+  - sample: 6
+    low: C-0
+    high: D-3
+  - sample: 7
+    low: D#3
+    high: B-9
+  fade_out: 0.5
+- name: tremolo
+  triggers: [trem., trem]
+  zones:
+  - sample: 4
+    low: C-0
+    high: D-3
+  - sample: 5
+    low: D#3
+    high: B-9
+  gain: -1
+  volume_env:
+    points: [[0, 0], [0.012, 1], [0.042, 0.38], [0.072, 1], [0.3, 0]]
+    loop_start: 1
+    loop_end: 3
+- name: muted
+  triggers: [con sord., con sordino, sord.]
+  zones:
+  - sample: 1
+    low: C-0
+    high: D-3
+  - sample: 3
+    low: D#3
+    high: B-9
+  gain: -5
+  fade_out: 0.35
+playback:
+  range: [C-2, A-5]
+  clef: bass
+  staccato: 0.4
+description: 'A cello section: sustain, staccato, pizzicato, tremolo, muted'
