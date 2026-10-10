@@ -112,6 +112,10 @@ func sceneryGroupsSignature(lvl *world.Level) uint64 {
 		if lvl.Scenery[i].NaniteGPU {
 			put(0xffffffff)
 		}
+		// Its chunk switched off: out of every group (world.SyncPlacementChunks).
+		if !lvl.Scenery[i].InWorld() {
+			put(0xfffffffe)
+		}
 		put(uint32(len(subs)))
 		for si := range subs {
 			put(subs[si].Vao)
@@ -141,8 +145,8 @@ func (in *sceneryInstancer) prepare(lvl *world.Level) {
 	index := map[sceneryGroupKey]int{}
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
-		if s.NaniteGPU {
-			continue // the GPU-driven cull's (nanite_scenery.go)
+		if s.NaniteGPU || !s.InWorld() {
+			continue // the GPU-driven cull's (nanite_scenery.go), or its chunk is off
 		}
 		for si := range s.Submeshes {
 			g := &s.Submeshes[si]

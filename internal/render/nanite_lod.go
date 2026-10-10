@@ -13,10 +13,15 @@ package render
 //	k = H / (2·tan(fovy/2)) / τ = H · Projection[1][1] / 2 / τ
 //
 // Taken once per frame, at the top of DrawWorld, from the projection and
-// camera the frame was handed — before the shadow passes, which choose their
-// cut from the camera too, so every pass of a frame draws the same cut. A
-// caller drawing outside DrawWorld (a GL test, a preview) gets the camera and
-// projection as they stand at each pass.
+// camera the frame was handed — before the shadow passes. A point light's
+// cube faces choose their cut from the camera too. A sun's orthographic views
+// (each cascade, each virtual-shadow-map rectangle) choose one by their own
+// texel instead (shadowOrthoLOD): the camera's cut is centimetre detail round
+// the player, and an orthographic view takes all of it — no occlusion, no
+// fall-off with distance — however coarse its texels are. A cascade or a
+// coarse page over a city drew every building near the camera at full detail
+// into texels a metre across. A caller drawing outside DrawWorld (a GL test,
+// a preview) gets the camera and projection as they stand at each pass.
 
 import (
 	"foundry/internal/gfx"
@@ -28,6 +33,36 @@ import (
 // NaniteLOD switches the LOD selection: off draws every cooked mesh at its
 // full detail, as Phase 1 did.
 var NaniteLOD = gfx.EnvFlag("FOUNDRY_NANITE_LOD", true)
+
+// NaniteShadowLODScale is how many of its own texels a cluster's error may
+// cover in a sun shadow view, as a multiple of gfx.NaniteLODError: 0 draws
+// the camera's cut there, as before shadowOrthoLOD (FOUNDRY_NANITE_SHADOW_LOD).
+var NaniteShadowLODScale = float32(envFloat("FOUNDRY_NANITE_SHADOW_LOD", 1))
+
+// shadowLODTexel is the world size of a texel of the orthographic shadow view
+// being drawn, set round its walk by the pass that draws it (the cascades,
+// the virtual map's rectangles); 0 outside one.
+var shadowLODTexel float32
+
+// shadowOrthoDistance is how far back along the light shadowOrthoLOD puts its
+// eye. An orthographic view is a perspective one from infinitely far; from
+// here every cluster in a view is the same distance to a few parts in ten
+// thousand (sideways is second order), which is the error test's own slack.
+const shadowOrthoDistance = 1e5
+
+// shadowOrthoLOD is the LOD parameters for an orthographic view looking along
+// dir (unit, from the light into the scene) with texels texel across: a
+// cluster is fine enough when its error covers no more than τ texels. The
+// test stays error·k <= d — the eye far back along the light makes d the same
+// everywhere — so the shaders need nothing new and the cut is a cut of the
+// DAG like any other.
+func shadowOrthoLOD(dir mgl32.Vec3, texel float32) naniteLODView {
+	tau := min(max(gfx.NaniteLODError, gfx.NaniteLODErrorMin), gfx.NaniteLODErrorMax) * NaniteShadowLODScale
+	return naniteLODView{
+		eye: gfx.Cam.Position.Sub(dir.Mul(shadowOrthoDistance)),
+		k:   shadowOrthoDistance / (tau * texel),
+	}
+}
 
 // naniteLODWalk runs the tree walk ahead of the per-cluster LOD test. It
 // changes nothing but cost — the walk only skips what the test rejects — and

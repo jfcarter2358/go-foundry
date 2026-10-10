@@ -431,13 +431,7 @@ func (b *cullBatch) swUniforms(p *progUniforms) {
 
 // swClusterCount is how many clusters the batch's tiles hold: the most one
 // pass could list.
-func (b *cullBatch) swClusterCount() int {
-	n := 0
-	for i := range b.tiles {
-		n += int(b.tiles[i].A[1])
-	}
-	return n
-}
+func (b *cullBatch) swClusterCount() int { return b.swClusters }
 
 // admitSW decides, before a camera pass's cull, whether the compute
 // rasteriser takes part in it, and how many clusters it may list: what the
@@ -456,7 +450,7 @@ func (b *cullBatch) admitSW(groups []visGroup) {
 		}
 	}
 	v := &naniteVis
-	cap := min(b.swClusterCount(), naniteSWListMax, naniteVisMaxRecords-v.recordsUsed-b.slots)
+	cap := min(b.swClusterCount(), naniteSWListMax, naniteVisMaxRecords-v.recordsUsed-b.visSpan(naniteCull.compactable()))
 	if cap <= 0 || !v.admits(b, groups, cap, false) {
 		return
 	}

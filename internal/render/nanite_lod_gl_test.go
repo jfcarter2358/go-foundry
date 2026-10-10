@@ -314,6 +314,51 @@ func TestNaniteLODShadowDrawsTheCamerasCut(t *testing.T) {
 	}
 }
 
+// A sun's view inside a pass that names its texel (the cascades, the virtual
+// map's rectangles) cuts by that texel, not by the camera: with the camera
+// right at the rocks, texels a metre across draw a coarse cut, and texels a
+// millimetre across all but the full detail.
+func TestNaniteLODSunShadowCutsByItsTexel(t *testing.T) {
+	lodProbe(t)
+	rock := cookRock(t, 5)
+	var poses []mgl32.Vec3
+	for i := 0; i < 6; i++ {
+		poses = append(poses, mgl32.Vec3{float32(i-3) * 0.8, 0, -1})
+	}
+	lvl := naniteSceneryLevel(t, rock, true, poses, 0.4)
+	total := lvl.Scenery[0].Nanite.TriangleCount() * len(poses)
+	centre := mgl32.Vec3{0, 0, -1}
+	lsm := mgl32.Ortho(-4, 4, -4, 4, 0.1, 30).Mul4(
+		mgl32.LookAtV(centre.Add(mgl32.Vec3{3, 5, 4}.Normalize().Mul(12)), centre, mgl32.Vec3{0, 1, 0}))
+	shadow := func(texel float32) int {
+		shadowLODTexel = texel
+		defer func() { shadowLODTexel = 0 }()
+		cull := ExtractFrustum(lsm)
+		identity := mgl32.Ident4()
+		gl.UseProgram(Shadows.Program)
+		gl.UniformMatrix4fv(Shadows.LSMUniform, 1, false, &lsm[0])
+		gl.UniformMatrix4fv(Shadows.ModelUniform, 1, false, &identity[0])
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		return primitivesDrawn(t, func() { renderNaniteSceneryShadow(lvl, Shadows.Program, &cull) })
+	}
+	NaniteShadowCone = false
+	eye := gfx.Cam.Position
+	defer func() { gfx.Cam.Position = eye }()
+	NaniteLOD = true
+	gfx.Cam.Position = mgl32.Vec3{0, 0, 0.5}
+	setLODThreshold(t, 1)
+	camera := shadow(0)
+	fine := shadow(0.001)
+	coarse := shadow(1)
+	t.Logf("shadow triangles: camera's cut %d, 1 mm texels %d, 1 m texels %d, full detail %d", camera, fine, coarse, total)
+	if coarse*10 > total {
+		t.Errorf("texels a metre across still drew %d of %d triangles", coarse, total)
+	}
+	if !(coarse < fine && fine <= total) || fine*10 < total*9 {
+		t.Errorf("the cut did not follow the texel: 1 mm %d, 1 m %d, full %d", fine, coarse, total)
+	}
+}
+
 // Popping: walking the camera from near to far in small steps, every frame's
 // cut stays within the threshold of the full detail at that same spot — so no
 // step between two frames can jump by more than that either.

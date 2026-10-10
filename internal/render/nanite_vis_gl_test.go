@@ -52,6 +52,11 @@ func newVisWorld(t *testing.T) *visWorld {
 	t.Helper()
 	gltest.Context(t)
 	withRepoResources(t)
+	// Pictures compared a frame or two after a pose change: the shadow map
+	// must be whole by then, not filling in under the page budget.
+	prevRects := NaniteVSMRects
+	NaniteVSMRects = 0
+	t.Cleanup(func() { NaniteVSMRects = prevRects })
 	pw, ph := platform.WinWidth, platform.WinHeight
 	platform.WinWidth, platform.WinHeight = naniteTestSize, naniteTestSize
 	if err := StandUpWorld(naniteTestSize, naniteTestSize); err != nil {

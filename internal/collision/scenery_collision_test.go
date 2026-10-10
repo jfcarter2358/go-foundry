@@ -204,3 +204,50 @@ func TestRotatedSceneryIsSolidAtItsOwnAngle(t *testing.T) {
 		t.Fatalf("a turned prop did not stop a body inside its corner: %v", moved)
 	}
 }
+
+// A prop streaming with a switched-off chunk is walked through, like the chunk.
+func TestSceneryInADisabledChunkStopsNothing(t *testing.T) {
+	const start = float32(1.15)
+	rock := sceneryBox("rock", mgl32.Vec3{0, 0, 0})
+	rock.Chunk = "zone"
+	lvl := &world.Level{
+		Chunks:   []world.Chunk{{ID: "zone", Disabled: true}},
+		Scenery:  []world.Scenery{rock},
+		Entities: []world.Entity{walkerAt("guard", mgl32.Vec3{start, 1, 0})},
+	}
+	world.SyncPlacementChunks(lvl, false)
+	if moved := ResolveSceneryCollisions(lvl, nil); len(moved) != 0 {
+		t.Fatalf("a prop in a disabled chunk pushed a walker: %v", moved)
+	}
+
+	lvl.Chunks[0].Disabled = false
+	world.SyncPlacementChunks(lvl, false)
+	InvalidateScenery()
+	if moved := ResolveSceneryCollisions(lvl, nil); len(moved) != 1 {
+		t.Fatalf("the prop did not stop the walker once its chunk came back: %v", moved)
+	}
+}
+
+// A tree streaming with a switched-off chunk lets a walker through its trunk.
+func TestTreeInADisabledChunkStopsNothing(t *testing.T) {
+	tree := world.NewTree("spruce", world.FoliageSitkaSpruce, mgl32.Vec3{0, 0, 0})
+	tree.Chunk = "zone"
+	_, hi, _ := tree.TrunkBox()
+	lvl := &world.Level{
+		Chunks:   []world.Chunk{{ID: "zone", Disabled: true}},
+		Trees:    []world.Tree{tree},
+		Entities: []world.Entity{walkerAt("guard", mgl32.Vec3{hi.X() + 0.15, 1, 0})},
+	}
+	world.SyncPlacementChunks(lvl, false)
+	InvalidateScenery()
+	if moved := ResolveSceneryCollisions(lvl, nil); len(moved) != 0 {
+		t.Fatalf("a tree in a disabled chunk pushed a walker: %v", moved)
+	}
+
+	lvl.Chunks[0].Disabled = false
+	world.SyncPlacementChunks(lvl, false)
+	InvalidateScenery()
+	if moved := ResolveSceneryCollisions(lvl, nil); len(moved) != 1 {
+		t.Fatalf("the trunk did not stop the walker once its chunk came back: %v", moved)
+	}
+}

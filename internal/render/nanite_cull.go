@@ -447,6 +447,29 @@ type cullBatch struct {
 	// draw are a group's real cost, and a level of a thousand groups pays it
 	// a thousand times.
 	live []bool
+
+	// drawMax, when set, is per group the most commands this pass can have
+	// packed into it: the command slots of the instances the CPU found in
+	// view (boundDraws). A packed group is drawn with it as the indirect
+	// count's maximum, and a group at zero not at all. It matters because a
+	// GTX 1070's driver walks an indirect-count draw's whole maximum, not its
+	// count: chicago's props hold 856,184 slots in 104 groups, and every
+	// shadow rectangle paid ~4.8 ms for them whether it drew 276 triangles
+	// or a million. nil: every group's whole run.
+	drawMax []int32
+	// instSlots is each instance's command slots by group, from the tiles
+	// (boundDraws builds it when they change).
+	instSlots      [][]instGroupSlots
+	instSlotsDirty bool
+	// swClusters is how many clusters the tiles hold (swClusterCount),
+	// summed when they change rather than every camera pass.
+	swClusters int
+}
+
+// instGroupSlots is how many of one group's command slots one instance's
+// tiles write.
+type instGroupSlots struct {
+	group, slots int32
 }
 
 // groupLive is whether group gi is drawn this pass.
@@ -552,8 +575,13 @@ func shadowCullView(cull *Frustum) cullView {
 	v := cullView{mode: cullPlain, lod: currentNaniteLOD()}
 	if cull != nil {
 		v.planes = cull.Planes
-		if eye, ok := frustumEye(*cull); ok && NaniteCone && NaniteShadowCone {
+		eye, ok := frustumEye(*cull)
+		if ok && NaniteCone && NaniteShadowCone {
 			v.eye, v.cone = eye, coneClosed
+		}
+		// A sun's view: a cut by its own texel (nanite_lod.go).
+		if ok && eye[3] == 0 && shadowLODTexel > 0 && NaniteShadowLODScale > 0 {
+			v.lod = shadowOrthoLOD(eye.Vec3(), shadowLODTexel)
 		}
 	}
 	return v
@@ -784,6 +812,12 @@ func (b *cullBatch) setTiles(tiles []gpuTile, groups []cullGroup, slots int) {
 	b.tilesDirty = true
 	b.groupsDirty = true
 	b.slotsDirty = true
+	b.instSlotsDirty = true
+	b.drawMax = nil
+	b.swClusters = 0
+	for ti := range tiles {
+		b.swClusters += int(tiles[ti].A[1])
+	}
 	// Each tile names its group's first slot, where the packing writes from.
 	gi := 0
 	for ti := range tiles {
@@ -1061,7 +1095,7 @@ func (b *cullBatch) cull(v cullView) bool {
 // buffer the commands address).
 func (b *cullBatch) drawGroup(gi int) {
 	g := b.groups[gi]
-	if g.count == 0 || !b.groupLive(gi) {
+	if g.count == 0 || !b.groupLive(gi) || (b.drawMax != nil && b.drawMax[gi] == 0) {
 		return
 	}
 	b.bindIndirect()
@@ -1088,6 +1122,55 @@ func (b *cullBatch) unbindIndirect() {
 	gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, 0)
 }
 
+// NaniteDrawBound switches the draw bound (cullBatch.drawMax) — off, every
+// packed group is drawn to its whole run, as before (FOUNDRY_NANITE_DRAW_BOUND).
+var NaniteDrawBound = gfx.EnvFlag("FOUNDRY_NANITE_DRAW_BOUND", true)
+
+// boundDraws sets drawMax for this pass from the instances in view (in, one
+// per instance, true where the CPU's test passed — which must pass whatever
+// the GPU's instance test passes, or the packed commands past the bound are
+// never drawn). nil in: no bound.
+func (b *cullBatch) boundDraws(in []bool) {
+	if in == nil || len(in) != len(b.insts) || !NaniteDrawBound {
+		b.drawMax = nil
+		return
+	}
+	if b.instSlotsDirty || len(b.instSlots) != len(b.insts) {
+		b.instSlotsDirty = false
+		b.instSlots = make([][]instGroupSlots, len(b.insts))
+		for ti := range b.tiles {
+			t := &b.tiles[ti]
+			inst, group := int(t.A[2]), int32(t.B[3])
+			if inst >= len(b.instSlots) {
+				continue
+			}
+			n := int32(rangeSlots)
+			if t.B[2] != tileRange {
+				n = int32(t.A[1])
+			}
+			list := b.instSlots[inst]
+			if k := len(list) - 1; k >= 0 && list[k].group == group {
+				list[k].slots += n
+			} else {
+				list = append(list, instGroupSlots{group, n})
+			}
+			b.instSlots[inst] = list
+		}
+	}
+	if len(b.drawMax) != len(b.groups) {
+		b.drawMax = make([]int32, len(b.groups))
+	}
+	clear(b.drawMax)
+	for i, ok := range in {
+		if !ok && b.insts[i].Flags[0]&instAlwaysVisible == 0 {
+			continue
+		}
+		for _, gs := range b.instSlots[i] {
+			b.drawMax[gs.group] += gs.slots
+		}
+	}
+}
+
 // drawGroupBound is drawGroup between a bindIndirect and an unbindIndirect:
 // what a pass drawing many groups calls, so the buffers are bound once for
 // all of them rather than once a group.
@@ -1095,6 +1178,15 @@ func (b *cullBatch) drawGroupBound(gi int) {
 	g := b.groups[gi]
 	if g.count == 0 || !b.groupLive(gi) {
 		return
+	}
+	if b.drawMax != nil {
+		// Nothing in view writes a command here (see drawMax).
+		if b.drawMax[gi] == 0 {
+			return
+		}
+		if b.compacted {
+			g.count = min(g.count, b.drawMax[gi])
+		}
 	}
 	if b.compacted {
 		glext.MultiDrawElementsIndirectCount(gl.TRIANGLES, gl.UNSIGNED_INT, uintptr(g.first)*20, uintptr(gi)*4, g.count, 20)

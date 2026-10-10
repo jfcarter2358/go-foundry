@@ -267,8 +267,8 @@ func (t *vsmTracker) collect(level *world.Level, cam mgl32.Vec3, reach float32) 
 	for i := range level.Scenery {
 		s := &level.Scenery[i]
 		lo, hi, ok := s.WorldAABB()
-		if !ok {
-			continue
+		if !ok || !s.InWorld() {
+			continue // gone below hands in its box when its chunk goes off
 		}
 		h := newSig()
 		h.u64(uint64(boolToInt32(s.HasGeometry())))

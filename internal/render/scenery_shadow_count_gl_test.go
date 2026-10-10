@@ -190,6 +190,58 @@ func TestSceneryShadowDrawsNaniteRocksOnce(t *testing.T) {
 	}
 }
 
+// The draw bound (cullBatch.drawMax) only ever stops a draw short of slots
+// nothing in view could have filled: an orthographic window swept across a
+// row of rocks — its edges cutting through placements at every step — draws
+// exactly what it draws with the bound off, and with it on the groups of
+// rocks wholly outside are not drawn at all.
+func TestNaniteDrawBoundDrawsWhatTheWholeRunDraws(t *testing.T) {
+	naniteProbe(t)
+	if !naniteCull.compactable() {
+		t.Skip("no indirect-count draw: nothing is packed, so nothing is bounded")
+	}
+	dir := t.TempDir()
+	glb, err := model.EncodeGLB(nanitecook.SampleRock(4, 0.4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "rock.glb")
+	if err := os.WriteFile(src, glb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := nanitecook.CookFile(src, "", true, nanitecook.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var poses []mgl32.Vec3
+	for i := 0; i < 16; i++ {
+		poses = append(poses, mgl32.Vec3{float32(i)*0.9 - 7, 0, -2})
+	}
+	lvl := naniteSceneryLevel(t, res.Out, true, poses, 0.45)
+	prev := NaniteDrawBound
+	defer func() { NaniteDrawBound = prev }()
+	view := mgl32.LookAtV(mgl32.Vec3{0, 10, -2}, mgl32.Vec3{0, 0, -2}, mgl32.Vec3{0, 0, -1})
+	for step := 0; step < 12; step++ {
+		x := float32(step)*1.3 - 8
+		cull := ExtractFrustum(mgl32.Ortho(x, x+2.1, -3, 3, 0.1, 30).Mul4(view))
+		count := func(bound bool) int {
+			NaniteDrawBound = bound
+			bindSceneryShadow()
+			return primitivesDrawn(t, func() { renderNaniteSceneryShadow(lvl, Shadows.Program, &cull) })
+		}
+		whole, bounded := count(false), count(true)
+		if bounded != whole {
+			t.Errorf("window at x %.1f: bounded draw %d triangles, the whole run %d", x, bounded, whole)
+		}
+		if whole == 0 && step > 0 && step < 11 {
+			t.Errorf("window at x %.1f drew nothing: the sweep should cut through rocks", x)
+		}
+	}
+	if b := &naniteScenery.batch; b.drawMax == nil {
+		t.Errorf("the last pass set no bound")
+	}
+}
+
 // The shadow cone (NaniteShadowCone): on a closed cooked mesh, a sun cascade
 // and a point light's face each drop the clusters turned wholly away from the
 // light — fewer triangles than with the cone off — and the shadow map does not

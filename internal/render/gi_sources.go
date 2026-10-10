@@ -527,7 +527,8 @@ func (s *giSourceSet) collectScenery(lvl *world.Level) {
 			slot.g = nil
 		}
 		slot.id = sc.ID
-		if sc.Nanite != nil && sc.Nanite.SDF != nil {
+		// Its chunk off: not seen, so the drop below takes it out of the field.
+		if sc.Nanite != nil && sc.Nanite.SDF != nil && sc.InWorld() {
 			tex := sc.SlotTexture(0)
 			if slot.nameHash == 0 || slot.model != sc.Model || slot.texture != tex {
 				slot.model, slot.texture = sc.Model, tex

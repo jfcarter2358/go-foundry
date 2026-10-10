@@ -50,6 +50,16 @@ type Tree struct {
 	// by default: a tree you walk through is the exception.
 	Solid bool
 
+	// Chunk names the chunk this tree streams with, or "" for none — the
+	// same switch Scenery.Chunk gives a prop: while the chunk is disabled the
+	// tree is not drawn and its trunk does not collide. It stays where it is
+	// placed. A tree has no buffers of its own to unload; leaving TreeBatches
+	// is what frees its foliage cell's instances.
+	Chunk string
+	// ChunkOff is whether Chunk is switched off, stamped by
+	// SyncPlacementChunks; runtime only. Read it through InWorld.
+	ChunkOff bool
+
 	// unknown is a species name the file gave that no shape has: kept, so
 	// saving the level does not turn a typo into a lost tree, and drawn as
 	// nothing meanwhile.
@@ -61,6 +71,10 @@ type Tree struct {
 func NewTree(id string, species FoliageShape, pos mgl32.Vec3) Tree {
 	return Tree{ID: id, Species: species, Position: pos, Scale: 1, Solid: true}
 }
+
+// InWorld reports whether the tree takes part in the world: it does unless
+// the chunk it streams with is switched off.
+func (t *Tree) InWorld() bool { return !t.ChunkOff }
 
 // EffectiveScale is Scale with its zero read as 1.
 func (t *Tree) EffectiveScale() float32 {
@@ -210,7 +224,8 @@ func TreeBatches(lvl *Level) ([]FoliageBatch, uint64) {
 	}
 	for i := range lvl.Trees {
 		t := &lvl.Trees[i]
-		if t.Species >= FoliageShapeCount {
+		// Out with its chunk: the fingerprint moves, and the renderer drops it.
+		if t.Species >= FoliageShapeCount || !t.InWorld() {
 			continue
 		}
 		in := t.Instance()
@@ -250,6 +265,7 @@ func TreeFromRaw(r RawTree) Tree {
 		Yaw:      r.Yaw * math.Pi / 180,
 		Scale:    r.Scale,
 		Solid:    BoolDefault(r.Solid, true),
+		Chunk:    r.Chunk,
 	}
 	if s, ok := FoliageShapeByKey(r.Species); ok {
 		t.Species = s
@@ -274,6 +290,7 @@ func TreeToRaw(t *Tree) RawTree {
 		Position: RawVec3{X: t.Position.X(), Y: t.Position.Y(), Z: t.Position.Z()},
 		Yaw:      float32(math.Round(float64(t.Yaw*180/math.Pi)*1000) / 1000),
 		Solid:    BoolPtrIfFalse(t.Solid),
+		Chunk:    t.Chunk,
 	}
 	if t.Species < FoliageShapeCount {
 		r.Species = foliageShapeKey(t.Species)

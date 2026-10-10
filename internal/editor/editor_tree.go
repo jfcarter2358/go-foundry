@@ -411,6 +411,10 @@ func editorTreePropertiesSection() {
 	editorPropGroupOpen("Identity##treeidgrp", func() { editorTreeIdentity(t) })
 	editorPropGroupOpen("Transform##treetfgrp", func() { editorTreeTransform(t) })
 	editorPropGroupOpen("Colour##treecolgrp", func() { editorTreeColours(t) })
+	editorPropGroupOpen("Streaming##treestreamgrp", func() {
+		editorStreamingGroup(pickTree, t.Chunk, "tree",
+			"Switched off with this chunk: not drawn and its trunk not\nsolid while it is disabled. The tree stays where it is placed.")
+	})
 	editorPropGroupOpen("Actions##treeactions", func() {
 		if imgui.Button("Duplicate##treedup") {
 			duplicateActiveTree()

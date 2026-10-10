@@ -67,8 +67,8 @@ var DebugStats struct {
 	// The sun's virtual shadow map (vsm.go): pages holding a physical page,
 	// pages drawn this frame and in how many rectangles, and requests the
 	// pool had no page for. VSMOn says the frame's sun used it.
-	VSMOn                                    bool
-	VSMPages, VSMDrawn, VSMRects, VSMStarved int
+	VSMOn                                                 bool
+	VSMPages, VSMDrawn, VSMRects, VSMStarved, VSMDeferred int
 	// The Nanite foliage (nfoliage.go): whether the frame's foliage took it,
 	// and what its camera pass drew a frame or two ago (read back without
 	// waiting): plant clusters, references (a triangle cluster, a part or a
@@ -307,8 +307,8 @@ func DebugOverlayLines() []DebugLine {
 			DebugStats.NaniteFoliageItems, DebugStats.NaniteFoliageRefs, DebugStats.NaniteFoliageBricks, foliage.nan.vox.mode())
 	}
 	if DebugStats.VSMOn {
-		line("Sun shadow:   virtual, %d pages resident, %d drawn in %d rects, %d starved",
-			DebugStats.VSMPages, DebugStats.VSMDrawn, DebugStats.VSMRects, DebugStats.VSMStarved)
+		line("Sun shadow:   virtual, %d pages resident, %d drawn in %d rects, %d starved, %d deferred",
+			DebugStats.VSMPages, DebugStats.VSMDrawn, DebugStats.VSMRects, DebugStats.VSMStarved, DebugStats.VSMDeferred)
 	}
 	line("Point shadows: %d re-rendered of %d", DebugStats.PointShadowRenders, DebugStats.PointShadows)
 	if s := GIStatsLast; s.Active {

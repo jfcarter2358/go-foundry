@@ -39,6 +39,8 @@ package world
 // rebuild must happen before anything resolves through the hash again.
 // Separating them is the same split DrainScriptWork exists for.
 
+import "log"
+
 // EvictBiomeCaches releases the GPU resources the renderer derives from a
 // biome scatter volume — its scatter height texture, its ground patch mesh
 // and its cached triangulation. Installed by the render package (GrassInit),
@@ -97,6 +99,76 @@ func SyncChunkGeometry(lvl *Level) bool {
 		// the consequence.
 		if lvl.Static != nil && ch.Compiled {
 			lvl.Static.SetChunkHidden(ch.ID, ch.Disabled)
+		}
+	}
+	if SyncPlacementChunks(lvl, true) {
+		changed = true
+	}
+	return changed
+}
+
+// SyncPlacementChunks brings every placement that streams with a chunk —
+// Scenery.Chunk, Tree.Chunk — into line with that chunk: ChunkOff follows
+// its Disabled, and when residency is true (which needs the GL context) a
+// prop's buffers are released or rebuilt the way the chunk's own are, by
+// WantsGeometry. A tree has no buffers of its own: the foliage renderer drops
+// its instances when TreeBatches stops listing it. Reports whether any
+// placement came or went.
+//
+// Run every frame from SyncChunkGeometry rather than on the chunk's
+// transition, for the reason that function gives: the flag can be written
+// from anywhere, and a placement's chunk can be renamed or reassigned in the
+// editor. A placement naming no chunk, or one that does not exist (which
+// `foundry check` reports), is always in.
+func SyncPlacementChunks(lvl *Level, residency bool) bool {
+	if lvl == nil {
+		return false
+	}
+	var byID map[string]*Chunk
+	lookup := func(id string) (off, unload bool) {
+		if id == "" {
+			return false, false
+		}
+		if byID == nil {
+			byID = make(map[string]*Chunk, len(lvl.Chunks))
+			for ci := range lvl.Chunks {
+				byID[lvl.Chunks[ci].ID] = &lvl.Chunks[ci]
+			}
+		}
+		if ch := byID[id]; ch != nil {
+			return ch.Disabled, !ch.WantsGeometry()
+		}
+		return false, false
+	}
+	changed := false
+	for i := range lvl.Scenery {
+		s := &lvl.Scenery[i]
+		off, unload := lookup(s.Chunk)
+		if off != s.ChunkOff {
+			s.ChunkOff = off
+			changed = true
+		}
+		if !residency {
+			continue
+		}
+		switch {
+		case unload && !s.Unloaded:
+			s.Delete()
+			s.Unloaded = true
+			changed = true
+		case !unload && s.Unloaded:
+			s.Unloaded = false
+			if err := s.Load(); err != nil {
+				log.Printf("%v", err)
+			}
+			changed = true
+		}
+	}
+	for i := range lvl.Trees {
+		t := &lvl.Trees[i]
+		if off, _ := lookup(t.Chunk); off != t.ChunkOff {
+			t.ChunkOff = off
+			changed = true
 		}
 	}
 	return changed

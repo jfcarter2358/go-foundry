@@ -52,7 +52,7 @@ func RenderScenery(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, m
 	}
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
-		if s.NaniteGPU || !s.HasGeometry() || !SceneryInFrustum(s, cull) {
+		if s.NaniteGPU || !s.InWorld() || !s.HasGeometry() || !SceneryInFrustum(s, cull) {
 			continue
 		}
 		model := s.ModelMatrix()
@@ -87,7 +87,7 @@ func RenderSceneryShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 	drewAny := false
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
-		if s.NaniteGPU || !s.HasGeometry() || !SceneryInFrustum(s, cull) {
+		if s.NaniteGPU || !s.InWorld() || !s.HasGeometry() || !SceneryInFrustum(s, cull) {
 			continue
 		}
 		model := s.ModelMatrix()

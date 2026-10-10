@@ -80,6 +80,15 @@ type naniteSceneryRenderer struct {
 	clusters uint32
 	nodes    uint32
 
+	// preparedFrame is the DrawWorld frame (naniteStreamFrame) prepare last
+	// brought everything up to date in, and prepared what it answered: a
+	// frame's passes — a camera pass or two, and a shadow view per cascade or
+	// virtual-map rectangle — share one look at the level, which nothing in
+	// DrawWorld moves.
+	preparedFrame uint32
+	preparedLvl   *world.Level
+	prepared      bool
+
 	// members are the level's placements drawn here, by index; sig what the
 	// groups and tiles were built from.
 	lvl     *world.Level
@@ -94,6 +103,8 @@ type naniteSceneryRenderer struct {
 	// air of strength 1 (0: still).
 	spheres []mgl32.Vec4
 	reach   []float32
+	// inMask is which placements the last inView found in its frustum.
+	inMask []bool
 	// leafBase is each placement's first leaf mark.
 	leafBase []uint32
 
@@ -137,25 +148,45 @@ func (r *naniteSceneryRenderer) prepare(lvl *world.Level) bool {
 	if lvl == nil || !naniteCull.ok {
 		return false
 	}
+	// Once a frame inside DrawWorld: chicago's 1,624 placements re-signed and
+	// their matrices rebuilt for every shadow rectangle were a fifth of the
+	// frame's CPU. Outside it (a test, a preview) every call looks again.
+	if naniteLODFrame.set && lvl == r.preparedLvl && r.preparedFrame == naniteStreamFrame {
+		return r.prepared
+	}
+	r.preparedFrame = 0
 	r.members = r.members[:0]
 	for i := range lvl.Scenery {
-		if s := &lvl.Scenery[i]; s.NaniteGPU && s.Nanite != nil {
+		// A placement whose chunk is off is not a member: the signature
+		// below then rebuilds the tiles without it, and a mesh none of the
+		// members uses leaves the pool.
+		if s := &lvl.Scenery[i]; s.NaniteGPU && s.Nanite != nil && s.InWorld() {
 			r.members = append(r.members, i)
 		}
 	}
 	if len(r.members) == 0 {
+		r.markPrepared(lvl, false)
 		return false
 	}
 	sig := r.signature(lvl)
 	if lvl != r.lvl || sig != r.sig {
+		sameLevel := lvl == r.lvl
 		r.lvl, r.sig = lvl, sig
-		r.rebuild(lvl)
+		r.rebuild(lvl, sameLevel)
 	}
 	r.updateInstances(lvl)
 	if r.stream != nil {
 		r.stream.update(r.clusters, r.nodes)
 	}
+	r.markPrepared(lvl, true)
 	return true
+}
+
+// markPrepared records prepare's answer for the rest of a DrawWorld frame.
+func (r *naniteSceneryRenderer) markPrepared(lvl *world.Level, ok bool) {
+	if naniteLODFrame.set {
+		r.preparedLvl, r.preparedFrame, r.prepared = lvl, naniteStreamFrame, ok
+	}
 }
 
 // signature hashes what the pool, groups and tiles depend on: which
@@ -185,8 +216,18 @@ func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
 	return h.Sum64()
 }
 
-// rebuild remakes the pool (if a mesh came or went) and the groups and tiles.
-func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
+// rebuild remakes the pool (if a mesh came that it lacks) and the groups and
+// tiles.
+//
+// Within one level the pool only grows. A mesh no member uses any more —
+// every placement of it in a chunk that streamed out (world.Scenery.Chunk) —
+// keeps its place: rebuilding the pool releases every resident page, so the
+// whole level would stream in again, and its shadows redraw, each time an
+// area switched off. Nothing draws the idle mesh, so nothing requests its
+// pages and the page pool evicts them as it would any unseen page. When the
+// pool has to be rebuilt for a new mesh it keeps the idle ones too, so the
+// area coming back on does not rebuild it again. A new level starts afresh.
+func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 	used := map[*nanite.Mesh]bool{}
 	var list []*nanite.Mesh
 	for _, i := range r.members {
@@ -196,11 +237,22 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level) {
 			list = append(list, m)
 		}
 	}
-	samePool := len(list) == len(r.poolList) && (r.stream != nil) == naniteStreaming()
+	samePool := (r.stream != nil) == naniteStreaming()
 	for _, m := range list {
 		if r.meshes[m] == nil {
 			samePool = false
 		}
+	}
+	if !samePool && sameLevel {
+		for _, m := range r.poolList {
+			if !used[m] {
+				used[m] = true
+				list = append(list, m)
+			}
+		}
+	}
+	if !sameLevel && len(list) != len(r.poolList) {
+		samePool = false // a new level's pool holds that level's meshes only
 	}
 	if !samePool {
 		r.buildPool(list)
@@ -529,6 +581,9 @@ func RenderNaniteScenery(lvl *world.Level, frustum Frustum, projView mgl32.Mat4)
 		r.pass2View = cameraCullView(frustum, projView, eye, cullPass2)
 	}
 	v := cameraCullView(frustum, projView, eye, mode)
+	// Bounded before admitSW: the records the visibility buffer keeps for
+	// the pass are the bound's (visSpan), not the batch's every slot.
+	r.batch.boundDraws(r.inMask)
 	r.batch.admitSW(r.visGroups())
 	if r.batch.cull(v) {
 		r.drawColour()
@@ -543,6 +598,10 @@ func (r *naniteSceneryRenderer) drawOcclusion() {
 		return
 	}
 	r.pass2 = false
+	// The first pass's frustum, asked again: a shadow pass between the two
+	// would have left its own marks.
+	r.inView(&Frustum{Planes: r.pass2View.planes})
+	r.batch.boundDraws(r.inMask)
 	r.batch.admitSW(r.visGroups())
 	if r.batch.cull(r.pass2View) {
 		r.drawColour()
@@ -607,14 +666,15 @@ func renderNaniteSceneryShadow(lvl *world.Level, prog uint32, cull *Frustum) {
 		return
 	}
 	v := shadowCullView(cull)
-	// Packed when most placements are out of the frustum, where the fixed
-	// list would be mostly empty commands; drawn as it stands when most are
-	// in, where the packing is all cost. That holds with LOD selection too:
-	// a DAG's leaves are range tiles of rangeSlots commands each, so the
-	// list is no longer than the full detail's cluster list was, and on the
-	// rock field packing it cost 2 ms a frame more than it saved
-	// (docs/nanite/PHASE_2.md).
-	v.compact = in*2 < len(r.spheres)
+	// Packed, as the camera's passes are, and drawn no further than what is
+	// in view can have written (cullBatch.drawMax). Phase 2 packed a shadow
+	// pass only with most placements out of its frustum, measuring the
+	// packing at 2 ms over three cascades on the rock field; that was the
+	// one-workgroup prefix sum Phase 5's scan replaced. Unpacked, a pass
+	// walks every slot of the batch — chicago's 856,184, ~4.8 ms a shadow
+	// view however little it drew.
+	v.compact = true
+	r.batch.boundDraws(r.inMask)
 	ok := r.batch.cull(v)
 	gl.UseProgram(prog)
 	if !ok {
@@ -631,15 +691,25 @@ func renderNaniteSceneryShadow(lvl *world.Level, prog uint32, cull *Frustum) {
 }
 
 // inView counts the placements whose sphere touches cull (all of them for
-// none).
+// none), marking them in r.inMask (nil for none) for the pass's draw bound
+// (cullBatch.boundDraws). The sphere is grown a little past the GPU's: a
+// placement its instance test passes must pass here too, or what it packs
+// past the bound is never drawn.
 func (r *naniteSceneryRenderer) inView(cull *Frustum) int {
 	if cull == nil {
+		r.inMask = nil
 		return len(r.spheres)
+	}
+	if len(r.inMask) != len(r.spheres) {
+		r.inMask = make([]bool, len(r.spheres))
 	}
 	n := 0
 	k := gfx.Wind.Strength()
 	for i, sp := range r.spheres {
-		if sphereInFrustum(*cull, sp.Vec3(), sp[3]+r.reach[i]*k) {
+		rad := sp[3] + r.reach[i]*k
+		in := sphereInFrustum(*cull, sp.Vec3(), rad*1.01+0.05)
+		r.inMask[i] = in
+		if in {
 			n++
 		}
 	}

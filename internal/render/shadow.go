@@ -641,7 +641,9 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			// caster behind the player can still drop a shadow into view, and
 			// the box already extends toward the light to include it.
 			cull := ExtractFrustum(lsm)
+			shadowLODTexel = texel
 			renderSceneShadow(level, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, &cull)
+			shadowLODTexel = 0
 			// Cast shadow-casting sprites, turned to face the LIGHT rather than
 			// the camera — a camera-facing quad rendered from here would be
 			// edge-on and cast nothing. Restores Shadows.Program.

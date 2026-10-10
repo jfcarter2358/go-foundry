@@ -82,10 +82,18 @@ func TestVSMRequestsAllocateDrawAndCache(t *testing.T) {
 	if len(again) != 2 || again[0].key != (vsmKey{5, 0, 0}) || again[1].key != (vsmKey{3, 2, 1}) {
 		t.Fatalf("after a change over (3, 2, 1): drew %d pages", len(again))
 	}
-	// An invalid page is not in the table until drawn.
+	// An out-of-date page keeps its drawing in the table until it is drawn
+	// again (the budget may leave it a frame); only invalidateAll takes it
+	// out, since then what it holds means nothing.
 	tab = p.table(tab)
-	if tab[(3*vsmWindowPages+int(1-o[1]))*vsmWindowPages+int(2-o[0])] != 0 {
-		t.Fatalf("a stale page is in the table")
+	if tab[(3*vsmWindowPages+int(1-o[1]))*vsmWindowPages+int(2-o[0])] == 0 {
+		t.Fatalf("an out-of-date page left the table before it was drawn again")
+	}
+	p.invalidateAll()
+	for i, v := range p.table(tab) {
+		if v != 0 {
+			t.Fatalf("after invalidateAll, table entry %d still holds a page", i)
+		}
 	}
 }
 
@@ -195,10 +203,10 @@ func TestVSMMoversRedrawOnlyTheirPages(t *testing.T) {
 	if !movers[0].static || movers[0].valid {
 		t.Fatalf("its static layer should stand and its depth be stale")
 	}
-	// Not in the table until its movers are drawn again.
+	// Still in the table, a frame behind, until its movers are drawn again.
 	o := p.origin[2]
-	if p.table(nil)[(2*vsmWindowPages+int(-o[1]))*vsmWindowPages+int(-o[0])] != 0 {
-		t.Fatalf("a page with stale movers is in the table")
+	if p.table(nil)[(2*vsmWindowPages+int(-o[1]))*vsmWindowPages+int(-o[0])] == 0 {
+		t.Fatalf("a page with stale movers left the table")
 	}
 	p.markDrawn(movers)
 	if whole, movers := p.request(keys); len(whole)+len(movers) != 0 {
@@ -227,5 +235,79 @@ func TestVSMPagesLeftByTheWindowAreRedrawnOnReturn(t *testing.T) {
 	whole, movers := p.request(keys)
 	if len(whole) != 1 || whole[0].key != (vsmKey{0, 10, 10}) || len(movers) != 0 {
 		t.Fatalf("back in the window: %d whole (want the level-0 page), %d movers", len(whole), len(movers))
+	}
+}
+
+// budgetKeys is a page in each of n (at most 4) vsmRectPages blocks of level
+// l's window, so each is a rectangle of its own.
+func budgetKeys(p *vsmPager, l int8, n int) []vsmKey {
+	if n > 4 {
+		panic("a window holds 2x2 rectangle blocks")
+	}
+	o := p.origin[l]
+	var keys []vsmKey
+	for i := 0; i < n; i++ {
+		keys = append(keys, vsmKey{l, o[0] + int32(i%2)*vsmRectPages, o[1] + int32(i/2)*vsmRectPages})
+	}
+	return keys
+}
+
+// Over budget, a frame draws the holes coarse first and leaves the rest,
+// which are asked for again and drawn in the frames after — and until then
+// a page never drawn is absent from the table.
+func TestVSMBudgetDrawsHolesCoarseFirstAndDefersTheRest(t *testing.T) {
+	p := newVSMPager(64)
+	p.setWindows(0, 0)
+	keys := append(budgetKeys(p, 1, 4), budgetKeys(p, 6, 2)...)
+	whole, movers := p.request(keys)
+	whole, movers = p.budget(whole, movers, 3)
+	if len(whole) != 3 || len(movers) != 0 || p.deferred != 3 {
+		t.Fatalf("budget 3 of 6 one-page rectangles: kept %d whole, %d movers, deferred %d", len(whole), len(movers), p.deferred)
+	}
+	if whole[0].key.level != 6 || whole[1].key.level != 6 {
+		t.Fatalf("the coarse holes were not served first: levels %d, %d", whole[0].key.level, whole[1].key.level)
+	}
+	p.markDrawn(whole)
+	drawn := 3
+	for frame := 0; frame < 3 && drawn < 6; frame++ {
+		w, m := p.request(keys)
+		w, m = p.budget(w, m, 3)
+		drawn += len(w) + len(m)
+		p.markDrawn(w)
+		p.markDrawn(m)
+	}
+	if drawn != 6 {
+		t.Fatalf("after the frames that followed, %d of 6 pages drawn", drawn)
+	}
+	if w, m := p.request(keys); len(w)+len(m) != 0 {
+		t.Fatalf("a still scene still has %d pages to draw", len(w)+len(m))
+	}
+}
+
+// Walking makes new holes every frame; the out-of-date pages (a tree's
+// shadow swaying) still get a share of the budget, oldest first.
+func TestVSMBudgetKeepsAShareForOutOfDatePages(t *testing.T) {
+	p := newVSMPager(64)
+	p.setWindows(0, 0)
+	old := budgetKeys(p, 2, 4)
+	w, _ := p.request(old)
+	p.markDrawn(w)
+	p.invalidateRect([2]float64{-1e6, -1e6}, [2]float64{1e6, 1e6}, false) // everything sways
+	holes := append(budgetKeys(p, 0, 4), budgetKeys(p, 1, 4)...)
+	whole, movers := p.request(append(holes, old...))
+	whole, movers = p.budget(whole, movers, 6)
+	if len(movers) != 2 || len(whole) != 4 {
+		t.Fatalf("budget 6 over 8 holes and 4 out-of-date: kept %d holes, %d out-of-date; want 4 and 2", len(whole), len(movers))
+	}
+}
+
+// No limit, nothing deferred.
+func TestVSMBudgetZeroIsNoLimit(t *testing.T) {
+	p := newVSMPager(64)
+	p.setWindows(0, 0)
+	whole, movers := p.request(append(budgetKeys(p, 1, 4), budgetKeys(p, 3, 2)...))
+	whole, _ = p.budget(whole, movers, 0)
+	if len(whole) != 6 || p.deferred != 0 {
+		t.Fatalf("budget 0: kept %d of 6, deferred %d", len(whole), p.deferred)
 	}
 }

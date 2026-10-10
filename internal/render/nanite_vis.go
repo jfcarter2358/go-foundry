@@ -321,7 +321,7 @@ func (v *naniteVisPass) admits(b *cullBatch, groups []visGroup, extra int, warn 
 			return say("tile lists larger than the driver's largest storage block (%d MB)", v.maxBlock>>20)
 		}
 	}
-	if v.recordsUsed+b.slots+extra > naniteVisMaxRecords {
+	if v.recordsUsed+b.visSpan(naniteCull.compactable())+extra > naniteVisMaxRecords {
 		return say("more than %d commands", naniteVisMaxRecords)
 	}
 	if !b.visGroupsFit(groups, v.maxBlock) {
@@ -356,7 +356,9 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 		}
 	}
 	ProfileBegin("nanite: vis")
-	v.ensureRecords(v.recordsUsed + b.slots + sw)
+	span := b.visSpan(b.compacted)
+	v.ensureRecords(v.recordsUsed + span + sw)
+	b.uploadVisPassTable(groups)
 
 	// Number the pass's commands.
 	cmd := b.cmdBuf
@@ -437,7 +439,7 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	// The clusters the cull listed for the compute rasteriser, into the same
 	// IDs and depth, their records after the commands'.
 	if sw > 0 && len(groups) > 0 {
-		naniteSW.rasterBatch(b, &groups[0], v.recordsUsed+b.slots, base, sw)
+		naniteSW.rasterBatch(b, &groups[0], v.recordsUsed+span, base, sw)
 	}
 	drawBuffersColour()
 	gl.StencilFunc(gl.ALWAYS, 0, 0xff)
@@ -453,7 +455,7 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 		}
 		gl.BindVertexArray(0)
 	}
-	v.recordsUsed += b.slots + sw
+	v.recordsUsed += span + sw
 	v.used = true
 	return true
 }
@@ -607,6 +609,45 @@ func (v *naniteVisPass) warn(format string, args ...any) {
 	log.Printf("nanite: visibility buffer: "+format+" in a frame — the rest is drawn the forward way", args...)
 }
 
+// visSpan is how many records one pass of b takes: every command slot, or —
+// packed, with a bound (cullBatch.drawMax) — only as many as the bound lets
+// it have. chicago's props are 856,184 slots, so two camera passes numbered
+// slot by slot overran the 2^20 an ID can name and the second pass went the
+// forward way every frame.
+func (b *cullBatch) visSpan(packed bool) int {
+	if !packed || b.drawMax == nil {
+		return b.slots
+	}
+	n := 0
+	for gi, g := range b.groups {
+		n += int(min(g.count, b.drawMax[gi]))
+	}
+	return n
+}
+
+// uploadVisPassTable writes this pass's group table for the numbering pass
+// (nanite_vis_number_comp.glsl): each group's first slot, how many slots it
+// numbers, whether it is drawn, and its first record — packed records when
+// the pass is bounded, its slot otherwise. Into the buffer visGroupsFit made.
+func (b *cullBatch) uploadVisPassTable(groups []visGroup) {
+	bounded := b.compacted && b.drawMax != nil
+	table := make([]uint32, 0, 4*len(groups))
+	off := uint32(0)
+	for gi, g := range groups {
+		first, count := uint32(b.groups[gi].first), uint32(b.groups[gi].count)
+		rec := first
+		if bounded {
+			count = uint32(min(b.groups[gi].count, b.drawMax[gi]))
+			rec = off
+			off += count
+		}
+		table = append(table, first, count, uint32(boolToInt32(frameSurface(g.mat).prepass)), rec)
+	}
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.visGroupBuf)
+	gl.BufferSubData(gl.SHADER_STORAGE_BUFFER, 0, len(table)*4, gl.Ptr(table))
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
+}
+
 // visGroupsFit uploads the batch's group table for the numbering pass when
 // its groups changed, and reports whether every buffer the material pass
 // would read is within the driver's largest storage block.
@@ -624,7 +665,7 @@ func (b *cullBatch) visGroupsFit(groups []visGroup, maxBlock int64) bool {
 	b.visGroupSig = sig
 	table := make([]uint32, 0, 4*len(groups))
 	for gi, g := range groups {
-		table = append(table, uint32(b.groups[gi].first), uint32(b.groups[gi].count), uint32(boolToInt32(frameSurface(g.mat).prepass)), 0)
+		table = append(table, uint32(b.groups[gi].first), uint32(b.groups[gi].count), uint32(boolToInt32(frameSurface(g.mat).prepass)), uint32(b.groups[gi].first))
 	}
 	if b.visGroupBuf == 0 {
 		gl.GenBuffers(1, &b.visGroupBuf)

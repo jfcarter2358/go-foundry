@@ -14,9 +14,13 @@ package render
 // holding the placed plants whose foot is in it. There are far fewer placed
 // plants than grown ones, so there is no cluster tree and no thinning cut: a
 // cell is built whole, and only again when a placement in it changes —
-// world.TreeBatches' fingerprint, which moving a tree in the editor changes.
+// world.TreeBatches' fingerprint, which moving a tree in the editor changes,
+// says some cell did, and each cell's own sum says which. A chunk switching
+// off (world.Tree.Chunk) then re-uploads only the cells its trees stood in.
 
 import (
+	"encoding/binary"
+	"hash/fnv"
 	"math"
 	"sort"
 
@@ -34,6 +38,8 @@ const foliagePlacedCell = 48
 // foliagePlaced is the placed plants' units.
 type foliagePlaced struct {
 	cells map[[2]int32]*foliageUnit
+	// sums is each cell's instances' hash at its last upload.
+	sums map[[2]int32]uint64
 	// fp is the placements' fingerprint the cells were built from.
 	fp    uint64
 	model mgl32.Mat4
@@ -97,6 +103,9 @@ func (p *foliagePlaced) rebuild(batches []world.FoliageBatch) {
 	if p.cells == nil {
 		p.cells = map[[2]int32]*foliageUnit{}
 	}
+	if p.sums == nil {
+		p.sums = map[[2]int32]uint64{}
+	}
 	type key = [2]int32
 	byCell := map[key]map[[2]int]*world.FoliageBatch{}
 	for _, b := range batches {
@@ -120,6 +129,7 @@ func (p *foliagePlaced) rebuild(batches []world.FoliageBatch) {
 		if _, ok := byCell[k]; !ok {
 			u.release()
 			delete(p.cells, k)
+			delete(p.sums, k)
 		}
 	}
 	for k, cell := range byCell {
@@ -135,12 +145,25 @@ func (p *foliagePlaced) rebuild(batches []world.FoliageBatch) {
 		})
 		var out []world.FoliageBatch
 		count := 0
+		h := fnv.New64a()
+		var w [4]byte
+		put := func(f float32) {
+			binary.LittleEndian.PutUint32(w[:], math.Float32bits(f))
+			h.Write(w[:])
+		}
 		inf := float32(math.Inf(1))
 		lo, hi := mgl32.Vec3{inf, inf, inf}, mgl32.Vec3{-inf, -inf, -inf}
 		for _, bk := range bks {
 			b := cell[bk]
 			ext := world.FoliageExtent[b.Shape]
+			put(float32(b.Shape))
+			put(float32(b.Variant))
+			put(float32(len(b.Instances)))
 			for _, in := range b.Instances {
+				for _, f := range []float32{in.Pos[0], in.Pos[1], in.Pos[2], in.Yaw, in.Scale,
+					in.Color[0], in.Color[1], in.Color[2], in.Accent[0], in.Accent[1], in.Accent[2], in.Rank} {
+					put(f)
+				}
 				// Bounded by the plant's own extent at its size, as
 				// placement bounds a section.
 				r := max(ext[0], ext[1]) * in.Scale
@@ -150,11 +173,16 @@ func (p *foliagePlaced) rebuild(batches []world.FoliageBatch) {
 			out = append(out, *b)
 		}
 		u := p.cells[k]
+		sum := h.Sum64()
+		if u != nil && p.sums[k] == sum {
+			continue // its plants are the ones it holds
+		}
 		if u == nil {
 			u = &foliageUnit{}
 			p.cells[k] = u
 		}
 		foliage.upload(u, out, count, lo, hi)
+		p.sums[k] = sum
 	}
 }
 
@@ -164,5 +192,6 @@ func (p *foliagePlaced) release() {
 		u.release()
 		delete(p.cells, k)
 	}
+	p.sums = nil
 	p.fp = 0
 }

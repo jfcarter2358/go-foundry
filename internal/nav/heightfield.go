@@ -209,7 +209,7 @@ func appendScenerySolids(out []solid, lvl *world.Level) []solid {
 	for si := range lvl.Scenery {
 		sc := &lvl.Scenery[si]
 		mode := sc.CollisionMode()
-		if mode != meshcollide.ModeHulls && mode != meshcollide.ModeMesh {
+		if !sc.InWorld() || (mode != meshcollide.ModeHulls && mode != meshcollide.ModeMesh) {
 			continue
 		}
 		d := sc.CollisionData()

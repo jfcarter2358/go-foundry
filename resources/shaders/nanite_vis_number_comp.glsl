@@ -25,8 +25,11 @@ struct Record {
 layout(std430, binding = 1) writeonly buffer Records {
     Record records[];
 };
-// Each group's first slot, slot count, and whether the visibility buffer
-// draws it.
+// Each group's first slot, the slots numbered from it (a packed pass with a
+// bound, cullBatch.drawMax: no more than its bound), whether the visibility
+// buffer draws it, and its first record less recordBase — its first slot
+// when every slot is numbered, else the bounds of the groups before it, so
+// a pass takes only as many records as it can have commands.
 layout(std430, binding = 2) readonly buffer Groups {
     uvec4 groups[];
 };
@@ -55,7 +58,7 @@ void main() {
         return;
     }
     uint o = i * 5u;
-    uint r = recordBase + i;
+    uint r = recordBase + g.w + (i - g.x);
     records[r].a = uvec4(cmds[o + 2u], cmds[o + 3u], cmds[o + 4u], binBase + lo);
     records[r].b = uvec4(r + 1u, cmds[o], 0u, 0u);
     cmds[o + 4u] = r;

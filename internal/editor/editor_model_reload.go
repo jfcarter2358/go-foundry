@@ -120,7 +120,8 @@ func reloadModelsIn(lvl *world.Level, saved map[string]bool) int {
 	}
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
-		if s.Model == "" || !saved[modelReloadKey(fileutil.ResolveAssetPath(s.Model))] {
+		// An unloaded one (its chunk is off) reads the new file when it comes back.
+		if s.Model == "" || s.Unloaded || !saved[modelReloadKey(fileutil.ResolveAssetPath(s.Model))] {
 			continue
 		}
 		if err := s.Load(); err != nil {

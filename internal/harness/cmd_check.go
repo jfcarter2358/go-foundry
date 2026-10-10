@@ -203,6 +203,19 @@ func checkSceneryCollision(out io.Writer, lvl *world.Level) int {
 	groups := map[string]*group{}
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
+		if s.Chunk != "" && world.FindChunkByID(lvl, s.Chunk) == nil {
+			key := "\x00chunk\x00" + s.Chunk
+			if g := groups[key]; g != nil {
+				g.n++
+			} else {
+				groups[key] = &group{first: s.ID, model: s.Model, mode: "-", n: 1,
+					text: fmt.Sprintf("streams with chunk %q, which is not in the level: it is always in", s.Chunk)}
+				order = append(order, key)
+			}
+		}
+		if s.Unloaded {
+			continue // its chunk is off and unloaded: no bounds to judge
+		}
 		mode := s.CollisionMode().String()
 		for _, w := range world.SceneryCollisionWarnings(s) {
 			key := s.Model + "\x00" + mode + "\x00" + w
@@ -223,7 +236,29 @@ func checkSceneryCollision(out io.Writer, lvl *world.Level) int {
 		}
 		fmt.Fprintf(out, "  WARNING %s (%s, collision %s): %s\n", who, g.model, g.mode, g.text)
 	}
-	return len(order)
+	// Trees naming a chunk that is not there, one line per chunk name.
+	missing := map[string]int{}
+	var names []string
+	first := map[string]string{}
+	for i := range lvl.Trees {
+		t := &lvl.Trees[i]
+		if t.Chunk == "" || world.FindChunkByID(lvl, t.Chunk) != nil {
+			continue
+		}
+		if missing[t.Chunk] == 0 {
+			names = append(names, t.Chunk)
+			first[t.Chunk] = t.ID
+		}
+		missing[t.Chunk]++
+	}
+	for _, c := range names {
+		who := "tree " + first[c]
+		if n := missing[c]; n > 1 {
+			who = fmt.Sprintf("tree %s and %d more", first[c], n-1)
+		}
+		fmt.Fprintf(out, "  WARNING %s: streams with chunk %q, which is not in the level: it is always in\n", who, c)
+	}
+	return len(order) + len(names)
 }
 
 // checkDecals reports every decal that projects onto nothing, and returns how

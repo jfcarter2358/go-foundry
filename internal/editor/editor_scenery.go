@@ -462,6 +462,12 @@ func editorSceneryReload(s *world.Scenery) {
 	if s == nil {
 		return
 	}
+	if s.Unloaded {
+		// Its chunk is off and unloaded: the new model is read when it
+		// comes back on (world.SyncPlacementChunks).
+		editorSetStatus("%q is unloaded with its chunk; it reloads when the chunk is enabled", s.ID)
+		return
+	}
 	if err := s.Load(); err != nil {
 		editorSetStatus("Scenery %s: %v", s.ID, err)
 		return

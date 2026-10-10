@@ -230,10 +230,15 @@ tasks:
   # Each carries the shaders it was built from (which it reads instead of any
   # project's) and runtimes/ — the release game binaries for both platforms and
   # the Windows installer program — so its Release window can ship a game with
-  # nothing else installed. Then:
+  # nothing else installed.
   #
-  #   task dist-editor
-  #   gh release create v$(task --silent editor-version) build/editor-dist/*
+  # Pushing a v<major>.<minor>.<patch> tag does the rest: the Release editor
+  # workflow (.github/workflows/release-editor.yml) runs this with
+  # EDITOR_VERSION set to the tag's semver and uploads the three files to that
+  # tag's release. By hand, the same thing is:
+  #
+  #   task dist-editor EDITOR_VERSION=1.2.3
+  #   gh release create v1.2.3 build/editor-dist/*
 
   dist-editor:
     desc: Build the editor for a Foundry GitHub release, both platforms.

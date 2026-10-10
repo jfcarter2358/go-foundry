@@ -87,6 +87,16 @@ import (
 // NaniteVSM switches the virtual shadow map; see the file comment.
 var NaniteVSM = gfx.EnvFlag("FOUNDRY_NANITE_VSM", true)
 
+// NaniteVSMRects is the most rectangles of pages a frame draws; the rest wait
+// for the frames after (vsm_pages.go, "The budget"). 0: no limit.
+var NaniteVSMRects = func() int {
+	// 0 is a value here (no limit), which envInt would read as unset.
+	if v, err := strconv.Atoi(os.Getenv("FOUNDRY_NANITE_VSM_RECTS")); err == nil && v >= 0 {
+		return v
+	}
+	return 6
+}()
+
 // NaniteVSMPages is the physical page pool, read when it is first made.
 var NaniteVSMPages = envInt("FOUNDRY_NANITE_VSM_PAGES", 2048)
 
@@ -394,6 +404,7 @@ func vsmBegin(lights world.LightSet, level *world.Level, li int, view, projectio
 	keys := append([]vsmKey(nil), v.requests...)
 	keys = v.appendSafety(keys, view, projection)
 	whole, movers := v.pager.request(keys)
+	whole, movers = v.pager.budget(whole, movers, NaniteVSMRects)
 	v.drawnPages, v.rects = len(whole)+len(movers), 0
 	if v.drawnPages > 0 {
 		v.drawPages(level, whole, movers, dl, frame)
@@ -421,8 +432,8 @@ func vsmBegin(lights world.LightSet, level *world.Level, li int, view, projectio
 	v.frame.depthOffset = float32(v.camLS[2] - v.zNear)
 	frame.VSM = &v.frame
 	v.active = true
-	DebugStats.VSMPages, DebugStats.VSMDrawn, DebugStats.VSMRects, DebugStats.VSMStarved =
-		v.pager.resident(), v.drawnPages, v.rects, v.pager.starved
+	DebugStats.VSMPages, DebugStats.VSMDrawn, DebugStats.VSMRects, DebugStats.VSMStarved, DebugStats.VSMDeferred =
+		v.pager.resident(), v.drawnPages, v.rects, v.pager.starved, v.pager.deferred
 	return true
 }
 
@@ -617,8 +628,10 @@ func (v *vsmRenderer) drawPages(level *world.Level, whole, movers []*vsmPage, dl
 		gl.Viewport(0, 0, wpx, hpx)
 		gl.Scissor(0, 0, wpx, hpx)
 		gl.Clear(gl.DEPTH_BUFFER_BIT)
+		shadowLODTexel = float32(vsmTexel(r.level))
 		return v.rectMatrices(r)
 	}
+	defer func() { shadowLODTexel = 0 }()
 	for _, r := range v.pager.rects(whole) {
 		lsm, cull := begin(&r)
 		v.drawStatic(level, lsm, &cull)

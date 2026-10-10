@@ -395,11 +395,17 @@ func pick3DCandidates(sx, sy int32) []pickHit {
 	// click on distance exactly as the wall in front of another wall does.
 	// Volumes and sprites are tested afterwards precisely because they are not.
 	for si := range lvl.Scenery {
+		if !lvl.Scenery[si].InWorld() {
+			continue // its chunk is off, so it is not drawn: the chunks' reason above
+		}
 		scene.add(pickSceneryRayT(origin, dir, &lvl.Scenery[si]), pickScenery, -1, si)
 	}
 	// Trees on the same terms: solid things standing in the level, tested
 	// against their crown's footprint (editor_tree.go).
 	for ti := range lvl.Trees {
+		if !lvl.Trees[ti].InWorld() {
+			continue // its chunk is off, so it is not drawn
+		}
 		scene.add(pickTreeRayT(origin, dir, &lvl.Trees[ti]), pickTree, -1, ti)
 	}
 

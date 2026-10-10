@@ -310,7 +310,7 @@ func pointShadowSignaturesIn(level *world.Level, pl world.PointLight, cubemap ui
 	// Scenery, under RenderSceneryShadow's.
 	for i := range level.Scenery {
 		s := &level.Scenery[i]
-		if !s.HasGeometry() || !SceneryInFrustum(s, &box) {
+		if !s.InWorld() || !s.HasGeometry() || !SceneryInFrustum(s, &box) {
 			continue
 		}
 		var mask uint8

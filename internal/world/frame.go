@@ -473,6 +473,9 @@ func RebuildIndexes(lvl *Level) error {
 		return nil
 	}
 	RebuildSpatialHash(lvl)
+	// The scenery that streams with a chunk follows the same flags the hash
+	// was just built from; flags only, since this runs off the GL thread too.
+	SyncPlacementChunks(lvl, false)
 	fs, err := BuildFrames(lvl)
 	if err != nil {
 		lvl.Frames = &FrameSet{byID: map[string]*Frame{}}

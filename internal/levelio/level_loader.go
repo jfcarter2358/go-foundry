@@ -573,14 +573,19 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// existence — the same rule an entity attachment follows. What the author
 	// gets is a reported error and a prop that draws nothing, which is fixable;
 	// a level that refuses to open over one missing rock is not.
+	//
+	// A placement streaming with a chunk that starts switched off and
+	// unload_when_disabled is left unloaded, as its chunk is: the chunks are
+	// already built, so SyncPlacementChunks can say which those are, and builds
+	// them when the chunk comes on.
 	for _, rsc := range raw.Scenery {
 		sc := world.SceneryFromRaw(rsc)
 		sc.ID = world.UniqueSceneryID(level, sc.ID)
-		if err := sc.Load(); err != nil {
-			// Load's own error already names the placement and the model.
-			log.Printf("%v", err)
-		}
 		level.Scenery = append(level.Scenery, sc)
+	}
+	sceneryFrom := len(level.Scenery) - len(raw.Scenery)
+	for i := sceneryFrom; i < len(level.Scenery); i++ {
+		level.Scenery[i].Unloaded = true
 	}
 
 	// Trees: hand-placed plants, with the same ID guarantee. Nothing to
@@ -590,6 +595,9 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		t.ID = world.UniqueTreeID(level, t.ID)
 		level.Trees = append(level.Trees, t)
 	}
+	// Which props and trees start out with their chunk, and loading the
+	// props that do (see above).
+	world.SyncPlacementChunks(level, true)
 
 	// Sounds: placed sound sources, with the same ID guarantee.
 	//

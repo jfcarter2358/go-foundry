@@ -281,6 +281,9 @@ type RawTree struct {
 	Accent []float32 `yaml:"accent,omitempty,flow"`
 	// Solid defaults to true; written only to let bodies through the trunk.
 	Solid *bool `yaml:"solid,omitempty"`
+	// Chunk is the chunk this tree streams with: not drawn and not solid
+	// while it is switched off. Absent: always in.
+	Chunk string `yaml:"chunk,omitempty"`
 }
 
 // RawScenery is the YAML representation of a placed static model
@@ -310,6 +313,9 @@ type RawScenery struct {
 	// Wind bends a cooked Nanite mesh in the level's wind: `wind: {bend:
 	// 0.02, flutter: 0.08}`. Absent: it stands still.
 	Wind *RawSceneryWind `yaml:"wind,omitempty"`
+	// Chunk is the chunk this placement streams with: switched off (and
+	// unloaded, for an unload_when_disabled chunk) along with it. Absent: always in.
+	Chunk string `yaml:"chunk,omitempty"`
 }
 
 // RawSceneryWind is a placement's wind (world.SceneryWind).

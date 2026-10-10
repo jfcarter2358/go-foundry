@@ -108,9 +108,9 @@ type benchCounts struct {
 	pointShadows, pointShadowRenders                                                                int
 	// The sun's virtual shadow map (Phase 5): frames it ran in, pages
 	// resident, drawn, rectangles drawn, requests starved.
-	vsmFrames, vsmPages, vsmDrawn, vsmRects, vsmStarved int
-	nfFrames, nfItems, nfRefs, nfBricks                 int
-	giBuilt, giPending, giTraced                        int
+	vsmFrames, vsmPages, vsmDrawn, vsmRects, vsmStarved, vsmDeferred int
+	nfFrames, nfItems, nfRefs, nfBricks                              int
+	giBuilt, giPending, giTraced                                     int
 }
 
 // benchParse reads FOUNDRY_BENCH. ok is false when it is unset.
@@ -373,6 +373,7 @@ func benchEndFrame() {
 			c.vsmDrawn += s.VSMDrawn
 			c.vsmRects += s.VSMRects
 			c.vsmStarved += s.VSMStarved
+			c.vsmDeferred += s.VSMDeferred
 		}
 		if s.NaniteFoliage {
 			c.nfFrames++
@@ -439,8 +440,8 @@ func benchWritePose() {
 	fmt.Fprintf(r, "point shadows re-rendered %.2f of %.0f a frame\n", per(c.pointShadowRenders), per(c.pointShadows))
 	if c.vsmFrames > 0 {
 		vf := float64(c.vsmFrames)
-		fmt.Fprintf(r, "sun shadow  virtual in %.0f%% of frames: %.0f pages resident, %.1f drawn in %.1f rects, %.1f starved a frame\n",
-			100*vf/n, float64(c.vsmPages)/vf, float64(c.vsmDrawn)/vf, float64(c.vsmRects)/vf, float64(c.vsmStarved)/vf)
+		fmt.Fprintf(r, "sun shadow  virtual in %.0f%% of frames: %.0f pages resident, %.1f drawn in %.1f rects, %.1f starved, %.1f deferred a frame\n",
+			100*vf/n, float64(c.vsmPages)/vf, float64(c.vsmDrawn)/vf, float64(c.vsmRects)/vf, float64(c.vsmStarved)/vf, float64(c.vsmDeferred)/vf)
 	} else {
 		fmt.Fprintf(r, "sun shadow  cascades\n")
 	}

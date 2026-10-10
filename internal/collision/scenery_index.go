@@ -92,22 +92,25 @@ type sceneryKey struct {
 	solid           bool
 	mode            meshcollide.Mode
 	data            *meshcollide.Data
+	// off: its chunk is switched off (world.Scenery.ChunkOff).
+	off bool
 }
 
 func keyOf(s *world.Scenery) sceneryKey {
 	return sceneryKey{pos: s.Position, rot: s.Rotation, scale: s.Scale, lo: s.LocalMin, hi: s.LocalMax,
-		solid: s.Solid, mode: s.Collision, data: s.CollisionData()}
+		solid: s.Solid, mode: s.Collision, data: s.CollisionData(), off: s.ChunkOff}
 }
 
 // treeKey is what a placed tree's entry depends on.
 type treeKey struct {
 	lo, hi mgl32.Vec3
 	ok     bool
+	off    bool // its chunk is switched off (world.Tree.ChunkOff)
 }
 
 func treeKeyOf(t *world.Tree) treeKey {
 	lo, hi, ok := t.TrunkBox()
-	return treeKey{lo, hi, ok}
+	return treeKey{lo, hi, ok, t.ChunkOff}
 }
 
 // sceneryIndex is a level's solid placements under a tree of their boxes.
@@ -238,6 +241,9 @@ func buildSceneryIndex(lvl *world.Level) *sceneryIndex {
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
 		ix.keys[i] = keyOf(s)
+		if !s.InWorld() {
+			continue // its chunk is off: walked through, like the chunk
+		}
 		mode := s.CollisionMode()
 		ix.byMode[mode]++
 		if mode == meshcollide.ModeNone {
@@ -273,6 +279,9 @@ func buildSceneryIndex(lvl *world.Level) *sceneryIndex {
 	for i := range lvl.Trees {
 		t := &lvl.Trees[i]
 		ix.trees[i] = treeKeyOf(t)
+		if !t.InWorld() {
+			continue // its chunk is off: walked through, like the chunk
+		}
 		lo, hi, ok := t.TrunkBox()
 		if !ok {
 			ix.byMode[meshcollide.ModeNone]++

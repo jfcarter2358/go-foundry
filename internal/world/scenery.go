@@ -23,7 +23,9 @@ package world
 //
 // Scenery is level-scoped rather than chunk-scoped for the reason volumes are:
 // it is placed in world space and a chunk boundary is not something an author
-// aims at when scattering rocks.
+// aims at when scattering rocks. A placement may still name a chunk it streams
+// with (Chunk): it stays in world space, but leaves the world while that chunk
+// is switched off — see SyncPlacementChunks in chunk_enable.go.
 
 import (
 	"fmt"
@@ -76,7 +78,24 @@ type Scenery struct {
 	// picking and raycasts keep the still mesh.
 	Wind SceneryWind
 
+	// Chunk names the chunk this placement streams with, or "" for none. It
+	// does not move the placement — Position is still world space, and a chunk
+	// that moves leaves it standing — it only shares the chunk's switch: while
+	// that chunk is disabled the placement is not drawn, does not cast, does
+	// not collide and is not in the nav, and if the chunk is
+	// unload_when_disabled its buffers are released too (chunk_enable.go).
+	Chunk string
+
 	// ---------- runtime, never authored and never saved ----------
+
+	// ChunkOff is whether Chunk is switched off, stamped by
+	// SyncPlacementChunks. Everything that walks lvl.Scenery for the world —
+	// draws, shadows, GI, collision, nav — skips a placement with it set;
+	// InWorld is the spelling they read.
+	ChunkOff bool
+	// Unloaded is whether the placement's buffers were released because
+	// Chunk is off and unload_when_disabled (Chunk.WantsGeometry).
+	Unloaded bool
 
 	// Submeshes is the uploaded mesh, in model space — the draw carries
 	// ModelMatrix, exactly as an entity attachment's does.
@@ -149,6 +168,10 @@ func NewScenery(id, model string, pos mgl32.Vec3) Scenery {
 		Solid:    true,
 	}
 }
+
+// InWorld reports whether the placement takes part in the world at all: it
+// does unless the chunk it streams with is switched off.
+func (s *Scenery) InWorld() bool { return !s.ChunkOff }
 
 // EffectiveScale treats the zero value as identity, so a scenery that never
 // mentioned scale behaves as one scaled {1,1,1} rather than collapsing.
@@ -565,6 +588,40 @@ func FindScenery(lvl *Level, id string) *Scenery {
 	return nil
 }
 
+// SceneryChunkAt is the chunk a placement standing at pos would stream with:
+// the world-space chunk whose footprint holds it, switched on or not. A prop
+// stands ON a ground chunk rather than inside its box, so the footprint is
+// what decides; among several, the one whose height span reaches pos (or comes
+// nearest) wins, then the smaller footprint, as the more specific area. ""
+// when no chunk's footprint holds it.
+func SceneryChunkAt(lvl *Level, pos mgl32.Vec3) string {
+	if lvl == nil {
+		return ""
+	}
+	best, bestGap, bestArea := "", float32(0), float32(0)
+	for i := range lvl.Chunks {
+		c := &lvl.Chunks[i]
+		if c.InFrame() || c.ID == "" {
+			continue
+		}
+		lo, hi := c.WorldBounds()
+		if pos.X() < lo.X() || pos.X() > hi.X() || pos.Z() < lo.Z() || pos.Z() > hi.Z() {
+			continue
+		}
+		gap := float32(0)
+		if pos.Y() < lo.Y() {
+			gap = lo.Y() - pos.Y()
+		} else if pos.Y() > hi.Y() {
+			gap = pos.Y() - hi.Y()
+		}
+		area := (hi.X() - lo.X()) * (hi.Z() - lo.Z())
+		if best == "" || gap < bestGap || (gap == bestGap && area < bestArea) {
+			best, bestGap, bestArea = c.ID, gap, area
+		}
+	}
+	return best
+}
+
 // UniqueSceneryID returns base, or base with a numeric suffix that nothing in
 // lvl is already using — the guarantee every other mint site gives.
 func UniqueSceneryID(lvl *Level, base string) string {
@@ -600,6 +657,7 @@ func SceneryFromRaw(r RawScenery) Scenery {
 		Materials: copyStringMap(r.Materials),
 		Collision: collisionModeFromRaw(r.ID, r.Collision),
 		Wind:      sceneryWindFromRaw(r.Wind),
+		Chunk:     r.Chunk,
 	}
 }
 
@@ -644,6 +702,7 @@ func SceneryToRaw(s *Scenery) RawScenery {
 		Position: RawVec3{X: s.Position.X(), Y: s.Position.Y(), Z: s.Position.Z()},
 		Rotation: RawVec3{X: s.Rotation.X(), Y: s.Rotation.Y(), Z: s.Rotation.Z()},
 		Solid:    BoolPtrIfFalse(s.Solid),
+		Chunk:    s.Chunk,
 
 		Materials: copyStringMap(s.Materials),
 	}

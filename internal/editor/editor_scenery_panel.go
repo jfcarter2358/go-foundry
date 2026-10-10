@@ -152,6 +152,7 @@ func editorSceneryProperties(s *world.Scenery) {
 	editorPropGroupOpen("Identity##scidgrp", func() { editorSceneryIdentity(s) })
 	editorPropGroupOpen("Transform##sctfgrp", func() { editorSceneryTransform(s) })
 	editorPropGroupOpen("Collision##sccolgrp", func() { editorSceneryCollision(s) })
+	editorPropGroupOpen("Streaming##scstreamgrp", func() { editorSceneryStreaming(s) })
 	if s.Nanite != nil || nanitecook.IsSourcePath(s.Model) {
 		editorPropGroupOpen("Nanite##scnanite", func() { editorSceneryNanite(s) })
 		editorPropGroupOpen("Wind##scwind", func() { editorSceneryWind(s) })
@@ -226,6 +227,147 @@ func editorSceneryTransform(s *world.Scenery) {
 			world.EntityScaleClamp(scale[2]),
 		}
 	}
+}
+
+// editorSceneryStreaming draws the chunk the prop streams with
+// (world.Scenery.Chunk).
+func editorSceneryStreaming(s *world.Scenery) {
+	editorStreamingGroup(pickScenery, s.Chunk, "sc",
+		"Switched off with this chunk: not drawn, not solid and not\nin the nav while it is disabled, and unloaded with it when it\nis unload_when_disabled. The prop stays where it is placed.")
+}
+
+// streamedPlacement is one selected prop or tree, as the streaming group
+// edits it: its chunk field and where it stands.
+type streamedPlacement struct {
+	chunk *string
+	pos   mgl32.Vec3
+}
+
+// selectedStreamed is every selected placement of kind (pickScenery or
+// pickTree), so a Ctrl+clicked field of rocks joins a chunk in one go.
+func selectedStreamed(kind pickKind) []streamedPlacement {
+	lvl := Editor.level
+	var out []streamedPlacement
+	for _, r := range selectedObjRefs() {
+		switch {
+		case r.kind != kind || r.idx < 0:
+		case kind == pickScenery && r.idx < len(lvl.Scenery):
+			out = append(out, streamedPlacement{&lvl.Scenery[r.idx].Chunk, lvl.Scenery[r.idx].Position})
+		case kind == pickTree && r.idx < len(lvl.Trees):
+			out = append(out, streamedPlacement{&lvl.Trees[r.idx].Chunk, lvl.Trees[r.idx].Position})
+		}
+	}
+	return out
+}
+
+// editorStreamingGroup draws the chunk a prop or tree streams with: a pick
+// that applies to the whole selection of that kind, a containing-chunk
+// button, and one that assigns every unassigned placement in the level.
+func editorStreamingGroup(kind pickKind, current, tag, tip string) {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	label := current
+	if label == "" {
+		label = "(none)"
+	}
+	pick, picked := "", false
+	if imguibackend.BeginCombo("Chunk##"+tag+"chunk", label) {
+		if imguibackend.SelectableV("(none)", current == "", 0, imgui.Vec2{}) {
+			pick, picked = "", true
+		}
+		for i := range lvl.Chunks {
+			ch := &lvl.Chunks[i]
+			if ch.InFrame() {
+				continue // carried by a vehicle: not an area anything streams with
+			}
+			if imguibackend.SelectableV(ch.ID, current == ch.ID, 0, imgui.Vec2{}) {
+				pick, picked = ch.ID, true
+			}
+		}
+		imguibackend.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip(tip)
+	}
+	if picked {
+		editorSetPlacementChunks(kind, func(mgl32.Vec3) string { return pick })
+	}
+	if imgui.Button("Containing Chunk##" + tag + "chunkat") {
+		editorSetPlacementChunks(kind, func(p mgl32.Vec3) string { return world.SceneryChunkAt(lvl, p) })
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Stream each selected placement with the chunk whose footprint it stands in.")
+	}
+	imgui.SameLine()
+	if imgui.Button("All Unassigned##" + tag + "chunkall") {
+		editorAssignAllPlacementChunks()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Every prop and tree in the level with no chunk yet streams\nwith the chunk whose footprint it stands in.")
+	}
+	if current != "" && world.FindChunkByID(lvl, current) == nil {
+		editorTextWrapped("No chunk has this ID, so it is always in.")
+	}
+}
+
+// editorSetPlacementChunks gives every selected placement of kind the chunk
+// chunkFor names for where it stands, as one undo step, and brings their
+// switch into line at once — a placement put into a disabled chunk
+// disappears now rather than next frame.
+func editorSetPlacementChunks(kind pickKind, chunkFor func(mgl32.Vec3) string) {
+	targets := selectedStreamed(kind)
+	changed := 0
+	for _, t := range targets {
+		if chunkFor(t.pos) != *t.chunk {
+			changed++
+		}
+	}
+	if changed == 0 {
+		return
+	}
+	EditorPushUndo()
+	// The undo snapshot re-reads nothing, so the pointers are still live.
+	for _, t := range targets {
+		*t.chunk = chunkFor(t.pos)
+	}
+	world.SyncPlacementChunks(Editor.level, true)
+	editorSetStatus("%d placement(s) moved to a new chunk", changed)
+}
+
+// editorAssignAllPlacementChunks streams every unassigned prop and tree in
+// the level with the chunk it stands in, as one undo step.
+func editorAssignAllPlacementChunks() {
+	lvl := Editor.level
+	var targets []streamedPlacement
+	for i := range lvl.Scenery {
+		targets = append(targets, streamedPlacement{&lvl.Scenery[i].Chunk, lvl.Scenery[i].Position})
+	}
+	for i := range lvl.Trees {
+		targets = append(targets, streamedPlacement{&lvl.Trees[i].Chunk, lvl.Trees[i].Position})
+	}
+	picks := make([]string, len(targets))
+	n := 0
+	for i, t := range targets {
+		if *t.chunk == "" {
+			if picks[i] = world.SceneryChunkAt(lvl, t.pos); picks[i] != "" {
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		editorSetStatus("No unassigned prop or tree stands in a chunk")
+		return
+	}
+	EditorPushUndo()
+	for i, id := range picks {
+		if id != "" {
+			*targets[i].chunk = id
+		}
+	}
+	world.SyncPlacementChunks(lvl, true)
+	editorSetStatus("%d placement(s) assigned to the chunk they stand in", n)
 }
 
 // editorSceneryWind draws a cooked prop's wind (world.SceneryWind): whether
