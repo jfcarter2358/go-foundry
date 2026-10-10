@@ -1,0 +1,21 @@
+version: 1
+title: Transposing
+key: [{bar: 1, fifths: -2}]
+lines:
+- name: Clarinet in Bb
+  instrument: woodwinds/clarinet
+  staves:
+  - clef: treble
+    transpose: -M2
+    voices: ["| qBb4 qC5 qD5 qEb5 | wF5"]
+- name: Horn in F
+  instrument: brass/horn
+  staves:
+  - clef: treble
+    transpose: -P5
+    voices: ["| qBb3 qD4 qF4 qBb4 | wA4"]
+- name: Flute
+  instrument: woodwinds/flute
+  staves:
+  - clef: treble
+    voices: ["| qBb4 qC5 qD5 qEb5 | wF5"]

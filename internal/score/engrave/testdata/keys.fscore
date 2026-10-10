@@ -1,0 +1,24 @@
+version: 1
+title: Keys
+key: [{bar: 1, fifths: 7}, {bar: 2, fifths: 3}, {bar: 3, fifths: -4}, {bar: 4, fifths: -7}, {bar: 5, fifths: 0}, {bar: 6, fifths: 5}]
+lines:
+- name: Treble
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices: ["| wC5 | wC5 | wC5 | wC5 | wC5 | wC5"]
+- name: Bass
+  instrument: keys/grand_piano
+  staves:
+  - clef: bass
+    voices: ["| wC3 | wC3 | wC3 | wC3 | wC3 | wC3"]
+- name: Alto
+  instrument: strings/viola_section
+  staves:
+  - clef: alto
+    voices: ["| wC4 | wC4 | wC4 | wC4 | wC4 | wC4"]
+- name: Tenor
+  instrument: strings/cello_section
+  staves:
+  - clef: tenor
+    voices: ["| wC4 | wC4 | wC4 | wC4 | wC4 | wC4"]

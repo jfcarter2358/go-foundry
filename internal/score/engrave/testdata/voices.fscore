@@ -1,0 +1,20 @@
+version: 1
+title: Voices
+lines:
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qF4 qG4 qC5 qA4
+      | eC5 eD5 eE5 eF5 hG5
+      | hE4 qG4 qG4
+      | q.G4 eG4 hD5
+      | qE5 qE5+G5 qA4 qB4
+    - |
+      | qE4 qD4 qC5 qB4
+      | qA4 qB4 hC5
+      | hE4 qF4 qA4
+      | q.E4 eE4 hG4
+      | qC4 qr qF4+G4 qr

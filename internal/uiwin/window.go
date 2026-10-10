@@ -70,6 +70,13 @@ type UIWindow struct {
 	// different Escape is to take the key away first.
 	FilterEvent func(sdl.Event) bool
 	OnClose     func()
+	// HelpOverlay, when set, is what F1 shows in this window instead of the
+	// shared keybinding reference: an editor whose keys are its own (the
+	// Score editor's rebindable keymap) draws them itself. It runs inside
+	// the window's frame, like Draw; arriving is true on the frame the
+	// overlay first appears here, when it should take focus. Closing it is
+	// KeybindHelpSetVisible(false), as F1 and Escape already do.
+	HelpOverlay func(arriving bool)
 	// ConfirmClose is optional, and asked when the window's own close button
 	// is pressed: returning false keeps the window open — typically because
 	// it has just put up an unsaved-changes prompt that closes it itself.

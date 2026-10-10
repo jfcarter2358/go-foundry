@@ -10,9 +10,10 @@ instrument.
 Scores live beside the other sounds, as `resources/sounds/<name>.fscore`. This
 chapter covers the file, the notation text inside it, how a score plays, and
 the `foundry score` commands that check, render, play, import and export
-scores. The Score editor window, and playing a score in a level, come in a
-later update. Until then, a score is written as text, imported from MIDI or
-MusicXML, and heard with `foundry score render` or `foundry score play`.
+scores, and the Score editor window, where notes are entered the way Sibelius
+or MuseScore enters them. Playing a score in a level comes in a later update;
+until then a score is heard in the editor, or with `foundry score render` or
+`foundry score play`.
 
 ## The file
 
@@ -74,6 +75,80 @@ bar's meter counts them: `5`, `5:3`, `5:2+1/2`.
 Pitches in a score are always **concert pitch** (what sounds). A staff's
 `transpose` only changes how it is shown. The notes in the file never change
 when you change it.
+
+## The Score editor
+
+Open it from the editor strip (**Score**) or **Window > Score**. It starts on
+a one-line sketch; **File > New** offers a solo line, a piano (grand staff),
+a string quartet and a chamber ensemble (flute, clarinet in B♭ and horn in F
+written transposed, violins, cello), each eight empty bars of 4/4 in C.
+**File > Open**, **Open Recent**, **Save** (Ctrl+S), **Save As** and **Save
+All** work as in every editor, and the chip at the right of the menu bar says
+whether the score matches its file.
+
+The score is drawn as one continuous system on paper, scrolled with the
+wheel (Shift+wheel across) and zoomed with Ctrl+wheel about the pointer,
+Ctrl+= and Ctrl+-. Line names sit in the column on the left, bar numbers
+along the top. **View > Concert Pitch** shows transposing instruments as they
+sound; otherwise they are shown — and typed, clicked and sharpened — at
+written pitch, and stored at concert pitch. **View > Voice Colours** colours
+voices 2–4 green, orange and magenta.
+
+### Entering notes (Sibelius keys)
+
+| To | Press |
+| --- | --- |
+| Note input on / off | `N` — a ghost note follows the pointer, spelled in the key, with its pitch, value and voice beside it |
+| Write a note | click a line or space: the pitch the key signature implies (F♯ on the top line in G), the current value, at the beat under the pointer. What it lands on is cut short, what it covers goes, the rest of the bar is rests. A value longer than the bar has left carries on over the barline, tied |
+| Letters | `A`–`G` write after the selection, in the octave nearest the note before. Out of note input a letter changes the selected note; `Shift`+letter adds that letter above the chord |
+| Interval above / below | `2`–`9` / `Shift+2`–`9`, spelled in the key (a third above D in G is F♯). With bars selected, every chord in them takes it |
+| Sharp, flat, natural | `+` (or `=`), `-`, `0`, keypad `8` `9` `7`; again for a double sharp or flat. With nothing selected the accidental goes on the next note written |
+| Semitone, step, octave | `Up`/`Down`, `Alt+Up`/`Down` (in the key), `Ctrl+Up`/`Down` — the selected note, or every note of the selected bars |
+| Respell | `Return` (F♯ ↔ G♭) |
+| Values | keypad `1`–`6` = 32nd … whole (laptop `Alt+1`–`6`); `F8` or keypad `/` switches to the second layout, where `1`–`4` are 64th, 128th, 256th and breve. In note input the value is the next note's, chosen before the letter (`4 C 3 D E` is a quarter and two eighths); out of note input the selected note takes it and the bar reflows |
+| Dot | keypad `.` (`Alt+.`): once a dot, again a double dot, again none — like the value, the next note's in note input |
+| Rest | keypad `0` (`Alt+0`): in note input a rest after the selection, otherwise the selected note becomes one |
+| Tie | keypad `Enter` or `T` |
+| Voice | `Ctrl+Alt+1`–`4`, or keypad `*` for the next. In note input the caret stays where it was, so the new voice starts under the old one's last note; out of it the new voice's note at the same beat is selected |
+| Tuplet | `Ctrl+2`–`9` start one on the selected note: three of its value in the time of two, five in four… Inside a tuplet the new one nests |
+| Flip a stem | `X` or keypad `-` |
+| Delete | `Delete`: a note becomes a rest, one note of a chord goes, a rest in voices 2–4 is hidden; selected bars are cleared |
+| Previous / next note | `Left` / `Right` |
+| Key, time, clef | `K`, `Ctrl+Shift+T`, `Q` (or the toolbar): a key or time signature from the selected bar; a clef for a whole staff |
+
+Changing the time signature keeps each bar's music but fits it to the new
+length: music past a new barline is cut and a short bar filled with rests
+(Ctrl+Z brings it back). Changing the key never changes a note — the pitches
+are spelled — only what the page prints.
+
+### Selecting, copying, repeating
+
+Click a note (or rest) to select it; it plays. Click empty space in a bar to
+select that bar of that line (typing into it starts on the staff you
+clicked, so a piano's bass staff is a click away), `Ctrl`+click for that bar of every line,
+`Shift`+click to extend; `Ctrl+A` selects everything and `Esc` clears.
+`Ctrl+C` and `Ctrl+V` copy and paste bars (every voice of every staff of the
+lines) or a single note; `Alt`+click pastes at the clicked bar or beat. `R`
+repeats the selection right after itself, growing the score when it has to,
+and selects the copy, so `R` again carries on. A paste into bars of another
+meter is fitted to them. `Ctrl+Z` / `Ctrl+Y` undo and redo every edit.
+
+`Space` plays from the selection and stops; `P` plays from the selection.
+The full transport (ruler, loop, tempo) comes with many-line playback.
+
+### The keypad, the keymap and F1
+
+The keypad panel (toolbar **Keypad**, `Ctrl+Alt+K`) mirrors the numeric
+keypad in Sibelius's layout and is clickable; the selected note's value,
+dot, accidental, tie and rest are lit, and its **More** tab is the second
+layout. **F1** in the Score window shows the active keymap over the score.
+
+**Edit > Keyboard Shortcuts** picks the keymap — **Sibelius** (the default) or
+**MuseScore** (digits `1`–`8` are 64th … breve, `Alt+2`–`9` intervals, `J`
+respells, `0` rests, `T` ties) — and rebinds any command: **Set** replaces a
+command's keys with the next one pressed, **Add** gives it another, **Clear**
+unbinds it; a key already in use moves to the new command. The choice and the
+rebindings are kept in `score.yaml` beside the project (never packed).
 
 ## Notation as text
 
@@ -162,6 +237,7 @@ foundry score list                         every score and how long it runs
 foundry score inspect <score>              maps, sections and their times, lines, staves, ranges, problems
 foundry score check [score …]              does it parse, validate and find its instruments (all scores with no names)
 foundry score render <score> [flags]       render to a WAV
+foundry score render <score> -png out.png  engrave the notation to an image
 foundry score play <score> [flags]         play on the audio device, printing the bar and beat
 foundry score fmt [-check] [score …]       rewrite scores in canonical form
 foundry score import <file> [-o name]      a MIDI or MusicXML file as a score (-list shows the parts first)
@@ -174,6 +250,28 @@ path. `render` and `play` take `-section name`, `-from 9:3`, `-seconds n`,
 `-param name=value`. `render` also takes `-o out.wav`, `-tail` (seconds of
 reverb after the end) and `-rate`. It prints the length, the peak and a hash
 of the audio, so two renders can be compared.
+
+`render -png out.png` engraves the score instead: the notation as the Score
+editor shows it, every bar on one continuous system, in Bravura. It takes
+`-bars 5-8` (or one bar), `-lines 1,3` (1-based), `-scale 12` (pixels per
+staff space; a staff is four spaces tall), `-concert` (transposing staves at
+sounding pitch rather than written), `-spacing 1.2` (wider or tighter) and
+`-bar-numbers 5` (number every fifth bar; `0`, the default, numbers only the
+first bar shown when it is not bar 1, `-1` none). It prints the image's size
+and a hash of its pixels.
+
+The engraving follows the usual rules, so what a score says is what a
+player expects to read. Accidentals last to the barline and are shared by a
+staff's voices; a note tied over the barline does not repeat its
+accidental; `!` on a note forces one and `?` puts it in parentheses. Beams
+follow the meter: beats, half bars of eighths in 4/4, dotted beats in 6/8,
+the groups of 3+2+2/8 (5/8 beams 3+2 and 7/8 2+2+3), and each tuplet on its
+own. With two or more voices on a staff, voices 1 and 3 have stems up and 2
+and 4 down, whatever the pitch, and rests move out of the way; the `up` and
+`down` marks force a stem. A bar written as `R`, or as one whole rest, has
+its rest in the middle; an empty bar shows a faint one. Copyright: the
+Bravura font is © Steinberg Media Technologies, under the SIL Open Font
+License (an editor install carries it in `licenses/`).
 
 ## Importing MIDI and MusicXML
 

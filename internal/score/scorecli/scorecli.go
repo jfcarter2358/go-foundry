@@ -36,6 +36,8 @@ const usage = `foundry score — work on notated scores (sounds/*.fscore).
   foundry score inspect <score>              lines, staves, maps, sections, and what is wrong
   foundry score check [score …]              does it parse, validate, find its instruments (all scores with no names)
   foundry score render <score> [flags]       render to a WAV (-o, -section, -from, -seconds, -tempo, -param k=v)
+  foundry score render <score> -png out.png  engrave it to an image (-bars 5-8, -scale px/space, -lines 1,3,
+                                             -concert, -spacing k, -bar-numbers n)
   foundry score play <score> [flags]         play on the audio device (-section, -from, -tempo, -seconds)
   foundry score fmt [-check] [score …]       rewrite scores in canonical form (all of them with no names)
   foundry score import <file> [-o name]      a MIDI (.mid) or MusicXML (.musicxml, .xml, .mxl) file as a score;
@@ -391,7 +393,7 @@ func needsValue(flag string) bool {
 		return false
 	}
 	switch strings.TrimLeft(flag, "-") {
-	case "check", "list", "force", "no-dynamics", "no-legato", "no-graces", "no-repeats":
+	case "check", "list", "force", "no-dynamics", "no-legato", "no-graces", "no-repeats", "concert":
 		return false
 	}
 	return true
@@ -405,6 +407,8 @@ func render(rest []string, out io.Writer) int {
 	rate := fs.Int("rate", 48000, "sample rate")
 	var pf playFlags
 	pf.register(fs)
+	var ef engraveFlags
+	ef.register(fs)
 	name, flags := splitArgs(rest)
 	if err := fs.Parse(flags); err != nil {
 		return 2
@@ -417,6 +421,9 @@ func render(rest []string, out io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(out, "score render: %v\n", err)
 		return 1
+	}
+	if ef.png != "" {
+		return renderPNG(s, ef, out)
 	}
 	prog, errs, err := play.Prepare(s)
 	if err != nil {

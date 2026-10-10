@@ -429,6 +429,7 @@ var developmentFiles = map[string]bool{
 	"foundry.log":  true, // the development build's log (fileutil.StatePath)
 	"release.yaml": true, // the Release window's settings (internal/release)
 	"claude.yaml":  true, // the Claude Code panel's settings (editor_claude_settings.go)
+	"score.yaml":   true, // the Score editor's keymap and recent files (editor_score_settings.go)
 }
 
 // IsDevelopmentFile reports whether a loose file at the top of a content tree

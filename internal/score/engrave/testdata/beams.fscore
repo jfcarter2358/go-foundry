@@ -1,0 +1,14 @@
+version: 1
+title: Beams
+lines:
+- name: Flute
+  instrument: woodwinds/flute
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | eC4 eD4 eE4 eF4 eG4 eA4 eB4 eC5
+      | sC5 sB4 sA4 sG4 sE4 sG4 sC5 sE5 e.D5 sC5 s.B4 tA4 eG4
+      | sC4 sC4 eC4 eC5 eC5 tC5 tD5 tE5 tF5 sG5 sA5 eC6 sB5 sA5
+      | eG4 eC5 eE4 eG4 er eF4 eE4 er
+      | eE4 eA5 eE4 eC4 sA4 sG4 eB4 qC5

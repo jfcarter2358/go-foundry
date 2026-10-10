@@ -1,0 +1,14 @@
+version: 1
+title: Accidentals
+key: [{bar: 1, fifths: 2, mode: major}, {bar: 3, fifths: -3, mode: major}]
+lines:
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qF4 qFn4 qF4 qF#4!
+      | qC#4+E4+G#4+B4 qD4+E4+F#4+G#4 qC4+Eb4+G4+Bb4+Db5 qG##4+Bbb4
+      | qB4 qBn4 qB4? qEb5+Ab5~
+      | qEb5+Ab5 qA4 qAbb4 qAb4

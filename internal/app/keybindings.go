@@ -115,6 +115,19 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
+		Title:  "Score editor",
+		Active: editor.ScoreEditorOpen,
+		Binds: []uiwin.Keybind{
+			{Keys: "F1 (in the Score window)", Desc: "The active keymap over the score, with your rebindings"},
+			{Keys: "Edit > Keyboard Shortcuts", Desc: "Sibelius (default) or MuseScore keymap; rebind any command"},
+			{Keys: "N, then click", Desc: "Note input: a click writes the pitch the key implies there"},
+			{Keys: "A-G / 2-9 / Shift+2-9", Desc: "Letters after the selection; intervals above / below (Sibelius)"},
+			{Keys: "Keypad 1-6, F8 / Alt+1-6", Desc: "Durations 32nd..whole; second layout 64th..breve"},
+			{Keys: "Click / Ctrl+click / Shift+click", Desc: "Select a bar / it in every line / extend"},
+			{Keys: "Ctrl+C / Ctrl+V / R / Alt+click", Desc: "Copy / paste / repeat after / paste at the click"},
+		},
+	},
+	{
 		Title:  "Tracker editor",
 		Active: editor.TrackerEditorOpen,
 		Binds: []uiwin.Keybind{

@@ -17,6 +17,8 @@ package pack
 //	                      the author: it is what the Claude Code panel's docs tool
 //	                      serves (editor_claude_docs.go)
 //	runtimes/             the release game binaries and the installer program
+//	licenses/             third-party licenses for what the editor embeds
+//	                      (Bravura-OFL.txt: the Score editor's music font)
 
 import (
 	"fmt"
@@ -26,7 +28,20 @@ import (
 	"strings"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/score/glyph/bravura"
 )
+
+// LicensesDirName is the folder of third-party licenses an editor install
+// carries.
+const LicensesDirName = "licenses"
+
+// thirdPartyLicenses are the licenses of what the editor binary embeds that
+// must travel with it: Bravura, the Score editor's music font (SIL OFL 1.1,
+// which asks that the license accompany every copy of the font). The
+// release game runtime does not link the font.
+var thirdPartyLicenses = map[string]string{
+	bravura.LicenseFileName: bravura.License,
+}
 
 // RuntimesDirName is the runtimes/ folder of a project, and of an editor
 // install: the prebuilt release binaries and installer program.
@@ -129,6 +144,17 @@ func StageEditor(o EditorOptions) (Result, error) {
 		if err := p.copyTo(rt, filepath.Join(RuntimesDirName, filepath.Base(rt))); err != nil {
 			return Result{}, fmt.Errorf("runtimes: %w", err)
 		}
+	}
+	for name, text := range thirdPartyLicenses {
+		dst := filepath.Join(o.Out, LicensesDirName, name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return Result{}, err
+		}
+		if err := os.WriteFile(dst, []byte(text), 0644); err != nil {
+			return Result{}, fmt.Errorf("licenses: %w", err)
+		}
+		p.copied++
+		p.bytes += int64(len(text))
 	}
 
 	stamp := Stamp{Title: EditorTitle, Version: o.Version, Exe: o.ExeName, Kind: KindEditor}

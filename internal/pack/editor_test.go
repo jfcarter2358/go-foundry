@@ -35,10 +35,13 @@ func TestAnEditorInstallIsTheEngineOnly(t *testing.T) {
 	if !strings.Contains(string(stamp), "KIND='editor'") {
 		t.Errorf("stamp:\n%s", stamp)
 	}
-	for _, want := range []string{"foundry.exe", "SDL2.dll", "resources/shaders/fragment.glsl", "runtimes/foundry-release-linux-amd64"} {
+	for _, want := range []string{"foundry.exe", "SDL2.dll", "resources/shaders/fragment.glsl", "runtimes/foundry-release-linux-amd64", "licenses/Bravura-OFL.txt"} {
 		if !exists(out, want) {
 			t.Errorf("%s was not staged", want)
 		}
+	}
+	if ofl, _ := os.ReadFile(filepath.Join(out, "licenses", "Bravura-OFL.txt")); !strings.Contains(string(ofl), "SIL Open Font License") {
+		t.Error("the Bravura license is not the OFL")
 	}
 	for _, unwanted := range []string{"resources/shaders/fragment.glsl.bak", "resources/game.yaml"} {
 		if exists(out, unwanted) {

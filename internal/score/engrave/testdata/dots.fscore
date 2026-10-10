@@ -1,0 +1,13 @@
+version: 1
+title: Dots
+lines:
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | q.E4 eF4 q.F4 eG4
+      | h.C4+E4+G4 qr
+      | q..A4 sB4 h.G4+A4+B4
+      | q.r eC5 h.F5+A5+C6
