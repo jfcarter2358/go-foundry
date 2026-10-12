@@ -81,6 +81,9 @@ type Surface struct {
 
 	HasSmooth   bool
 	SmoothAngle float32
+
+	// Fx is the terrain and rock effects (material_resolve_fx.go).
+	Fx SurfaceFx
 }
 
 // ResolveSurface reads the named material as a surface. The second result is
@@ -140,6 +143,7 @@ func ResolveSurfaceDoc(d *Doc) Surface {
 	if e := d.Effect(KindSmooth); e != nil {
 		s.HasSmooth, s.SmoothAngle = true, e.Float("angle")
 	}
+	resolveSurfaceFx(d, &s)
 	return s
 }
 

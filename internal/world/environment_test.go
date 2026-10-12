@@ -37,6 +37,12 @@ func TestFogRoundTripsThroughItsRawForm(t *testing.T) {
 		SkyBlend:   0.4,
 		SkyFalloff: 6,
 	}
+	// The atmosphere (fog_atmosphere.go) at its switched-off defaults, which
+	// is what a block without one reads back as.
+	d := DefaultFog()
+	want.Height, want.Aerial, want.Sun = d.Height, d.Aerial, d.Sun
+	want.Height.Color, want.Aerial.Color = want.Color, want.Color
+	want.SkyHaze, want.SkyDistance = d.SkyHaze, d.SkyDistance
 	got := FogFromRaw(FogToRaw(&want))
 	if got == nil {
 		t.Fatal("a full fog block round-tripped to nil")

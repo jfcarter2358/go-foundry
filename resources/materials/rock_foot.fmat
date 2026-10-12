@@ -1,0 +1,20 @@
+# rock_foot.fmat — a rock fading into the ground it sits on, as a worked
+# example.
+#
+# ground_blend reads two maps over the terrain's world rectangle: the
+# ground's COLOUR and its HEIGHT (16 bits, red the high byte and green the
+# low, between height_range's two values). Within `band` metres of that
+# height a rock's colour fades toward the ground's, which hides the seam
+# where a placed mesh meets the terrain. `sand` and `dirt` are standing in
+# for the two maps here; a terrain_material generator stage writes the real
+# ones, and scatter and cliff_wall give their rocks this effect when they
+# name it as their ground.
+kind: surface
+doc: A rock's foot fading into the ground. Swap the two maps for a terrain's.
+effects:
+  - effect: ground_blend
+    ground: sand
+    height: dirt
+    bounds_min: [-64, -64]
+    bounds_max: [64, 64]
+    height_range: [-2, 2]

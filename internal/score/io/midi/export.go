@@ -4,7 +4,9 @@ package midi
 //
 // The file is what the score sounds like, from the interpreter
 // (internal/score/interpret): repeats played out (or not, NoRepeats),
-// ties joined, grace notes where they sound, dynamics as velocities. It is
+// ties joined, grace notes where they sound, dynamics as velocities, the
+// shapes the interpreter gives articulations, ornaments, tremolos and
+// glissandi (a slide as a chromatic run: a note in a file cannot bend). It is
 // format 1 at the score's own 960 ticks a quarter, so every onset is
 // exact: track 0 is the conductor (title, composer, tempo — a ramp in
 // 16th-note steps — time and key signatures, rehearsal marks as markers,
@@ -32,7 +34,8 @@ type ExportOptions struct {
 // Export makes a MIDI file of a score.
 func Export(s *score.Score, o ExportOptions) (f *File, err error) {
 	defer score.RecoverOverflow(&err)
-	perf, err := interpret.Interpret(s, interpret.Options{NoRepeats: o.NoRepeats})
+	// A file's notes cannot bend: a slide is written as the run it passes.
+	perf, err := interpret.Interpret(s, interpret.Options{NoRepeats: o.NoRepeats, NoSlides: true})
 	if err != nil {
 		return nil, err
 	}

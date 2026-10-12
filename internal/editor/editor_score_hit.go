@@ -48,10 +48,11 @@ func scorePointerTarget(l *engrave.List, s *score.Score, voice int, dur score.Du
 		return t, false
 	}
 	t.Line, t.Staff, t.Bar = sb.Line, sb.Staff, bb.Bar
-	t.Diatonic = sb.Diatonic(p.Y)
 	t.At = scoreSnap(s, t.Line, t.Staff, voice, t.Bar, dur, bb, p.X)
 	t.X = bb.XAt(t.At.Float())
-	t.Y = sb.Y(t.Diatonic)
+	// The clef in force where the note would go (a clef change before it).
+	t.Diatonic = sb.DiatonicAt(t.X, p.Y)
+	t.Y = sb.YAt(t.X, t.Diatonic)
 	return t, true
 }
 

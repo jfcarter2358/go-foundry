@@ -46,7 +46,8 @@ import (
 )
 
 // visVaryings are vertex.glsl's outputs, which are fragment.glsl's inputs.
-var visVaryings = []string{"fragTexCoord", "fragWorldPos", "fragNormal", "fragViewDepth", "fragBakedLight", "fragBakedIndirect"}
+var visVaryings = []string{"fragTexCoord", "fragWorldPos", "fragNormal", "fragViewDepth", "fragBakedLight", "fragBakedIndirect",
+	"fragVertColor"}
 
 var (
 	reVersion      = regexp.MustCompile(`(?m)^\s*#version[^\n]*\n`)

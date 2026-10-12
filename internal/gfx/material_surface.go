@@ -64,6 +64,13 @@ type SurfaceState struct {
 	// Blend is how the framebuffer blend will combine the fragment, which the
 	// shading stage needs told — see SurfaceBlend.
 	Blend SurfaceBlend
+	// VertexColors is whether the mesh carries per-vertex colours for the
+	// shader to multiply in (VertexColorsUniform). It is the mesh's, never a
+	// material's: a mesh without the attribute must never have it set.
+	VertexColors bool
+	// Fx is the terrain and rock effects (material_fx.go): only ever a
+	// material's, and the zero value — none — for everything else.
+	Fx material.SurfaceFx
 }
 
 // identityUV is what UVScale means "unchanged".
@@ -118,6 +125,9 @@ func (s *SurfaceState) overlay(m material.Surface) {
 		if m.SmoothAngle > 0 {
 			s.SmoothAngle = m.SmoothAngle
 		}
+	}
+	if m.Fx.Any() {
+		s.Fx = m.Fx
 	}
 }
 
@@ -177,6 +187,7 @@ func (g *Geometry) SurfaceState() SurfaceState {
 		Normals:      len(g.Normals) > 0,
 		Tint:         g.Tint,
 		Blend:        g.Blend,
+		VertexColors: len(g.colors) > 0,
 	}
 	if m, ok := material.ResolveSurface(g.MaterialName); ok {
 		s.overlay(m)
@@ -199,6 +210,7 @@ func (m *Material) SurfaceState() SurfaceState {
 		UVScale:      identityUV,
 		Smooth:       m.Smooth,
 		Normals:      m.Normals,
+		VertexColors: m.VertexColors,
 	}
 	if res, ok := material.ResolveSurface(m.MaterialName); ok {
 		s.overlay(res)
@@ -233,6 +245,14 @@ func (s *SurfaceState) UnlitFlag() int32 {
 	return 0
 }
 
+// VertexColorsFlag is the shader's `vertexColors`.
+func (s *SurfaceState) VertexColorsFlag() int32 {
+	if s.VertexColors {
+		return 1
+	}
+	return 0
+}
+
 // IsTransparent routes the surface into the sorted, back-to-front blended pass
 // rather than the opaque one — Geometry.IsTransparent's rule, asked of the
 // state a material has already had its say in, so that a material's `unlit` or
@@ -258,9 +278,11 @@ func (s *SurfaceState) Apply() {
 	gl.Uniform1f(AlphaCutoffBiasUniform, s.CutoffBias)
 	applyTintUniform(TintBiasUniform, s.Tint)
 	gl.Uniform1i(SurfaceBlendUniform, int32(s.Blend))
+	gl.Uniform1i(VertexColorsUniform, s.VertexColorsFlag())
 	applyWaterUniforms(&s.Water)
 	applyBlendUniforms(s.BlendTexture, s.BlendMask)
 	BindNormalMap(s.NormalMap, HasNormalMapUniform, NormalMapUniform)
+	applySurfaceFx(&s.Fx, s.Texture, programFxLocs())
 }
 
 // ApplyUVUniforms sets the three texture-coordinate uniforms together.
@@ -335,6 +357,8 @@ type SurfaceLocs struct {
 	isWater, waveAmp, waveLen, waveSpeed, reflectivity     int32
 	reflectColor, hasBlend, blendTex, blendMask            int32
 	hasNormalMap, normalMap                                int32
+	vertexColors                                           int32
+	fx                                                     FxLocs
 }
 
 // NewSurfaceLocs resolves prog's SurfaceLocs.
@@ -348,6 +372,8 @@ func NewSurfaceLocs(prog uint32) SurfaceLocs {
 		waveSpeed: loc("waveSpeed\x00"), reflectivity: loc("reflectivity\x00"), reflectColor: loc("reflectColor\x00"),
 		hasBlend: loc("hasBlend\x00"), blendTex: loc("blendTex\x00"), blendMask: loc("blendMask\x00"),
 		hasNormalMap: loc("hasNormalMap\x00"), normalMap: loc("normalMap\x00"),
+		vertexColors: loc("vertexColors\x00"),
+		fx:           NewFxLocs(prog),
 	}
 }
 
@@ -364,6 +390,7 @@ func (s *SurfaceState) ApplyLocs(l *SurfaceLocs) {
 	gl.Uniform1f(l.cutoff, s.CutoffBias)
 	applyTintUniform(l.tint, s.Tint)
 	gl.Uniform1i(l.blend, int32(s.Blend))
+	gl.Uniform1i(l.vertexColors, s.VertexColorsFlag())
 
 	if !s.Water.Enabled {
 		gl.Uniform1i(l.isWater, 0)
@@ -391,6 +418,7 @@ func (s *SurfaceState) ApplyLocs(l *SurfaceLocs) {
 	}
 
 	BindNormalMap(s.NormalMap, l.hasNormalMap, l.normalMap)
+	applySurfaceFx(&s.Fx, s.Texture, &l.fx)
 }
 
 // DrawThroughProgram draws the geometry with its material applied, through a
@@ -414,4 +442,25 @@ func (g *Geometry) DrawThroughProgram(prog uint32, model mgl32.Mat4) {
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 	gl.Uniform1i(UniformLoc(prog, "tex\x00"), 0)
 	g.DrawTriangles()
+}
+
+// DrawInstancedThroughProgram is DrawThroughProgram for count instances
+// starting at first of the matrix buffer AttachInstanceMatrices gave this
+// geometry's VAO, each placed by its own matrix (the program's `instanced`
+// path; the model uniform is not read). The Generator editor's scatter
+// preview draws thousands of rocks as one proxy this way.
+func (g *Geometry) DrawInstancedThroughProgram(prog uint32, first, count int) {
+	if len(g.Vertices) == 0 || g.Vao == 0 || count <= 0 {
+		return
+	}
+	st := g.SurfaceState()
+	gl.UseProgram(prog)
+	st.ApplyTo(prog)
+	gl.Uniform1i(UniformLoc(prog, "instanced\x00"), 1)
+	gl.BindVertexArray(g.Vao)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
+	gl.Uniform1i(UniformLoc(prog, "tex\x00"), 0)
+	g.DrawTrianglesInstanced(first, count)
+	gl.Uniform1i(UniformLoc(prog, "instanced\x00"), 0)
 }

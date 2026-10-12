@@ -15,7 +15,6 @@ import (
 	"strconv"
 
 	"foundry/internal/score"
-	"foundry/internal/score/glyph"
 )
 
 // clefBottom is the diatonic number (score.Pitch.Diatonic) of a clef's
@@ -305,7 +304,7 @@ func (e *engraver) barPrefixLayout(bc *barCtx) barPrefix {
 	if bc.showKey {
 		kw := 0.0
 		for _, sc := range e.staves {
-			kw = max(kw, e.keyWidth(keyChangeAccs(sc.clef, writtenFifths(bc.prevFifths, sc.iv), writtenFifths(bc.fifths, sc.iv))))
+			kw = max(kw, e.keyWidth(keyChangeAccs(sc.clefAtBar(bc.bar), writtenFifths(bc.prevFifths, sc.iv), writtenFifths(bc.fifths, sc.iv))))
 		}
 		if kw > 0 {
 			bp.keyX = x + 0.6
@@ -333,10 +332,10 @@ func (e *engraver) drawBarPrefix(sc *staffCtx, bi int) {
 		return
 	}
 	bp := e.barPrefixLayout(bc)
-	x0 := bc.x0 + barlineWidth(e.d, e.barlineBefore(bi))
+	x0 := bc.x0 + e.barlineWidth(e.barlineBefore(bi))
 	ref := Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}
 	if bc.showKey {
-		e.drawKey(sc, ref, x0+bp.keyX, keyChangeAccs(sc.clef, writtenFifths(bc.prevFifths, sc.iv), writtenFifths(bc.fifths, sc.iv)))
+		e.drawKey(sc, ref, x0+bp.keyX, keyChangeAccs(sc.clefAtBar(bc.bar), writtenFifths(bc.prevFifths, sc.iv), writtenFifths(bc.fifths, sc.iv)))
 	}
 	if bc.showTime {
 		e.drawTime(sc, ref, x0+bp.timeX, bc.meter)
@@ -344,17 +343,142 @@ func (e *engraver) drawBarPrefix(sc *staffCtx, bi int) {
 }
 
 // barlineItems are a barline's strokes with its left edge at x, from y0 to
-// y1.
-func barlineItems(d glyph.Defaults, k barlineKind, x, y0, y1 float64, ref Ref) []Item {
+// y1. dots puts a repeat barline's dots in the second and third spaces (y
+// staff-local: only for a barline drawn on one staff).
+func (e *engraver) barlineItems(k barlineKind, x, y0, y1 float64, ref Ref, dots bool) []Item {
+	d := e.d
 	line := func(cx, w float64) Item {
 		return Item{Kind: ItemLine, Role: RoleBarline, Ref: ref, P: Point{X: cx, Y: y0}, Q: Point{X: cx, Y: y1}, Width: w}
 	}
 	thin, thick := d.ThinBarlineThickness, d.ThickBarlineThickness
+	dotW := e.f.Width("repeatDot")
+	db, _ := e.f.Box("repeatDot")
+	dotCol := func(left float64) []Item {
+		if !dots {
+			return nil
+		}
+		var out []Item
+		for _, y := range []float64{1.5, 2.5} {
+			out = append(out, e.glyphItem(RoleBarline, ref, "repeatDot", left-db.Min.X, y-(db.Min.Y+db.Max.Y)/2, 1))
+		}
+		return out
+	}
 	switch k {
 	case barDouble:
 		return []Item{line(x+thin/2, thin), line(x+thin+d.BarlineSeparation+thin/2, thin)}
 	case barFinal:
 		return []Item{line(x+thin/2, thin), line(x+thin+d.ThinThickBarlineSeparation+thick/2, thick)}
+	case barRepeatEnd:
+		// :|| — dots, thin, thick.
+		out := dotCol(x)
+		cx := x + dotW + d.RepeatBarlineDotSeparation
+		return append(out, line(cx+thin/2, thin), line(cx+thin+d.ThinThickBarlineSeparation+thick/2, thick))
+	case barRepeatStart:
+		// ||: — thick, thin, dots.
+		out := []Item{line(x+thick/2, thick), line(x+thick+d.ThinThickBarlineSeparation+thin/2, thin)}
+		return append(out, dotCol(x+thick+d.ThinThickBarlineSeparation+thin+d.RepeatBarlineDotSeparation)...)
+	case barRepeatBoth:
+		// :||: — dots, thin, thick, thin, dots.
+		out := dotCol(x)
+		cx := x + dotW + d.RepeatBarlineDotSeparation
+		out = append(out, line(cx+thin/2, thin))
+		cx += thin + d.ThinThickBarlineSeparation
+		out = append(out, line(cx+thick/2, thick))
+		cx += thick + d.ThinThickBarlineSeparation
+		out = append(out, line(cx+thin/2, thin))
+		return append(out, dotCol(cx+thin+d.RepeatBarlineDotSeparation)...)
 	}
 	return []Item{line(x+thin/2, thin)}
+}
+
+// ---------- clef changes inside a staff ----------
+
+// clefMark is a clef change drawn inside the layout: smaller than the
+// staff's opening clef, just before the column it takes effect at — or, at
+// a bar's start, just before that bar's barline, at the end of the bar
+// before (atEnd), as engravers place it.
+type clefMark struct {
+	clef  string
+	col   *column
+	bar   int // the layout bar whose column it stands in
+	atEnd bool
+	// inkLeft is how far the staff's other ink at the column reaches left
+	// of it: the clef goes beyond that.
+	inkLeft float64
+	x       float64 // the glyph's origin, once drawn
+}
+
+// clefChangeGap is the room between a clef change and what follows it.
+const clefChangeGap = 0.35
+
+// clefChangeGlyph is a clef change's glyph and size: SMuFL's smaller
+// change clefs, or the full clef scaled down where there is none.
+func clefChangeGlyph(clef string) (string, float64) {
+	switch clef {
+	case "treble":
+		return "gClefChange", 1
+	case "bass":
+		return "fClefChange", 1
+	case "alto", "tenor":
+		return "cClefChange", 1
+	}
+	g, _ := clefGlyph(clef)
+	return g, 0.75
+}
+
+// clefChangeWidth is the room a clef change takes.
+func (e *engraver) clefChangeWidth(clef string) float64 {
+	g, size := clefChangeGlyph(clef)
+	return e.f.Width(g)*size + clefChangeGap
+}
+
+// collectClefChanges finds every staff's clef changes inside the layout
+// and gives each its column.
+func (e *engraver) collectClefChanges() {
+	for _, sc := range e.staves {
+		if sc.percussion || len(sc.st.Clefs) == 0 {
+			continue
+		}
+		cur := sc.clef
+		for _, ch := range sc.st.Clefs {
+			at := ch.At
+			if l := e.s.BarLength(at.Bar); at.Bar >= 1 && !at.Offset.Less(l) {
+				at = score.Pos{Bar: at.Bar + 1, Offset: at.Offset.Sub(l)}
+			}
+			if at.Bar < e.from || at.Bar > e.to || (at.Bar == e.from && at.Offset.IsZero()) {
+				if !score.PosLess(score.Pos{Bar: e.from}, at) {
+					cur = ch.Clef // in force at the layout's start already
+				}
+				continue
+			}
+			if ch.Clef == cur {
+				continue
+			}
+			cur = ch.Clef
+			bi := at.Bar - e.from
+			cm := &clefMark{clef: ch.Clef}
+			if at.Offset.IsZero() {
+				pb := e.bars[bi-1]
+				cm.col, cm.bar, cm.atEnd = pb.cols[len(pb.cols)-1], pb.bar, true
+			} else {
+				cm.col, cm.bar = e.bars[bi].colFrom(at.Offset), e.bars[bi].bar
+			}
+			sc.clefMarks = append(sc.clefMarks, cm)
+		}
+	}
+}
+
+// drawClefChanges draws a staff's clef changes, once x is known.
+func (e *engraver) drawClefChanges(sc *staffCtx) {
+	for _, cm := range sc.clefMarks {
+		g, size := clefChangeGlyph(cm.clef)
+		_, y := clefGlyph(cm.clef)
+		w := e.f.Width(g) * size
+		cm.x = cm.col.x - cm.inkLeft - clefChangeGap - w
+		if cm.atEnd {
+			cm.x = cm.col.x - cm.inkLeft - 0.3 - w
+		}
+		ref := Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: cm.bar, Event: -1, Note: -1}
+		e.addStaff(sc, e.glyphItem(RoleClef, ref, g, cm.x, y, size))
+	}
 }

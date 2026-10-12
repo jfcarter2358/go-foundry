@@ -525,7 +525,7 @@ func TestScoreTransposingStaff(t *testing.T) {
 		t.Errorf("third above = %q (written C#+E)", got)
 	}
 	// In concert view the same staff is edited as it sounds.
-	e.Concert = true
+	e.Score.Concert = true
 	if p := e.ghost(0, 0, 1, pitchD("B4")); p.String() != "Bb4" {
 		t.Errorf("concert ghost = %s", p)
 	}

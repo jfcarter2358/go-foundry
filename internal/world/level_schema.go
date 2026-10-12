@@ -160,6 +160,10 @@ type RawVolumeFog struct {
 // ordinary cloud casts, and the key only needs writing for the one that does
 // not.
 type RawCloudLook struct {
+	// Preset names a look to start from instead of the defaults (fair,
+	// dust_haze; world.CloudLookPreset); the keys beside it override it. A
+	// save writes every number, so the name is read but not written back.
+	Preset     string    `yaml:"preset,omitempty"`
 	Color      *RawColor `yaml:"color,omitempty"`
 	Coverage   *float32  `yaml:"coverage,omitempty"`
 	Density    *float32  `yaml:"density,omitempty"`
@@ -307,6 +311,10 @@ type RawScenery struct {
 	// Materials overrides a cooked Nanite mesh's (.fnm) material slots, slot
 	// name to texture: `materials: {stone: granite, moss: snow}`.
 	Materials map[string]string `yaml:"materials,omitempty"`
+	// Material is a .fmat every slot of a cooked mesh wears
+	// (docs/guide/28-materials.md): `material: canyon_rock`. A slot whose
+	// Materials entry names a material wears that one instead. Absent: none.
+	Material string `yaml:"material,omitempty"`
 	// Collision is how a cooked Nanite mesh collides: auto (absent), box,
 	// hulls, mesh or none. Any other model collides as its box.
 	Collision string `yaml:"collision,omitempty"`
@@ -938,6 +946,9 @@ type RawLevel struct {
 	// every level authored before this looking exactly as it did.
 	Sky *RawSky `yaml:"sky,omitempty"`
 	Fog *RawFog `yaml:"fog,omitempty"`
+	// Tonemap opts the level into HDR shading with a filmic tone curve
+	// (tonemap.go). Absent: LDR, as every level before it.
+	Tonemap *RawTonemap `yaml:"tonemap,omitempty"`
 	// Player is this level's tuning for the body it starts (player_settings.go).
 	// A pointer for the reason Sky and Fog are: the player is engine-owned, so
 	// a level that never wanted to say anything about it writes no block at all
@@ -1031,7 +1042,7 @@ type RawSky struct {
 // exists because someone added fog, and `fog: {}` meaning no fog would be a
 // trap. Same reasoning as RawGlobalLight.Disabled.
 type RawFog struct {
-	Mode     string `yaml:"mode,omitempty"` // linear (default) | exp | exp2
+	Mode     string `yaml:"mode,omitempty"` // linear (default) | exp | exp2 | none (no distance fade: the atmosphere alone)
 	Disabled bool   `yaml:"disabled,omitempty"`
 
 	Color   *RawColor `yaml:"color,omitempty"`
@@ -1042,4 +1053,38 @@ type RawFog struct {
 	MaxOpacity *float32 `yaml:"max_opacity,omitempty"` // default 1
 	SkyBlend   *float32 `yaml:"sky_blend,omitempty"`
 	SkyFalloff *float32 `yaml:"sky_falloff,omitempty"`
+
+	// The atmosphere (world/fog_atmosphere.go). Each block is off when absent.
+	Height      *RawFogHeight `yaml:"height,omitempty"`       // exponential height fog lying in the low ground
+	Aerial      *RawFogAerial `yaml:"aerial,omitempty"`       // aerial perspective: haze thickening with range, bluish at distance
+	Sun         *RawFogSun    `yaml:"sun,omitempty"`          // the sun's forward-scattering glow through the haze
+	SkyHaze     *float32      `yaml:"sky_haze,omitempty"`     // share of the atmosphere the sky takes, 0 to 1; default 1
+	SkyDistance *float32      `yaml:"sky_distance,omitempty"` // metres a sky ray's atmosphere is integrated over; default 20000
+}
+
+// RawFogHeight is a fog block's height fog.
+type RawFogHeight struct {
+	Disabled bool      `yaml:"disabled,omitempty"`
+	Density  *float32  `yaml:"density,omitempty"` // extinction per metre at the base; default 0.02
+	Base     float32   `yaml:"base,omitempty"`    // world height the density is measured at
+	Falloff  *float32  `yaml:"falloff,omitempty"` // per metre: thins by e every 1/falloff metres up; default 0.1
+	Color    *RawColor `yaml:"color,omitempty"`   // default the fog's colour
+}
+
+// RawFogAerial is a fog block's aerial perspective.
+type RawFogAerial struct {
+	Disabled    bool      `yaml:"disabled,omitempty"`
+	Distance    *float32  `yaml:"distance,omitempty"`     // metres over which the haze takes 63% of what is behind it; default 2500
+	Color       *RawColor `yaml:"color,omitempty"`        // the haze's colour at range; default the fog's colour
+	Tint        *RawColor `yaml:"tint,omitempty"`         // per-channel extinction weights, blue above red for Rayleigh's tint; default (0.8, 1, 1.25)
+	ScaleHeight *float32  `yaml:"scale_height,omitempty"` // metres up over which the haze thins by e; default 1200
+	Base        float32   `yaml:"base,omitempty"`         // world height the distance is measured at
+}
+
+// RawFogSun is a fog block's sun in-scattering.
+type RawFogSun struct {
+	Disabled   bool      `yaml:"disabled,omitempty"`
+	Strength   *float32  `yaml:"strength,omitempty"`   // how far the lobe moves the sun's light toward looking into it; default 0.05
+	Anisotropy *float32  `yaml:"anisotropy,omitempty"` // Henyey-Greenstein g: 0 even, toward 1 only toward the sun; default 0.7
+	Color      *RawColor `yaml:"color,omitempty"`      // multiplies the sun's colour; default white
 }

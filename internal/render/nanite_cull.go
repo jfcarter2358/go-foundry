@@ -461,15 +461,33 @@ type cullBatch struct {
 	// (boundDraws builds it when they change).
 	instSlots      [][]instGroupSlots
 	instSlotsDirty bool
+	// instReach is, per instance, how far from its sphere's centre any of
+	// its clusters' parent LOD spheres reach (world units), for the LOD
+	// bound (nanite_draw_lod_bound.go), in its mesh's units; boundLOD the
+	// LOD parameters of the pass the next boundDraws bounds, when boundLODOn.
+	instReach []float32
+	// cpuClusters is the batch's cluster records on the CPU, where its owner
+	// keeps them (cooked scenery); nil, no LOD bound.
+	cpuClusters []gpuCluster
+	boundLOD    naniteLODView
+	boundLODOn  bool
 	// swClusters is how many clusters the tiles hold (swClusterCount),
 	// summed when they change rather than every camera pass.
 	swClusters int
+	// live2 is the live-tile list (nanite_live_tiles.go): the range tiles
+	// of the instances a pass kept, which its range stages run over.
+	live2 liveTiles
 }
 
 // instGroupSlots is how many of one group's command slots one instance's
 // tiles write.
 type instGroupSlots struct {
 	group, slots int32
+	// The LOD bound's (nanite_draw_lod_bound.go): the group's tiles of this
+	// instance by their clusters' largest parent error, ascending, and the
+	// slots of the tiles before each.
+	lodKey []float32
+	lodCum []int32
 }
 
 // groupLive is whether group gi is drawn this pass.
@@ -788,6 +806,11 @@ func (n *naniteCuller) build() (err error) {
 			n.canCompact = true
 		}
 	}
+	// The live-tile list (nanite_live_tiles.go). A failure costs the
+	// saving, not the cull.
+	if lerr := buildLiveTiles(); lerr != nil {
+		log.Printf("nanite: live-tile list unavailable: %v — every range tile is dispatched", lerr)
+	}
 	return n.hiz.init("nanite", naniteHiZUnit)
 }
 
@@ -896,6 +919,7 @@ func (b *cullBatch) upload() {
 			}
 		}
 		b.rangeTile = len(kinds) - b.clusterTiles
+		b.setLiveRuns(kinds)
 		kinds = append(kinds, 0)
 		gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.kindBuf)
 		gl.BufferData(gl.SHADER_STORAGE_BUFFER, len(kinds)*4, gl.Ptr(kinds), gl.STATIC_DRAW)
@@ -1023,7 +1047,15 @@ func (b *cullBatch) cull(v cullView) bool {
 		ProfileEnd()
 	}
 
+	// The live-tile list, before any tile writes its commands: it clears
+	// what the tiles it leaves out would have written.
+	willCompact := n.compactable() && v.compact && len(b.groups) > 0
+	live := b.liveOn() && !debug
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 13, b.kindBuf)
+	if live {
+		b.buildLive(v.mode)
+		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 13, b.kindBuf)
+	}
 	if b.clusterTiles > 0 {
 		setCommon(&n.clus)
 		for done := 0; done < b.clusterTiles; done += 65535 {
@@ -1032,7 +1064,11 @@ func (b *cullBatch) cull(v cullView) bool {
 			gl.DispatchCompute(uint32(cnt), 1, 1)
 		}
 	}
-	if b.rangeTile > 0 {
+	if b.rangeTile > 0 && live {
+		setCommon(&n.rng)
+		b.dispatchLive(&n.rng)
+	} else if b.rangeTile > 0 {
+		b.live2.stale = true // every run's slots written: see nanite_live_tiles.go
 		setCommon(&n.rng)
 		total := b.clusterTiles + b.rangeTile
 		gl.Uniform1ui(n.rng.U("kindTileCount"), uint32(total))
@@ -1067,8 +1103,8 @@ func (b *cullBatch) cull(v cullView) bool {
 	// alone, so nearly every command survives and the packing is all cost:
 	// measured on 256 dense rocks, two milliseconds over three cascades.
 	b.compacted = false
-	if n.compactable() && v.compact && len(b.groups) > 0 {
-		b.compactCommands()
+	if willCompact {
+		b.compactCommands(live)
 		if NaniteStats && v.camera && os.Getenv("FOUNDRY_NANITE_STATS_LOG") == "1" {
 			counts := make([]uint32, len(b.groups))
 			gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, b.countBuf)
@@ -1152,17 +1188,24 @@ func (b *cullBatch) boundDraws(in []bool) {
 			if k := len(list) - 1; k >= 0 && list[k].group == group {
 				list[k].slots += n
 			} else {
-				list = append(list, instGroupSlots{group, n})
+				list = append(list, instGroupSlots{group: group, slots: n})
 			}
 			b.instSlots[inst] = list
 		}
+		b.buildLODBound()
 	}
 	if len(b.drawMax) != len(b.groups) {
 		b.drawMax = make([]int32, len(b.groups))
 	}
 	clear(b.drawMax)
+	lod, lodOn := b.boundLOD, b.boundLODOn && NaniteLOD && b.leaves > 0 && NaniteDrawLODBound && !naniteDebugActive() &&
+		len(b.cpuClusters) > 0 && len(b.instReach) == len(b.insts)
 	for i, ok := range in {
 		if !ok && b.insts[i].Flags[0]&instAlwaysVisible == 0 {
+			continue
+		}
+		if lodOn {
+			b.addLODBound(i, lod)
 			continue
 		}
 		for _, gs := range b.instSlots[i] {
@@ -1247,7 +1290,7 @@ func passStore(buf uint32, have *int, size int) {
 // draw exactly the survivors: a prefix sum over every tile's survivor count
 // (in blocks, then the blocks', then each tile's place in its group), then a
 // scatter per tile. The cull's SSBO bindings are still up; this adds 6-12.
-func (b *cullBatch) compactCommands() {
+func (b *cullBatch) compactCommands(live bool) {
 	n := &naniteCull
 	if b.packedBuf == 0 {
 		gl.GenBuffers(1, &b.packedBuf)
@@ -1319,7 +1362,11 @@ func (b *cullBatch) compactCommands() {
 	if b.clusterTiles > 0 {
 		dispatch(&n.compactScatter, b.clusterTiles)
 	}
-	if b.rangeTile > 0 {
+	if b.rangeTile > 0 && live {
+		p := &n.compactScatterRange
+		gl.UseProgram(p.prog)
+		b.dispatchLive(p)
+	} else if b.rangeTile > 0 {
 		p := &n.compactScatterRange
 		gl.UseProgram(p.prog)
 		gl.Uniform1ui(p.U("kindTileCount"), uint32(b.clusterTiles+b.rangeTile))
@@ -1342,6 +1389,7 @@ func (b *cullBatch) release() {
 			*buf = 0
 		}
 	}
+	b.releaseLive()
 	b.histLen, b.leafCap, b.swListSize = 0, 0, 0
 	b.swGroupsDirty = b.swGroups != nil
 	b.cmdSize, b.packedSize, b.countSize = 0, 0, 0

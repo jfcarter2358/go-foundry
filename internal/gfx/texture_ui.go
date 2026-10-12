@@ -55,6 +55,7 @@ func ReleaseTexture(name string) {
 	delete(Textures, name)
 	delete(TextureSizes, name)
 	forgetTextureMean(name)
+	forgetTextureVRAM(name)
 	for i := range pendingUITextureUploads {
 		if pendingUITextureUploads[i].Name == name {
 			// A queued upload would otherwise recreate the texture on the next

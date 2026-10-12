@@ -33,6 +33,10 @@ package app
 //	menus     answer: a modal screen that comes up is answered with its
 //	          initial_focus, as `foundry play` does, so a level that opens on
 //	          a menu is measured playing rather than paused behind it
+//	editor    1: measure the editor's own 3D view of the level instead of
+//	          play — the level is installed under the editor, which stays
+//	          open, so its forward path, overlays and ImGui frame are what is
+//	          timed (docs/canyon/PERF.md)
 //	fly       1: the poses are waypoints of ONE flight — warm up at the first,
 //	          then fly through them, evenly in time, over the measured
 //	          frames — reported as one pose. What streaming (Nanite Phase 3,
@@ -83,6 +87,8 @@ type benchConfig struct {
 	cpuprof  string
 	shots    string
 	answer   bool
+	// editor measures the editor's view rather than play (editor=1).
+	editor bool
 	// path is the flight's waypoints (fly=1); poses is then the one flight.
 	path []benchPose
 }
@@ -143,6 +149,8 @@ func benchParse() (benchConfig, bool, error) {
 			c.shots = v
 		case "menus":
 			c.answer = v == "answer"
+		case "editor":
+			c.editor = v == "1"
 		case "fly":
 			if v == "1" {
 				c.path = []benchPose{} // filled from the poses below
@@ -232,7 +240,10 @@ func benchConfigure() {
 	// A benchmark measures the game, not the editor: a TAA run gets the
 	// window a release build makes, without samples nothing would use
 	// (render.KeepWindowMSAA). Before the window is created.
-	render.KeepWindowMSAA = false
+	// The editor's view (editor=1) keeps the samples, as the editor does.
+	if !cfg.editor {
+		render.KeepWindowMSAA = false
+	}
 }
 
 // benchStart loads the level and puts the engine into play on it. Called once,
@@ -262,11 +273,21 @@ func benchStart(level *world.Level) {
 		log.Fatalf("bench: loading %s: %v", name, err)
 	}
 	installLevel(level, &built)
-	if devActive() {
+	if cfg.editor {
+		// The editor's own view: open it if the build started in play, and
+		// let it forget any selection naming the level just replaced.
+		if !devActive() {
+			devToggle()
+		}
+		devAdoptLoadedLevel()
+	} else if devActive() {
 		devToggle() // into play, as tilde would
 	}
 	// The anti-aliasing mode (Phase 4): TAA draws into a scene target of its
 	// own, with the visibility buffer; MSAA into the window's samples.
+	if cfg.editor {
+		fmt.Fprintf(&bench.report, "EDITOR VIEW (editor=1)\n")
+	}
 	fmt.Fprintf(&bench.report, "bench %s (%s) — load %.1fs, %dx%d, AA %s, window MSAA %dx, visibility buffer %v, virtual shadow map %v, compute raster %q\n",
 		name, map[bool]string{true: "compiled", false: "yaml"}[cfg.compiled],
 		time.Since(t0).Seconds(), platform.WinWidth, platform.WinHeight, gfx.AntiAliasMode, render.AntiAliasGrantedSamples,
@@ -432,6 +453,12 @@ func benchWritePose() {
 			st.Slots, float64(st.PoolBytes)/(1<<20), st.Pages, st.Resident, st.TotalUploaded, st.TotalEvicted, st.TotalStarved,
 			float64(st.MaxUpdateTime.Microseconds())/1000, map[bool]string{true: "persistent", false: "glBufferSubData"}[st.Persistent])
 	}
+	// World textures' VRAM (gfx.TextureVRAM; docs/canyon/PHASE_4.md), with
+	// the compression and skip-mips settings it was measured under.
+	if tv := gfx.TextureVRAM(); tv.Count > 0 {
+		fmt.Fprintf(r, "textures  %.1f MB in %d (%d BC7, %d BC5), compression %v, skip %d mips\n",
+			float64(tv.Bytes)/(1<<20), tv.Count, tv.BC7, tv.BC5, gfx.TextureCompression, gfx.TextureSkipMips)
+	}
 	c := bench.counts
 	per := func(v int) float64 { return float64(v) / n }
 	fmt.Fprintf(r, "scene  static %.0f  brushes %.0f in %.0f calls  chunks %.0f  scenery %.0f  sprites %.0f (%.0f particles, %.0f draws)  volume marches %.1f\n",
@@ -474,7 +501,26 @@ func benchCaptureShot() {
 	gl.BindFramebuffer(gl.READ_FRAMEBUFFER, 0)
 	gl.ReadBuffer(gl.BACK)
 	gl.PixelStorei(gl.PACK_ALIGNMENT, 1)
+	// A multisampled window (the editor's view, editor=1) reads back black on
+	// the 1070: resolve it into a plain renderbuffer first.
+	var fbo, rb uint32
+	if render.AntiAliasGrantedSamples > 0 {
+		gl.GenRenderbuffers(1, &rb)
+		gl.BindRenderbuffer(gl.RENDERBUFFER, rb)
+		gl.RenderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, int32(w), int32(h))
+		gl.GenFramebuffers(1, &fbo)
+		gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, fbo)
+		gl.FramebufferRenderbuffer(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, rb)
+		gl.BlitFramebuffer(0, 0, int32(w), int32(h), 0, 0, int32(w), int32(h), gl.COLOR_BUFFER_BIT, gl.NEAREST)
+		gl.BindFramebuffer(gl.READ_FRAMEBUFFER, fbo)
+		gl.ReadBuffer(gl.COLOR_ATTACHMENT0)
+	}
 	glext.ReadPixels(0, 0, int32(w), int32(h), gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(px))
+	if fbo != 0 {
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+		gl.DeleteFramebuffers(1, &fbo)
+		gl.DeleteRenderbuffers(1, &rb)
+	}
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		// GL's rows run bottom-up.

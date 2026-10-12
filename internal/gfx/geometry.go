@@ -78,6 +78,16 @@ type Geometry struct {
 	VertexLightSmooth [][]float32
 	vertexLightSmooth []float32
 	Lbo               uint32
+	// VertexColors is per-vertex colour, set before Load and parallel to the
+	// *source* vertices, four floats each (RGBA in 0..1), which Load
+	// de-indexes alongside Vertices: the albedo is multiplied by RGB and A is
+	// the cavity/ambient occlusion (fragment.glsl's vertexColors). Only a
+	// generated mesh has it (a cooked .fnm drawn the classic way,
+	// docs/canyon/PHASE_2.md); everything else leaves it nil, uploads no
+	// buffer and draws exactly as before.
+	VertexColors [][]float32
+	colors       []float32
+	Cbo          uint32
 	// BonePalette is the per-frame pose, one delta per bone. The entity owns the
 	// backing array and updates it in place, so this slice header can be handed
 	// to every submesh once at load and never touched again — which is what lets
@@ -313,6 +323,7 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 
 	// The baked light is de-indexed the same way, for the same reason.
 	g.vertexLight = deindexLight(g.VertexLight, indices)
+	g.colors = deindexColors(g.VertexColors, indices)
 	g.vertexLightSmooth = deindexLight(g.VertexLightSmooth, indices)
 
 	// The skin attributes are de-indexed in the same order, so record k of the
@@ -443,6 +454,12 @@ func (g *Geometry) upload() {
 		gl.BufferData(gl.ARRAY_BUFFER, len(light)*4, gl.Ptr(light), gl.STATIC_DRAW)
 		BindLightLayout()
 	}
+
+	// Vertex colours, the same again.
+	if len(g.colors) > 0 {
+		g.Cbo = newBuffer(g.colors)
+		BindColorLayout()
+	}
 }
 
 // ---------- shared meshes ----------
@@ -479,6 +496,7 @@ func (g *Geometry) upload() {
 type MeshShare struct {
 	refs                         int
 	vbo, nbo, ebo, ibo, wbo, lbo uint32
+	cbo                          uint32
 }
 
 // Live is whether s still holds buffers some geometry draws from.
@@ -492,7 +510,7 @@ func (s *MeshShare) Live() bool { return s != nil && s.refs > 0 }
 func (g *Geometry) UploadShared(live **MeshShare) {
 	g.CPUOnly = false
 	g.share = nil
-	g.Vao, g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo = 0, 0, 0, 0, 0, 0, 0
+	g.Vao, g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo, g.Cbo = 0, 0, 0, 0, 0, 0, 0, 0
 	if !GeometryUploadsEnabled || len(g.Vertices) == 0 {
 		return
 	}
@@ -512,11 +530,15 @@ func (g *Geometry) UploadShared(live **MeshShare) {
 		if light := g.BakedLightData(); len(light) > 0 {
 			s.lbo = newBuffer(light)
 		}
+		if len(g.colors) > 0 {
+			s.cbo = newBuffer(g.colors)
+		}
 		*live = s
 	}
 	s.refs++
 	g.share = s
 	g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo = s.vbo, s.nbo, s.ebo, s.ibo, s.wbo, s.lbo
+	g.Cbo = s.cbo
 
 	// The same VAO upload makes, over buffers that already hold the data.
 	g.ModelUniform = WorldModelUniform()
@@ -542,6 +564,10 @@ func (g *Geometry) UploadShared(live **MeshShare) {
 	if g.Lbo != 0 {
 		gl.BindBuffer(gl.ARRAY_BUFFER, g.Lbo)
 		BindLightLayout()
+	}
+	if g.Cbo != 0 {
+		gl.BindBuffer(gl.ARRAY_BUFFER, g.Cbo)
+		BindColorLayout()
 	}
 }
 
@@ -591,12 +617,12 @@ func (g *Geometry) releaseShare() {
 	if g.Vao != 0 {
 		gl.DeleteVertexArrays(1, &g.Vao)
 	}
-	g.Vao, g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo = 0, 0, 0, 0, 0, 0, 0
+	g.Vao, g.Vbo, g.Nbo, g.Ebo, g.Ibo, g.Wbo, g.Lbo, g.Cbo = 0, 0, 0, 0, 0, 0, 0, 0
 	s.refs--
 	if s.refs > 0 {
 		return
 	}
-	for _, b := range []*uint32{&s.vbo, &s.nbo, &s.ebo, &s.ibo, &s.wbo, &s.lbo} {
+	for _, b := range []*uint32{&s.vbo, &s.nbo, &s.ebo, &s.ibo, &s.wbo, &s.lbo, &s.cbo} {
 		if *b != 0 {
 			gl.DeleteBuffers(1, b)
 			*b = 0
@@ -618,7 +644,44 @@ const (
 	// AttribLightIndirect is the same baked-light buffer read again from its
 	// fifth float: the indirect part of the colour (see LightStride).
 	AttribLightIndirect = 6
+	// AttribColor is the per-vertex colour and cavity (vertex.glsl's
+	// vertColor; VertexColorsUniform gates reading it). The last location GL
+	// guarantees: 7-10 are the instance matrix, 11-12 the visibility
+	// buffer's records, 13-14 the instance sphere and wind.
+	AttribColor = 15
 )
+
+// BindColorLayout points the colour attribute at four floats a vertex in the
+// ARRAY_BUFFER currently bound, in the VAO currently bound.
+func BindColorLayout() {
+	gl.EnableVertexAttribArray(AttribColor)
+	gl.VertexAttribPointerWithOffset(AttribColor, 4, gl.FLOAT, false, 4*4, 0)
+}
+
+// BindPackedColorLayout points the colour attribute at one RGBA8 word a
+// vertex (normalised): the cooked-mesh pool's layout (render/nanite_scenery.go).
+func BindPackedColorLayout() {
+	gl.EnableVertexAttribArray(AttribColor)
+	gl.VertexAttribPointerWithOffset(AttribColor, 4, gl.UNSIGNED_BYTE, true, 4, 0)
+}
+
+// deindexColors lays per-source-vertex RGBA rows out per corner, four floats
+// each; a missing or short row is opaque white (no change to the albedo, no
+// occlusion). Nil in, nil out.
+func deindexColors(rows [][]float32, indices []int) []float32 {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]float32, 0, len(indices)*4)
+	for _, idx := range indices {
+		if idx < len(rows) && len(rows[idx]) == 4 {
+			out = append(out, rows[idx]...)
+		} else {
+			out = append(out, 1, 1, 1, 1)
+		}
+	}
+	return out
+}
 
 // BindLightLayout points the two baked-light attributes at the LightStride
 // record in the ARRAY_BUFFER currently bound, in the VAO currently bound.
@@ -797,6 +860,10 @@ func (g *Geometry) deleteOwned() {
 	}
 	g.deleteSkinBuffers()
 	g.deleteBakedLightBuffer()
+	if g.Cbo != 0 {
+		gl.DeleteBuffers(1, &g.Cbo)
+		g.Cbo = 0
+	}
 }
 
 // Unload releases the GPU handles AND drops the CPU-side vertex data, leaving
@@ -816,6 +883,7 @@ func (g *Geometry) Unload() {
 	g.VertexLight, g.vertexLight = nil, nil
 	g.VertexLightSmooth, g.vertexLightSmooth = nil, nil
 	g.VertexNormals = nil
+	g.VertexColors, g.colors = nil, nil
 	g.BonePalette = nil
 	g.ShadowLOD = nil
 }
@@ -956,6 +1024,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	gl.Uniform1f(AlphaCutoffBiasUniform, 0)
 	applyTintUniform(TintBiasUniform, mgl32.Vec3{})
 	gl.Uniform1i(SurfaceBlendUniform, int32(SurfaceBlendNormal))
+	gl.Uniform1i(VertexColorsUniform, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
 	gl.Uniform1i(HasNormalMapUniform, 0)
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)

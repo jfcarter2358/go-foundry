@@ -1,0 +1,45 @@
+version: 1
+title: Form
+bars: 12
+tempo: [{bar: 1, bpm: 96, text: Allegro}, {bar: 5, bpm: 72, unit: q., text: "Più mosso"}, {bar: 9, text: rit., to: "10:3"}, {bar: 11, text: a tempo}]
+sections: [{name: intro, bar: 1}, {name: verse, bar: 3}, {name: coda, bar: 11}]
+repeats: [{start: 3, end: 6, times: 3}, {start: 9, end: 10}]
+voltas: [{start: 5, end: 6, passes: [1, 2]}, {start: 7, end: 7, passes: [3]}]
+jumps: [{mark: segno, bar: 3}, {mark: to_coda, bar: 8}, {mark: ds, bar: 10, al: coda}, {mark: coda, bar: 11}, {mark: fine, bar: 12}]
+lines:
+- name: Oboe
+  instrument: woodwinds/oboe
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qC5 qD5 qE5 qF5
+      | wG5
+      | qE5 qD5 qC5 qD5
+      | wE5
+      | qF5 qE5 qD5 qC5
+      | wD5
+      | qG5 qF5 qE5 qD5
+      | wC5
+      | qC5 qD5 qE5 qF5
+      | wG5
+      | qG5 qE5 qD5 qE5
+      | wC5
+- name: Bassoon
+  instrument: woodwinds/bassoon
+  staves:
+  - clef: bass
+    voices:
+    - |
+      | wC3
+      | wG2
+      | wC3
+      | wC3
+      | wF2
+      | wG2
+      | wE2
+      | wC3
+      | wC3
+      | wG2
+      | wC3
+      | wC3

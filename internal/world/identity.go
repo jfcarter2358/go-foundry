@@ -286,71 +286,89 @@ func LevelIDTaken(lvl *Level, id string) bool {
 	if reservedLevelIDs[id] {
 		return true
 	}
+	return eachLevelID(lvl, func(have string) bool { return have == id })
+}
+
+// eachLevelID calls fn with the ID of every addressable object in lvl — the
+// one list of what shares the namespace, so LevelIDTaken and LevelIDIndex
+// cannot disagree about it. fn returning true stops the walk, and
+// eachLevelID then returns true.
+func eachLevelID(lvl *Level, fn func(id string) bool) bool {
 	if lvl == nil {
 		return false
 	}
 	for i := range lvl.Entities {
-		if lvl.Entities[i].ID == id {
+		if fn(lvl.Entities[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Volumes {
-		if lvl.Volumes[i].ID == id {
+		if fn(lvl.Volumes[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Sprites {
-		if lvl.Sprites[i].ID == id {
+		if fn(lvl.Sprites[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Emitters {
-		if lvl.Emitters[i].ID == id {
+		if fn(lvl.Emitters[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Sounds {
-		if lvl.Sounds[i].ID == id {
+		if fn(lvl.Sounds[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Effects {
-		if lvl.Effects[i].ID == id {
+		if fn(lvl.Effects[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Scenery {
-		if lvl.Scenery[i].ID == id {
+		if fn(lvl.Scenery[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Trees {
-		if lvl.Trees[i].ID == id {
+		if fn(lvl.Trees[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.Decals {
-		if lvl.Decals[i].ID == id {
+		if fn(lvl.Decals[i].ID) {
 			return true
 		}
 	}
 	for i := range lvl.WaypointAnimations {
-		if lvl.WaypointAnimations[i].ID == id {
+		if fn(lvl.WaypointAnimations[i].ID) {
 			return true
 		}
 	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if ch.ID == id {
+		if fn(ch.ID) {
 			return true
 		}
 		for bi := range ch.Brushes {
-			if ch.Brushes[bi].ID == id {
+			if fn(ch.Brushes[bi].ID) {
 				return true
 			}
 		}
 	}
-	return lightIDTaken(&lvl.Lights, id)
+	for i := range lvl.Lights.Directional {
+		if fn(lvl.Lights.Directional[i].ID) {
+			return true
+		}
+	}
+	for i := range lvl.Lights.Points {
+		if fn(lvl.Lights.Points[i].ID) {
+			return true
+		}
+	}
+	return false
 }
 
 // uniqueLevelID returns base, or base with a numeric suffix, such that no object

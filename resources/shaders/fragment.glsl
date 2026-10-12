@@ -17,7 +17,9 @@ uniform sampler2D blendMask;
 // field painted on the texture's bump channel in the texture editor (see
 // texdoc/bump.go). Off (0) by default, so a program that links this shader
 // without knowing about it — and every texture with no <name>_normal.png
-// beside it — shades exactly as it did before.
+// beside it — shades exactly as it did before. 2 means the map is BC5
+// (gfx/texture_compress.go): only x and y are stored, the blue channel reads
+// 0, and z is rebuilt from them as sqrt(1 - x² - y²).
 uniform int       hasNormalMap;
 uniform sampler2D normalMap;
 
@@ -141,6 +143,23 @@ uniform sampler2DArrayShadow shadowMapArray;
 // passes share.
 #include "point_shadow.glsl"
 
+// The terrain and rock material effects — triplanar, splat, ground blend,
+// streaks, detail normal, macro variation, colour grade — each gated by a bit
+// of matFx, which is 0 (none of them) for every surface whose material does
+// not carry one. See surface_fx.glsl and docs/canyon/PHASE_5.md.
+#include "surface_fx.glsl"
+
+// Per-vertex colour and cavity (gfx.VertexColorsUniform): when set, the albedo
+// is multiplied by fragVertColor.rgb and fragVertColor.a is the surface's
+// cavity/ambient occlusion — all of the ambient and VERTEX_AO_DIRECT of the
+// direct light is taken by it (a crevice loses the sky first, and a little of
+// the sun to the inter-reflection it no longer gets). A generated rock bakes
+// both (procgen/rocks, docs/canyon/PHASE_2.md). Off (0) by default — every
+// mesh without colours — and then the lighting below is the code it always
+// was, operation for operation.
+uniform int vertexColors;
+#define VERTEX_AO_DIRECT 0.35
+
 // Smooth shading. When set, the surface normal is the interpolated per-vertex
 // normal supplied by the vertex/tessellation stage instead of the flat facet
 // the derivatives below recover — see smooth.go.
@@ -161,6 +180,8 @@ in float fragViewDepth;
 in vec4 fragBakedLight;
 // The part of fragBakedLight.rgb that is ambient and bounce (vertex.glsl).
 in vec3 fragBakedIndirect;
+// The vertex colour and cavity (vertexColors); white without them.
+in vec4 fragVertColor;
 
 out vec4 outputColor;
 
@@ -460,8 +481,9 @@ void main() {
     if (normalColor != 0) {
         // No texture named, so there is nothing to sample and nothing to blend
         // over: the normal is the albedo. Opaque, whatever texture object
-        // happens to be bound.
-        texColor = vec4(albedoNormal * 0.5 + 0.5, 1.0);
+        // happens to be bound. A mesh with vertex colours has a colour of its
+        // own, though: white here, its colour multiplied in below.
+        texColor = vertexColors != 0 ? vec4(1.0) : vec4(albedoNormal * 0.5 + 0.5, 1.0);
     } else {
         texColor = texture(tex, uv);
         if (isWater != 0) {
@@ -477,6 +499,29 @@ void main() {
         }
     }
 
+    // The effects that make the albedo and the normal themselves, projected in
+    // world space (surface_fx.glsl): the surface's own texture triplanar, or
+    // the terrain's splat layers; then the grade, varnish streaks and macro
+    // variation on the colour that gives. fxAO is the splat layers' ambient
+    // occlusion, 1 everywhere else. matFx is a uniform: a surface with none of
+    // them takes none of these branches.
+    float fxAO = 1.0;
+    if ((matFx & FX_TRIPLANAR) != 0 && normalColor == 0) {
+        normal = fxTriplanarSurface(tex, normalMap, isWater == 0 ? hasNormalMap : 0, fragWorldPos, normal, dPdx, dPdy, texColor);
+    }
+    if ((matFx & FX_SPLAT) != 0) {
+        fxSplatSurface(fragWorldPos, normal, dPdx, dPdy, texColor, normal, fxAO);
+    }
+    if ((matFx & FX_GRADE) != 0) {
+        fxGradeApply(texColor);
+    }
+    if ((matFx & FX_STREAKS) != 0) {
+        fxStreaksApply(fragWorldPos, geoNormal, texColor);
+    }
+    if ((matFx & FX_MACRO) != 0) {
+        fxMacroApply(fragWorldPos, texColor);
+    }
+
     // The albedo tint, on the sampled texture rather than on the shaded result:
     // a tint says what colour the surface IS, so it has to be in place before
     // the lighting multiplies it — tinting afterwards would scale the light as
@@ -484,17 +529,39 @@ void main() {
     // normalColor path too, so an untextured surface can still be tinted.
     texColor.rgb *= vec3(1.0) + tintBias;
 
+    // The vertex colour, on the albedo like the tint (see vertexColors).
+    float vertexAO = 1.0;
+    if (vertexColors != 0) {
+        texColor.rgb *= fragVertColor.rgb;
+        vertexAO = clamp(fragVertColor.a, 0.0, 1.0);
+    }
+    // A rock's foot takes the ground's colour (surface_fx.glsl) — after the
+    // vertex colour, so the cavity and strata a generated rock baked do not
+    // stain the sand it fades into.
+    if ((matFx & FX_GROUND) != 0) {
+        fxGroundBlend(fragWorldPos, dPdx, dPdy, texColor);
+    }
+    vertexAO *= fxAO;
+
     // Normal mapping, on everything but water — water derives its normal from
     // the wave field, which is the whole point of that path, and a tangent
     // frame built on a surface that is displacing under the fragment would not
     // describe it anyway. Both conditions are uniforms, so the texture() call
     // inside stays under uniform control flow.
-    if (hasNormalMap != 0 && isWater == 0) {
+    // A triplanar or splat surface has had its normal mapped already, by
+    // projections the mesh's UVs know nothing of.
+    if (hasNormalMap != 0 && isWater == 0 && (matFx & (FX_TRIPLANAR | FX_SPLAT)) == 0) {
         mat3 tbn = cotangentFrame(normal, dPdx, dPdy, dUVdx, dUVdy);
         vec3 tangentNormal = texture(normalMap, uv).xyz * 2.0 - 1.0;
+        if (hasNormalMap == 2) {
+            tangentNormal.z = sqrt(max(1.0 - dot(tangentNormal.xy, tangentNormal.xy), 0.0));
+        }
         if (dot(tangentNormal, tangentNormal) > 1e-6) {
             normal = normalize(tbn * tangentNormal);
         }
+    }
+    if ((matFx & FX_DETAIL) != 0 && isWater == 0) {
+        normal = fxDetailApply(fragWorldPos, geoNormal, normal, dPdx, dPdy, fragViewDepth);
     }
 
     vec3 lighting;
@@ -556,6 +623,18 @@ void main() {
                 lighting += pointLightContrib(i, normal);
             }
         }
+    } else if (vertexColors != 0 || fxAO < 1.0) {
+        // Every light, with the vertex cavity taken off (see vertexColors) —
+        // and a splat's layer AO, which vertexAO now carries too.
+        vec3 direct = vec3(0.0);
+        for (int i = 0; i < numDirLights; i++) {
+            direct += dirLightContrib(i, normal, geoNormal);
+        }
+        for (int i = 0; i < numPointLights; i++) {
+            direct += pointLightContrib(i, normal);
+        }
+        lighting = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal) * vertexAO
+            + direct * mix(1.0, vertexAO, VERTEX_AO_DIRECT);
     } else {
         // Every light, static or dynamic, on anything that was not baked.
         lighting = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal);
@@ -597,7 +676,11 @@ void main() {
 
     if (finalAlpha < 0.001) discard;
 
-    vec3 surface = unlit != 0 ? texColor.rgb : texColor.rgb * clamp(lighting, 0.0, 1.0);
+    // The light is clamped to what the frame can show: 1 in LDR, as it always
+    // was, or far above in an HDR frame (gfx/hdr.go), where an unlit
+    // surface's colour, being screen colour, is carried into the scene's
+    // units instead.
+    vec3 surface = unlit != 0 ? hdrFromDisplay(texColor.rgb) : texColor.rgb * clamp(lighting, 0.0, hdrLightMax());
     // The GI debug view (gi_debug): the light alone, as if every surface
     // were white, so what GI adds can be told from what the textures are.
     if (giDebug == 1 && unlit == 0) {
@@ -659,7 +742,7 @@ void main() {
     // than a near one.
     surface = surfaceBlend == 1
         ? applyFogAdditive(surface, fragWorldPos)
-        : applyFog(surface, fragWorldPos);
+        : applyFogScene(surface, fragWorldPos);
 
     outputColor = vec4(surface, finalAlpha);
 }

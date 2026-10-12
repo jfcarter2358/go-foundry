@@ -110,9 +110,23 @@ void main() {
     }
 
     vec3 d = normalize(vDir);
-    if (fogMode != 0 && skyFogBlend > 0.0) {
+    if (fogMode != 0 && fogMode != 4 && skyFogBlend > 0.0) {
         float horizon = pow(1.0 - clamp(abs(d.y), 0.0, 1.0), max(skyFogFalloff, 0.001));
         col = mix(col, fogColor, clamp(skyFogBlend * horizon, 0.0, 1.0));
+    }
+
+    // The atmosphere (fog.glsl), integrated along the sky ray as far as
+    // fogSkyDistance: the same height fog and aerial haze a far cliff is
+    // seen through, so the cliff and the sky behind it end in the same air.
+    // It needs no horizon weighting of its own — a ray climbing out of the
+    // haze passes through little of it, a level one through all of it — and
+    // that is what makes the horizon haze match the ground's rather than
+    // approximate it. fogSkyHaze scales it, for a sky whose art already holds
+    // a haze of its own.
+    if (fogAtmos != 0 && fogSkyHaze > 0.0) {
+        vec3 T;
+        vec3 add = fogAtmosSegmentDisplay(fogCamPos, d, fogSkyDistance, T);
+        col = mix(col, col * T + add, clamp(fogSkyHaze, 0.0, 1.0));
     }
 
     // Fog VOLUMES, unlike the distance fog, take the sky at full strength, and
@@ -123,7 +137,13 @@ void main() {
     // should dim that horizon for the same reason it dims the hill in front of
     // it. A point far enough along the view ray stands in for infinity; the
     // volume clips the segment long before it gets there.
-    col = applyFogVolumes(col, fogCamPos + d * SKY_FOG_VOLUME_REACH);
+    col = applyFogVolumesDisplay(col, fogCamPos + d * SKY_FOG_VOLUME_REACH);
 
-    outColor = vec4(col, 1.0);
+    // The sky is screen colour, worked out in screen colour to here: in an
+    // HDR frame (gfx/hdr.go) it is carried into the scene's units once, at
+    // the end, so the tone curve gives it back exactly as it would have been
+    // shown. (Mixing the haze in after the carry instead, in the scene's
+    // units, magnified the cubemap's 8-bit steps near white, where the
+    // curve's inverse is steep, into visible bands.) Off, a no-op.
+    outColor = vec4(hdrFromDisplay(col), 1.0);
 }

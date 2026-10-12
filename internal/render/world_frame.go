@@ -210,6 +210,10 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// them.
 		SyncTerrainMeshes(lvl)
 
+		// Every placement's matrix, once (scenery_xform.go): before the
+		// goroutine below, which reads them too.
+		fillSceneryXforms(lvl)
+
 		// What the level holds is settled for the frame: GI's diff of it
 		// starts on a goroutine while the shadows draw (frame_prep.go).
 		prepareGI(lvl, o)

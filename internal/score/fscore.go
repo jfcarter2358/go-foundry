@@ -32,6 +32,12 @@ package score
 //	  b: {fx: [{fx: delay, beats: 0.75}], return: 0.2}
 //	master: [{fx: compressor, threshold: -12}]
 //
+// Phase 3 added, all optional: a tempo mark with text and no bpm ("rit.",
+// "a tempo"; tempo.go) and its `to:`; `voltas:` and `jumps:` (form.go);
+// `concert: true`; `playback: {ignore_repeats: true, graces: before|on}`;
+// a line's `gliss:` style and `dynamic_overrides: [{at, to, level}]`; a
+// staff's `clefs: [{at: "5:3", clef: bass}]`.
+//
 // Positions are "bar" or "bar:beat" (Score.ParsePos). An effect is a map
 // whose "fx" key names it, the rest its settings in order. Instruments are
 // named, never embedded: one .finst plays the same in every score.
@@ -69,6 +75,10 @@ type rawScore struct {
 	Sections []rawSection `yaml:"sections,omitempty"`
 	Markers  []rawMarker  `yaml:"markers,flow,omitempty"`
 	Repeats  []rawRepeat  `yaml:"repeats,flow,omitempty"`
+	Voltas   []rawVolta   `yaml:"voltas,flow,omitempty"`
+	Jumps    []rawJump    `yaml:"jumps,flow,omitempty"`
+	Concert  bool         `yaml:"concert,omitempty"`
+	Playback *rawPlayback `yaml:"playback,flow,omitempty"`
 	Params   []rawParam   `yaml:"params,flow,omitempty"`
 	Bindings []rawBinding `yaml:"bindings,omitempty"`
 	Lines    []rawLine    `yaml:"lines"`
@@ -79,10 +89,40 @@ type rawScore struct {
 type rawTempo struct {
 	Bar  int     `yaml:"bar"`
 	Beat string  `yaml:"beat,omitempty"`
-	BPM  float64 `yaml:"bpm"`
+	BPM  float64 `yaml:"bpm,omitempty"`
 	Unit string  `yaml:"unit,omitempty"`
 	Text string  `yaml:"text,omitempty"`
 	Ramp bool    `yaml:"ramp,omitempty"`
+	To   string  `yaml:"to,omitempty"`
+}
+
+type rawVolta struct {
+	Start  int   `yaml:"start"`
+	End    int   `yaml:"end"`
+	Passes []int `yaml:"passes,flow"`
+}
+
+type rawJump struct {
+	Mark    string `yaml:"mark"`
+	Bar     int    `yaml:"bar"`
+	Al      string `yaml:"al,omitempty"`
+	Repeats bool   `yaml:"repeats,omitempty"`
+}
+
+type rawPlayback struct {
+	IgnoreRepeats bool   `yaml:"ignore_repeats,omitempty"`
+	Graces        string `yaml:"graces,omitempty"`
+}
+
+type rawOverride struct {
+	At    string  `yaml:"at"`
+	To    string  `yaml:"to"`
+	Level float32 `yaml:"level"`
+}
+
+type rawClef struct {
+	At   string `yaml:"at"`
+	Clef string `yaml:"clef"`
 }
 
 type rawMeter struct {
@@ -137,8 +177,10 @@ type rawLine struct {
 	Solo       bool                      `yaml:"solo,omitempty"`
 	Sends      *rawSends                 `yaml:"sends,flow,omitempty"`
 	Inserts    []FX                      `yaml:"inserts,flow,omitempty"`
+	Gliss      string                    `yaml:"gliss,omitempty"`
 	Staves     []rawStaff                `yaml:"staves"`
 	Lanes      map[string][]rawLanePoint `yaml:"lanes,omitempty"`
+	Overrides  []rawOverride             `yaml:"dynamic_overrides,flow,omitempty"`
 }
 
 type rawSends struct {
@@ -147,9 +189,10 @@ type rawSends struct {
 }
 
 type rawStaff struct {
-	Clef      string   `yaml:"clef"`
-	Transpose string   `yaml:"transpose,omitempty"`
-	Voices    []string `yaml:"voices"`
+	Clef      string    `yaml:"clef"`
+	Transpose string    `yaml:"transpose,omitempty"`
+	Clefs     []rawClef `yaml:"clefs,flow,omitempty"`
+	Voices    []string  `yaml:"voices"`
 }
 
 type rawLanePoint struct {
@@ -299,10 +342,16 @@ func Parse(b []byte) (s *Score, err error) {
 		if err != nil {
 			return nil, fmt.Errorf("tempo: %w", err)
 		}
-		if rt.BPM <= 0 || rt.BPM > 2000 {
-			return nil, fmt.Errorf("tempo at bar %d: bpm %g", rt.Bar, rt.BPM)
+		if rt.BPM < 0 || rt.BPM > 2000 || rt.BPM == 0 && (rt.Text == "" || rt.Ramp) {
+			return nil, fmt.Errorf("tempo at bar %d: bpm %g (a mark with no bpm is text: rit., a tempo …)", rt.Bar, rt.BPM)
 		}
 		tm := TempoMark{At: p, BPM: rt.BPM, Unit: Duration{Base: Quarter}, Text: rt.Text, Ramp: rt.Ramp}
+		if rt.To != "" {
+			if tm.To, err = s.ParsePos(rt.To); err != nil {
+				return nil, fmt.Errorf("tempo at bar %d: to: %w", rt.Bar, err)
+			}
+			tm.HasTo = true
+		}
 		if rt.Unit != "" {
 			if tm.Unit, err = parseDuration(rt.Unit); err != nil {
 				return nil, fmt.Errorf("tempo at bar %d: unit: %w", rt.Bar, err)
@@ -325,6 +374,45 @@ func Parse(b []byte) (s *Score, err error) {
 	}
 	for _, rr := range r.Repeats {
 		s.Repeats = append(s.Repeats, Repeat{Start: rr.Start, End: rr.End, Times: rr.Times})
+	}
+	for _, rv := range r.Voltas {
+		if len(rv.Passes) == 0 {
+			return nil, fmt.Errorf("volta at bar %d: no passes (want e.g. passes: [1])", rv.Start)
+		}
+		s.Voltas = append(s.Voltas, Volta{Start: rv.Start, End: rv.End, Passes: append([]int(nil), rv.Passes...)})
+	}
+	for _, rj := range r.Jumps {
+		k, ok := ParseJumpKind(rj.Mark)
+		if !ok {
+			return nil, fmt.Errorf("jump at bar %d: mark %q (want segno, coda, to_coda, fine, dc or ds)", rj.Bar, rj.Mark)
+		}
+		j := Jump{Kind: k, Bar: rj.Bar, Repeats: rj.Repeats}
+		switch rj.Al {
+		case "":
+		case "fine":
+			j.Al = JumpFine
+		case "coda":
+			j.Al = JumpCoda
+		default:
+			return nil, fmt.Errorf("jump at bar %d: al %q (want fine or coda)", rj.Bar, rj.Al)
+		}
+		if (j.Al != 0 || j.Repeats) && k != JumpDC && k != JumpDS {
+			return nil, fmt.Errorf("jump at bar %d: only a dc or ds takes al: and repeats:", rj.Bar)
+		}
+		s.Jumps = append(s.Jumps, j)
+	}
+	s.Concert = r.Concert
+	if r.Playback != nil {
+		s.Playback.IgnoreRepeats = r.Playback.IgnoreRepeats
+		switch r.Playback.Graces {
+		case "", "auto":
+		case "before":
+			s.Playback.Graces = GraceBefore
+		case "on":
+			s.Playback.Graces = GraceOn
+		default:
+			return nil, fmt.Errorf("playback: graces %q (want auto, before or on)", r.Playback.Graces)
+		}
 	}
 	for _, rp := range r.Params {
 		s.Params = append(s.Params, Param{Name: rp.Name, Default: rp.Default})
@@ -353,7 +441,10 @@ func Parse(b []byte) (s *Score, err error) {
 }
 
 func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
-	l := &Line{Name: rl.Name, Instrument: rl.Instrument, Volume: 1, Pan: rl.Pan, Mute: rl.Mute, Solo: rl.Solo, Inserts: rl.Inserts}
+	l := &Line{Name: rl.Name, Instrument: rl.Instrument, Volume: 1, Pan: rl.Pan, Mute: rl.Mute, Solo: rl.Solo, Inserts: rl.Inserts, Gliss: rl.Gliss}
+	if rl.Gliss != "" && !validGliss(rl.Gliss) {
+		return nil, fmt.Errorf("gliss %q (want %s)", rl.Gliss, strings.Join(GlissStyles, ", "))
+	}
 	if rl.Volume != nil {
 		l.Volume = *rl.Volume
 	}
@@ -368,6 +459,17 @@ func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
 			return nil, fmt.Errorf("staff %d: clef %q (want one of %s)", si+1, rs.Clef, strings.Join(StaffClefs(), ", "))
 		}
 		st := &Staff{Clef: rs.Clef}
+		for _, rc := range rs.Clefs {
+			if !validStaffClef(rc.Clef) {
+				return nil, fmt.Errorf("staff %d: clef change to %q (want one of %s)", si+1, rc.Clef, strings.Join(StaffClefs(), ", "))
+			}
+			at, err := s.ParsePos(rc.At)
+			if err != nil {
+				return nil, fmt.Errorf("staff %d: clef change: %w", si+1, err)
+			}
+			st.Clefs = append(st.Clefs, ClefChange{At: at, Clef: rc.Clef})
+		}
+		st.SortClefs()
 		if rs.Transpose != "" {
 			iv, err := ParseInterval(rs.Transpose)
 			if err != nil {
@@ -413,7 +515,30 @@ func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
 		}
 		l.Lanes = append(l.Lanes, ln)
 	}
+	for _, ro := range rl.Overrides {
+		from, err := s.ParsePos(ro.At)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic override: %w", err)
+		}
+		to, err := s.ParsePos(ro.To)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic override: %w", err)
+		}
+		if ro.Level < 0 || ro.Level > 1 {
+			return nil, fmt.Errorf("dynamic override at %s: level %g (0..1, mf is 0.63)", ro.At, ro.Level)
+		}
+		l.Overrides = append(l.Overrides, DynOverride{From: from, To: to, Level: ro.Level})
+	}
 	return l, nil
+}
+
+func validGliss(g string) bool {
+	for _, v := range GlissStyles {
+		if v == g {
+			return true
+		}
+	}
+	return false
 }
 
 // StaffClefs are the clefs a staff may have: the instrument clefs but the
@@ -466,6 +591,9 @@ func Marshal(s *Score) ([]byte, error) {
 	}
 	for _, t := range s.Tempo {
 		rt := rawTempo{Bar: t.At.Bar, Beat: beat(t.At), BPM: t.BPM, Text: t.Text, Ramp: t.Ramp}
+		if t.HasTo {
+			rt.To = s.FormatPos(t.To)
+		}
 		if t.Unit != (Duration{Base: Quarter}) && t.Unit != (Duration{}) {
 			rt.Unit = t.Unit.String()
 		}
@@ -486,6 +614,26 @@ func Marshal(s *Score) ([]byte, error) {
 	for _, rp := range s.Repeats {
 		r.Repeats = append(r.Repeats, rawRepeat{Start: rp.Start, End: rp.End, Times: rp.Times})
 	}
+	for _, v := range s.Voltas {
+		r.Voltas = append(r.Voltas, rawVolta{Start: v.Start, End: v.End, Passes: append([]int(nil), v.Passes...)})
+	}
+	for _, j := range s.Jumps {
+		rj := rawJump{Mark: j.Kind.String(), Bar: j.Bar, Repeats: j.Repeats}
+		switch j.Al {
+		case JumpFine:
+			rj.Al = "fine"
+		case JumpCoda:
+			rj.Al = "coda"
+		}
+		r.Jumps = append(r.Jumps, rj)
+	}
+	r.Concert = s.Concert
+	if s.Playback != (PlaybackOptions{}) {
+		r.Playback = &rawPlayback{IgnoreRepeats: s.Playback.IgnoreRepeats}
+		if s.Playback.Graces != GraceAuto && int(s.Playback.Graces) < len(GraceTimings) {
+			r.Playback.Graces = GraceTimings[s.Playback.Graces]
+		}
+	}
 	for _, p := range s.Params {
 		r.Params = append(r.Params, rawParam{Name: p.Name, Default: p.Default})
 	}
@@ -493,7 +641,10 @@ func Marshal(s *Score) ([]byte, error) {
 		r.Bindings = append(r.Bindings, rawBinding{Param: b.Param, Line: b.Line, Target: string(b.Target), From: b.From, To: b.To})
 	}
 	for _, l := range s.Lines {
-		rl := rawLine{Name: l.Name, Instrument: l.Instrument, Pan: l.Pan, Mute: l.Mute, Solo: l.Solo, Inserts: l.Inserts}
+		rl := rawLine{Name: l.Name, Instrument: l.Instrument, Pan: l.Pan, Mute: l.Mute, Solo: l.Solo, Inserts: l.Inserts, Gliss: l.Gliss}
+		for _, o := range l.Overrides {
+			rl.Overrides = append(rl.Overrides, rawOverride{At: s.FormatPos(o.From), To: s.FormatPos(o.To), Level: o.Level})
+		}
 		if l.Volume != 1 {
 			v := l.Volume
 			rl.Volume = &v
@@ -505,6 +656,9 @@ func Marshal(s *Score) ([]byte, error) {
 			rs := rawStaff{Clef: st.Clef, Voices: []string{}}
 			if st.Transpose != (Interval{}) {
 				rs.Transpose = st.Transpose.String()
+			}
+			for _, c := range st.Clefs {
+				rs.Clefs = append(rs.Clefs, rawClef{At: s.FormatPos(c.At), Clef: c.Clef})
 			}
 			for _, v := range st.Voices {
 				rs.Voices = append(rs.Voices, FormatVoice(v))

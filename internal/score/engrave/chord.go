@@ -222,10 +222,22 @@ func (e *engraver) arrangeColumn(sb *staffBar, c *column, evs []*ev) (left, righ
 		ink(accLeft, accLeft)
 	}
 
-	// Rests, out of the other voices' way; a rest's dot clear of the
-	// chords' dots.
+	// An arpeggio line left of the chord and its accidentals.
+	arpEdge := math.Min(accLeft, headsLeft)
+	for _, x := range chords {
+		if ok, _ := arpeggio(x); ok {
+			x.arpX = math.Min(accLeft, headsLeft) - arpGap - arpWidth
+			arpEdge = math.Min(arpEdge, x.arpX)
+			ink(x.arpX, x.arpX)
+		}
+	}
+
+	// Rests, out of the other voices' way (and of each other); a rest's
+	// dot clear of the chords' dots.
+	var placed []*ev
 	for _, x := range rests {
-		e.placeRest(x, chords, sb.forced)
+		e.placeRest(x, chords, placed, sb.forced)
+		placed = append(placed, x)
 		w := e.f.Width(restGlyph(x.base))
 		ink(x.restX, x.restX+w)
 		if x.dots > 0 {
@@ -250,7 +262,7 @@ func (e *engraver) arrangeColumn(sb *staffBar, c *column, evs []*ev) (left, righ
 	}
 
 	// Grace notes, leftwards from everything else.
-	edge := math.Min(accLeft, headsLeft)
+	edge := arpEdge
 	if len(chords) == 0 && len(rests) == 0 && c.end {
 		edge = 0
 	}

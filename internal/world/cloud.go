@@ -91,6 +91,42 @@ func DefaultCloudLook() CloudLook {
 	}
 }
 
+// CloudPresetNames are the looks a `cloud:` block can start from by name
+// (`preset:`), in the order the editor offers them.
+var CloudPresetNames = []string{"fair", "dust_haze"}
+
+// CloudLookPreset is a named look:
+//
+//   - fair: DefaultCloudLook, a white fair-weather cloud;
+//   - dust_haze: desert dust hanging low over the ground — a warm tan, thin,
+//     wide and soft, drifting with the wind, lit through rather than shaded
+//     (low absorption, strong ambient) and casting no shadow. Made for a
+//     wide, shallow box over a canyon floor (docs/canyon/PHASE_6.md): what
+//     the atmosphere's height fog does smoothly, this does in drifting
+//     banks.
+//
+// ok is false for any other name, "" included.
+func CloudLookPreset(name string) (CloudLook, bool) {
+	switch name {
+	case "fair":
+		return DefaultCloudLook(), true
+	case "dust_haze":
+		return CloudLook{
+			Color:       mgl32.Vec3{0.86, 0.74, 0.58},
+			Coverage:    0.8,
+			Density:     0.006,
+			Scale:       90,
+			Detail:      25,
+			Erosion:     0.15,
+			Wind:        mgl32.Vec3{3, 0, 1},
+			Absorption:  0.25,
+			Ambient:     1.6,
+			CastShadows: false,
+		}, true
+	}
+	return CloudLook{}, false
+}
+
 // Clamp puts every field back inside the range volume_common.glsl assumes.
 func (c *CloudLook) Clamp() {
 	if c == nil {
@@ -134,6 +170,11 @@ func LerpCloudLook(a, b CloudLook, t float32) CloudLook {
 }
 
 func cloudLookFromRaw(r RawCloudLook, def CloudLook) CloudLook {
+	// A preset stands in for the defaults, and every key written beside it
+	// still overrides it.
+	if p, ok := CloudLookPreset(r.Preset); ok {
+		def = p
+	}
 	c := def
 	if r.Color != nil {
 		c.Color = mgl32.Vec3{r.Color.R, r.Color.G, r.Color.B}
@@ -149,6 +190,9 @@ func cloudLookFromRaw(r RawCloudLook, def CloudLook) CloudLook {
 	c.Absorption = float32Default(r.Absorption, def.Absorption)
 	c.Ambient = float32Default(r.Ambient, def.Ambient)
 	c.CastShadows = !r.NoShadows
+	if p, ok := CloudLookPreset(r.Preset); ok && !p.CastShadows {
+		c.CastShadows = false // a preset that casts none (no key turns one on)
+	}
 	return c
 }
 

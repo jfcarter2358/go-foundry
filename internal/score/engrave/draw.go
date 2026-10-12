@@ -17,7 +17,7 @@ import (
 
 // draw draws every staff.
 func (e *engraver) draw() {
-	endX := e.bars[len(e.bars)-1].x1 + barlineWidth(e.d, e.barlineBefore(len(e.bars)))
+	endX := e.bars[len(e.bars)-1].x1 + e.barlineWidth(e.barlineBefore(len(e.bars)))
 	t := e.d.StaffLineThickness
 	for _, sc := range e.staves {
 		ref := Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: 0, Event: -1, Note: -1}
@@ -26,6 +26,12 @@ func (e *engraver) draw() {
 			e.addStaff(sc, Item{Kind: ItemLine, Role: RoleStaff, Ref: ref, P: Point{X: 0, Y: y}, Q: Point{X: endX, Y: y}, Width: t})
 		}
 		e.drawStart(sc)
+		if bc := e.bars[0]; e.repeatStarts(bc.bar) {
+			for _, it := range e.barlineItems(barRepeatStart, bc.content+startRepeatGap, -t/2, 4+t/2, Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}, true) {
+				e.addStaff(sc, it)
+			}
+		}
+		e.drawClefChanges(sc)
 		for bi, bc := range e.bars {
 			sb := sc.bars[bi]
 			if bi > 0 {
@@ -33,7 +39,7 @@ func (e *engraver) draw() {
 			}
 			bref := ref
 			bref.Bar = bc.bar
-			for _, it := range barlineItems(e.d, e.barlineBefore(bi+1), bc.x1, -t/2, 4+t/2, bref) {
+			for _, it := range e.barlineItems(e.barlineBefore(bi+1), bc.x1, -t/2, 4+t/2, bref, true) {
 				e.addStaff(sc, it)
 			}
 			for _, v := range sb.voices {
@@ -52,6 +58,7 @@ func (e *engraver) draw() {
 		for _, sb := range sc.bars {
 			e.drawTuplets(sc, sb)
 		}
+		e.drawExpression(sc)
 	}
 }
 
@@ -120,6 +127,7 @@ func (e *engraver) drawEvent(sc *staffCtx, x *ev) {
 		}
 	}
 	e.drawLedgers(sc, x)
+	e.drawArpeggio(sc, x)
 	for k := 0; k < x.dots; k++ {
 		for _, row := range x.dotRows {
 			e.add(sc, x, e.glyphItem(RoleDot, x.ref, "augmentationDot", x.x+x.dotX+float64(k)*dotSpacing*s, 4-float64(row)/2, s))
@@ -222,7 +230,7 @@ func (e *engraver) drawSpanning() {
 	t := e.d.StaffLineThickness
 	first, last := e.staves[0], e.staves[len(e.staves)-1]
 	if len(e.staves) > 1 {
-		for _, it := range barlineItems(e.d, barSingle, 0, first.top-t/2, last.top+4+t/2, NoRef) {
+		for _, it := range e.barlineItems(barSingle, 0, first.top-t/2, last.top+4+t/2, NoRef, false) {
 			e.items = append(e.items, it)
 		}
 	}
@@ -246,15 +254,23 @@ func (e *engraver) drawSpanning() {
 		it.ScaleY = h / (b.H() * size)
 		e.items = append(e.items, it)
 		// Barlines through the gaps.
+		if bc := e.bars[0]; e.repeatStarts(bc.bar) {
+			for k := i; k < j; k++ {
+				for _, it := range e.barlineItems(barRepeatStart, bc.content+startRepeatGap, e.staves[k].top+4, e.staves[k+1].top, NoRef, false) {
+					e.items = append(e.items, it)
+				}
+			}
+		}
 		for bi, bc := range e.bars {
 			for k := i; k < j; k++ {
-				for _, it := range barlineItems(e.d, e.barlineBefore(bi+1), bc.x1, e.staves[k].top+4, e.staves[k+1].top, Ref{Line: sc.line, Staff: -1, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}) {
+				for _, it := range e.barlineItems(e.barlineBefore(bi+1), bc.x1, e.staves[k].top+4, e.staves[k+1].top, Ref{Line: sc.line, Staff: -1, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}, false) {
 					e.items = append(e.items, it)
 				}
 			}
 		}
 	}
 	e.drawBarNumbers()
+	e.drawSystemMarks()
 }
 
 // drawBarNumbers numbers bars above the top staff.

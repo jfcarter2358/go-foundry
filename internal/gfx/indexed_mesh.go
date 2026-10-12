@@ -77,6 +77,7 @@ type IndexedMesh struct {
 	LightSmooth []float32 // LightStride per vertex, or nil
 	SkinIdx     []float32 // 4 per vertex, or nil
 	SkinWt      []float32 // 4 per vertex, or nil
+	Colors      []float32 // 4 per vertex (RGBA 0..1), or nil
 	// Indices is the triangle list, three per triangle. Nil on a corner soup
 	// — the input WeldCorners takes — where vertex k is simply corner k.
 	Indices []uint32
@@ -127,6 +128,7 @@ func (m *IndexedMesh) Validate() error {
 		{"smooth light", m.LightSmooth, LightStride},
 		{"bone indices", m.SkinIdx, 4},
 		{"bone weights", m.SkinWt, 4},
+		{"colours", m.Colors, 4},
 	} {
 		if a.data != nil && len(a.data) != n*a.stride {
 			return fmt.Errorf("indexed mesh: %s has %d floats, want %d for %d vertices", a.name, len(a.data), n*a.stride, n)
@@ -193,6 +195,7 @@ func (m *IndexedMesh) Deindex() IndexedMesh {
 	out.LightSmooth = gather(m.LightSmooth, LightStride)
 	out.SkinIdx = gather(m.SkinIdx, 4)
 	out.SkinWt = gather(m.SkinWt, 4)
+	out.Colors = gather(m.Colors, 4)
 	return out
 }
 
@@ -224,6 +227,7 @@ func WeldCorners(soup IndexedMesh) IndexedMesh {
 		{soup.LightSmooth, LightStride},
 		{soup.SkinIdx, 4},
 		{soup.SkinWt, 4},
+		{soup.Colors, 4},
 	}
 	// A ragged soup — an attribute array shorter than the positions — would
 	// read out of range below. Geometry.Load never builds one (deindexLight and
@@ -314,6 +318,7 @@ func WeldCorners(soup IndexedMesh) IndexedMesh {
 	out.LightSmooth = gather(attrs[3].src, LightStride)
 	out.SkinIdx = gather(attrs[4].src, 4)
 	out.SkinWt = gather(attrs[5].src, 4)
+	out.Colors = gather(attrs[6].src, 4)
 	return out
 }
 
@@ -330,7 +335,9 @@ func (g *Geometry) weld() {
 		LightSmooth: g.vertexLightSmooth,
 		SkinIdx:     g.skinIdx,
 		SkinWt:      g.skinWt,
+		Colors:      g.colors,
 	})
+	g.colors = m.Colors
 	g.Vertices, g.Normals = m.Vertices, m.Normals
 	g.vertexLight, g.vertexLightSmooth = m.Light, m.LightSmooth
 	g.skinIdx, g.skinWt = m.SkinIdx, m.SkinWt
@@ -348,6 +355,7 @@ func (g *Geometry) Mesh() IndexedMesh {
 		LightSmooth: g.vertexLightSmooth,
 		SkinIdx:     g.skinIdx,
 		SkinWt:      g.skinWt,
+		Colors:      g.colors,
 		Indices:     g.Indices,
 	}
 }

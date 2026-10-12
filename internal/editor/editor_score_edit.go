@@ -93,8 +93,25 @@ type scoreState struct {
 	// written takes it.
 	Armed    bool
 	ArmedAcc edit.AccKind
-	// Concert shows (and so edits) transposing staves at sounding pitch.
-	Concert bool
+	// Grace is the kind of grace note note input writes; NotGrace for
+	// normal notes (editor_score_marks.go).
+	Grace score.Grace
+
+	// Lanes are the lines (by name) whose dynamics lane is open, LaneSel
+	// the override selected in one, laneDrag a drag in one.
+	Lanes    map[string]bool
+	LaneSel  scoreLaneSel
+	laneDrag scoreLaneDrag
+	// laneRev counts lanes opening and closing (the layout leaves room for
+	// them); laneLive counts a drag's live changes (the window paces the
+	// player's updates by it).
+	laneRev, laneLive uint64
+	// laneCurveCache is every line's dynamics as written, for the lanes.
+	laneCurveCache []interpret.LineDynamics
+	laneCurveRev   uint64
+	laneCurveLive  uint64
+	laneCurveScore *score.Score
+	laneCurveSet   bool
 
 	// The clipboard: bars, or one event.
 	Clip      *edit.Clip
@@ -133,7 +150,7 @@ type scoreState struct {
 
 // newScoreState starts an editor on a score.
 func newScoreState(s *score.Score) *scoreState {
-	e := &scoreState{Dur: score.Duration{Base: score.Quarter}, Transport: newScoreTransport()}
+	e := &scoreState{Dur: score.Duration{Base: score.Quarter}, Transport: newScoreTransport(), LaneSel: scoreLaneSel{Index: -1}}
 	e.setScore(s)
 	return e
 }
@@ -146,6 +163,8 @@ func (e *scoreState) setScore(s *score.Score) {
 	e.redo.clear()
 	e.Input = false
 	e.Armed = false
+	e.Grace = score.NotGrace
+	e.LaneSel, e.laneDrag = scoreLaneSel{Index: -1}, scoreLaneDrag{}
 	e.mixKey = ""
 	e.Transport.Loop, e.Transport.Head = scoreLoop{}, 0
 	e.Rev++
@@ -261,7 +280,7 @@ func (e *scoreState) fifths(bar int) int { return e.Score.KeyAt(bar).Fifths }
 // zero in concert view or for a staff that does not transpose.
 func (e *scoreState) writtenIV(line, staff int) score.Interval {
 	st := edit.Staff(e.Score, line, staff)
-	if st == nil || e.Concert {
+	if st == nil || e.Score.Concert {
 		return score.Interval{}
 	}
 	return score.Interval{Diatonic: -st.Transpose.Diatonic, Chromatic: -st.Transpose.Chromatic}
@@ -408,7 +427,8 @@ func (e *scoreState) prevPitch(l edit.Loc, at score.Frac) score.Pitch {
 		if k < 0 || k >= len(ev.Notes) {
 			k = len(ev.Notes) - 1
 		}
-		return e.toWritten(l.Line, l.Staff, ev.Notes[k].Pitch)
+		on, _ := edit.Onset(e.Score, e.Sel.Loc)
+		return e.onPage(l.Line, l.Staff, score.Pos{Bar: e.Sel.Loc.Bar, Offset: on}, ev.Notes[k].Pitch)
 	}
 	if v := edit.Voice(e.Score, l.Line, l.Staff, l.Voice); v != nil {
 		for b := min(l.Bar, len(v.Measures)); b >= 1; b-- {
@@ -419,11 +439,22 @@ func (e *scoreState) prevPitch(l edit.Loc, at score.Frac) score.Pitch {
 				if ev.Kind != score.EventChord || (b == l.Bar && !offs[i].Less(at)) {
 					continue
 				}
-				return e.toWritten(l.Line, l.Staff, ev.Notes[len(ev.Notes)-1].Pitch)
+				return e.onPage(l.Line, l.Staff, score.Pos{Bar: b, Offset: offs[i]}, ev.Notes[len(ev.Notes)-1].Pitch)
 			}
 		}
 	}
 	return e.staffMiddle(l.Line, l.Staff)
+}
+
+// onPage is a stored pitch where the page shows it at a point: written for
+// the staff's transposition and moved by any ottava line over it — what a
+// letter typed after it is nearest to, as a click there would be.
+func (e *scoreState) onPage(line, staff int, at score.Pos, p score.Pitch) score.Pitch {
+	p = e.toWritten(line, staff, p)
+	if st := edit.Staff(e.Score, line, staff); st != nil && !e.percussion(line, staff) {
+		p.Octave -= int8(e.Score.OttavaAt(st, at))
+	}
+	return p
 }
 
 // ---------- entry ----------
@@ -462,12 +493,30 @@ func (e *scoreState) write(l edit.Loc, at score.Frac, written *score.Pitch) bool
 		if e.Armed && !e.percussion(l.Line, l.Staff) {
 			p = edit.Accidental(p, e.ArmedAcc)
 		}
+		// Under an ottava line the page shows the note where it is written,
+		// an octave from where it sounds.
+		if st := edit.Staff(e.Score, l.Line, l.Staff); st != nil && !e.percussion(l.Line, l.Staff) {
+			p.Octave += int8(e.Score.OttavaAt(st, score.Pos{Bar: l.Bar, Offset: at}))
+		}
 		concert = e.toConcert(l.Line, l.Staff, p)
 		if !edit.Playable(concert) {
 			e.Status = fmt.Sprintf("%s is out of range", edit.PitchName(p))
 			return false
 		}
 		ev = score.Event{Kind: score.EventChord, Dur: e.Dur, Notes: []score.Note{{Pitch: concert}}}
+	}
+	if e.Grace != score.NotGrace {
+		if written == nil {
+			e.Status = "Grace notes are notes: switch grace notes off for a rest"
+			return false
+		}
+		if !e.writeGrace(l, at, concert) {
+			return false
+		}
+		e.Armed = false
+		e.audition(l.Line, concert)
+		e.Status = e.describeSel()
+		return true
 	}
 	ok := e.change(func() error {
 		// A value longer than the bar has left carries on over the barline,
@@ -946,7 +995,16 @@ func (e *scoreState) flip(up bool) {
 // sounding at the selected one's onset is selected — or, where the new
 // voice has nothing there yet, a caret at that onset.
 func (e *scoreState) setVoice(v int) {
-	e.Voice = max(0, min(v, score.MaxVoices-1))
+	v = max(0, min(v, score.MaxVoices-1))
+	// Out of note input a selected note moves into the voice (Sibelius).
+	if !e.Input && e.chord() != nil && e.chord().Grace == score.NotGrace && e.Sel.Loc.Voice != v {
+		if e.moveToVoice(v) {
+			return
+		}
+		status := e.Status
+		defer func() { e.Status = status }()
+	}
+	e.Voice = v
 	switch e.Sel.Kind {
 	case scoreSelEvent, scoreSelCaret:
 		if e.Sel.Loc.Voice == e.Voice {

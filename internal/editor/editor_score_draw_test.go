@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"image"
 	"testing"
 
 	"foundry/internal/score"
@@ -29,7 +30,7 @@ func scoreDrawTest(t *testing.T) {
 	r := scoredraw.New()
 	r.Upload = func(*glyph.Atlas, uint32) uint32 { return 1 }
 	r.Delete = func(uint32) {}
-	r.FontSize = func() float32 { return 13 }
+	r.UploadText = func(*image.RGBA, uint32) uint32 { return 2 }
 	scoreRend = r
 	scoreEditorWindow = &uiwin.UIWindow{W: 1400, H: 900}
 	scoreShowKeypad = true

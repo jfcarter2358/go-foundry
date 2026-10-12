@@ -108,6 +108,34 @@ layout(std140, binding = 0) uniform SceneBlock {
     vec3  fogVolColor[MAX_FOG_VOLUMES];
     float fogVolDensity[MAX_FOG_VOLUMES];    // per world unit travelled inside
     float fogVolMaxOpacity[MAX_FOG_VOLUMES];
+
+    // ---- atmosphere (world.PackFog; fog.glsl's fogAtmosSegment) ----
+    // Height fog, aerial perspective and the sun's in-scattering, all off
+    // while fogAtmos is 0 — which is every level that does not ask for them.
+    vec3  fogAerialColor;     // the haze's colour at range
+    float fogAerialDensity;   // extinction per metre at fogAerialBase; 0 = no aerial perspective
+    vec3  fogAerialTint;      // per-channel extinction weights: blue above red is Rayleigh's tint
+    float fogAerialBase;      // the height fogAerialDensity is measured at
+    vec3  fogHeightColor;
+    float fogHeightDensity;   // extinction per metre at fogHeightBase; 0 = no height fog
+    vec3  fogSunDir;          // unit, toward the sun
+    float fogHeightBase;
+    vec3  fogSunColor;        // the lobe's colour and strength; 0 = no in-scattering
+    float fogHeightFalloff;   // per metre: density falls by e every 1/falloff metres up
+    float fogAerialFalloff;   // the same for the aerial haze (1 / its scale height)
+    float fogSunG;            // the lobe's Henyey-Greenstein anisotropy
+    float fogSkyHaze;         // how much of the atmosphere the sky takes, 0..1
+    float fogSkyDistance;     // how far along a sky ray the atmosphere is integrated
+    int   fogAtmos;           // 1 when any term above is on
+
+    // ---- HDR (gfx/hdr.go; world.Tonemap) ----
+    // 1 when the frame shades in high dynamic range: a level that asked
+    // (`tonemap:`) in a frame drawn into the RGBA16F scene target. Then lit
+    // surfaces keep light above 1 and display-referred colours (the sky, the
+    // fog's colours, other passes' output) are carried into the scene's units
+    // by fog.glsl's hdrFromDisplay; taa_output_frag.glsl applies the curve.
+    int   hdrMode;
+    float hdrExposure;
 };
 
 #endif

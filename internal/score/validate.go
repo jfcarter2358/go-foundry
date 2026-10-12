@@ -137,6 +137,20 @@ func (s *Score) Validate(instrumentExists func(string) bool) (out []Issue) {
 			add(Error, 0, 0, 0, r.Start, "repeats overlap (bars %d..%d and %d..%d)", s.Repeats[i-1].Start, s.Repeats[i-1].End, r.Start, r.End)
 		}
 	}
+	s.validateForm(n, add)
+	for _, t := range s.Tempo {
+		if t.BPM == 0 && !t.Ramp && t.Change() == TempoSet {
+			add(Warning, 0, 0, 0, t.At.Bar, "tempo text %q sets no tempo (give it a bpm, or write rit., a tempo …)", t.Text)
+		}
+		if t.HasTo {
+			if !t.Change().Gradual() {
+				add(Warning, 0, 0, 0, t.At.Bar, "tempo mark %q has an end (to:) but is not a gradual change", t.Text)
+			}
+			if !PosLess(t.At, t.To) || !inRange(t.To.Bar) && !(t.To.Bar == n+1 && t.To.Offset.IsZero()) {
+				add(Error, 0, 0, 0, t.At.Bar, "tempo change %q ends before it starts or past the score", t.Text)
+			}
+		}
+	}
 	params := map[string]bool{}
 	for _, p := range s.Params {
 		if params[p.Name] {
@@ -184,7 +198,17 @@ func (s *Score) Validate(instrumentExists func(string) bool) (out []Issue) {
 				}
 			}
 		}
+		for _, o := range l.Overrides {
+			if !inRange(o.From.Bar) || !PosLess(o.From, o.To) || !inRange(o.To.Bar) && !(o.To.Bar == n+1 && o.To.Offset.IsZero()) {
+				add(Error, L, 0, 0, o.From.Bar, "dynamic override ends before it starts or is outside the score")
+			}
+		}
 		for si, st := range l.Staves {
+			for _, c := range st.Clefs {
+				if !inRange(c.At.Bar) || !c.At.Offset.Less(s.BarLength(c.At.Bar)) {
+					add(Error, L, si+1, 0, c.At.Bar, "clef change to %s outside the score", c.Clef)
+				}
+			}
 			for vi, v := range st.Voices {
 				s.validateVoice(v, L, si+1, vi+1, add)
 			}
@@ -199,6 +223,7 @@ func (s *Score) validateVoice(v *Voice, L, S, V int, add func(Severity, int, int
 		midi int
 	}
 	var ties []tie
+	open := map[string]bool{}
 	for bi, m := range v.Measures {
 		bar := bi + 1
 		barLen := s.BarLength(bar)
@@ -231,6 +256,33 @@ func (s *Score) validateVoice(v *Voice, L, S, V int, add func(Severity, int, int
 			for _, mk := range e.Marks {
 				if mk.Kind() == MarkUnknown {
 					add(Warning, L, S, V, bar, "unknown mark %q (kept as written)", mk.Name)
+					continue
+				}
+				if msg := markValueProblem(mk); msg != "" {
+					add(Warning, L, S, V, bar, "%s", msg)
+				}
+				switch mk.Name {
+				case "cresc", "dim":
+					open["hairpin"] = true
+				case "hairpin_end":
+					if !open["hairpin"] {
+						add(Warning, L, S, V, bar, "hairpin_end with no cresc or dim before it in the voice")
+					}
+					open["hairpin"] = false
+				case "slur":
+					open["slur"] = true
+				case "slur_end":
+					if !open["slur"] {
+						add(Warning, L, S, V, bar, "slur_end with no slur before it in the voice")
+					}
+					open["slur"] = false
+				case "8va", "8vb", "15ma", "15mb":
+					open["ottava"] = true
+				case "ottava_end":
+					if !open["ottava"] {
+						add(Warning, L, S, V, bar, "ottava_end with no ottava before it in the voice")
+					}
+					open["ottava"] = false
 				}
 			}
 			for _, nt := range e.Notes {
@@ -265,5 +317,85 @@ func (s *Score) validateVoice(v *Voice, L, S, V int, add func(Severity, int, int
 	}
 	for _, t := range ties {
 		add(Warning, L, S, V, t.bar, "tie from %s at the end of the voice", SpellMIDI(t.midi, 0, 1))
+	}
+}
+
+// markValueProblem says what is wrong with a known mark's value, or "".
+func markValueProblem(mk Mark) string {
+	switch mk.Name {
+	case "tr", "mord", "imord", "turn", "iturn":
+		if _, _, _, _, ok := OrnamentAccidentals(mk.Value); !ok {
+			return fmt.Sprintf("%s=%s: want the auxiliary note's accidental (#, b, n, x, bb; a turn's as upper/lower)", mk.Name, mk.Value)
+		}
+	case "trem", "trem2":
+		if _, ok := TremoloStrokes(mk.Value); !ok {
+			return fmt.Sprintf("%s=%s: want 1..4 strokes", mk.Name, mk.Value)
+		}
+	case "ferm":
+		if mk.Value != "" && FermataScale(mk.Value) == 2 {
+			return fmt.Sprintf("ferm=%s: want short, long or verylong", mk.Value)
+		}
+	case "arp":
+		if mk.Value != "" && mk.Value != "up" && mk.Value != "down" {
+			return fmt.Sprintf("arp=%s: want up or down", mk.Value)
+		}
+	case "gliss":
+		if mk.Value != "" && mk.Value != "wavy" && mk.Value != "straight" {
+			return fmt.Sprintf("gliss=%s: want wavy or straight", mk.Value)
+		}
+	}
+	return ""
+}
+
+// validateForm checks voltas and jumps against the bars and each other.
+func (s *Score) validateForm(n int, add func(Severity, int, int, int, int, string, ...any)) {
+	for i, v := range s.Voltas {
+		if v.Start < 1 || v.End < v.Start || v.End > n {
+			add(Error, 0, 0, 0, v.Start, "ending %d..%d is not inside bars 1..%d", v.Start, v.End, n)
+			continue
+		}
+		if i > 0 && v.Start <= s.Voltas[i-1].End {
+			add(Error, 0, 0, 0, v.Start, "endings overlap (bars %d..%d and %d..%d)", s.Voltas[i-1].Start, s.Voltas[i-1].End, v.Start, v.End)
+		}
+		r := s.VoltaRepeat(v)
+		if r < 0 {
+			add(Error, 0, 0, 0, v.Start, "ending %s at bar %d has no repeat before it", v.Label(), v.Start)
+			continue
+		}
+		for _, p := range v.Passes {
+			if p < 1 || p > s.Repeats[r].Plays() {
+				add(Error, 0, 0, 0, v.Start, "ending %s: the repeat at bars %d..%d plays %d times", v.Label(), s.Repeats[r].Start, s.Repeats[r].End, s.Repeats[r].Plays())
+				break
+			}
+		}
+	}
+	back := 0
+	for _, j := range s.Jumps {
+		if j.Bar < 1 || j.Bar > n {
+			add(Error, 0, 0, 0, j.Bar, "%s past the last bar (%d)", j.Text(), n)
+			continue
+		}
+		switch j.Kind {
+		case JumpDS:
+			if s.FirstJump(JumpSegno) == 0 {
+				add(Error, 0, 0, 0, j.Bar, "%s but no segno", j.Text())
+			}
+			back++
+		case JumpDC:
+			back++
+		case JumpToCoda:
+			if s.FirstJump(JumpCoda) == 0 {
+				add(Error, 0, 0, 0, j.Bar, "To Coda but no coda")
+			}
+		}
+		if j.Al == JumpCoda && s.FirstJump(JumpToCoda) == 0 {
+			add(Error, 0, 0, 0, j.Bar, "%s but no To Coda", j.Text())
+		}
+		if j.Al == JumpFine && s.FirstJump(JumpFine) == 0 {
+			add(Error, 0, 0, 0, j.Bar, "%s but no Fine", j.Text())
+		}
+	}
+	if back > 1 {
+		add(Warning, 0, 0, 0, 0, "%d D.C./D.S. marks: each plays once, in the order reached", back)
 	}
 }

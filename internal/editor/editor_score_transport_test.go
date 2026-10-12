@@ -258,3 +258,27 @@ func TestScoreWriteTempo(t *testing.T) {
 		t.Errorf("dotted mark: %+v", e.Score.Tempo)
 	}
 }
+
+// Tempo text with no number ("rit.", "a tempo", "Andante") survives the
+// slider's writes: scaling leaves it relative, a mark set at its bar goes
+// before a relative one and numbers a plain word.
+func TestScoreWriteTempoKeepsTempoText(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 4
+	s.Tempo = []score.TempoMark{{At: score.Pos{Bar: 1}, BPM: 100}, {At: score.Pos{Bar: 2}, Text: "rit."}, {At: score.Pos{Bar: 3}, Text: "Andante"}}
+	scoreScaleTempoMarks(s, 1.5)
+	if s.Tempo[0].BPM != 150 || s.Tempo[1].BPM != 0 || s.Tempo[2].BPM != 0 {
+		t.Errorf("scaled: %+v", s.Tempo)
+	}
+	scoreSetTempoAt(s, 2, 80)
+	if len(s.Tempo) != 4 || s.Tempo[1].BPM != 80 || s.Tempo[2].Text != "rit." || s.Tempo[2].BPM != 0 {
+		t.Errorf("a number at a rit.'s bar: %+v", s.Tempo)
+	}
+	scoreSetTempoAt(s, 3, 70)
+	if s.Tempo[3].BPM != 70 || s.Tempo[3].Text != "Andante" || len(s.Tempo) != 4 {
+		t.Errorf("a number for Andante: %+v", s.Tempo)
+	}
+	if w := scoreTempoWords(score.TempoMark{Text: "a tempo"}); w != "a tempo" {
+		t.Errorf("words %q", w)
+	}
+}

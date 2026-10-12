@@ -1,0 +1,302 @@
+doc: 'Desert canyon: red sandstone mesas, a stepped canyon, Poly Haven scans'
+seed: 1234
+level: desert_canyon
+stages:
+- stage: polyhaven_textures
+  id: tex
+  params:
+    layers:
+    - name: sand
+      id: red_sand
+      scale: 3
+    - name: cracked
+      id: cracked_red_ground
+      scale: 4.5
+    - name: gravel
+      id: dry_river_pebbles
+      scale: 2
+    - name: cliff
+      id: cliff_side
+      scale: 10
+- stage: terrain
+  id: ground
+  params:
+    size: 512
+    resolution: 0.5
+    mesa_height: 55
+    mesa_coverage: 0.75
+    mesa_scale: 340
+    mesa_rim: 26
+    canyons:
+    - path:
+      - x: -300
+        z: -120
+        width: 70
+        depth: 55
+      - x: -140
+        z: -40
+        width: 80
+        depth: 60
+      - x: 40
+        z: 10
+        width: 90
+        depth: 66
+      - x: 180
+        z: 90
+        width: 95
+        depth: 70
+      - x: 300
+        z: 150
+        width: 100
+        depth: 72
+      floor: 0.22
+      meander: 22
+      meander_length: 220
+      tributaries: 0
+    texture: ph_red_sand
+    material: gen_desert_canyon_ground_mat
+    uv_scale: 0.333
+    cook_memory: 2000
+    far: 3000
+    far_cell: 8
+    far_blend: 140
+    far_tile: 512
+    far_material: gen_desert_canyon_ground_mat_far
+- stage: terrain_material
+  id: ground_mat
+  params:
+    terrain: ground
+    textures: tex
+    cracked_cover: 0.3
+    rock_scale: 10
+    strata: 0.45
+    strata_warp: 2.5
+    streaks: 0.4
+    normal_strength: 1.2
+    rock_tint:
+      r: 1.1
+      g: 0.94
+      b: 0.84
+    cap_rock: 0.75
+    bedding: 0.22
+    bedding_spacing: 2.4
+    wall_normal: 1.8
+- stage: polyhaven_rocks
+  id: cliffs
+  params:
+    assets:
+    - id: namaqualand_cliff_01
+    - id: namaqualand_cliff_02
+    - id: rock_face_01
+    - id: mountainside
+    - id: coastal_cliff_02
+      max_triangles: 400000
+    match_ground: 0.7
+- stage: polyhaven_rocks
+  id: boulders
+  params:
+    assets:
+    - id: namaqualand_boulder_02
+    - id: namaqualand_boulder_03
+    - id: namaqualand_boulder_04
+    - id: namaqualand_boulder_05
+    lite_triangles: 5000
+    back: none
+- stage: polyhaven_rocks
+  id: stones
+  params:
+    assets:
+    - id: namaqualand_stones_01
+    - id: namaqualand_rocks_01
+    lite_triangles: 2000
+    back: none
+    collision: none
+- stage: polyhaven_plants
+  id: trees
+  params:
+    assets:
+    - id: quiver_tree_01
+    - id: quiver_tree_02
+- stage: polyhaven_plants
+  id: deadwood
+  params:
+    assets:
+    - id: dead_quiver_trunk
+- stage: polyhaven_plants
+  id: bushes
+  params:
+    assets:
+    - id: wild_rooibos_bush
+    - id: shrub_04
+- stage: cliff_wall
+  id: walls
+  params:
+    terrain: ground
+    chunks: cliffs
+    min_wall: 6
+    scale:
+      x: 1
+      "y": 3
+    spacing: 0.45
+    max_chunks: 1500
+    stretch: 40
+    ground: ground_mat
+    match_to: rock
+    match_brightness: 0.8
+    focus:
+      x: -150
+      "y": -45
+    focus_range: 220
+    match_ground: 0.9
+- stage: scatter
+  id: scatter
+  params:
+    terrain: ground
+    rules:
+    - name: talus
+      rocks: boulders
+      max_triangles: 6000
+      density: 5
+      scale:
+        x: 0.4
+        "y": 1.5
+      scale_bias: 2.4
+      slope:
+        x: 0
+        "y": 42
+      cliff:
+        x: 0
+        "y": 0.55
+      cliff_base: 1
+      cliff_base_distance: 12
+      cluster: 0.4
+      cluster_scale: 16
+      align: 0.7
+      tilt: 18
+      sink: 0.14
+      match_ground: 0.6
+    - name: boulder_field
+      rocks: boulders
+      max_triangles: 6000
+      density: 0.9
+      scale:
+        x: 0.6
+        "y": 2
+      slope:
+        x: 0
+        "y": 25
+      deposition:
+        x: 0.05
+        "y": 1
+      cluster: 1
+      cluster_scale: 28
+      align: 0.5
+      sink: 0.16
+      match_ground: 0.6
+    - name: wash_stones
+      rocks: stones
+      max_triangles: 3000
+      density: 14
+      spacing: 0.9
+      scale:
+        x: 0.7
+        "y": 1.6
+      scale_bias: 2
+      slope:
+        x: 0
+        "y": 16
+      flow:
+        x: 0.3
+        "y": 1
+      cluster: 0.6
+      cluster_scale: 10
+      align: 0.9
+      tilt: 15
+      sink: 0.25
+      max_instances: 3000
+      match_ground: 0.5
+    - name: trees
+      rocks: trees
+      density: 0.12
+      spacing: 4
+      scale:
+        x: 0.8
+        "y": 1.4
+      slope:
+        x: 0
+        "y": 20
+      cliff:
+        x: 0
+        "y": 0.3
+      cluster_scale: 40
+      align: 0
+      tilt: 0
+      sink: 0.02
+    - name: deadwood
+      rocks: deadwood
+      density: 0.06
+      spacing: 3
+      scale:
+        x: 0.7
+        "y": 1.3
+      slope:
+        x: 0
+        "y": 22
+      cliff:
+        x: 0
+        "y": 0.3
+      cluster_scale: 30
+      tilt: 80
+      sink: 0.05
+    - name: bushes
+      rocks: bushes
+      density: 1.2
+      spacing: 1.5
+      scale:
+        x: 0.7
+        "y": 1.5
+      slope:
+        x: 0
+        "y": 30
+      cliff:
+        x: 0
+        "y": 0.4
+      cluster: 0.6
+      cluster_scale: 20
+      align: 0.3
+      tilt: 0
+      sink: 0.05
+    ground: ground_mat
+    avoid: walls
+- stage: vegetation
+  id: plants
+  enabled: false
+  params:
+    terrain: ground
+    rules:
+    - name: scrub
+      density: 0.08
+      amounts: rock=0 pebbles=0 cactus=0
+      slope:
+        x: 0
+        "y": 22
+      cliff:
+        x: 0
+        "y": 0.3
+      cluster: 0.6
+      cluster_scale: 50
+- stage: environment
+  id: air
+  params:
+    terrain: ground
+    aerial_distance: 1700
+    sun_brightness: 1.5
+    view_distance: 4500
+    hdr: true
+    exposure: 0.95
+    ambient_brightness: 0.38
+    spawn: true
+    spawn_at:
+      x: -150
+      "y": -45
+    spawn_yaw: 20

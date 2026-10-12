@@ -4,31 +4,53 @@
 // scheduler (internal/score/play), an exporter or the editor's playhead
 // needs.
 //
-// It is the one place that knows what notation means for sound. Today
-// that is: the tempo map (marks and ramps), repeats unrolled, tuplets at
-// any depth, ties merged into one long note (across bars and passes),
-// grace notes placed around the beat, dynamics marks as velocities (sfz
-// and fp too), technique text and articulation marks named for the
-// instrument's articulations, and automation lanes as curves. Hairpins,
-// slurs, articulation lengths, voltas and D.S./coda arrive in later phases
-// as more passes over the same walk; Options is where they will be turned
-// on and off.
+// It is the one place that knows what notation means for sound:
+//
+//   - form (form.go): repeats unrolled, 1st/2nd endings, D.C./D.S., To
+//     Coda and Fine followed — or the score straight through;
+//   - time (tempo.go, tempobuild.go): tempo marks, tempo text (rit.,
+//     accel., a tempo, meno/più mosso) and fermatas as one tempo map;
+//   - notes (this file): tuplets at any depth, ties merged into one long
+//     note across bars and passes, grace notes before or on the beat;
+//   - level (dynamics.go): dynamics marks and hairpins as a curve per line,
+//     the dynamics lane's overrides laid over it, accents and sfz on the
+//     notes they are on;
+//   - shape (expression.go): articulation lengths, slurs played legato,
+//     glissandi as slides or runs, trills, mordents and turns, tremolos,
+//     arpeggios, the sustain pedal, technique text;
+//   - automation lanes as curves.
 //
 // Everything is computed in exact score time (score.Frac) and only turned
 // into ticks (score.TicksPerQuarter) and seconds at the end, so a note
-// after a thousand triplets is exactly where it was written.
+// after a thousand triplets is exactly where it was written. Pitches are
+// sounding pitch: transposition, clefs and ottava lines change what is
+// written, not what plays (score/staff.go).
 package interpret
 
 import (
 	"sort"
 
 	"foundry/internal/score"
+	"foundry/internal/tracker"
 )
 
 // Options shape an interpretation.
 type Options struct {
-	// NoRepeats plays the score straight through, once, as written.
+	// NoRepeats plays the score straight through, once, as written: no
+	// repeats, every ending, no D.C. or D.S. (the score's own
+	// Playback.IgnoreRepeats does the same).
 	NoRepeats bool
+	// Instruments are each line's instrument, nil where it is not known.
+	// What an instrument changes: a staccato's length (its
+	// Playback.Staccato), how a glissandum plays when the line does not
+	// say (Playback.Gliss), and whether an unmeasured tremolo is its
+	// tremolo articulation or repeated notes. Without one the defaults
+	// play: half-length staccato, slides, repeated notes.
+	Instruments []*tracker.Instrument
+	// NoSlides plays a glissando the line would slide as a chromatic run
+	// instead, every note a note: for exports that cannot bend one (a MIDI
+	// file's notes), where a slide would leave only its first note.
+	NoSlides bool
 }
 
 // Note is one note of the performance.
@@ -41,20 +63,59 @@ type Note struct {
 	// MIDI is the sounding pitch; Cents a fine offset.
 	MIDI  int
 	Cents float32
-	// Velocity is 0..1 (MIDI velocity / 127).
+	// Velocity is 0..1 (MIDI velocity / 127): the line's dynamic level at
+	// the note's start times its Accent.
 	Velocity float32
+	// Accent is how much the note starts above its line's level (an
+	// accent 1.25, a marcato 1.4, an sfz its level over the prevailing
+	// one); 1 for none. A scheduler that follows a held note through its
+	// line's dynamics lets it fall back to 1 over AccentTicks.
+	Accent float32
+	// Bend is the note's pitch curve in semitones, breakpoints in
+	// performance ticks, linear between and held after the last (a
+	// glissando played as a slide); nil for none.
+	Bend []BendPoint
 	// Line, Staff and Voice are 0-based indexes into the score.
 	Line, Staff, Voice int
 	// Bar is the written bar the note starts in; Pass the time through it.
 	Bar, Pass int
 	Grace     score.Grace
 	// Articulation is a word naming how this note is played ("staccato",
-	// from its marks), Technique the line's technique text in force
-	// ("pizz."). A scheduler looks each up in the instrument
-	// (Instrument.ArticulationIndex), the note's own first.
+	// from its marks; "legato" under a slur), Technique the line's
+	// technique text in force ("pizz."). A scheduler looks each up in the
+	// instrument (Instrument.ArticulationIndex), the note's own first.
 	Articulation string
 	Technique    string
 }
+
+// BendPoint is a breakpoint of a note's pitch curve.
+type BendPoint struct {
+	Tick  float64
+	Semis float32
+}
+
+// BendAt is a note's bend at a tick: linear between its points, 0 before
+// the first and held after the last.
+func (n *Note) BendAt(tick float64) float32 {
+	b := n.Bend
+	if len(b) == 0 || tick <= b[0].Tick {
+		if len(b) > 0 && tick >= b[0].Tick {
+			return b[0].Semis
+		}
+		return 0
+	}
+	for i := 1; i < len(b); i++ {
+		if tick < b[i].Tick {
+			x, y := b[i-1], b[i]
+			return x.Semis + (y.Semis-x.Semis)*float32((tick-x.Tick)/(y.Tick-x.Tick))
+		}
+	}
+	return b[len(b)-1].Semis
+}
+
+// AccentTicks is how long an accent takes to fall back to the line's
+// level: a 16th note.
+const AccentTicks = score.TicksPerQuarter / 4
 
 // Bar is one bar as played.
 type Bar struct {
@@ -100,7 +161,8 @@ type CurvePoint struct {
 }
 
 // Curve is a control curve over a line: linear between points, holding
-// the ends. Target is the lane it came from ("volume", "pan", …).
+// the ends. Target is the lane it came from ("volume", "pan", …), or
+// "dynamics".
 type Curve struct {
 	Line   int
 	Target string
@@ -108,7 +170,7 @@ type Curve struct {
 }
 
 // At reads the curve at a tick. Of two points at one tick (a jump at a
-// repeat) the later wins from that tick on.
+// repeat, a step) the later wins from that tick on.
 func (c *Curve) At(tick float64) float32 {
 	p := c.Points
 	if len(p) == 0 {
@@ -128,12 +190,33 @@ func (c *Curve) At(tick float64) float32 {
 	return a.Value + (b.Value-a.Value)*float32((tick-a.Tick)/(b.Tick-a.Tick))
 }
 
+// Varies reports whether the curve moves anywhere strictly between two
+// ticks: a breakpoint inside, or a slope through them.
+func (c *Curve) Varies(from, to float64) bool {
+	p := c.Points
+	i := sort.Search(len(p), func(i int) bool { return p[i].Tick > from })
+	if i < len(p) && p[i].Tick < to {
+		return true
+	}
+	return c.At(from) != c.At(to-1e-9)
+}
+
+// LineDynamics is a line's dynamic level over the performance, on the
+// marks' scale (MIDI velocity / 127). Written is what the printed marks
+// and hairpins give; Effective is Written with the dynamics lane's
+// overrides laid over it, which is what plays.
+type LineDynamics struct {
+	Line               int
+	Written, Effective Curve
+}
+
 // Performance is a score as it sounds.
 type Performance struct {
 	Score *score.Score
 	// Notes are in onset order (then line, staff, voice, pitch).
 	Notes    []Note
 	Curves   []Curve
+	Dynamics []LineDynamics
 	Bars     []Bar
 	Beats    []Beat
 	Sections []SectionSpan
@@ -142,6 +225,10 @@ type Performance struct {
 	// Length is the whole performance in ticks; Seconds its duration.
 	Length  int64
 	Seconds float64
+	// InstrumentDependent marks the lines whose notes depend on their
+	// instrument (Options.Instruments): another instrument on one of them
+	// needs the score interpreted again; on any other line it does not.
+	InstrumentDependent []bool
 }
 
 // played is one bar in playing order.
@@ -155,6 +242,7 @@ type played struct {
 type rawNote struct {
 	at, dur score.Frac
 	velAt   score.Frac // where its dynamic is read (a grace's main note)
+	pitch   score.Pitch
 	midi    int
 	line    int
 	staff   int
@@ -163,12 +251,43 @@ type rawNote struct {
 	pass    int
 	grace   score.Grace
 	art     string
+	accent  float32 // from its first event's marks
+	// segAt and segDur are its last tied event, whose marks (segMarks)
+	// decide how long it really sounds.
+	segAt, segDur score.Frac
+	segMarks      []score.Mark
+	bends         []bendAt
+	// drop leaves it out of the performance; into, when not 0, is the
+	// note (index+1) it became part of (a slide's target).
+	drop bool
+	into int
+	// shaped notes have been cut by an ornament, a tremolo or a run, so
+	// the articulation and slur passes leave them alone.
+	shaped bool
 }
 
-// dynPoint is a dynamic mark in performance time.
-type dynPoint struct {
-	at  score.Frac
-	dyn score.Dynamic
+type bendAt struct {
+	at    score.Frac
+	semis float32
+}
+
+// vev is one event of a voice in playing order.
+type vev struct {
+	at, dur         score.Frac // the event's slot
+	mainAt, mainDur score.Frac // after on-beat grace notes
+	off             score.Frac // written offset in its bar
+	bar, pass       int
+	e               *score.Event
+	// notes are the rawNotes each of a chord's pitches started or carried
+	// on (a tie), as written.
+	notes []int
+}
+
+// voiceEvents is one voice's events in playing order.
+type voiceEvents struct {
+	line, staff, voice int
+	evs                []vev
+	end                score.Frac // where the voice's last event ends
 }
 
 // techPoint is technique text in performance time.
@@ -184,6 +303,8 @@ func Interpret(s *score.Score, o Options) (perf *Performance, err error) {
 	in.layout()
 	in.buildTempo()
 	in.walk()
+	in.dynamics()
+	in.express()
 	return in.finish(), nil
 }
 
@@ -194,140 +315,49 @@ type interp struct {
 	order  []played
 	tempo  *TempoMap
 
-	notes []rawNote
-	dyns  [][]dynPoint
-	techs [][]techPoint
+	notes   []rawNote
+	voices  []voiceEvents
+	techs   [][]techPoint
+	lines   []lineMarks
+	dyn     []lineCurves
+	instDep []bool
 }
 
 // maxPlayedBars caps the unrolled length against a runaway repeat.
 const maxPlayedBars = 1 << 16
 
-// layout unrolls the repeats into the bars in playing order.
-func (in *interp) layout() {
-	s := in.s
-	n := s.Measures()
-	in.starts = s.BarStarts()
-	reps := append([]score.Repeat(nil), s.Repeats...)
-	sort.SliceStable(reps, func(i, j int) bool { return reps[i].Start < reps[j].Start })
-	if in.o.NoRepeats {
-		reps = nil
-	}
-	count := make([]int, len(reps))
-	at := score.Frac{Num: 0, Den: 1}
-	for b := 1; b <= n && len(in.order) < maxPlayedBars; {
-		pass := 1
-		ri := -1
-		for i, r := range reps {
-			if b >= r.Start && b <= r.End && r.Start >= 1 && r.End <= n && r.End >= r.Start {
-				ri = i
-				pass = count[i] + 1
-				break
-			}
-		}
-		l := s.BarLength(b)
-		in.order = append(in.order, played{bar: b, pass: pass, start: at, length: l})
-		at = at.Add(l)
-		if ri >= 0 && b == reps[ri].End && count[ri]+1 < reps[ri].Plays() {
-			count[ri]++
-			b = reps[ri].Start
-			continue
-		}
-		b++
-	}
-}
-
-// writtenTempo is the tempo in force at a written position and whether it
-// is ramping there.
-func (in *interp) writtenTempo(pos score.Frac, marks []score.TempoMark, at []score.Frac) (float64, bool) {
-	if len(marks) == 0 {
-		return DefaultQPM, false
-	}
-	k := -1
-	for i := range marks {
-		if !pos.Less(at[i]) {
-			k = i
-		}
-	}
-	if k < 0 {
-		return marks[0].QuarterBPM(), false
-	}
-	q := marks[k].QuarterBPM()
-	if marks[k].Ramp && k+1 < len(marks) && at[k].Less(at[k+1]) {
-		q1 := marks[k+1].QuarterBPM()
-		t := pos.Sub(at[k]).Div(at[k+1].Sub(at[k])).Float()
-		return q + (q1-q)*t, true
-	}
-	return q, false
-}
-
-// buildTempo lays the tempo marks over the bars as played: a point at each
-// played bar's start with the tempo in force there (so a repeat jumping
-// back picks the right one up), and one at each mark inside a bar.
-func (in *interp) buildTempo() {
-	marks := append([]score.TempoMark(nil), in.s.Tempo...)
-	sort.SliceStable(marks, func(i, j int) bool { return score.PosLess(marks[i].At, marks[j].At) })
-	at := make([]score.Frac, len(marks))
-	for i, m := range marks {
-		at[i] = in.s.PosFrac(m.At, in.starts)
-	}
-	var pts []TempoPoint
-	push := func(tick float64, q float64, ramp bool) {
-		if n := len(pts); n > 0 {
-			last := &pts[n-1]
-			if last.Tick == tick {
-				last.QPM, last.Ramp = q, ramp
-				return
-			}
-			if !last.Ramp && !ramp && last.QPM == q {
-				return
-			}
-		}
-		pts = append(pts, TempoPoint{Tick: tick, QPM: q, Ramp: ramp})
-	}
-	for _, pb := range in.order {
-		ws := in.starts[pb.bar-1]
-		we := ws.Add(pb.length)
-		q, ramp := in.writtenTempo(ws, marks, at)
-		push(pb.start.TicksFloat(), q, ramp)
-		for i, m := range marks {
-			if ws.Less(at[i]) && at[i].Less(we) {
-				q, ramp := in.writtenTempo(at[i], marks, at)
-				push(pb.start.Add(at[i].Sub(ws)).TicksFloat(), q, ramp && m.Ramp)
-			}
-		}
-	}
-	in.tempo = NewTempoMap(pts)
-}
-
-// acciaccaturaMax is the most an acciaccatura takes before its beat: a
-// 32nd note of the score's time.
+// acciaccaturaMax is the most a grace note takes before its beat: a 32nd
+// note of the score's time.
 var acciaccaturaMax = score.F(1, 32)
 
 // walk visits every event of every voice in playing order, collecting
-// notes (ties merged, graces placed), dynamics and technique text.
+// notes (ties merged, graces placed) and the marks that act on a whole
+// line: dynamics, hairpins, technique text, pedal.
 func (in *interp) walk() {
 	s := in.s
-	in.dyns = make([][]dynPoint, len(s.Lines))
 	in.techs = make([][]techPoint, len(s.Lines))
+	in.lines = make([]lineMarks, len(s.Lines))
+	in.instDep = make([]bool, len(s.Lines))
 	for li, l := range s.Lines {
 		for si, st := range l.Staves {
 			for vi, v := range st.Voices {
-				in.walkVoice(li, si, vi, v)
+				in.voices = append(in.voices, in.walkVoice(li, si, vi, v))
 			}
 		}
-		sort.SliceStable(in.dyns[li], func(i, j int) bool { return in.dyns[li][i].at.Less(in.dyns[li][j].at) })
 		sort.SliceStable(in.techs[li], func(i, j int) bool { return in.techs[li][i].at.Less(in.techs[li][j].at) })
 	}
 }
 
 type graceNote struct {
-	ev   score.Event
+	ev   *score.Event
 	dur  score.Frac // written value, tuplets applied
 	bar  int
 	pass int
+	off  score.Frac
 }
 
-func (in *interp) walkVoice(li, si, vi int, v *score.Voice) {
+func (in *interp) walkVoice(li, si, vi int, v *score.Voice) voiceEvents {
+	ve := voiceEvents{line: li, staff: si, voice: vi}
 	// open maps a tied pitch to the note it extends.
 	open := map[int]int{}
 	var graces []graceNote
@@ -338,12 +368,14 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) {
 	// main note (the voice stops, or falls silent for a bar) play there, in
 	// time.
 	end := score.Frac{Num: 0, Den: 1}
+	hp := &hairpinState{}
 	flush := func() {
 		at := end
 		for _, g := range graces {
 			for _, nt := range g.ev.Notes {
-				in.notes = append(in.notes, rawNote{at: at, dur: g.dur, velAt: at, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
-					bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev)})
+				in.notes = append(in.notes, rawNote{at: at, dur: g.dur, velAt: at, pitch: nt.Pitch, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
+					bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev),
+					segAt: at, segDur: g.dur, segMarks: g.ev.Marks})
 			}
 			at = at.Add(g.dur)
 		}
@@ -358,23 +390,26 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) {
 			continue
 		}
 		offs, _ := m.Offsets(pb.length)
-		for ei, e := range m.Events {
+		for ei := range m.Events {
+			e := &m.Events[ei]
 			at := pb.start.Add(offs[ei])
-			in.collectMarks(li, e, at)
+			in.collectMarks(li, e, at, at.Add(m.Actual(*e, pb.length)), hp)
 			if e.Grace != score.NotGrace {
-				graces = append(graces, graceNote{ev: e, dur: m.Actual(score.Event{Dur: e.Dur, Tuplet: e.Tuplet}, pb.length), bar: pb.bar, pass: pb.pass})
+				graces = append(graces, graceNote{ev: e, dur: m.Actual(score.Event{Dur: e.Dur, Tuplet: e.Tuplet}, pb.length), bar: pb.bar, pass: pb.pass, off: offs[ei]})
 				continue
 			}
-			dur := m.Actual(e, pb.length)
+			dur := m.Actual(*e, pb.length)
 			end = at.Add(dur)
 			mainAt, mainDur := at, dur
 			if len(graces) > 0 {
 				mainAt, mainDur = in.placeGraces(graces, at, dur, li, si, vi, sounding)
 				graces = graces[:0]
 			}
+			x := vev{at: at, dur: dur, mainAt: mainAt, mainDur: mainDur, off: offs[ei], bar: pb.bar, pass: pb.pass, e: e}
 			if e.Kind != score.EventChord {
 				clear(open)
 				sounding = sounding[:0]
+				ve.evs = append(ve.evs, x)
 				continue
 			}
 			art := articulationWord(e)
@@ -385,49 +420,76 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) {
 				idx, tied := open[midi]
 				if tied {
 					// The tie carries the first note on to this one's end.
-					in.notes[idx].dur = mainAt.Add(mainDur).Sub(in.notes[idx].at)
+					n := &in.notes[idx]
+					n.dur = mainAt.Add(mainDur).Sub(n.at)
+					n.segAt, n.segDur, n.segMarks = mainAt, mainDur, e.Marks
 				} else {
-					in.notes = append(in.notes, rawNote{at: mainAt, dur: mainDur, velAt: at, midi: midi, line: li, staff: si, voice: vi,
-						bar: pb.bar, pass: pb.pass, art: art})
+					in.notes = append(in.notes, rawNote{at: mainAt, dur: mainDur, velAt: at, pitch: nt.Pitch, midi: midi, line: li, staff: si, voice: vi,
+						bar: pb.bar, pass: pb.pass, art: art, accent: accentOf(e), segAt: mainAt, segDur: mainDur, segMarks: e.Marks})
 					idx = len(in.notes) - 1
 				}
 				if nt.Tie {
 					next[midi] = idx
 				}
 				sounding = append(sounding, idx)
+				x.notes = append(x.notes, idx)
 			}
 			open = next
+			ve.evs = append(ve.evs, x)
 		}
 	}
 	flush()
+	ve.end = end
+	hp.close(in, li, end)
+	return ve
 }
 
 // placeGraces adds a group of grace notes before the event at `at` (length
 // dur) and returns where the main note now starts and how long it is.
 //
-// Appoggiaturas lean on the beat: they take their written value from the
-// main note, at most half of it. Acciaccaturas are crushed in just before
-// the beat — each a 32nd at most — taking the time from the notes still
+// On the beat, graces lean on it: they take their written value from the
+// main note, at most half of it. Before the beat they are crushed in just
+// ahead of it — each a 32nd at most — taking the time from the notes still
 // sounding into it; at the very top of the score there is nothing to take
-// from, so they go on the beat instead.
+// from, so they go on the beat instead. Which it is: an "on_beat" or
+// "before_beat" mark on the group, else the score's Playback.Graces, else
+// appoggiaturas on the beat and acciaccaturas before it.
 func (in *interp) placeGraces(gs []graceNote, at, dur score.Frac, li, si, vi int, sounding []int) (score.Frac, score.Frac) {
 	app := false
+	forced, onBeat := false, false
 	for _, g := range gs {
 		if g.ev.Grace == score.Appoggiatura {
 			app = true
+		}
+		if g.ev.Has("on_beat") {
+			forced, onBeat = true, true
+		} else if g.ev.Has("before_beat") {
+			forced, onBeat = true, false
+		}
+	}
+	if !forced {
+		switch in.s.Playback.Graces {
+		case score.GraceOn:
+			onBeat = true
+		case score.GraceBefore:
+			onBeat = false
+		default:
+			onBeat = app
 		}
 	}
 	var lens []score.Frac
 	total := score.Frac{Num: 0, Den: 1}
 	for _, g := range gs {
 		l := g.dur
-		if !app {
+		if !onBeat {
 			l = score.MinFrac(l, acciaccaturaMax)
 		}
 		lens = append(lens, l)
 		total = total.Add(l)
 	}
-	onBeat := app || at.Less(total)
+	if at.Less(total) {
+		onBeat = true
+	}
 	if onBeat {
 		if limit := dur.Div(score.Whole(2)); limit.Less(total) {
 			// Squeeze the group into half the main note.
@@ -445,14 +507,18 @@ func (in *interp) placeGraces(gs []graceNote, at, dur score.Frac, li, si, vi int
 			n := &in.notes[idx]
 			if n.at.Less(start) && start.Less(n.at.Add(n.dur)) {
 				n.dur = start.Sub(n.at)
+				if n.segAt.Less(start) {
+					n.segDur = start.Sub(n.segAt)
+				}
 			}
 		}
 	}
 	t := start
 	for i, g := range gs {
 		for _, nt := range g.ev.Notes {
-			in.notes = append(in.notes, rawNote{at: t, dur: lens[i], velAt: at, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
-				bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev)})
+			in.notes = append(in.notes, rawNote{at: t, dur: lens[i], velAt: at, pitch: nt.Pitch, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
+				bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev),
+				segAt: t, segDur: lens[i], segMarks: g.ev.Marks})
 		}
 		t = t.Add(lens[i])
 	}
@@ -462,14 +528,31 @@ func (in *interp) placeGraces(gs []graceNote, at, dur score.Frac, li, si, vi int
 	return at, dur
 }
 
-// collectMarks notes an event's dynamics and technique text for its line.
-func (in *interp) collectMarks(li int, e score.Event, at score.Frac) {
+// collectMarks notes an event's line-wide marks: dynamics, hairpins,
+// technique text, pedal. end is where the event ends.
+func (in *interp) collectMarks(li int, e *score.Event, at, end score.Frac, hp *hairpinState) {
+	lm := &in.lines[li]
 	for _, mk := range e.Marks {
 		if d, ok := score.Dynamics[mk.Name]; ok {
-			in.dyns[li] = append(in.dyns[li], dynPoint{at: at, dyn: d})
+			lm.dyns = append(lm.dyns, dynMark{at: at, name: mk.Name, dyn: d})
 		}
-		if mk.Name == "tech" && mk.Value != "" {
-			in.techs[li] = append(in.techs[li], techPoint{at: at, text: mk.Value})
+		switch mk.Name {
+		case "tech":
+			if mk.Value != "" {
+				in.techs[li] = append(in.techs[li], techPoint{at: at, text: mk.Value})
+			}
+		case "cresc", "dim":
+			dir := 1
+			if mk.Name == "dim" {
+				dir = -1
+			}
+			hp.start(in, li, at, dir)
+		case "hairpin_end":
+			hp.end(in, li, end)
+		case "ped":
+			lm.pedal = append(lm.pedal, pedalMark{at: at, down: true})
+		case "ped_end":
+			lm.pedal = append(lm.pedal, pedalMark{at: end})
 		}
 	}
 }
@@ -480,77 +563,123 @@ var articulationWords = map[string]string{
 	"marc": "marcato", "legato": "legato", "portato": "portato", "trem": "tremolo",
 }
 
-func articulationWord(e score.Event) string {
+func articulationWord(e *score.Event) string {
 	for _, m := range e.Marks {
 		if w, ok := articulationWords[m.Name]; ok {
 			return w
 		}
 	}
+	// An sfz asks for an instrument's accented attack when it has one.
+	for _, m := range e.Marks {
+		if d, ok := score.Dynamics[m.Name]; ok && d.Momentary {
+			return m.Name
+		}
+	}
 	return ""
 }
 
-// techniqueResets are the words that go back to the instrument's own way
-// of playing.
-var techniqueResets = map[string]bool{"arco": true, "ord.": true, "ord": true, "normal": true, "nat.": true, "senza sord.": true}
+// accents are how much louder an articulation starts a note.
+var accents = map[string]float32{"acc": 1.25, "marc": 1.4, "ten": 1.05}
 
-// velocity is the level at x on a line: the last dynamic at or before it,
-// or that dynamic's momentary level when it is exactly there.
-func velocity(pts []dynPoint, x score.Frac) float32 {
-	level := score.Dynamics[score.DefaultDynamic].Level
-	for _, p := range pts {
-		if x.Less(p.at) {
-			break
-		}
-		if p.at.Eq(x) {
-			level = p.dyn.Level
-			continue
-		}
-		switch {
-		case p.dyn.After > 0:
-			level = p.dyn.After
-		case p.dyn.Momentary:
-			// sfz accents its own notes only; the level carries on.
-		default:
-			level = p.dyn.Level
+func accentOf(e *score.Event) float32 {
+	a := float32(1)
+	for _, m := range e.Marks {
+		if k, ok := accents[m.Name]; ok {
+			a *= k
 		}
 	}
-	return level
+	return a
 }
 
+// techFamilies group technique words that replace each other: a word
+// stays in force until another of its family (or "ord.") replaces it, so
+// "con sord." survives "pizz." and "arco". The words that end a family's
+// technique map to "".
+var techFamilies = map[string]string{
+	"pizz.": "pizz", "pizz": "pizz", "pizzicato": "pizz", "arco": "pizz",
+	"con sord.": "sord", "con sordino": "sord", "sord.": "sord", "mute": "sord", "muted": "sord",
+	"senza sord.": "sord", "senza sordino": "sord", "open": "sord",
+	"trem.": "trem", "trem": "trem", "tremolo": "trem", "non trem.": "trem",
+}
+
+// techniqueEnds are the words that end their family's technique.
+var techniqueEnds = map[string]bool{"arco": true, "senza sord.": true, "senza sordino": true, "open": true, "non trem.": true}
+
+// techniqueResets go back to the instrument's own way of playing in every
+// family.
+var techniqueResets = map[string]bool{"ord.": true, "ord": true, "normal": true, "norm.": true, "nat.": true}
+
 // technique is the technique text in force at x on a line, "" for the
-// instrument's own way of playing.
+// instrument's own way of playing: the most recent word still in force.
 func technique(pts []techPoint, x score.Frac) string {
-	t := ""
+	type live struct {
+		family, word string
+	}
+	var on []live
 	for _, p := range pts {
 		if x.Less(p.at) {
 			break
 		}
-		t = p.text
-		if techniqueResets[t] {
-			t = ""
+		w := p.text
+		if techniqueResets[w] {
+			on = on[:0]
+			continue
+		}
+		fam, ok := techFamilies[w]
+		if !ok {
+			fam = "word:" + w
+		}
+		for i := 0; i < len(on); i++ {
+			if on[i].family == fam {
+				on = append(on[:i], on[i+1:]...)
+				i--
+			}
+		}
+		if !techniqueEnds[w] {
+			on = append(on, live{fam, w})
 		}
 	}
-	return t
+	if len(on) == 0 {
+		return ""
+	}
+	return on[len(on)-1].word
+}
+
+// resolve follows a note that became part of another (a slide's target)
+// to the one that sounds.
+func (in *interp) resolve(i int) int {
+	for k := 0; k < 64 && in.notes[i].into != 0; k++ {
+		i = in.notes[i].into - 1
+	}
+	return i
 }
 
 func (in *interp) finish() *Performance {
 	s := in.s
-	p := &Performance{Score: s, Tempo: in.tempo}
+	p := &Performance{Score: s, Tempo: in.tempo, InstrumentDependent: in.instDep}
 	sec := func(f score.Frac) float64 { return in.tempo.Seconds(f.TicksFloat()) }
 
 	p.Notes = make([]Note, 0, len(in.notes))
-	for _, r := range in.notes {
-		if r.dur.Sign() <= 0 {
+	for i := range in.notes {
+		r := &in.notes[i]
+		if r.drop || r.dur.Sign() <= 0 {
 			continue
 		}
 		end := r.at.Add(r.dur)
+		vel, acc := in.velocity(r)
 		n := Note{
 			Tick: r.at.Ticks(), Start: sec(r.at), End: sec(end),
-			MIDI: r.midi, Velocity: velocity(in.dyns[r.line], r.velAt),
+			MIDI: r.midi, Velocity: vel, Accent: acc,
 			Line: r.line, Staff: r.staff, Voice: r.voice, Bar: r.bar, Pass: r.pass, Grace: r.grace,
 			Articulation: r.art, Technique: technique(in.techs[r.line], r.velAt),
 		}
 		n.Ticks = end.Ticks() - n.Tick
+		if len(r.bends) > 0 {
+			n.Bend = make([]BendPoint, len(r.bends))
+			for k, b := range r.bends {
+				n.Bend[k] = BendPoint{Tick: b.at.TicksFloat(), Semis: b.semis}
+			}
+		}
 		p.Notes = append(p.Notes, n)
 	}
 	sort.SliceStable(p.Notes, func(i, j int) bool {
@@ -606,6 +735,11 @@ func (in *interp) finish() *Performance {
 
 	in.sections(p)
 	in.curves(p)
+	for li, d := range in.dyn {
+		p.Dynamics = append(p.Dynamics, LineDynamics{Line: li,
+			Written:   Curve{Line: li, Target: "dynamics", Points: d.written.ticks()},
+			Effective: Curve{Line: li, Target: "dynamics", Points: d.effective.ticks()}})
+	}
 	return p
 }
 
@@ -751,4 +885,14 @@ func (p *Performance) BarTick(bar int) int64 {
 // FirstNoteAt is the index of the first note starting at or after sec.
 func (p *Performance) FirstNoteAt(sec float64) int {
 	return sort.Search(len(p.Notes), func(i int) bool { return p.Notes[i].Start >= sec })
+}
+
+// DynamicsOf is a line's dynamics, nil when the line has none (no line).
+func (p *Performance) DynamicsOf(line int) *LineDynamics {
+	for i := range p.Dynamics {
+		if p.Dynamics[i].Line == line {
+			return &p.Dynamics[i]
+		}
+	}
+	return nil
 }

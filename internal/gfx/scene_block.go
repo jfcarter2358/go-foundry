@@ -114,9 +114,31 @@ type SceneBlock struct {
 	FogVolColor      [SceneMaxFogVolumes][4]float32    // 3472
 	FogVolDensity    [SceneMaxFogVolumes][4]float32    // 3600
 	FogVolMaxOpacity [SceneMaxFogVolumes][4]float32    // 3728
+
+	// ---- atmosphere: height fog, aerial perspective, sun in-scattering ----
+	FogAerialColor   [3]float32 // 3856
+	FogAerialDensity float32    // 3868
+	FogAerialTint    [3]float32 // 3872
+	FogAerialBase    float32    // 3884
+	FogHeightColor   [3]float32 // 3888
+	FogHeightDensity float32    // 3900
+	FogSunDir        [3]float32 // 3904
+	FogHeightBase    float32    // 3916
+	FogSunColor      [3]float32 // 3920
+	FogHeightFalloff float32    // 3932
+	FogAerialFalloff float32    // 3936
+	FogSunG          float32    // 3940
+	FogSkyHaze       float32    // 3944
+	FogSkyDistance   float32    // 3948
+	FogAtmos         int32      // 3952
+
+	// ---- HDR (gfx/hdr.go; world.Tonemap) ----
+	HdrMode     int32   // 3956: 1 in a scene-target frame of a level that asks
+	HdrExposure float32 // 3960
+	_           int32   // 3964: std140 rounds the block up to 16
 }
 
-// SceneBlockSize is the block's size in bytes: 3856.
+// SceneBlockSize is the block's size in bytes: 3968.
 const SceneBlockSize = int(unsafe.Sizeof(SceneBlock{}))
 
 // SceneBuffer is one SceneBlock on the CPU and the GL buffer it is sent to.

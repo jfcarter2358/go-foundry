@@ -36,6 +36,7 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/material"
 	"foundry/internal/model"
+	"foundry/internal/procgen"
 	"foundry/internal/script"
 	"foundry/internal/texture"
 	"foundry/internal/world"
@@ -247,6 +248,15 @@ func claudeApplyFileChange(path string) {
 				claudeNoteConflict(abs)
 				return
 			}
+		}
+		claudeReload.reloaded++
+
+	case ext == procgen.Ext:
+		// A generator document: the Generator editor re-reads it if it holds
+		// it unedited (editor_generator_claude.go).
+		if !claudeGeneratorFileChanged(abs) {
+			claudeNoteConflict(abs)
+			return
 		}
 		claudeReload.reloaded++
 

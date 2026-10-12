@@ -56,6 +56,13 @@ var goldenCases = []goldenCase{
 	{"transposing", "transposing", engrave.Options{}},
 	{"transposing_concert", "transposing", engrave.Options{Concert: true}},
 	{"percussion", "percussion", engrave.Options{}},
+	{"dynamics", "dynamics", engrave.Options{}},
+	{"articulations", "articulations", engrave.Options{}},
+	{"slurs", "slurs", engrave.Options{}},
+	{"slurs_from_bar_6", "slurs", engrave.Options{From: 6, To: 8}},
+	{"lines", "lines", engrave.Options{}},
+	{"form", "form", engrave.Options{}},
+	{"voices4", "voices4", engrave.Options{}},
 	{"demo_bars_9_12", "../../../../resources/sounds/score_demo", engrave.Options{From: 9, To: 12, BarNumbers: 1}},
 }
 

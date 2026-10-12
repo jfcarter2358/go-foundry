@@ -7,7 +7,9 @@ package app
 // foliage distance and shadows (gfx.FoliageDistance, gfx.FoliageShadows), the
 // Nanite LOD threshold (gfx.NaniteLODError), the Nanite page pool's size
 // (gfx.NaniteStreamPoolMB), the live GI tier (gfx.GIQuality) and the
-// anti-aliasing mode and TAA sharpening (gfx.AntiAliasMode, gfx.TAASharpen). The
+// anti-aliasing mode and TAA sharpening (gfx.AntiAliasMode, gfx.TAASharpen),
+// and the texture memory settings (gfx.TextureCompression,
+// gfx.TextureSkipMips). The
 // file is graphics.yaml in the writable state directory, a missing file means
 // defaults, a malformed one is logged and ignored, and a script's change is
 // saved once it has settled (saveSettingsWhenSettled).
@@ -40,6 +42,11 @@ type rawGraphics struct {
 	AntiAliasing *string `yaml:"anti_aliasing,omitempty"`
 	// TAASharpen is gfx.TAASharpen, 0-1.
 	TAASharpen *float32 `yaml:"taa_sharpen,omitempty"`
+	// TextureCompression is gfx.TextureCompression; TextureSkipMips is
+	// gfx.TextureSkipMips, 0-3. FOUNDRY_TEXTURE_COMPRESSION and
+	// FOUNDRY_TEXTURE_SKIP_MIPS, when set, outrank them for the run.
+	TextureCompression *bool `yaml:"texture_compression,omitempty"`
+	TextureSkipMips    *int  `yaml:"texture_skip_mips,omitempty"`
 }
 
 // loadGraphicsSettings reads the saved graphics settings over the defaults.
@@ -74,6 +81,7 @@ func applyGraphicsSettings(data []byte) error {
 	}
 	if raw.NaniteStreamPoolMB != nil {
 		gfx.NaniteStreamPoolMB = min(max(*raw.NaniteStreamPoolMB, gfx.NaniteStreamPoolMBMin), gfx.NaniteStreamPoolMBMax)
+		gfx.NaniteStreamPoolChosen = true
 	}
 	if raw.GIQuality != nil {
 		if q, ok := gfx.ParseGIQuality(*raw.GIQuality); ok {
@@ -93,6 +101,12 @@ func applyGraphicsSettings(data []byte) error {
 	if raw.TAASharpen != nil {
 		gfx.TAASharpen = min(max(*raw.TAASharpen, 0), 1)
 	}
+	if raw.TextureCompression != nil && !gfx.TextureCompressionForced {
+		gfx.TextureCompression = *raw.TextureCompression
+	}
+	if raw.TextureSkipMips != nil && !gfx.TextureSkipMipsForced {
+		gfx.TextureSkipMips = gfx.ClampTextureSkipMips(*raw.TextureSkipMips)
+	}
 	return nil
 }
 
@@ -105,6 +119,8 @@ func marshalGraphicsSettings() ([]byte, error) {
 	sharpen := gfx.TAASharpen
 	raw := rawGraphics{SmoothLighting: &smooth, FoliageDistance: &dist, FoliageShadows: &shadows, NaniteLODError: &lod,
 		NaniteStreamPoolMB: &pool, TAASharpen: &sharpen}
+	texCompress, skipMips := gfx.TextureCompression, gfx.TextureSkipMips
+	raw.TextureCompression, raw.TextureSkipMips = &texCompress, &skipMips
 	// The mode likewise, only once chosen.
 	if gfx.AntiAliasModeChosen {
 		aa := gfx.AntiAliasMode.String()

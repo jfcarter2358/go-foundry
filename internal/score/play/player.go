@@ -113,7 +113,14 @@ type activeNote struct {
 	id   tracker.NoteID
 	end  float64
 	line int
+	// note indexes the program's notes; -1 for a note the program does
+	// not have (another program came in without it).
+	note int
 }
+
+// bendStep is how often, in frames, a bending note's pitch is set inside a
+// block: 2.5 ms at 48 kHz, fine enough that a slide is a curve, not steps.
+const bendStep = 120
 
 // LineMix is a line's mixer strip as the editor's faders set it: the
 // score's own Volume, Pan, SendA and SendB, overridden live.
@@ -528,11 +535,52 @@ func (p *Player) install(prog *Program) {
 		at := prog.Perf.Tempo.Seconds(math.Min(tick, float64(prog.Perf.Length)))
 		p.reindex(at)
 		for k := 0; k < p.nActive; k++ {
-			if p.active[k].line >= len(s.Lines) {
-				p.eng.Kill(p.active[k].id)
+			a := &p.active[k]
+			if a.line >= len(s.Lines) {
+				p.eng.Kill(a.id)
+				a.note = -1
+				continue
+			}
+			// The same note in the new performance (an edit elsewhere, a
+			// dynamics-lane drag) goes on following its line there; one
+			// the edit changed or took out keeps the level it has.
+			a.note = sameNote(old.Perf, prog.Perf, a.note)
+			if a.note >= 0 && prog.follow[a.note] == 0 {
+				// A note that need not move takes its new level once, on
+				// an instrument that holds its notes (a piano's keeps the
+				// level it started at).
+				if in := prog.insts[a.line]; in != nil && in.Sustains() {
+					p.eng.SetNoteControls(a.id, VelocityGain(prog.Perf.Notes[a.note].Velocity), 0, 0)
+				}
 			}
 		}
 	}
+}
+
+// sameNote is the index in perf b of perf a's note i — the note at the
+// same tick, on the same line, staff, voice and pitch — or -1.
+func sameNote(a, b *interpret.Performance, i int) int {
+	if i < 0 || i >= len(a.Notes) {
+		return -1
+	}
+	n := &a.Notes[i]
+	// Notes are in onset order: the first at n's tick, then along it.
+	lo, hi := 0, len(b.Notes)
+	for lo < hi {
+		m := int(uint(lo+hi) >> 1)
+		if b.Notes[m].Tick < n.Tick {
+			lo = m + 1
+		} else {
+			hi = m
+		}
+	}
+	for j := lo; j < len(b.Notes) && b.Notes[j].Tick == n.Tick; j++ {
+		c := &b.Notes[j]
+		if c.Line == n.Line && c.Staff == n.Staff && c.Voice == n.Voice && c.MIDI == n.MIDI && c.Pass == n.Pass {
+			return j
+		}
+	}
+	return -1
 }
 
 // scoreMute is whether the score itself mutes a line.
@@ -748,6 +796,7 @@ func (p *Player) Render(dst []float32, frames, rate int) bool {
 	}
 	p.rampControls(float64(frames) / float64(rate))
 	if p.playing {
+		p.noteControls(frames)
 		p.schedule(frames)
 	}
 	more := p.eng.Render(out, frames, rate)
@@ -933,7 +982,7 @@ func (p *Player) cueOns(bound, fpos float64) {
 		id := p.eng.NewNoteID()
 		p.cue(tracker.Cue{At: at, Kind: tracker.CueNoteOn, Note: id, Strip: n.Line, Inst: in, Pitch: EnginePitch(n.MIDI, n.Cents),
 			Opts: tracker.NoteOptions{Velocity: n.Velocity, Volume: VelocityGain(n.Velocity), Articulation: prog.arts[i], Release: prog.release[n.Line]}})
-		p.active[p.nActive] = activeNote{id: id, end: n.End, line: n.Line}
+		p.active[p.nActive] = activeNote{id: id, end: n.End, line: n.Line, note: i}
 		p.nActive++
 	}
 }
@@ -952,6 +1001,8 @@ func (p *Player) cue(c tracker.Cue) {
 		p.eng.NoteOff(c.Note)
 	case tracker.CueKill:
 		p.eng.Kill(c.Note)
+	case tracker.CueNoteControl:
+		p.eng.SetNoteControls(c.Note, c.Volume, c.Bend, c.Pan)
 	}
 }
 
@@ -1055,6 +1106,53 @@ func (p *Player) rampControls(dt float64) {
 			}
 		}
 		p.eng.SetStrip(li, c)
+	}
+}
+
+// noteControls moves the sounding notes that follow something: a held
+// note's level along its line's dynamics (set once a block, which the
+// engine ramps), a slide's pitch (cued every bendStep frames through the
+// block).
+func (p *Player) noteControls(frames int) {
+	prog := p.prog
+	if p.nActive == 0 {
+		return
+	}
+	tick := prog.Perf.Tempo.Tick(p.sec)
+	for k := 0; k < p.nActive; k++ {
+		a := &p.active[k]
+		if a.note < 0 || prog.follow[a.note] == 0 {
+			continue
+		}
+		f := prog.follow[a.note]
+		n := &prog.Perf.Notes[a.note]
+		vol := VelocityGain(n.Velocity)
+		if f&followLevel != 0 {
+			vol = prog.levelAt(a.note, tick)
+		}
+		if f&followBend == 0 {
+			p.eng.SetNoteControls(a.id, vol, 0, 0)
+			continue
+		}
+		if b := n.Bend; tick >= b[len(b)-1].Tick || prog.Perf.Tempo.Tick(p.sec+float64(frames)/float64(p.rate)*p.scale) <= b[0].Tick {
+			// Before the slide or past it, the pitch holds this block.
+			p.eng.SetNoteControls(a.id, vol, n.BendAt(tick), 0)
+			continue
+		}
+		for at := 0; at < frames; at += bendStep {
+			t := tick
+			if at > 0 {
+				t = prog.Perf.Tempo.Tick(p.sec + float64(at)/float64(p.rate)*p.scale)
+			}
+			v := vol
+			if f&followLevel != 0 && at > 0 {
+				v = prog.levelAt(a.note, t)
+			}
+			p.cue(tracker.Cue{At: at, Kind: tracker.CueNoteControl, Note: a.id, Volume: v, Bend: n.BendAt(t)})
+			if t >= n.Bend[len(n.Bend)-1].Tick {
+				break // past the slide: the pitch holds from here
+			}
+		}
 	}
 }
 

@@ -41,6 +41,7 @@ import (
 	"foundry/internal/material"
 	"foundry/internal/model"
 	"foundry/internal/particle"
+	"foundry/internal/procgen"
 	"foundry/internal/score"
 	"foundry/internal/script"
 	"foundry/internal/tracker"
@@ -127,6 +128,7 @@ func claudeReferenceTools() []claude.Tool {
 			},
 		},
 		claudeDocsTool(),
+		claudeGeneratorTool(),
 	}
 }
 
@@ -281,6 +283,7 @@ func claudeAssetKinds() []struct {
 		{"biomes", world.BiomesDir, world.BiomeExt},
 		{"sounds", func() string { return fileutil.ResolveAssetPath(audio.SoundsDirName) }, ".wav"},
 		{"levels", levelio.LevelsDir, ".yaml"},
+		{"generators", procgen.GeneratorsDir, procgen.Ext},
 	}
 }
 

@@ -16,15 +16,8 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
-	"sync"
 
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/gobold"
-	"golang.org/x/image/font/gofont/gobolditalic"
-	"golang.org/x/image/font/gofont/goitalic"
-	"golang.org/x/image/font/gofont/goregular"
-	"golang.org/x/image/font/opentype"
-	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/image/vector"
 
@@ -190,44 +183,8 @@ func bounds4(p [4][2]float64) (x0, y0, x1, y1 float64) {
 
 // ---------- text ----------
 
-var (
-	textOnce  sync.Once
-	textFonts [4]*sfnt.Font
-	faceMu    sync.Mutex
-	faces     = map[faceKey]font.Face{}
-)
-
-type faceKey struct {
-	f  engrave.TextFont
-	px int
-}
-
-func textFace(f engrave.TextFont, px float64) font.Face {
-	textOnce.Do(func() {
-		for i, ttf := range [][]byte{goregular.TTF, goitalic.TTF, gobold.TTF, gobolditalic.TTF} {
-			textFonts[i], _ = opentype.Parse(ttf)
-		}
-	})
-	k := faceKey{f, int(math.Round(px * 4))}
-	faceMu.Lock()
-	defer faceMu.Unlock()
-	if fc, ok := faces[k]; ok {
-		return fc
-	}
-	src := textFonts[int(f)%len(textFonts)]
-	if src == nil {
-		return nil
-	}
-	fc, err := opentype.NewFace(src, &opentype.FaceOptions{Size: float64(k.px) / 4, DPI: 72, Hinting: font.HintingNone})
-	if err != nil {
-		return nil
-	}
-	faces[k] = fc
-	return fc
-}
-
 func (r *renderer) text(it *engrave.Item, c color.RGBA) {
-	fc := textFace(it.Font, it.Size*r.s)
+	fc := engrave.TextFace(it.Font, it.Size*r.s)
 	if fc == nil {
 		return
 	}

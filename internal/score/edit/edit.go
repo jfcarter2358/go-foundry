@@ -464,6 +464,11 @@ func (b bar) replace(m score.Measure, ctx int, a, z score.Frac, seq piece) (scor
 					return m, -1, err
 				}
 				put(pc)
+			} else if on.Eq(a) && ea.Eq(a) {
+				// What is written at a note's onset takes its grace
+				// notes: they lean on whatever is there (how grace notes
+				// are entered — before a rest, then the note over it).
+				out = append(out, cloneAll(ev[i:j])...)
 			}
 			region()
 			if ez.Less(end) {

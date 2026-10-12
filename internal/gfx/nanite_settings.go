@@ -51,5 +51,6 @@ func SetNaniteStreamPoolMB(v int) {
 		return
 	}
 	NaniteStreamPoolMB = v
+	NaniteStreamPoolChosen = true
 	GraphicsSettingsChanged = true
 }

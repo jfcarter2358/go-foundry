@@ -54,12 +54,50 @@ var Dynamics = map[string]Dynamic{
 	"rfz": {Level: 104.0 / 127, Momentary: true}, "rf": {Level: 104.0 / 127, Momentary: true},
 	"fp": {Level: 96.0 / 127, After: 48.0 / 127}, "sfp": {Level: 112.0 / 127, After: 48.0 / 127},
 	"sfpp": {Level: 112.0 / 127, After: 32.0 / 127},
+	// niente is nothing: where a diminuendo goes to, or a crescendo
+	// starts from.
+	"niente": {Level: 0},
+}
+
+// DynamicSteps are the plain dynamics from softest to loudest: what an
+// open-ended hairpin moves one step along.
+var DynamicSteps = []string{"niente", "pppp", "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "ffff"}
+
+// StepDynamic is the level one step louder (dir > 0) or softer than
+// level: the nearest step's neighbour, clamped at the ends.
+func StepDynamic(level float32, dir int) float32 {
+	k := 0
+	for i, n := range DynamicSteps {
+		if d, b := Dynamics[n].Level-level, Dynamics[DynamicSteps[k]].Level-level; d*d < b*b {
+			k = i
+		}
+	}
+	if dir > 0 {
+		k = min(k+1, len(DynamicSteps)-1)
+	} else if dir < 0 {
+		k = max(k-1, 0)
+	}
+	return Dynamics[DynamicSteps[k]].Level
 }
 
 // DefaultDynamic is the level a line plays at before its first dynamic.
 const DefaultDynamic = "mf"
 
-// markKinds are the known names other than dynamics.
+// markKinds are the known names other than dynamics. What each plays as
+// is internal/score/interpret's; the values they take:
+//
+//	tr=#, mord=b, turn=#/b    the auxiliary note's accidental (a turn's
+//	                          upper/lower); none follows the key
+//	trem=3                    tremolo strokes on one note, 1..4 (3 when
+//	                          bare: unmeasured)
+//	trem2=3                   a two-note tremolo between this event and the
+//	                          next, strokes 1..4
+//	ferm=short|long|verylong  a fermata's length
+//	arp=down                  an arpeggio rolled from the top
+//	gliss=wavy                a glissando to the next note drawn wavy
+//	cresc="poco a poco"       a hairpin; a value prints as text with dashes
+//	                          instead ("text" prints "cresc."/"dim.")
+//	on_beat, before_beat      a grace group's timing, over Playback.Graces
 var markKinds = map[string]MarkKind{
 	// articulations
 	"stacc": MarkArticulation, "staccmo": MarkArticulation, "acc": MarkArticulation,
@@ -67,12 +105,13 @@ var markKinds = map[string]MarkKind{
 	"legato": MarkArticulation,
 	// ornaments
 	"tr": MarkOrnament, "mord": MarkOrnament, "imord": MarkOrnament, "turn": MarkOrnament,
-	"iturn": MarkOrnament, "trem": MarkOrnament,
+	"iturn": MarkOrnament, "trem": MarkOrnament, "trem2": MarkOrnament,
 	// notation only
 	"ferm": MarkNotation, "arp": MarkNotation, "up": MarkNotation, "down": MarkNotation,
+	"on_beat": MarkNotation, "before_beat": MarkNotation,
 	// text
 	"text": MarkText, "expr": MarkText, "tech": MarkTechnique,
-	// spanners: starts and ends (playback in a later phase)
+	// spanners: starts and ends
 	"cresc": MarkSpanner, "dim": MarkSpanner, "hairpin_end": MarkSpanner,
 	"slur": MarkSpanner, "slur_end": MarkSpanner, "gliss": MarkSpanner,
 	"8va": MarkSpanner, "8vb": MarkSpanner, "15ma": MarkSpanner, "15mb": MarkSpanner, "ottava_end": MarkSpanner,
@@ -103,4 +142,74 @@ func (e *Event) Has(name string) bool {
 		}
 	}
 	return false
+}
+
+// FermataScale is how much longer a fermata holds than written, by its
+// value: short 1.5, plain 2, long 3, verylong 4.
+func FermataScale(value string) float64 {
+	switch value {
+	case "short":
+		return 1.5
+	case "long":
+		return 3
+	case "verylong":
+		return 4
+	}
+	return 2
+}
+
+// FermataKinds are the values a fermata takes ("" aside).
+var FermataKinds = []string{"short", "long", "verylong"}
+
+// OrnamentAccidentals reads an ornament's value — "#", "b/n", "/#" — into
+// the alterations it asks of its upper and lower auxiliary notes; ok is
+// false for a value that is not one.
+func OrnamentAccidentals(value string) (upper, lower int, hasUpper, hasLower, ok bool) {
+	up, low, slash := value, "", false
+	for i := 0; i < len(value); i++ {
+		if value[i] == '/' {
+			up, low, slash = value[:i], value[i+1:], true
+			break
+		}
+	}
+	read := func(t string) (int, bool) {
+		switch t {
+		case "#":
+			return 1, true
+		case "x", "##":
+			return 2, true
+		case "b":
+			return -1, true
+		case "bb":
+			return -2, true
+		case "n":
+			return 0, true
+		}
+		return 0, false
+	}
+	if up != "" {
+		if upper, ok = read(up); !ok {
+			return
+		}
+		hasUpper = true
+	}
+	if slash && low != "" {
+		if lower, ok = read(low); !ok {
+			return
+		}
+		hasLower = true
+	}
+	return upper, lower, hasUpper, hasLower, true
+}
+
+// TremoloStrokes is a tremolo mark's strokes, 1..4 (3 when bare), and
+// whether the value is one.
+func TremoloStrokes(value string) (int, bool) {
+	switch value {
+	case "":
+		return 3, true
+	case "1", "2", "3", "4":
+		return int(value[0] - '0'), true
+	}
+	return 0, false
 }

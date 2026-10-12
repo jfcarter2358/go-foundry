@@ -126,8 +126,52 @@ func rms(d []float32) float64 {
 // scoreGolden are hashes of the shipped scores rendered whole; a change
 // means the scores sound different (a deliberate change re-captures them
 // with SCORE_GOLDEN_PRINT=1).
+//
+// Phase 3 re-captured score_demo: its last bar's fermatas now hold (the
+// demo with them taken out still renders to phase 0's 4a6f89d0e9c4c939;
+// TestDemoWithoutFermatasIsUnchanged).
 var scoreGolden = map[string]string{
-	"score_demo": "4a6f89d0e9c4c939",
+	"score_demo": "54bff7c5ac84c913",
+}
+
+// The expression passes change nothing a score does not ask for: the demo
+// without its fermatas (the only phase 3 marks it has) sounds exactly as
+// it did before them.
+func TestDemoWithoutFermatasIsUnchanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("renders the demo")
+	}
+	useRepoResources(t)
+	s, err := score.Load("score_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = s.Clone()
+	for _, l := range s.Lines {
+		for _, st := range l.Staves {
+			for _, v := range st.Voices {
+				for bi := range v.Measures {
+					for ei := range v.Measures[bi].Events {
+						e := &v.Measures[bi].Events[ei]
+						var keep []score.Mark
+						for _, m := range e.Marks {
+							if m.Name != "ferm" {
+								keep = append(keep, m)
+							}
+						}
+						e.Marks = keep
+					}
+				}
+			}
+		}
+	}
+	data, _, err := play.RenderScore(s, play.RenderOptions{Tail: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tracker.Hash(data); got != "4a6f89d0e9c4c939" {
+		t.Errorf("the demo without fermatas hashes %s, want phase 0's 4a6f89d0e9c4c939", got)
+	}
 }
 
 func TestShippedScoresGolden(t *testing.T) {
@@ -200,7 +244,7 @@ func TestFmtRewritesToCanonical(t *testing.T) {
 }
 
 // The interpreter agrees with inspect about how long the demo is: the
-// tempo map, the ramp and the repeat.
+// tempo map, the ramp, the repeat and the fermata.
 func TestScoreDemoLength(t *testing.T) {
 	useRepoResources(t)
 	s, _ := score.Load("score_demo")
@@ -208,9 +252,10 @@ func TestScoreDemoLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 18 bars at 92 (4 beats a bar), the rit. bar from 92 to 66, the last at 66.
+	// 18 bars at 92 (4 beats a bar), the rit. bar from 92 to 66, the last at
+	// 66 with its first half under a fermata, held twice as long.
 	ramp := 4 * 60 / (92.0 - 66) * math.Log(92.0/66)
-	want := 18*4*60/92.0 + ramp + 4*60/66.0
+	want := 18*4*60/92.0 + ramp + (2*2+2)*60/66.0
 	if math.Abs(p.Seconds-want) > 1e-6 {
 		t.Errorf("demo lasts %.4f s, want %.4f", p.Seconds, want)
 	}
@@ -244,5 +289,43 @@ func TestCheckAndRenderReportProblems(t *testing.T) {
 	out.Reset()
 	if code := render([]string{"score_demo", "-tempo", "3"}, &out); code == 0 || !strings.Contains(out.String(), "0.25 to 2") {
 		t.Errorf("-tempo 3: %d %s", code, out.String())
+	}
+}
+
+// testdata/expression.fscore uses every phase 3 realisation on library
+// instruments — hairpins, text crescendo, an override, slurs, staccato,
+// ornaments, tremolos, a slide and runs, arpeggios, the pedal, endings, a
+// D.S. al Coda, rit./a tempo/meno mosso, a fermata. It validates clean and
+// plays: every line sounds, nothing is NaN, nothing clips.
+func TestExpressionFixturePlays(t *testing.T) {
+	if testing.Short() {
+		t.Skip("renders a score")
+	}
+	useRepoResources(t)
+	s, err := score.LoadFile(filepath.Join("testdata", "expression.fscore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issues := s.Validate(func(n string) bool { return tracker.InstrumentPath(n) != "" }); len(issues) > 0 {
+		t.Fatalf("issues: %v", issues)
+	}
+	for li := -1; li < len(s.Lines); li++ {
+		c := s.Clone()
+		if li >= 0 {
+			c.Lines[li].Solo = true
+		}
+		data, errs, err := play.RenderScore(c, play.RenderOptions{Rate: 32000, Tail: 1})
+		if err != nil || len(errs) > 0 {
+			t.Fatal(err, errs)
+		}
+		peak := tracker.Peak(data)
+		for _, v := range data {
+			if math.IsNaN(float64(v)) {
+				t.Fatalf("line %d: NaN", li)
+			}
+		}
+		if peak < 0.02 || peak > 1.1 {
+			t.Errorf("line %d: peak %v", li, peak)
+		}
 	}
 }

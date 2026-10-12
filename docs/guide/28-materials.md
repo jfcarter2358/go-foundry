@@ -28,6 +28,10 @@ Every panel that has a **Texture** row now has a **Material** row under it, and
 it works the same way: pick a name, or `(none)`. The **Edit** button beside it
 opens the material editor on whatever is named.
 
+A placed scenery mesh (a cooked `.fnm`) wears one with `material:` on the
+placement — every slot — or by naming a material instead of a texture in its
+`materials:` slot map.
+
 In a level file it is one key:
 
 ```yaml
@@ -152,6 +156,38 @@ parameters are constants.
 | **Clouds** | `clouds:` | The volumetric deck — and the same parameters describe a cloud volume |
 | **Fog** | a volume's `fog:` | Extinction per world unit travelled inside the region |
 
+### Terrain and rock
+
+These are new rather than moved: the effects a generated landscape is
+painted with (docs/canyon/PHASE_5.md). They project in **world space**
+rather than reading the mesh's UVs — a heightfield's UVs are a sheet
+stretched down every cliff, a generated rock's seam on every edge — and they
+are what the generator stages write for their terrain and rocks, but any
+surface can wear them.
+
+| Effect | Does | Main settings |
+| --- | --- | --- |
+| **Triplanar** | The surface's own texture and normal map projected along the three world axes, blended by the normal. Upright: the side projections keep the texture's top toward the sky, so bedding stays level | `scale` (m a repeat), `sharpness`, `upright` |
+| **Splat (terrain layers)** | Up to four layers mixed by a **weights** texture laid over a world rectangle (red the first layer's weight, green the second's, blue, alpha), height-blended by each layer's `_height`, with its `_normal` and `_ao`. A layer can be triplanar; a **strata** ramp (a strip of tints read by world height) bands the triplanar layers. The surface's own texture is not drawn | `weights`, `bounds_min/max`, `layer1..4` + `_scale`, `_triplanar`, `_height`, `_tint`; `blend`, `ao`; `strata`, `strata_range`, `strata_strength`, `strata_warp`; `bedding`, `bedding_spacing`, `wall_normal` (phase 7: ledges bent into the triplanar layers' normals on steep faces, and a stronger normal map on walls) |
+| **Ground blend** | Fades the surface toward the ground's colour within a band above the ground's height — a rock's foot takes the sand's colour, which hides the seam — with a contact shadow at the line | `ground` (colour map), `height` (16-bit map: red high byte, green low), `bounds_min/max`, `height_range`, `band`, `breakup`, `strength`, `contact` |
+| **Streaks (desert varnish)** | Dark vertical streaks down steep faces and a darkening under overhangs, in world space, so a wall of many pieces streaks as one | `strength`, `scale` (width), `length`, `color`, `overhang` |
+| **Detail normal** | A second normal map at a small scale, world-projected, fading out with distance | `map`, `scale`, `strength`, `distance` |
+| **Macro variation** | Slow world-space noise on the albedo's brightness and warmth: hides a texture's repeat at distance | `scale`, `strength`, `warmth` |
+| **Colour grade** | `match` carries the texture's average colour toward `target` — every texel by the same ratio, brightness kept, so detail and variation survive — then a hue turn, saturation, a brightness-free `tint`, and a plain `brightness`. What turns grey granite scans into red-rock country without painting them | `match`, `target`, `source` (black: measured from the texture), `hue`, `saturation`, `tint`, `brightness` |
+
+Texture parameters of these effects take a texture name **or a
+resources-relative path without `.png`** (`generated/canyon/ground_mat/weights`),
+which is how a generator points a material at maps it wrote beside its
+output. A splat's four layers are packed into two 2×2 atlases (albedo with
+height, normal with AO) when the material is first used, at most 2048² a
+layer (`FOUNDRY_SPLAT_MAX_SIZE`); the data maps are read exactly, never
+compressed. Every effect is a branch a surface without it does not take, so
+nothing else draws differently, and they look the same on the forward path,
+the classic path and the Nanite visibility buffer.
+
+`desert_rock`, `desert_ground` and `rock_foot` are the shipped examples (with
+stand-in maps; a generator writes the real ones).
+
 The sky is the one domain where the material is **folded into** the level's own
 sky rather than read at draw time. `ease_sky` blends two complete sky values
 over a few seconds, and a sky whose numbers moved under it would ease toward a
@@ -179,7 +215,8 @@ to remember what they were.
 `water_rough`, `unlit`, `hologram`, `conveyor`, `mossy_rock`, `foliage`,
 `glass`, `deck_tiled`, `glow_sprite`, `foliage_sprite`, `poster`, `flipbook`,
 `ember`, `smoke`, `fireball`, `sky_day`, `sky_canyon`, `sky_space`,
-`sky_overcast` and `fog_bank`. They are meant to be opened and pulled around.
+`sky_overcast`, `fog_bank`, `desert_rock`, `desert_ground` and `rock_foot`. They
+are meant to be opened and pulled around.
 
 ## Notes
 

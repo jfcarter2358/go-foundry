@@ -193,3 +193,51 @@ func TestAntiAliasingRoundTripsOnceChosen(t *testing.T) {
 		}
 	}
 }
+
+// The texture memory settings survive the file, a file without them leaves
+// the defaults (compression off, nothing skipped), and skip-mips is clamped.
+func TestTextureMemorySettingsRoundTripThroughGraphicsFile(t *testing.T) {
+	prevC, prevS := gfx.TextureCompression, gfx.TextureSkipMips
+	prevCF, prevSF := gfx.TextureCompressionForced, gfx.TextureSkipMipsForced
+	t.Cleanup(func() {
+		gfx.TextureCompression, gfx.TextureSkipMips = prevC, prevS
+		gfx.TextureCompressionForced, gfx.TextureSkipMipsForced = prevCF, prevSF
+		gfx.GraphicsSettingsChanged = false
+	})
+	gfx.TextureCompressionForced, gfx.TextureSkipMipsForced = false, false
+	gfx.TextureCompression, gfx.TextureSkipMips = false, 0
+
+	gfx.SetTextureCompression(true)
+	gfx.SetTextureSkipMips(7)
+	if !gfx.GraphicsSettingsChanged || gfx.TextureSkipMips != gfx.TextureSkipMipsMax {
+		t.Fatalf("changed %v, skip %d", gfx.GraphicsSettingsChanged, gfx.TextureSkipMips)
+	}
+	data, err := marshalGraphicsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gfx.TextureCompression, gfx.TextureSkipMips = false, 0
+	if err := applyGraphicsSettings(data); err != nil {
+		t.Fatal(err)
+	}
+	if !gfx.TextureCompression || gfx.TextureSkipMips != gfx.TextureSkipMipsMax {
+		t.Errorf("came back compression %v, skip %d from:\n%s", gfx.TextureCompression, gfx.TextureSkipMips, data)
+	}
+
+	gfx.TextureCompression, gfx.TextureSkipMips = false, 0
+	if err := applyGraphicsSettings([]byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.TextureCompression || gfx.TextureSkipMips != 0 {
+		t.Error("a file without the texture settings changed them")
+	}
+
+	// The environment outranks the file.
+	gfx.TextureCompressionForced = true
+	if err := applyGraphicsSettings([]byte("texture_compression: true\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.TextureCompression {
+		t.Error("the saved setting overrode FOUNDRY_TEXTURE_COMPRESSION")
+	}
+}

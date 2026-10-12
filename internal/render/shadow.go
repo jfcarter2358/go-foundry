@@ -978,6 +978,9 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 	uploadGITo(prog)
 	// And the sun's virtual shadow map, or word that there is none (vsm.go).
 	uploadVSMTo(prog, frame)
+	// The terrain and rock material effects' samplers (gfx/material_fx.go):
+	// pointed at their units, with an array on the two array units.
+	gfx.BindSurfaceFxSamplers(prog)
 	gl.ActiveTexture(gl.TEXTURE0)
 }
 

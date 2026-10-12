@@ -204,6 +204,7 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 	raw.Music = world.MusicToRaw(level.Music)
 	raw.Sky = world.SkyToRaw(level.Sky)
 	raw.Fog = world.FogToRaw(level.Fog)
+	raw.Tonemap = world.TonemapToRaw(level.Tonemap)
 	raw.Player = world.PlayerSettingsToRaw(level.Player)
 
 	raw.Scripts = append([]string(nil), level.Scripts...)

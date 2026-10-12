@@ -46,6 +46,9 @@ func StandUpWorld(w, h int32) error {
 	// Live GI's tier for a player who has never chosen one, by GPU: on a
 	// discrete card, off on an integrated one (gfx.PickDefaultGIQuality).
 	gfx.PickDefaultGIQuality(gl.GoStr(gl.GetString(gl.RENDERER)))
+	// And the Nanite page pool's budget, by the card's memory
+	// (gfx/nanite_pool_default.go).
+	gfx.PickDefaultNaniteStreamPool()
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.ClearColor(0.2, 0.2, 0.3, 1.0)
@@ -156,6 +159,10 @@ func StandUpWorldUniforms() {
 	// case, so nothing that does not set it changes.
 	gfx.SurfaceBlendUniform = gl.GetUniformLocation(gfx.Program, gl.Str("surfaceBlend\x00"))
 	gl.Uniform1i(gfx.SurfaceBlendUniform, 0)
+	// Per-vertex colour and cavity (docs/canyon/PHASE_2.md). Zero is every
+	// surface without colours.
+	gfx.VertexColorsUniform = gl.GetUniformLocation(gfx.Program, gl.Str("vertexColors\x00"))
+	gl.Uniform1i(gfx.VertexColorsUniform, 0)
 
 	gfx.InstancedUniform = gl.GetUniformLocation(gfx.Program, gl.Str("instanced\x00"))
 	gl.Uniform1i(gfx.InstancedUniform, 0) // default: the model matrix is the `model` uniform

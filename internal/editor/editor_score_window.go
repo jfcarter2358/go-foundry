@@ -44,6 +44,7 @@ import (
 	"hash/fnv"
 	"log"
 	"strings"
+	"time"
 
 	"foundry/internal/audio"
 	"foundry/internal/imguibackend"
@@ -80,6 +81,11 @@ var (
 	scoreVoice     audio.VoiceID
 	scorePlayerRev uint64
 	scorePlayerSet bool
+	// scorePlayerLane is the dynamics-lane drag state the player was last
+	// given (scoreState.laneLive), scorePlayerLaneAt when: a drag reaches
+	// the player at most every scoreLaneSendEvery, each a new program.
+	scorePlayerLane   uint64
+	scorePlayerLaneAt time.Time
 	// What the player was last told of the mixer, so a fader drag sends
 	// only what moved.
 	scorePlayerMixRev uint64
@@ -223,6 +229,7 @@ func scoreStopPlayer() {
 func scoreAdopted() {
 	e := scEd
 	scorePlayerRev, scorePlayerMixRev, scorePlayerSet = e.Rev, e.MixRev, true
+	scorePlayerLane, scorePlayerLaneAt = e.laneLive, time.Now()
 	s := e.Score
 	// The program only re-mutes a line whose own flags changed against the
 	// player's last program, which a live mute never touched (an undo of
@@ -251,6 +258,10 @@ func scoreLineMix(l *score.Line) play.LineMix {
 	return play.LineMix{Volume: l.Volume, Pan: l.Pan, SendA: l.SendA, SendB: l.SendB}
 }
 
+// scoreLaneSendEvery paces a dynamics-lane drag's programs: often enough
+// to hear the level move, not a full interpretation every frame.
+var scoreLaneSendEvery = 40 * time.Millisecond
+
 // scoreSyncPlayer hands the player the score as it stands: a new program
 // when the music changed, the mixer alone (live, nothing prepared) when only
 // that did.
@@ -259,7 +270,8 @@ func scoreSyncPlayer(force bool) {
 		return
 	}
 	e := scEd
-	if force || !scorePlayerSet || scorePlayerRev != e.Rev {
+	lane := scorePlayerLane != e.laneLive && time.Since(scorePlayerLaneAt) >= scoreLaneSendEvery
+	if force || !scorePlayerSet || scorePlayerRev != e.Rev || lane {
 		if _, err := scorePlayer.SetScore(e.Score.Clone()); err != nil {
 			e.Status = "Playback: " + err.Error()
 		}
@@ -940,9 +952,8 @@ func scoreMenus() {
 		item("Zoom Out", scZoomOut, true)
 		item("Actual Size", scZoomReset, true)
 		imgui.Separator()
-		if imgui.MenuItemV("Concert Pitch", "", e.Concert, true) {
-			e.Concert = !e.Concert
-			e.touch()
+		if imgui.MenuItemV("Concert Pitch", km.label(scConcert), e.Score.Concert, true) {
+			scoreRunCmd(scConcert)
 		}
 		editorMenuTooltip("Show transposing instruments at sounding pitch (entry follows).")
 		editorMenuToggle("Voice Colours", "", &scoreVoiceColours)
@@ -1270,15 +1281,15 @@ var (
 	scoreList      *engrave.List
 	scoreListRev   uint64
 	scoreListScore *score.Score
-	scoreListConc  bool
+	scoreListLanes uint64
 )
 
 // scoreLayout is the score engraved as one continuous system.
 func scoreLayout() *engrave.List {
 	e := scEd
-	if scoreList == nil || scoreListRev != e.Rev || scoreListScore != e.Score || scoreListConc != e.Concert {
-		scoreList = engrave.Engrave(e.Score, engrave.Options{Concert: e.Concert, BarNumbers: -1})
-		scoreListRev, scoreListScore, scoreListConc = e.Rev, e.Score, e.Concert
+	if scoreList == nil || scoreListRev != e.Rev || scoreListScore != e.Score || scoreListLanes != e.laneRev {
+		scoreList = engrave.Engrave(e.Score, engrave.Options{BarNumbers: -1, Below: e.laneBelow()})
+		scoreListRev, scoreListScore, scoreListLanes = e.Rev, e.Score, e.laneRev
 	}
 	return scoreList
 }

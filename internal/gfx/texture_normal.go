@@ -127,6 +127,8 @@ func ensureNormalMapLoaded(name string) error {
 
 // BindNormalMap sets the hasNormalMap/normalMap uniform pair for a draw of
 // the named texture, binding the map to NormalMapUnit when there is one.
+// hasNormalMap is 0 (none), 1 (an RGB normal map) or 2 (a BC5 map holding
+// only x and y).
 //
 // Takes the locations rather than reading the globals so the detail
 // tessellation and scatter programs — which link the same fragment shader
@@ -138,7 +140,13 @@ func BindNormalMap(texName string, hasLoc, samplerLoc int32) {
 		gl.Uniform1i(hasLoc, 0)
 		return
 	}
-	gl.Uniform1i(hasLoc, 1)
+	// 2 rather than 1 says the map is two-channel BC5 and its z must be
+	// rebuilt from x and y (fragment.glsl; texture_compress.go).
+	if TextureFormatOf(NormalMapName(texName)) == TextureBC5 {
+		gl.Uniform1i(hasLoc, 2)
+	} else {
+		gl.Uniform1i(hasLoc, 1)
+	}
 	gl.ActiveTexture(gl.TEXTURE0 + NormalMapUnit)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[NormalMapName(texName)])
 	gl.Uniform1i(samplerLoc, NormalMapUnit)

@@ -1,0 +1,24 @@
+version: 1
+title: Four voices
+lines:
+- name: Organ
+  instrument: keys/organ
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qG5 qA5 qr qB5
+      | hC6 qr qG5
+      | wE5
+    - |
+      | qE5 qr qF5 qG5
+      | hE5 qr qD5
+      | wC5
+    - |
+      | qr qC5 qD5 qr
+      | qr qC5 hB4
+      | wG4
+    - |
+      | qC4 qr qr qG4
+      | hA4 qr qG4
+      | wC4

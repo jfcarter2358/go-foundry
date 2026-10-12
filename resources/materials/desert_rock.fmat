@@ -1,0 +1,24 @@
+# desert_rock.fmat — the rock effects, as a worked example
+# (docs/guide/28-materials.md, docs/canyon/PHASE_5.md).
+#
+# `rock` projected TRIPLANAR (world space, upright, no UVs needed — what a
+# generated rock or a cliff wants), regraded toward the red of sandstone
+# country, with dark desert-varnish streaks down its steep faces, slow macro
+# variation to break the repeat, and close-up grain from `stone_floor`'s
+# normal map.
+kind: surface
+texture: rock
+doc: Red desert rock, triplanar, varnished. Put it on anything with no useful UVs.
+effects:
+  - effect: triplanar
+    scale: 2.5
+  - effect: color_grade
+    match: 0.6
+    target: [0.62, 0.38, 0.27]
+  - effect: streaks
+    strength: 0.45
+  - effect: macro_variation
+    scale: 20
+  - effect: detail_normal
+    map: stone_floor
+    scale: 0.4

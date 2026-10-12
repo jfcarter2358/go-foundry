@@ -634,6 +634,38 @@ func levelProps() map[string]propAccess {
 			},
 			Doc: "the player's live global illumination quality: \"off\", \"low\", \"medium\" or \"high\" — bounce light worked out every frame from the lights as they are; off is the flat ambient and the baked bounce; picked by GPU until set, then saved for every level and session",
 		},
+		// The player's texture memory settings (gfx.TextureCompression,
+		// gfx.TextureSkipMips), saved to graphics.yaml like smooth_lighting.
+		// Read as each texture loads, so they take full effect at the next
+		// start (gfx/texture_compress_settings.go).
+		"texture_compression": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.TextureCompression), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("texture_compression", "bool", v)
+				}
+				gfx.SetTextureCompression(b)
+				return nil
+			},
+			Doc: "whether large world textures (256 px and up) are stored block-compressed on the GPU — BC7 for colour, BC5 for normal maps — at a quarter of the video memory; off by default; textures already loaded keep their form, so it takes full effect at the next start; saved for every level and session",
+		},
+		"texture_skip_mips": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.IntVal(int64(gfx.TextureSkipMips)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("texture_skip_mips", "int", v)
+				}
+				gfx.SetTextureSkipMips(int(f))
+				return nil
+			},
+			Doc: "texture quality, 0 to 3 (0 by default): how many times textures 512 px and up are halved before they reach the GPU (never below 256 px), each step taking about three quarters off their video memory; takes full effect at the next start; saved for every level and session",
+		},
 		"foliage_shadows": {
 			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
 				return flang.BoolVal(gfx.FoliageShadows), true

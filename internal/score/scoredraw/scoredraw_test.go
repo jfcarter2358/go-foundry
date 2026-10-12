@@ -1,6 +1,7 @@
 package scoredraw
 
 import (
+	"image"
 	"math"
 	"testing"
 
@@ -56,8 +57,13 @@ func testRenderer() (*Renderer, *int) {
 		}
 		return 7
 	}
+	r.UploadText = func(_ *image.RGBA, old uint32) uint32 {
+		if old != 0 {
+			return old
+		}
+		return 9
+	}
 	r.Delete = func(uint32) {}
-	r.FontSize = func() float32 { return 13 }
 	return r, &uploads
 }
 
@@ -89,8 +95,9 @@ func TestDrawEmitsEveryItem(t *testing.T) {
 	}
 	c := &rec{}
 	r.Draw(c, list, View{Origin: imgui.Vec2{X: 10, Y: 20}, Scale: 9, Ink: imgui.PackedColor(0xff000000)})
-	if c.images != want[0] || c.lines != want[1] || c.texts != want[3] {
-		t.Errorf("drew %d glyphs %d lines %d texts, want %v", c.images, c.lines, c.texts, want)
+	// Text runs are quads off the text page, like glyphs.
+	if c.images != want[0]+want[3] || c.lines != want[1] || c.texts != 0 || want[3] == 0 {
+		t.Errorf("drew %d glyph and text quads, %d lines, %d imgui texts, want %v", c.images, c.lines, c.texts, want)
 	}
 	if c.tris == 0 || c.area <= 0 {
 		t.Error("beams and ties drew no triangles")
@@ -200,5 +207,55 @@ func TestDrawSnapsStraightLines(t *testing.T) {
 	// A thick line keeps its width.
 	if a, b, ok := pixelRect(imgui.Vec2{X: 0, Y: 10}, imgui.Vec2{X: 20, Y: 10}, 3.4); !ok || b.Y-a.Y != 3 {
 		t.Errorf("3.4 px line = %v..%v", a, b)
+	}
+}
+
+// A text run is set in the layout's face at the view's size: its quad is
+// as wide as the face measures it, it scales with the zoom, a centred or
+// right-aligned run hangs from its anchor, and the page holds its ink in
+// white with coverage in alpha.
+func TestDrawSetsTextAtItsSize(t *testing.T) {
+	r, _ := testRenderer()
+	it := engrave.Item{Kind: engrave.ItemText, Text: "Allegro", Font: engrave.TextBold, Size: 2, P: engrave.Point{X: 10, Y: 5}}
+	draw := func(scale float32, align engrave.Align) [2]imgui.Vec2 {
+		it.Align = align
+		c := &rec{}
+		r.Draw(c, &engrave.List{Items: []engrave.Item{it}}, View{Scale: scale})
+		if c.images != 1 {
+			t.Fatalf("%d quads for one run", c.images)
+		}
+		return c.last
+	}
+	q := draw(10, engrave.AlignLeft)
+	want := float32(engrave.TextWidthFont("Allegro", engrave.TextBold, 2) * 10)
+	if w := q[1].X - q[0].X; w < want-2 || w > want+6 {
+		t.Errorf("quad %.1f px wide, the face measures %.1f", w, want)
+	}
+	if q[0].X > 100+1 || q[1].Y < 50 || q[0].Y > 50-10 {
+		t.Errorf("quad %v does not hang from the baseline at (100, 50)", q)
+	}
+	big := draw(20, engrave.AlignLeft)
+	if w, w2 := q[1].X-q[0].X, big[1].X-big[0].X; w2 < 1.8*w {
+		t.Errorf("at twice the zoom the run is %.1f px, was %.1f", w2, w)
+	}
+	right := draw(10, engrave.AlignRight)
+	if right[1].X > 100+2 || right[1].X < 100-4 {
+		t.Errorf("a right-aligned run ends at %.1f, want about 100", right[1].X)
+	}
+	cen := draw(10, engrave.AlignCenter)
+	if mid := (cen[0].X + cen[1].X) / 2; mid < 97 || mid > 103 {
+		t.Errorf("a centred run's middle is %.1f", mid)
+	}
+	ink := 0
+	for i := 3; i < len(r.text.img.Pix); i += 4 {
+		if a := r.text.img.Pix[i]; a > 0 {
+			ink++
+			if r.text.img.Pix[i-1] != 255 {
+				t.Fatal("text page pixels are premultiplied, want white with coverage")
+			}
+		}
+	}
+	if ink < 50 {
+		t.Errorf("the page holds only %d inked pixels", ink)
 	}
 }

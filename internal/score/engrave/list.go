@@ -71,6 +71,19 @@ const (
 	RoleDynamic
 	RoleText
 	RoleLedger
+	// RoleSlur, RoleHairpin and RoleLine (glissando, ottava and pedal
+	// lines, dashes) are drawn across notes; RoleOrnament and RoleFermata
+	// sit over one; the rest stand over the system: tempo marks, rehearsal
+	// marks, endings (voltas) and the navigation marks (segno, coda, D.S.).
+	RoleSlur
+	RoleHairpin
+	RoleLine
+	RoleOrnament
+	RoleFermata
+	RoleTempo
+	RoleRehearsal
+	RoleEnding
+	RoleJump
 )
 
 // Ref says which part of the score an item draws. Indices are 0-based
@@ -160,15 +173,56 @@ type StaffBox struct {
 	Transposed bool
 	// Extent is the staff's ink, top to bottom.
 	Extent Rect
+	// Changes are the clef changes inside the layout, left to right: from
+	// X on the staff reads in Clef, its bottom line Bottom.
+	Changes []ClefSpan
 }
 
-// Diatonic is what a y means on the staff.
+// ClefSpan is where a staff's clef changes on the layout.
+type ClefSpan struct {
+	X      float64
+	Clef   string
+	Bottom int
+}
+
+// Diatonic is what a y means on the staff, in its opening clef.
 func (b StaffBox) Diatonic(y float64) int {
 	return b.Bottom + int(math.Round((b.Top+4-y)*2))
 }
 
-// Y is where a diatonic position sits.
+// Y is where a diatonic position sits, in the opening clef.
 func (b StaffBox) Y(diatonic int) float64 { return b.Top + 4 - float64(diatonic-b.Bottom)/2 }
+
+// ClefAt is the clef and bottom line in force at an x of the layout.
+func (b StaffBox) ClefAt(x float64) (string, int) {
+	clef, bottom := b.Clef, b.Bottom
+	for _, c := range b.Changes {
+		if x >= c.X {
+			clef, bottom = c.Clef, c.Bottom
+		}
+	}
+	return clef, bottom
+}
+
+// DiatonicAt is what a y means on the staff at an x (after any clef change
+// before it).
+func (b StaffBox) DiatonicAt(x, y float64) int {
+	_, bottom := b.ClefAt(x)
+	return bottom + int(math.Round((b.Top+4-y)*2))
+}
+
+// YAt is where a diatonic position sits at an x.
+func (b StaffBox) YAt(x float64, diatonic int) float64 {
+	_, bottom := b.ClefAt(x)
+	return b.Top + 4 - float64(diatonic-bottom)/2
+}
+
+// LaneBox is the room left under a line (Options.Below): the editor draws
+// the line's dynamics lane there.
+type LaneBox struct {
+	Line        int
+	Top, Height float64
+}
 
 // BarBox is one bar on the layout: from its opening barline X0 to its
 // closing one X1. Content is where the music starts after any clef, key or
@@ -255,6 +309,7 @@ type List struct {
 	Staves []StaffBox
 	Bars   []BarBox
 	Events []EventBox
+	Lanes  []LaneBox
 }
 
 // Bounds is the ink of every item (glyph boxes from the font's metadata).
@@ -281,6 +336,12 @@ func (l *List) Translate(d Point) {
 	for i := range l.Staves {
 		l.Staves[i].Top += d.Y
 		l.Staves[i].Extent = l.Staves[i].Extent.Offset(d)
+		for k := range l.Staves[i].Changes {
+			l.Staves[i].Changes[k].X += d.X
+		}
+	}
+	for i := range l.Lanes {
+		l.Lanes[i].Top += d.Y
 	}
 	for i := range l.Bars {
 		b := &l.Bars[i]
@@ -369,7 +430,7 @@ func itemBounds(f *glyph.Font, it *Item) Rect {
 		}
 		return r
 	case ItemText:
-		w := TextWidth(it.Text, it.Size)
+		w := TextWidthFont(it.Text, it.Font, it.Size)
 		x := it.P.X
 		switch it.Align {
 		case AlignCenter:
@@ -396,24 +457,4 @@ func lineQuadBounds(p, q Point, h float64) Rect {
 		r.Max.X, r.Max.Y = math.Max(r.Max.X, c.X), math.Max(r.Max.Y, c.Y)
 	}
 	return r
-}
-
-// TextWidth estimates a text run's width at a size (in staff spaces, a
-// size of 1 being a 1-space em): a serif's average advance. Layout uses it
-// to keep text from colliding; backends measure their own font.
-func TextWidth(s string, size float64) float64 {
-	w := 0.0
-	for _, r := range s {
-		switch {
-		case r == ' ' || r == '.' || r == ',' || r == 'i' || r == 'l' || r == 'j' || r == 't' || r == 'f' || r == 'r':
-			w += 0.3
-		case r == 'm' || r == 'w' || r == 'M' || r == 'W':
-			w += 0.8
-		case r >= 'A' && r <= 'Z':
-			w += 0.68
-		default:
-			w += 0.52
-		}
-	}
-	return w * size
 }

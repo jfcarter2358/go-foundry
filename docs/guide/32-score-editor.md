@@ -39,6 +39,10 @@ key:   [{bar: 1, fifths: -2, mode: major}]
 sections: [{name: intro, bar: 1}, {name: theme, bar: 9, loop: true}]
 markers: [{name: hit, bar: 11, beat: "3"}]
 repeats: [{start: 5, end: 8, times: 2}]
+voltas: [{start: 7, end: 8, passes: [1]}, {start: 9, end: 9, passes: [2]}]
+jumps: [{mark: segno, bar: 3}, {mark: to_coda, bar: 10}, {mark: ds, bar: 14, al: coda}, {mark: coda, bar: 15}]
+playback: {ignore_repeats: false, graces: auto}
+concert: false
 params: [{name: intensity, default: 0}]
 bindings: [{param: intensity, line: Horn, target: volume, from: 0, to: 1}]
 lines:
@@ -47,8 +51,11 @@ lines:
     volume: 0.8
     pan: -0.3
     sends: {a: 0.3, b: 0}
+    gliss: slide                 # optional: slide, chromatic or diatonic
+    dynamic_overrides: [{at: "2", to: "3", level: 0.2}]
     staves:
       - clef: treble
+        clefs: [{at: "6:3", clef: alto}]   # optional clef changes
         voices:
           - |
             | q.Bb4(p) eC5 hD5
@@ -64,15 +71,21 @@ master: [{fx: compressor, threshold: -12, ratio: 3}]
 
 | Key | |
 | --- | --- |
-| `tempo` | Marks at a bar (and `beat:`): `bpm` of a quarter, or of `unit:` (`q.` = 60 in 6/8). `ramp: true` moves smoothly to the next mark (a rit. or accel.) instead of stepping at it. |
+| `tempo` | Marks at a bar (and `beat:`): `bpm` of a quarter, or of `unit:` (`q.` = 60 in 6/8), and `text:`. A mark can be text alone: `rit.`, `rall.`, `accel.`, `a tempo`, `tempo primo`, `meno mosso`, `più mosso` (see *How a score plays*), with `to:` where a gradual change's dashes end. `ramp: true` moves smoothly from this mark's bpm to the next mark's (the older way to write a rit.). |
 | `meter` | Any time signature from any bar: `4/4`, `6/8`, additive `3+2+2/8`, `C`, `C\|`. Beats follow it (6/8 counts two dotted quarters). |
 | `key` | Sharps (positive) or flats (negative) from a bar, and the mode's name. |
 | `sections` | Rehearsal marks. A game moves between them by name. `loop: true` repeats a section until asked to move on; `next:` goes to another section at its end. |
 | `markers` | Named points that tell scripts when playback passes them. |
 | `repeats` | Bars `start`..`end` played `times` times (2 by default). |
+| `voltas` | 1st/2nd endings: bars `start`..`end` played only on the `passes` listed, counted through the repeat they belong to. |
+| `jumps` | `segno`, `coda` (where playback lands: the start of the bar), `to_coda`, `fine`, `dc`, `ds` (where it leaves: the end of the bar). A `dc` or `ds` can say `al: fine` or `al: coda`, and `repeats: true` to take the repeats again on the way through. |
+| `playback` | `ignore_repeats: true` plays the score straight through, every bar once. `graces: before` or `on` plays every grace note before or on the beat (`auto`: acciaccaturas before, appoggiaturas on). |
+| `concert` | Show every staff at concert pitch (the Concert Pitch toggle). |
 | `params`, `bindings` | Values a script ramps while the score plays, bound to a line's volume, pan, sends or filter cutoff, as in the Tracker. |
 | `lines` | Each line names a library instrument (`category/name`, a `.finst`), has a fader, pan and two sends, and one or more staves. A piano has two. |
 | `staves` | `clef` (`treble`, `bass`, `alto`, `tenor`, `treble_8vb`, `treble_8va`, `bass_8vb`, `bass_8va`, `percussion`), an optional `transpose` (written to sounding, so a B♭ clarinet's is `-M2` and a horn in F is `-P5`), and up to four voices. |
+| `gliss` | How the line's glissandi play: `slide` (one continuous pitch), `chromatic` or `diatonic` (a run). Left out, the instrument's `playback.gliss`. |
+| `dynamic_overrides` | Segments of the dynamics lane dragged to a level (0..1, mf is 0.63): the line plays that level between `at` and `to` without changing a printed mark. |
 | `lanes` | Automation. `volume` multiplies the fader and `pan` replaces the pan. Each point is a position and a value; `to:` holds the value flat to a second position. |
 | `buses`, `master` | Bus A's reverb, bus B's delay and the master compressor play today. Other effects are kept in the file and listed by `foundry score inspect` as not played yet. |
 
@@ -259,12 +272,12 @@ A bar that runs over is an error, and one that runs short is a warning.
 
 | Kind | Names |
 | --- | --- |
-| Dynamics | `pppp` … `ffff`; the accents `sf`, `sfz`, `sffz`, `fz`, `rf`, `rfz`; `fp`, `sfp`, `sfpp` |
+| Dynamics | `pppp` … `ffff`, `niente`; the accents `sf`, `sfz`, `sffz`, `fz`, `rf`, `rfz`; `fp`, `sfp`, `sfpp` |
 | Articulations | `stacc`, `staccmo`, `acc`, `ten`, `marc`, `portato`, `legato` |
-| Ornaments | `tr`, `mord`, `imord`, `turn`, `iturn`, `trem` |
-| Notation | `ferm`, `arp`, `up`, `down` |
+| Ornaments | `tr`, `mord`, `imord`, `turn`, `iturn` (value: the auxiliary's accidental, `tr=#`, a turn's `turn=b/#` upper/lower); `trem=n` (1–4 strokes, bare 3), `trem2=n` (a two-note tremolo with the next event) |
+| Notation | `ferm` (`ferm=short`, `long`, `verylong`), `arp` (`arp=down`), `up`, `down`, `on_beat` / `before_beat` (a grace group's timing) |
 | Text | `"dolce"` (`text=`), `expr=`, `tech=` (playing technique: `tech=pizz.`, `tech="con sord."`) |
-| Spanners | `cresc`, `dim` and `hairpin_end`; `slur` and `slur_end`; `gliss`; `8va`, `8vb`, `15ma`, `15mb` and `ottava_end`; `ped` and `ped_end`. An end mark goes on the last note the line covers. |
+| Spanners | `cresc`, `dim` and `hairpin_end` (`cresc=text` prints "cresc." with dashes, any other value prints itself); `slur` and `slur_end`; `gliss` (to the next note; `gliss=wavy`); `8va`, `8vb`, `15ma`, `15mb` and `ottava_end`; `ped` and `ped_end`. An end mark goes on the last note the line covers. |
 
 A name the build doesn't know is kept and saved, and `foundry score inspect`
 warns about it. Nothing is lost when an older build opens a newer file.
@@ -274,24 +287,66 @@ warns about it. Nothing is lost when an older build opens a newer file.
 - **Time is exact.** Note values and tuplets are kept as exact fractions, so
   a note after a thousand triplets is exactly where it was written. Every
   note starts on the exact sample its time falls on.
-- **Tempo** follows the tempo marks, including ramps, and the repeats unroll.
-- **Dynamics** set the level of every note on the line from the mark on.
-  Before the first one a line plays at mf. `sfz` and the other accents
-  affect only the notes they are on. `fp` plays forte on its note and piano
-  after it. The level picks the instrument's velocity layer and sets the
-  volume.
+- **Form.** Repeats unroll; an ending plays only on its passes; a D.C. goes
+  back to the top and a D.S. to the segno, once each, and on that time
+  through a Fine ends the piece and a To Coda goes on to the coda. Repeats
+  are played once after a jump, with their last ending, unless the jump says
+  `repeats: true`. `playback: {ignore_repeats: true}` plays it as written.
+- **Tempo** follows the tempo marks. `rit.`/`rall.`/`allarg.` slow down and
+  `accel.`/`string.` speed up gradually from where they are to their `to:`
+  or the next mark: to that mark's bpm when it has one, else by a quarter
+  (`poco` half that, `molto` half again). `a tempo` goes back to the last
+  tempo set by a number, `tempo primo` to the first, `meno mosso` and `più
+  mosso` step 15% slower or faster.
+- **Fermatas** hold their note, and everything sounding with it, twice as
+  long (`short` 1.5, `long` 3, `verylong` 4): the tempo under it is divided.
+- **Dynamics** set the level of the whole line from the mark on (every voice
+  and staff). Before the first one a line plays at mf. Hairpins and
+  `cresc.`/`dim.` text ramp it in a straight line to the dynamic at their
+  end, or one step (mp to mf) when there is none; without a `hairpin_end`
+  they run to the next dynamic. `sfz` and the other accents, and `fp`'s
+  forte, act only on the notes they are on. The level picks the
+  instrument's velocity layer and sets the volume. A held note on an
+  instrument that sustains (strings, winds) follows the level while it
+  sounds; a piano's or a harp's keeps the level it started at. The
+  dynamics lane's overrides replace the level over their span.
+- **Accents** start a note louder: `acc` by a quarter, `marc` by 40%, `ten`
+  a little. On a held note they fall back within a 16th.
+- **Lengths.** `stacc` plays the instrument's staccato length (half the
+  note by default), `staccmo` half that, `portato` (or staccato with
+  tenuto) and staccato under a slur three quarters, `marc` four fifths.
+  Under a slur each note runs a 64th into the next and asks for the
+  instrument's `legato` articulation.
+- **Glissandi** go from their note to the next: a slide bends the note over
+  the last three quarters of it and carries on as the next note without a
+  new attack; a run plays every semitone (chromatic) or every note of the
+  key (diatonic) between.
+- **Ornaments** on a chord's top note: a trill alternates with the note
+  above about 12 times a second, starting and ending on the note; mordents
+  and turns in 32nds and 16ths. Neighbours are the key's, after any
+  accidental earlier in the bar, unless the mark names one.
+- **Tremolo**: `trem=n` re-strikes the note at its value with n more beams;
+  an unmeasured one (3 strokes) on an instrument with a `tremolo`
+  articulation plays that instead. `trem2=n` alternates two notes.
+- **Arpeggios** roll from the bottom (`arp=down`: the top), a 64th a note.
+- **The pedal**: a note that ends while it is down sounds until it comes up;
+  a `ped` while it is down re-pedals.
+- **Written, not sounding.** Ottava lines, clef changes and a staff's
+  transposition change only how notes are written; the stored (concert)
+  pitches play.
 - **Ties** join into one held note, across bars and repeats.
 - **Grace notes.** An acciaccatura is crushed in just before the beat, taking
   its time from the note before it. An appoggiatura takes time from the
-  note it leans on, at most half of it.
+  note it leans on, at most half of it. `playback: {graces: …}` or an
+  `on_beat`/`before_beat` mark on the group changes which.
 - **Articulations and technique** choose the instrument's articulation:
   `(stacc)` plays its staccato samples, and `tech=pizz.` switches the line to
-  pizzicato until `arco` or `ord.`.
+  pizzicato until `arco` or `ord.`. Technique words replace only their own
+  kind: `con sord.` lasts through `pizz.` and `arco` until `senza sord.`.
 - **Lanes** move the line's volume and pan.
 
-Hairpins, slurs, glissandi, articulation lengths and accents, voltas,
-D.S./D.C./coda, ottava lines and pedalling are written and kept today. They
-are not played yet.
+A MIDI export writes a slide as the chromatic run it passes, since a note
+in a MIDI file cannot bend.
 
 ## Instruments
 

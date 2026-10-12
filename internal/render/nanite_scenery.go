@@ -77,8 +77,14 @@ type naniteSceneryRenderer struct {
 	vao      uint32
 	vbo, nbo uint32
 	ebo      uint32
+	// cbo is the pool's vertex colours (RGBA8 a vertex), when any mesh in
+	// it has them (docs/canyon/PHASE_2.md); 0 otherwise.
+	cbo      uint32
 	clusters uint32
 	nodes    uint32
+	// cpuClusters is the cluster records as uploaded, for the draw bound's
+	// LOD keys (nanite_draw_lod_bound.go).
+	cpuClusters []gpuCluster
 
 	// preparedFrame is the DrawWorld frame (naniteStreamFrame) prepare last
 	// brought everything up to date in, and prepared what it answered: a
@@ -190,7 +196,8 @@ func (r *naniteSceneryRenderer) markPrepared(lvl *world.Level, ok bool) {
 }
 
 // signature hashes what the pool, groups and tiles depend on: which
-// placements, which mesh each uses, and each one's resolved slot textures.
+// placements, which mesh each uses, and each one's resolved slot textures and
+// materials.
 func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
 	h := fnv.New64a()
 	var b [8]byte
@@ -202,6 +209,8 @@ func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
 		h.Write(b[:])
 		for si := range s.Nanite.Slots {
 			h.Write([]byte(s.SlotTexture(si)))
+			h.Write([]byte{0})
+			h.Write([]byte(s.SlotMaterial(si)))
 			h.Write([]byte{0})
 		}
 	}
@@ -258,10 +267,15 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 		r.buildPool(list)
 	}
 
-	// Groups: one per resolved material, in order of first use.
+	// Groups: one per resolved material, in order of first use — the slot's
+	// texture, and the .fmat it wears (Scenery.SlotMaterial), which sets the
+	// uniforms the group's one draw applies for all of its placements, so two
+	// placements of a mesh in different materials draw apart.
 	type key struct {
 		tex    string
+		mat    string
 		smooth bool
+		colors bool
 	}
 	groupOf := map[key]int{}
 	r.groups = r.groups[:0]
@@ -281,12 +295,13 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 			if slot.Count == 0 {
 				continue
 			}
-			kk := key{s.SlotTexture(si), slot.Smooth}
+			kk := key{s.SlotTexture(si), s.SlotMaterial(si), slot.Smooth, m.HasColors && r.cbo != 0}
 			g, ok := groupOf[kk]
 			if !ok {
 				g = len(r.groups)
 				groupOf[kk] = g
-				r.groups = append(r.groups, gfx.Material{Texture: kk.tex, Alpha: 1, Normals: true, Smooth: kk.smooth})
+				r.groups = append(r.groups, gfx.Material{Texture: kk.tex, MaterialName: kk.mat, Alpha: 1, Normals: true,
+					Smooth: kk.smooth, VertexColors: kk.colors})
 			}
 			runs = append(runs, run{group: g, inst: k, first: pm.clusterBase + uint32(slot.First), count: uint32(slot.Count),
 				hist: hist + uint32(slot.First), mesh: pm})
@@ -322,6 +337,7 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 		groups[gi].count = int32(slot) - groups[gi].first
 	}
 	r.batch.clusters = r.clusters
+	r.batch.cpuClusters = r.cpuClusters
 	r.batch.setTiles(tiles, groups, slot)
 	// The groups the compute rasteriser may take: every group shares the
 	// pool's buffers, so only the material decides (nanite_swraster.go).
@@ -348,12 +364,15 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 		r.stream.release()
 		r.stream = nil
 		r.batch.stream = nil
-		r.vbo, r.nbo, r.ebo = 0, 0, 0 // the page pool's own
+		r.vbo, r.nbo, r.ebo, r.cbo = 0, 0, 0, 0 // the page pool's own
 	} else if r.vbo != 0 {
 		gl.DeleteBuffers(1, &r.vbo)
 		gl.DeleteBuffers(1, &r.nbo)
 		gl.DeleteBuffers(1, &r.ebo)
-		r.vbo, r.nbo, r.ebo = 0, 0, 0
+		if r.cbo != 0 {
+			gl.DeleteBuffers(1, &r.cbo)
+		}
+		r.vbo, r.nbo, r.ebo, r.cbo = 0, 0, 0, 0
 	}
 	r.meshes = map[*nanite.Mesh]*naniteMeshSlot{}
 	r.poolList = list
@@ -361,9 +380,13 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 		return
 	}
 	var verts, normals []float32
-	var indices []uint32
+	var indices, colors []uint32
 	var clusters []gpuCluster
 	var nodes []gpuNode
+	anyColors := false
+	for _, m := range list {
+		anyColors = anyColors || m.HasColors
+	}
 	for _, m := range list {
 		if err := m.Flat(); err != nil {
 			log.Printf("nanite: %s: %v", m.Source, err)
@@ -371,6 +394,17 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 		pm := &naniteMeshSlot{baseVertex: int32(len(verts) / 5), firstIndex: uint32(len(indices)), clusterBase: uint32(len(clusters)),
 			nodeBase: uint32(len(nodes)), leaves: uint32(m.Leaves), leafRanges: cluster.LeafRanges(m.Nodes), closed: m.ClosedSolid}
 		r.meshes[m] = pm
+		if anyColors {
+			if m.HasColors && len(m.Colors) == len(m.Vertices)/5 {
+				colors = append(colors, m.Colors...)
+			} else {
+				// Never read (its groups do not set vertexColors); white
+				// all the same.
+				for range len(m.Vertices) / 5 {
+					colors = append(colors, 0xffffffff)
+				}
+			}
+		}
 		verts = append(verts, m.Vertices...)
 		normals = append(normals, m.Normals...)
 		indices = append(indices, m.Indices...)
@@ -397,9 +431,18 @@ func (r *naniteSceneryRenderer) buildPool(list []*nanite.Mesh) {
 	gl.VertexAttribPointerWithOffset(gfx.AttribNormal, 3, gl.FLOAT, false, 3*4, 0)
 	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, r.ebo)
 	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*4, gl.Ptr(indices), gl.STATIC_DRAW)
+	if len(colors) > 0 {
+		gl.GenBuffers(1, &r.cbo)
+		gl.BindBuffer(gl.ARRAY_BUFFER, r.cbo)
+		gl.BufferData(gl.ARRAY_BUFFER, len(colors)*4, gl.Ptr(colors), gl.STATIC_DRAW)
+		gfx.BindPackedColorLayout()
+	} else {
+		gl.DisableVertexAttribArray(gfx.AttribColor)
+	}
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	uploadClusters(&r.clusters, clusters)
+	r.cpuClusters = clusters
 	uploadNodes(&r.nodes, nodes)
 }
 
@@ -440,7 +483,7 @@ func (r *naniteSceneryRenderer) buildPagePool(list []*nanite.Mesh) bool {
 	}
 	r.stream = s
 	r.batch.stream = s
-	r.vbo, r.nbo, r.ebo = s.vbo, s.nbo, s.ebo
+	r.vbo, r.nbo, r.ebo, r.cbo = s.vbo, s.nbo, s.ebo, s.cbo
 	if r.vao == 0 {
 		gl.GenVertexArrays(1, &r.vao)
 	}
@@ -450,10 +493,17 @@ func (r *naniteSceneryRenderer) buildPagePool(list []*nanite.Mesh) bool {
 	gl.BindBuffer(gl.ARRAY_BUFFER, r.nbo)
 	gl.EnableVertexAttribArray(gfx.AttribNormal)
 	gl.VertexAttribPointerWithOffset(gfx.AttribNormal, 3, gl.FLOAT, false, 3*4, 0)
+	if r.cbo != 0 {
+		gl.BindBuffer(gl.ARRAY_BUFFER, r.cbo)
+		gfx.BindPackedColorLayout()
+	} else {
+		gl.DisableVertexAttribArray(gfx.AttribColor)
+	}
 	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, r.ebo)
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	uploadClusters(&r.clusters, clusters)
+	r.cpuClusters = clusters
 	uploadNodes(&r.nodes, nodes)
 	return true
 }
@@ -468,7 +518,7 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 	}
 	for k, i := range r.members {
 		s := &lvl.Scenery[i]
-		in := placedInstance(s.ModelMatrix(), s.Nanite.Center, s.Nanite.Radius)
+		in := placedInstance(sceneryModel(lvl, s), s.Nanite.Center, s.Nanite.Radius)
 		if pm := r.meshes[s.Nanite]; pm != nil {
 			if pm.closed {
 				in.Flags[0] |= instShadowCone
@@ -582,7 +632,9 @@ func RenderNaniteScenery(lvl *world.Level, frustum Frustum, projView mgl32.Mat4)
 	}
 	v := cameraCullView(frustum, projView, eye, mode)
 	// Bounded before admitSW: the records the visibility buffer keeps for
-	// the pass are the bound's (visSpan), not the batch's every slot.
+	// the pass are the bound's (visSpan), not the batch's every slot. By the
+	// pass's LOD too (nanite_draw_lod_bound.go).
+	r.batch.setBoundLOD(v.lod, true)
 	r.batch.boundDraws(r.inMask)
 	r.batch.admitSW(r.visGroups())
 	if r.batch.cull(v) {
@@ -601,6 +653,7 @@ func (r *naniteSceneryRenderer) drawOcclusion() {
 	// The first pass's frustum, asked again: a shadow pass between the two
 	// would have left its own marks.
 	r.inView(&Frustum{Planes: r.pass2View.planes})
+	r.batch.setBoundLOD(r.pass2View.lod, true)
 	r.batch.boundDraws(r.inMask)
 	r.batch.admitSW(r.visGroups())
 	if r.batch.cull(r.pass2View) {
@@ -620,7 +673,11 @@ func (r *naniteSceneryRenderer) visGroups() []visGroup {
 				gl.BindVertexArray(r.vao)
 				r.batch.drawGroup(gi)
 				gl.Uniform1i(gfx.InstancedUniform, 0)
+				gl.Uniform1i(gfx.VertexColorsUniform, 0)
 			}}
+		if r.groups[gi].VertexColors {
+			groups[gi].cbo = r.cbo
+		}
 	}
 	return groups
 }
@@ -649,6 +706,8 @@ func (r *naniteSceneryRenderer) drawColour() {
 		r.batch.drawGroup(gi)
 	}
 	gl.Uniform1i(gfx.InstancedUniform, 0)
+	// A coloured group's flag is not left for a draw that does not set it.
+	gl.Uniform1i(gfx.VertexColorsUniform, 0)
 	gl.BindVertexArray(0)
 }
 
@@ -674,6 +733,7 @@ func renderNaniteSceneryShadow(lvl *world.Level, prog uint32, cull *Frustum) {
 	// walks every slot of the batch — chicago's 856,184, ~4.8 ms a shadow
 	// view however little it drew.
 	v.compact = true
+	r.batch.setBoundLOD(v.lod, true)
 	r.batch.boundDraws(r.inMask)
 	ok := r.batch.cull(v)
 	gl.UseProgram(prog)

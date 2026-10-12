@@ -58,8 +58,10 @@ func restStep(b score.DurBase) float64 {
 	return 0.5
 }
 
-// placeRest sets a rest's x (centred on a normal notehead) and y.
-func (e *engraver) placeRest(x *ev, chords []*ev, forced bool) {
+// placeRest sets a rest's x (centred on a normal notehead) and y, clear of
+// the other voices' notes and of the rests already placed at the column (a
+// third voice's rest goes beyond the first's).
+func (e *engraver) placeRest(x *ev, chords, placed []*ev, forced bool) {
 	g := restGlyph(x.base)
 	b, _ := e.f.Box(g)
 	x.restX = (e.f.Width("noteheadBlack") - b.W()) / 2
@@ -84,8 +86,9 @@ func (e *engraver) placeRest(x *ev, chords []*ev, forced bool) {
 	default:
 		y += dir * 2
 	}
-	// Clear the other voices' heads at this onset.
-	for tries := 0; tries < 8; tries++ {
+	// Clear the other voices' heads at this onset, and their stems where
+	// they point the way the rest moves (a third voice's, beside the first).
+	for tries := 0; tries < 16; tries++ {
 		top, bot := y+b.Min.Y, y+b.Max.Y
 		clash := false
 		for _, c := range chords {
@@ -96,6 +99,25 @@ func (e *engraver) placeRest(x *ev, chords []*ev, forced bool) {
 				if n.y+0.5 > top+0.1 && n.y-0.5 < bot-0.1 {
 					clash = true
 				}
+			}
+			if c.hasStem && c.up == up && len(c.notes) > 0 {
+				low, high := c.notes[0].y, c.notes[len(c.notes)-1].y // y down: low is the larger
+				s0, s1 := high, low+stemLength*c.size
+				if up {
+					s0, s1 = high-stemLength*c.size, low
+				}
+				if s1 > top+0.1 && s0 < bot-0.1 {
+					clash = true
+				}
+			}
+		}
+		for _, r := range placed {
+			if r.voice == x.voice {
+				continue
+			}
+			rb, _ := e.f.Box(restGlyph(r.base))
+			if r.restY+rb.Max.Y > top+0.1 && r.restY+rb.Min.Y < bot-0.1 {
+				clash = true
 			}
 		}
 		if !clash {

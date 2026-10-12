@@ -145,6 +145,31 @@ const (
 	scMixer
 	scExportAudio
 	scAddLine
+	// Expression (editor_score_marks.go).
+	scSlur
+	scCresc
+	scDim
+	scGliss
+	scExpression
+	scTempoText
+	scStaccato
+	scStaccatissimo
+	scAccent
+	scTenuto
+	scMarcato
+	scKeypad7 // keypad 7, 8, 9 and +, by the keypad layout: accidentals and
+	scKeypad8 // the accent on the first, articulations on the second
+	scKeypad9
+	scKeypadPlus
+	scGraceAcc
+	scGraceApp
+	scMarksPanel
+	scConcert
+	scLane
+	scRehearsal
+	scRepeatBars
+	scEnding
+	scClefChange
 	scCmdCount
 )
 
@@ -157,7 +182,7 @@ type scoreCmdInfo struct {
 var scoreCmdInfos = buildScoreCmdInfos()
 
 // The keymap's groups, in the order the overlay and the settings list them.
-var scoreCmdGroups = []string{"Entry", "Pitch", "Durations", "Rhythm", "Voices & tuplets", "Selection", "File & view", "Playback"}
+var scoreCmdGroups = []string{"Entry", "Pitch", "Durations", "Rhythm", "Voices & tuplets", "Expression", "Form", "Selection", "File & view", "Playback"}
 
 func buildScoreCmdInfos() []scoreCmdInfo {
 	in := make([]scoreCmdInfo, scCmdCount)
@@ -233,6 +258,30 @@ func buildScoreCmdInfos() []scoreCmdInfo {
 	set(scMixer, "mixer", "Score / Mixer view", "File & view")
 	set(scExportAudio, "export_audio", "Export audio (WAV)...", "File & view")
 	set(scAddLine, "add_line", "Add a line...", "Entry")
+	set(scSlur, "slur", "Slur to the next note (again: one note further); over selected bars", "Expression")
+	set(scCresc, "crescendo", "Crescendo hairpin to the next note (again: further)", "Expression")
+	set(scDim, "diminuendo", "Diminuendo hairpin to the next note (again: further)", "Expression")
+	set(scGliss, "glissando", "Glissando to the next note on / off", "Expression")
+	set(scExpression, "expression", "Dynamic or expression text... (mf, pizz., dolce, cresc.)", "Expression")
+	set(scTempoText, "tempo_text", "Tempo mark or tempo text...", "Form")
+	set(scStaccato, "staccato", "Staccato", "Expression")
+	set(scStaccatissimo, "staccatissimo", "Staccatissimo", "Expression")
+	set(scAccent, "accent", "Accent", "Expression")
+	set(scTenuto, "tenuto", "Tenuto", "Expression")
+	set(scMarcato, "marcato", "Marcato", "Expression")
+	set(scKeypad7, "keypad_7", "Natural (second layout: staccato)", "Expression")
+	set(scKeypad8, "keypad_8", "Sharp (second layout: tenuto)", "Expression")
+	set(scKeypad9, "keypad_9", "Flat (second layout: staccatissimo)", "Expression")
+	set(scKeypadPlus, "keypad_plus", "Accent (second layout: marcato)", "Expression")
+	set(scGraceAcc, "grace_acciaccatura", "Grace notes (acciaccatura) on / off", "Entry")
+	set(scGraceApp, "grace_appoggiatura", "Grace notes (appoggiatura) on / off", "Entry")
+	set(scMarksPanel, "marks_panel", "Show / hide the marks palette", "File & view")
+	set(scConcert, "concert_pitch", "Concert pitch on / off", "File & view")
+	set(scLane, "dynamics_lane", "Dynamics lane of the selected line on / off", "File & view")
+	set(scRehearsal, "rehearsal_mark", "Rehearsal mark (section)...", "Form")
+	set(scRepeatBars, "repeat_bars", "Repeat the selected bars...", "Form")
+	set(scEnding, "ending", "1st / 2nd ending over the selected bars...", "Form")
+	set(scClefChange, "clef_change", "Clef change from the selection...", "Form")
 	return in
 }
 
@@ -549,6 +598,19 @@ func scoreCommonBinds(k *scoreKeymap) {
 	k.bind(scSemiDown, key(sdl.SCANCODE_DOWN))
 	k.bind(scOctUp, ctrlKey(sdl.SCANCODE_UP))
 	k.bind(scOctDown, ctrlKey(sdl.SCANCODE_DOWN))
+	// Expression: S, H and Shift+H as both programs have them. G is the
+	// note G (a letter in note input, a pitch change out of it), so the
+	// glissando is Alt+G.
+	k.bind(scSlur, key(sdl.SCANCODE_S))
+	k.bind(scCresc, key(sdl.SCANCODE_H))
+	k.bind(scDim, shiftKey(sdl.SCANCODE_H))
+	k.bind(scGliss, altKey(sdl.SCANCODE_G))
+	k.bind(scExpression, ctrlKey(sdl.SCANCODE_E))
+	k.bind(scTempoText, ctrlAlt(sdl.SCANCODE_T))
+	k.bind(scMarksPanel, ctrlAlt(sdl.SCANCODE_P))
+	k.bind(scConcert, ctrlShift(sdl.SCANCODE_D))
+	k.bind(scLane, ctrlShift(sdl.SCANCODE_L))
+	k.bind(scRehearsal, ctrlKey(sdl.SCANCODE_R))
 }
 
 // scoreSibeliusKeymap is the default: Sibelius's keys, as SPEC.md's input
@@ -563,9 +625,21 @@ func scoreSibeliusKeymap() *scoreKeymap {
 		k.bind(scInt2+scoreCmd(n-2), key(scoreDigitKeys[n]))
 		k.bind(scBelow2+scoreCmd(n-2), shiftKey(scoreDigitKeys[n]))
 	}
-	k.bind(scSharp, key(sdl.SCANCODE_EQUALS), shiftKey(sdl.SCANCODE_EQUALS), key(sdl.SCANCODE_KP_8))
-	k.bind(scFlat, key(sdl.SCANCODE_MINUS), key(sdl.SCANCODE_KP_9))
-	k.bind(scNatural, key(sdl.SCANCODE_0), key(sdl.SCANCODE_KP_7))
+	k.bind(scSharp, key(sdl.SCANCODE_EQUALS), shiftKey(sdl.SCANCODE_EQUALS))
+	k.bind(scFlat, key(sdl.SCANCODE_MINUS))
+	k.bind(scNatural, key(sdl.SCANCODE_0))
+	// The keypad's 7, 8, 9 and + follow its layout.
+	k.bind(scKeypad7, key(sdl.SCANCODE_KP_7))
+	k.bind(scKeypad8, key(sdl.SCANCODE_KP_8))
+	k.bind(scKeypad9, key(sdl.SCANCODE_KP_9))
+	k.bind(scKeypadPlus, key(sdl.SCANCODE_KP_PLUS))
+	// Articulations on the main keys too: . ' > _ and " (marcato: Shift+6,
+	// the ^, is the sixth below).
+	k.bind(scStaccato, key(sdl.SCANCODE_PERIOD))
+	k.bind(scStaccatissimo, key(sdl.SCANCODE_APOSTROPHE))
+	k.bind(scAccent, shiftKey(sdl.SCANCODE_PERIOD))
+	k.bind(scTenuto, shiftKey(sdl.SCANCODE_MINUS))
+	k.bind(scMarcato, shiftKey(sdl.SCANCODE_APOSTROPHE))
 	k.bind(scStepUp, altKey(sdl.SCANCODE_UP))
 	k.bind(scStepDown, altKey(sdl.SCANCODE_DOWN))
 	k.bind(scRespell, key(sdl.SCANCODE_RETURN))
@@ -622,6 +696,13 @@ func scoreMuseScoreKeymap() *scoreKeymap {
 	k.bind(scClef, ctrlShift(sdl.SCANCODE_C))
 	k.bind(scKeypadPanel, ctrlAlt(sdl.SCANCODE_K))
 	k.bind(scMixer, key(sdl.SCANCODE_F10))
+	// MuseScore's articulation keys (its Shift+N, tenuto, is the natural
+	// here, so tenuto is Shift+T).
+	k.bind(scStaccato, shiftKey(sdl.SCANCODE_S))
+	k.bind(scAccent, shiftKey(sdl.SCANCODE_V))
+	k.bind(scMarcato, shiftKey(sdl.SCANCODE_O))
+	k.bind(scTenuto, shiftKey(sdl.SCANCODE_T))
+	k.bind(scStaccatissimo, shiftKey(sdl.SCANCODE_APOSTROPHE))
 	k.index()
 	return k
 }

@@ -3,7 +3,9 @@
 //
 // Glyphs are textured quads cut from the font atlas (internal/score/glyph,
 // atlas.go) for the view's zoom bucket, the page uploaded here as a GL
-// texture whenever it has changed; lines are imgui's antialiased lines;
+// texture whenever it has changed; text runs likewise from a page of their
+// own, set in the faces the layout measured them with (text.go); lines
+// are imgui's antialiased lines;
 // filled paths (beams, ties) are flattened and triangulated; horizontal and
 // vertical lines (staff lines, stems) are snapped to whole pixels. Colours come
 // per item from the caller, so a selection, a voice colour or a playing
@@ -16,6 +18,7 @@
 package scoredraw
 
 import (
+	"image"
 	"math"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -58,21 +61,23 @@ type Renderer struct {
 	atlases *glyph.Atlases
 	tex     map[*glyph.Atlas]uint32
 
+	// text is the page of text runs (text.go).
+	text *textPage
+
 	// Upload makes or refreshes a page's texture and returns its name; old
-	// is the page's texture so far (0 for none). Delete frees one. Both are
-	// GL by default; tests without GL stand in.
-	Upload func(a *glyph.Atlas, old uint32) uint32
-	Delete func(id uint32)
-	// FontSize is the text font's pixel size (imgui's current by default),
-	// to hang text from its baseline.
-	FontSize func() float32
+	// is the page's texture so far (0 for none); UploadText does the same
+	// for the text page. Delete frees one. All are GL by default; tests
+	// without GL stand in.
+	Upload     func(a *glyph.Atlas, old uint32) uint32
+	UploadText func(img *image.RGBA, old uint32) uint32
+	Delete     func(id uint32)
 }
 
 // New makes a renderer over the embedded font.
 func New() *Renderer {
 	return &Renderer{
-		atlases: glyph.NewAtlases(glyph.Bravura()), tex: map[*glyph.Atlas]uint32{},
-		Upload: uploadGL, Delete: deleteGL, FontSize: imgui.FontSize,
+		atlases: glyph.NewAtlases(glyph.Bravura()), tex: map[*glyph.Atlas]uint32{}, text: newTextPage(),
+		Upload: uploadGL, UploadText: uploadImageGL, Delete: deleteGL,
 	}
 }
 
@@ -85,6 +90,10 @@ func (r *Renderer) Release() {
 		a.UploadedRev = 0
 	}
 	r.tex = map[*glyph.Atlas]uint32{}
+	if r.text.tex != 0 {
+		r.Delete(r.text.tex)
+		r.text.tex, r.text.uploaded = 0, 0
+	}
 }
 
 // Texture is the texture for a zoom's atlas page after Draw (0 before).
@@ -103,11 +112,24 @@ func (r *Renderer) Draw(c Canvas, l *engrave.List, v View) {
 		b := engrave.ItemBounds(it)
 		return b.Max.X >= v.Clip.Min.X && b.Min.X <= v.Clip.Max.X && b.Max.Y >= v.Clip.Min.Y && b.Min.Y <= v.Clip.Max.Y
 	}
-	// Pass one: every glyph onto the page.
-	for i := range l.Items {
-		it := &l.Items[i]
-		if it.Kind == engrave.ItemGlyph && visible(it) {
-			a.Glyph(it.Glyph, it.Size)
+	// Pass one: every glyph and text run onto its page. A text page that
+	// starts again part way bakes the frame's runs once more.
+	for pass := 0; pass < 2; pass++ {
+		reset := r.text.reset
+		for i := range l.Items {
+			it := &l.Items[i]
+			if !visible(it) {
+				continue
+			}
+			switch it.Kind {
+			case engrave.ItemGlyph:
+				a.Glyph(it.Glyph, it.Size)
+			case engrave.ItemText:
+				r.text.slot(textKeyOf(it, v.Scale))
+			}
+		}
+		if r.text.reset == reset {
+			break
 		}
 	}
 	if a.Rev != a.UploadedRev || r.tex[a] == 0 {
@@ -115,6 +137,11 @@ func (r *Renderer) Draw(c Canvas, l *engrave.List, v View) {
 		a.UploadedRev = a.Rev
 	}
 	tex := imgui.TextureID(r.tex[a])
+	tp := r.text
+	if len(tp.slots) > 0 && (tp.rev != tp.uploaded || tp.tex == 0) {
+		tp.tex = r.UploadText(tp.img, tp.tex)
+		tp.uploaded = tp.rev
+	}
 
 	s := v.Scale
 	pt := func(p engrave.Point) imgui.Vec2 {
@@ -167,10 +194,23 @@ func (r *Renderer) Draw(c Canvas, l *engrave.List, v View) {
 				}
 			}
 		case engrave.ItemText:
-			fs := r.FontSize()
+			sl, ok := tp.slot(textKeyOf(it, s))
+			if !ok {
+				continue
+			}
 			p := pt(it.P)
-			p.Y -= fs * 0.8 // imgui hangs text from its top
-			c.AddText(p, col, it.Text)
+			switch it.Align {
+			case engrave.AlignCenter:
+				p.X -= sl.adv / 2
+			case engrave.AlignRight:
+				p.X -= sl.adv
+			}
+			// Whole pixels, so the run's pixels land on the screen's.
+			p0 := imgui.Vec2{X: float32(math.Round(float64(p.X - sl.ox))), Y: float32(math.Round(float64(p.Y - sl.oy)))}
+			p1 := imgui.Vec2{X: p0.X + float32(sl.w), Y: p0.Y + float32(sl.h)}
+			pw, ph := float32(tp.img.Bounds().Dx()), float32(tp.img.Bounds().Dy())
+			c.AddImageV(imgui.TextureID(tp.tex), p0, p1,
+				imgui.Vec2{X: float32(sl.x) / pw, Y: float32(sl.y) / ph}, imgui.Vec2{X: float32(sl.x+sl.w) / pw, Y: float32(sl.y+sl.h) / ph}, col)
 		}
 	}
 }
@@ -229,6 +269,24 @@ func uploadGL(a *glyph.Atlas, old uint32) uint32 {
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
 	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(a.W), int32(a.H), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(a.Pix.Pix))
+	gl.BindTexture(gl.TEXTURE_2D, 0)
+	return t
+}
+
+// uploadImageGL makes or refreshes the text page's texture.
+func uploadImageGL(img *image.RGBA, old uint32) uint32 {
+	t := old
+	if t == 0 {
+		gl.GenTextures(1, &t)
+	}
+	gl.BindTexture(gl.TEXTURE_2D, t)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
+	b := img.Bounds()
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(b.Dx()), int32(b.Dy()), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(img.Pix))
 	gl.BindTexture(gl.TEXTURE_2D, 0)
 	return t
 }

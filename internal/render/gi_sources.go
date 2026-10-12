@@ -534,7 +534,7 @@ func (s *giSourceSet) collectScenery(lvl *world.Level) {
 				slot.model, slot.texture = sc.Model, tex
 				slot.nameHash = hashString(sc.Model) ^ hashString(tex)
 			}
-			wm := sc.ModelMatrix()
+			wm := sceneryModel(lvl, sc)
 			h := hashMatCoarse(wm) ^ slot.nameHash
 			slot.seen = s.frame
 			if slot.g != nil && slot.g.hash == h {

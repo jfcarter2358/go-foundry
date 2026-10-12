@@ -259,6 +259,9 @@ func Describe(m *nanite.Mesh) string {
 	if c := m.Collision; c != nil {
 		coll = fmt.Sprintf("collision %d triangles / %d hulls", c.TriangleCount(), len(c.Hulls))
 	}
+	if m.HasColors {
+		coll += ", vertex colours"
+	}
 	return fmt.Sprintf("%d triangles, %d vertices, %d clusters over %d LOD levels in %d pages, fallback %d triangles, %s, %s, size %.2f x %.2f x %.2f, slots [%s]",
 		m.TriangleCount(), m.VertexCount(), len(m.Clusters), m.Levels, len(m.Pages), len(m.Fallback)/3, sdf, coll, size[0], size[1], size[2], strings.Join(slots, " "))
 }

@@ -117,6 +117,37 @@ var upward = map[string][]string{
 	// that starts it.
 	"release": {"editor", "app", "uiwin"},
 	"editor":  {"app"},
+	// procgen is the procedural generators' core — the .fgen document, the
+	// stage registry and the run engine — and is pure CPU, below the world
+	// and everything that draws: a stage's mesh output (procgen/meshout,
+	// which cooks through nanitecook and so reaches gfx) and its level
+	// splice (procgen/genlevel, which needs world's schema) live beside it,
+	// and the core reaches neither. noise is below even that.
+	"procgen":       {"gfx", "model", "nanitecook", "world", "levelio", "render", "editor", "app", "uiwin"},
+	"procgen/noise": {"gfx", "model", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/terrain is the heightfield generator behind the terrain stage
+	// and what later stages read its products through: pure computation,
+	// so it stays below the engine as noise does (a scatter stage importing
+	// it must not drag gfx in).
+	"procgen/terrain": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/sdf (signed-distance modelling and its mesher) and
+	// procgen/rocks (the rock generator on it) are pure computation too:
+	// the rocks stage turns their meshes into ImportMeshes and cooks them.
+	"procgen/sdf":   {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	"procgen/rocks": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/place (scatter, cliff walls, vegetation patches) reads a
+	// terrain and rock variants and answers instances: pure computation,
+	// the placement stages make level placements of them.
+	"procgen/place": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// polyhaven is the Poly Haven API client (listings, cached md5-verified
+	// downloads, thumbnails): pure Go over net/http. The importer
+	// (polyhaven/phimport) cooks, so it may reach gfx through nanitecook;
+	// the client and its catalog must not, so the editor's browser and a
+	// headless tool share it.
+	"polyhaven": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// texcompress (the BC7/BC5 encoders and their disk cache) is pure CPU
+	// under gfx, which uploads what it makes.
+	"texcompress": {"gfx", "world", "render", "editor", "app", "uiwin"},
 }
 
 func TestPackagesDoNotDependUpward(t *testing.T) {

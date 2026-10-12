@@ -342,6 +342,12 @@ func textureOpaque(name string) bool {
 	if v, ok := textureOpaqueCache[tex]; ok {
 		return v
 	}
+	// Known from the decoded image (gfx/texture_opaque.go): a block-
+	// compressed upload's readback is not exact.
+	if v, ok := gfx.TextureFullyOpaque(name); ok {
+		textureOpaqueCache[tex] = v
+		return v
+	}
 	var w, h int32
 	gl.BindTexture(gl.TEXTURE_2D, tex)
 	gl.GetTexLevelParameteriv(gl.TEXTURE_2D, 0, gl.TEXTURE_WIDTH, &w)
@@ -450,7 +456,11 @@ func (b *cullBatch) admitSW(groups []visGroup) {
 		}
 	}
 	v := &naniteVis
-	cap := min(b.swClusterCount(), naniteSWListMax, naniteVisMaxRecords-v.recordsUsed-b.visSpan(naniteCull.compactable()))
+	room := naniteVisMaxRecords - v.recordsUsed - b.visSpan(naniteCull.compactable())
+	if NaniteVisDense {
+		room = naniteVisMaxRecords // records are taken as clusters draw
+	}
+	cap := min(b.swClusterCount(), naniteSWListMax, room)
 	if cap <= 0 || !v.admits(b, groups, cap, false) {
 		return
 	}
@@ -474,6 +484,9 @@ func (s *naniteSWRaster) rasterBatch(b *cullBatch, g *visGroup, recordBase, binB
 	gl.Uniform1ui(p.U("recordBase"), uint32(recordBase))
 	gl.Uniform1ui(p.U("binBase"), uint32(binBase))
 	gl.Uniform1ui(p.U("swCap"), uint32(listCap))
+	gl.Uniform1ui(p.U("dense"), uint32(boolToInt32(NaniteVisDense)))
+	gl.Uniform1ui(p.U("maxRecords"), naniteVisMaxRecords)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, naniteVis.next)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, b.instBuf)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, naniteVis.records)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 2, g.ebo)
@@ -519,7 +532,7 @@ func (s *naniteSWRaster) rasterBatch(b *cullBatch, g *visGroup, recordBase, binB
 	// The words it cleared, before the next batch's raster writes them; the
 	// records, before the material pass reads them.
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
-	for _, i := range []uint32{0, 1, 2, 3, 5, 6, 7, 16} {
+	for _, i := range []uint32{0, 1, 2, 3, 4, 5, 6, 7, 16} {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, i, 0)
 	}
 	ProfileEnd()

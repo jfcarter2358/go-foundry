@@ -331,10 +331,11 @@ func scoreDrawGhost(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, t score
 	hw := f.Width(head)
 	items := []engrave.Item{{Kind: engrave.ItemGlyph, Glyph: head, Size: 1, P: engrave.Point{X: t.X, Y: t.Y}, Ref: engrave.NoRef}}
 	// Ledger lines from the staff out to the note.
-	pos := t.Diatonic - sb.Bottom
+	_, bottom := sb.ClefAt(t.X)
+	pos := t.Diatonic - bottom
 	ext := f.Defaults.LegerLineExtension
 	led := func(d int) {
-		y := sb.Y(sb.Bottom + d)
+		y := sb.YAt(t.X, bottom+d)
 		items = append(items, engrave.Item{Kind: engrave.ItemLine, P: engrave.Point{X: t.X - ext, Y: y}, Q: engrave.Point{X: t.X + hw + ext, Y: y},
 			Width: f.Defaults.LegerLineThickness, Ref: engrave.NoRef})
 	}
@@ -504,8 +505,11 @@ func scoreStatusParts() []string {
 	case e.ClipEvent != nil:
 		parts = append(parts, "Clipboard: "+scoreEventText(e, 0, 0, e.ClipEvent))
 	}
-	if e.Concert {
+	if e.Score.Concert {
 		parts = append(parts, "Concert pitch")
+	}
+	if e.Grace != score.NotGrace {
+		parts = append(parts, map[score.Grace]string{score.Acciaccatura: "Grace notes: acciaccaturas", score.Appoggiatura: "Grace notes: appoggiaturas"}[e.Grace])
 	}
 	if e.Transport.Loop.On {
 		parts = append(parts, scoreLoopText(e.Score, e.Transport.Loop))

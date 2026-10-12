@@ -44,6 +44,11 @@ layout(std430, binding = 4) readonly buffer Normals {
 layout(std430, binding = 5) readonly buffer Light {
     float lightData[]; // render.LightStride (7) a vertex
 };
+// The pool's vertex colours, one RGBA8 word a vertex (vertexColors; bound to
+// a stand-in when the bin's buffers have none, and then never read).
+layout(std430, binding = 7) readonly buffer Colors {
+    uint colorData[];
+};
 struct MatInstance {
     mat4 model;
     vec4 sphere;
@@ -81,6 +86,7 @@ void main() {
     float vd[3];
     vec4 bl[3];
     vec3 bi[3];
+    vec4 vc[3];
     for (int k = 0; k < 3; k++) {
         uint v = uint(int(indices[first + uint(k)]) + int(ra.y));
         vert = vec3(vertexData[5u * v], vertexData[5u * v + 1u], vertexData[5u * v + 2u]);
@@ -94,6 +100,7 @@ void main() {
             vertLight = vec4(0.0, 0.0, 0.0, 1.0);
             vertLightIndirect = vec3(0.0);
         }
+        vertColor = vertexColors != 0 ? unpackUnorm4x8(colorData[v]) : vec4(1.0);
         vx_main();
         clip[k] = vx_Position;
         uv[k] = vx_fragTexCoord;
@@ -102,6 +109,7 @@ void main() {
         vd[k] = vx_fragViewDepth;
         bl[k] = vx_fragBakedLight;
         bi[k] = vx_fragBakedIndirect;
+        vc[k] = vx_fragVertColor;
     }
 
     mat3 M = mat3(clip[0].xyw, clip[1].xyw, clip[2].xyw);
@@ -121,6 +129,7 @@ void main() {
     fragViewDepth = b.x * vd[0] + b.y * vd[1] + b.z * vd[2];
     fragBakedLight = b.x * bl[0] + b.y * bl[1] + b.z * bl[2];
     fragBakedIndirect = b.x * bi[0] + b.y * bi[1] + b.z * bi[2];
+    fragVertColor = b.x * vc[0] + b.y * vc[1] + b.z * vc[2];
     nvDUVdx = bx.x * uv[0] + bx.y * uv[1] + bx.z * uv[2];
     nvDUVdy = by.x * uv[0] + by.y * uv[1] + by.z * uv[2];
     nvDPdx = bx.x * wp[0] + bx.y * wp[1] + bx.z * wp[2];

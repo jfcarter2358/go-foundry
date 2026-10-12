@@ -1,0 +1,21 @@
+version: 1
+title: Slurs
+lines:
+- name: Clarinet
+  instrument: woodwinds/clarinet
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qC5(slur) qD5 qE5 qF5(slur_end)
+      | qG4(slur) qA4 qB4 qC5(slur_end)
+      | eC5(slur) eD5 eE5 eF5 eG5 eA5 eB5 eC6(slur_end)
+      | eE4(slur) eF4 eG4 eA4(slur_end) qC6(slur) qE4(slur_end)
+      | hC5(slur) hE5
+      | qF5 qE5 hD5(slur_end)
+      | hG4~(slur) qG4 qA4(slur_end)
+      | qC5(stacc,slur) qD5(stacc) qE5(stacc) qF5(stacc,slur_end)
+      | qC4(gliss) qC5 qG4(gliss=wavy) qE5
+      | hC5(gliss) hC4
+      | /eD5 qC5 ^eE5 qD5 /eF5(slur) qE5(slur_end) qr
+      | wC5

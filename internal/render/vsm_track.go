@@ -266,13 +266,14 @@ func (t *vsmTracker) collect(level *world.Level, cam mgl32.Vec3, reach float32) 
 
 	for i := range level.Scenery {
 		s := &level.Scenery[i]
-		lo, hi, ok := s.WorldAABB()
+		model := sceneryModel(level, s)
+		lo, hi, ok := s.WorldAABBFrom(model)
 		if !ok || !s.InWorld() {
 			continue // gone below hands in its box when its chunk goes off
 		}
 		h := newSig()
 		h.u64(uint64(boolToInt32(s.HasGeometry())))
-		h.mat(s.ModelMatrix())
+		h.mat(model)
 		h.u64(uint64(uintptr(unsafe.Pointer(s.Nanite))))
 		h.u64(uint64(boolToInt32(s.NaniteGPU)))
 		for si := range s.Submeshes {

@@ -32,6 +32,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/material"
 	"foundry/internal/meshcollide"
 	"foundry/internal/nanite"
 	"log"
@@ -55,6 +56,12 @@ type Scenery struct {
 	// texture: the same rock in moss or in snow without a second cook. A slot
 	// it does not name keeps the cooked texture. Ignored for any other model.
 	Materials map[string]string
+	// Material is the .fmat every slot of a cooked mesh wears, overlaid on
+	// its texture as a face's material is (gfx.SurfaceState) — the terrain
+	// splat a generated tile wears, a rock's ground blend. A Materials entry
+	// that names a material rather than a texture overrides it for its slot.
+	// Empty: none, and the mesh draws exactly as before.
+	Material string
 
 	Position mgl32.Vec3
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
@@ -116,6 +123,10 @@ type Scenery struct {
 	// could draw it: for a placement that is not in the level's list, such as
 	// the editor's placement ghost, which nothing would otherwise draw.
 	NoNanite bool
+
+	// classic is this placement's claim on the shared classic-path mesh its
+	// Submeshes copy (scenery_share.go), or nil.
+	classic *sceneryClassicClaim
 }
 
 // SceneryWind is how a placement bends in the wind. The wind's direction,
@@ -219,9 +230,13 @@ func (s *Scenery) BoundHalfExtents() mgl32.Vec3 {
 // engine's meshes is an origin at the base, so the box is half a height up —
 // and the offset has to travel through the placement's rotation and scale to
 // stay on the mesh.
-func (s *Scenery) BoundCenter() mgl32.Vec3 {
+func (s *Scenery) BoundCenter() mgl32.Vec3 { return s.BoundCenterFrom(s.ModelMatrix()) }
+
+// BoundCenterFrom is BoundCenter under model, the placement's ModelMatrix
+// as the caller already has it (the renderer works it out once a frame).
+func (s *Scenery) BoundCenterFrom(model mgl32.Mat4) mgl32.Vec3 {
 	c := s.LocalMin.Add(s.LocalMax).Mul(0.5)
-	p := s.ModelMatrix().Mul4x1(c.Vec4(1))
+	p := model.Mul4x1(c.Vec4(1))
 	return mgl32.Vec3{p.X(), p.Y(), p.Z()}
 }
 
@@ -236,12 +251,21 @@ func (s *Scenery) WorldAABB() (min, max mgl32.Vec3, ok bool) {
 	if !s.HasBounds() {
 		return mgl32.Vec3{}, mgl32.Vec3{}, false
 	}
+	return s.WorldAABBFrom(s.ModelMatrix())
+}
+
+// WorldAABBFrom is WorldAABB under model, the placement's ModelMatrix as the
+// caller already has it.
+func (s *Scenery) WorldAABBFrom(model mgl32.Mat4) (min, max mgl32.Vec3, ok bool) {
+	if !s.HasBounds() {
+		return mgl32.Vec3{}, mgl32.Vec3{}, false
+	}
 	h := s.BoundHalfExtents()
 	if s.Rotation != (mgl32.Vec3{}) {
 		r := h.Len()
 		h = mgl32.Vec3{r, r, r}
 	}
-	c := s.BoundCenter()
+	c := s.BoundCenterFrom(model)
 	return c.Sub(h), c.Add(h), true
 }
 
@@ -382,34 +406,43 @@ func (s *Scenery) Load() error {
 	if nanite.IsCookedPath(s.Model) {
 		return s.loadNanite()
 	}
-	doc, err := loadModelDocument(fileutil.ResolveAssetPath(s.Model))
+	path := fileutil.ResolveAssetPath(s.Model)
+	// The parsed document is the cache's, shared and read-only: a prop reads
+	// its bounds and builds nothing of its own from it.
+	doc, err := pristineModelDocument(path)
 	if err != nil {
 		return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
 	}
 	s.LocalMin, s.LocalMax = doc.Bounds()
 
-	for _, sub := range doc.ModelSubmeshes() {
-		if len(sub.Indices) == 0 {
-			continue
-		}
-		if err := gfx.EnsureTextureLoaded(sub.Texture); err != nil {
-			log.Printf("scenery %s: texture %q: %v", s.ID, sub.Texture, err)
-		}
-		// Indexed: a model loads as a shared vertex pool and an index list
-		// (gfx.IndexedModels; docs/nanite/PHASE_0.md).
-		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle, AutoSmooth: true, Indexed: true}
+	// The built mesh is the one entity attachments of the same file share
+	// (model_mesh_cache.go): an unskinned build is exactly what a prop
+	// draws, one indexed, auto-smoothed submesh per document submesh over
+	// its own texture. Copies of the templates, with buffers shared.
+	var mm *modelMesh
+	if key, ok := modelMeshKeyFor(path, doc, false); ok && shareSceneryMeshes {
+		mm, err = sharedModelMesh(key, doc)
+	} else {
+		mm, err = buildModelMesh(doc, false)
+	}
+	if err != nil {
+		return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
+	}
+	for i := range mm.subs {
+		g := mm.subs[i]
+		ensureSceneryTexture(s.ID, g.Texture)
 		// The mesh is model-space and the draw carries ModelMatrix, so the
 		// geometry's own origin — the transparent pass's sort key — is zero.
-		if err := g.Load(sub.Vertices, sub.Indices, sub.Texture, mgl32.Vec3{}); err != nil {
-			return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
-		}
+		g.UploadShared(&mm.shares[i])
 		s.Submeshes = append(s.Submeshes, g)
 	}
 	return nil
 }
 
 // loadNanite is Load for a cooked mesh: one submesh per material slot over
-// the cooked vertex pool, CPU-only when the GPU cull draws it.
+// the cooked vertex pool, CPU-only when the GPU cull draws it, and otherwise
+// the classic path's full detail, shared with every other placement of the
+// mesh (scenery_share.go).
 func (s *Scenery) loadNanite() error {
 	m, err := nanite.Load(fileutil.ResolveAssetPath(s.Model))
 	if err != nil {
@@ -418,11 +451,19 @@ func (s *Scenery) loadNanite() error {
 	s.Nanite = m
 	s.LocalMin, s.LocalMax = m.Lo, m.Hi
 	s.NaniteGPU = NaniteMeshes && !s.NoNanite && GeometryUploadsOn() && NaniteGPUAvailable != nil && NaniteGPUAvailable()
-	if !s.NaniteGPU || len(m.Fallback) == 0 {
-		// The classic path draws the full detail, and a mesh with no
-		// fallback has nothing smaller for the CPU: decode every page
-		// (docs/nanite/PHASE_3.md). The GPU path streams the pages instead
-		// and keeps none of them here.
+	if !s.NaniteGPU {
+		c, err := claimSceneryClassic(m)
+		if err != nil {
+			return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
+		}
+		s.classic = c
+		s.placeSceneryClassic(c)
+		return nil
+	}
+	if len(m.Fallback) == 0 {
+		// A mesh with no fallback has nothing smaller for the CPU: decode
+		// every page (docs/nanite/PHASE_3.md). The GPU path otherwise
+		// streams the pages and keeps none of them here.
 		if err := m.Flat(); err != nil {
 			return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
 		}
@@ -433,57 +474,46 @@ func (s *Scenery) loadNanite() error {
 			continue
 		}
 		tex := s.SlotTexture(si)
-		if err := gfx.EnsureTextureLoaded(tex); err != nil {
-			log.Printf("scenery %s: texture %q: %v", s.ID, tex, err)
-		}
+		ensureSceneryTexture(s.ID, tex)
+		// The GPU's LOD selection draws it; what the CPU keeps is for
+		// picking and the point-shadow signature, and the fallback mesh —
+		// the DAG cut at a middle level, over its own small pool — serves
+		// those for a fraction of the triangles (docs/nanite/PHASE_2.md).
+		// Nothing to upload: the cull's pool draws it. The arrays are the
+		// cooked mesh's own, shared by every placement and read-only.
 		g := gfx.Geometry{Smooth: m.Slots[si].Smooth, AutoSmooth: true, Indexed: true}
-		if s.NaniteGPU {
-			// The GPU's LOD selection draws it; what the CPU keeps is for
-			// picking and the point-shadow signature, and the fallback
-			// mesh — the DAG cut at a middle level, over its own small pool
-			// — serves those for a fraction of the triangles
-			// (docs/nanite/PHASE_2.md). Nothing to upload: the cull's pool
-			// draws it.
-			verts, normals, idx := m.FallbackVertices, m.FallbackNormals, m.SlotFallback(si)
-			if len(idx) == 0 {
-				// No fallback triangles for this slot: the full pool,
-				// decoded from the pages (a no-op once done).
-				if err := m.Flat(); err != nil {
-					return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
-				}
-				verts, normals, idx = m.Vertices, m.Normals, m.Indices[3*first:3*(first+count)]
-			}
-			g.CPUOnly = true
-			g.Vertices, g.Normals, g.Indices = verts, normals, idx
-			g.Texture, g.Alpha = tex, 1
-			g.Model = mgl32.Ident4()
-		} else {
-			idx := m.Indices[3*first : 3*(first+count)]
-			rows := make([][]float32, 0, len(idx))
-			normals := make([][]float32, 0, len(idx))
-			order := make([]int, len(idx))
-			for k, v := range idx {
-				rows = append(rows, m.Vertices[5*v:5*v+5])
-				normals = append(normals, m.Normals[3*v:3*v+3])
-				order[k] = k
-			}
-			g.VertexNormals = normals
-			if err := g.Load(rows, order, tex, mgl32.Vec3{}); err != nil {
+		verts, normals, idx := m.FallbackVertices, m.FallbackNormals, m.SlotFallback(si)
+		if len(idx) == 0 {
+			// No fallback triangles for this slot: the full pool, decoded
+			// from the pages (a no-op once done).
+			if err := m.Flat(); err != nil {
 				return fmt.Errorf("scenery %q model %q: %w", s.ID, s.Model, err)
 			}
-			if err := s.loadShadowLOD(&g, m, si, tex); err != nil {
-				return err
-			}
+			verts, normals, idx = m.Vertices, m.Normals, m.Indices[3*first:3*(first+count)]
 		}
+		g.CPUOnly = true
+		g.Vertices, g.Normals, g.Indices = verts, normals, idx
+		g.Texture, g.Alpha = tex, 1
+		g.MaterialName = s.SlotMaterial(si)
+		gfx.EnsureMaterialFxTextures(g.MaterialName, tex)
+		g.Model = mgl32.Ident4()
 		s.Submeshes = append(s.Submeshes, g)
 	}
 	return nil
 }
 
-// loadShadowLOD gives a classic-path submesh of a cooked mesh its shadow
-// stand-in: slot si of the fallback cut, uploaded beside it (gfx.Geometry.
+// ensureSceneryTexture loads tex for placement id, logging rather than
+// failing: see Load.
+func ensureSceneryTexture(id, tex string) {
+	if err := gfx.EnsureTextureLoaded(tex); err != nil {
+		log.Printf("scenery %s: texture %q: %v", id, tex, err)
+	}
+}
+
+// classicShadowLOD is a classic-path submesh's shadow stand-in: slot si of
+// the cooked mesh's fallback cut, built CPU-only beside it (gfx.Geometry.
 // ShadowLOD), which the cascade and point-light passes draw instead of the
-// full detail.
+// full detail. nil when there is nothing smaller to cast with.
 //
 // Why: a placement the GPU cull does not draw (no compute, the switch off, the
 // placement opted out) is drawn whole — every triangle of level 0 — and every
@@ -497,14 +527,15 @@ func (s *Scenery) loadNanite() error {
 // the eye sees is unchanged and only the shadow's outline moves by that much.
 //
 // NaniteClassicShadowLOD=false (FOUNDRY_NANITE_CLASSIC_SHADOW_LOD=0) keeps the
-// full detail in the shadows too, as before.
-func (s *Scenery) loadShadowLOD(g *gfx.Geometry, m *nanite.Mesh, si int, tex string) error {
-	if !NaniteClassicShadowLOD || len(m.Fallback) == 0 {
-		return nil
+// full detail in the shadows too, as before. Like the submesh it stands in
+// for, it is built once per cooked mesh and shared (scenery_share.go).
+func classicShadowLOD(g *gfx.Geometry, m *nanite.Mesh, si int, tex string) (*gfx.Geometry, error) {
+	if len(m.Fallback) == 0 {
+		return nil, nil
 	}
 	idx := m.SlotFallback(si)
 	if _, count := m.SlotTriangles(si); len(idx) == 0 || len(idx)/3 >= int(count) {
-		return nil // nothing smaller to cast with
+		return nil, nil // nothing smaller to cast with
 	}
 	rows := make([][]float32, 0, len(idx))
 	normals := make([][]float32, 0, len(idx))
@@ -514,16 +545,15 @@ func (s *Scenery) loadShadowLOD(g *gfx.Geometry, m *nanite.Mesh, si int, tex str
 		normals = append(normals, m.FallbackNormals[3*v:3*v+3])
 		order[k] = k
 	}
-	lod := &gfx.Geometry{Smooth: g.Smooth, AutoSmooth: true, Indexed: true, VertexNormals: normals}
+	lod := &gfx.Geometry{Smooth: g.Smooth, AutoSmooth: true, Indexed: true, CPUOnly: true, VertexNormals: normals}
 	if err := lod.Load(rows, order, tex, mgl32.Vec3{}); err != nil {
-		return fmt.Errorf("scenery %q model %q: shadow LOD: %w", s.ID, s.Model, err)
+		return nil, err
 	}
-	g.ShadowLOD = lod
-	return nil
+	return lod, nil
 }
 
 // NaniteClassicShadowLOD is whether a cooked mesh drawn the classic way casts
-// its fallback cut rather than its full detail (loadShadowLOD). Read when a
+// its fallback cut rather than its full detail (classicShadowLOD). Read when a
 // placement loads.
 var NaniteClassicShadowLOD = gfx.EnvFlag("FOUNDRY_NANITE_CLASSIC_SHADOW_LOD", true)
 
@@ -533,10 +563,21 @@ func (s *Scenery) SlotTexture(si int) string {
 	if s.Nanite == nil || si < 0 || si >= len(s.Nanite.Slots) {
 		return ""
 	}
-	if t, ok := s.Materials[s.Nanite.Slots[si].Name]; ok {
+	if t, ok := s.Materials[s.Nanite.Slots[si].Name]; ok && !material.Exists(t) {
 		return t
 	}
 	return s.Nanite.Slots[si].Texture
+}
+
+// SlotMaterial is the .fmat slot si wears: its Materials entry when that
+// names a material, else the placement's Material ("" for none).
+func (s *Scenery) SlotMaterial(si int) string {
+	if s.Nanite != nil && si >= 0 && si < len(s.Nanite.Slots) {
+		if t, ok := s.Materials[s.Nanite.Slots[si].Name]; ok && material.Exists(t) {
+			return t
+		}
+	}
+	return s.Material
 }
 
 // GeometryUploadsOn is gfx.GeometryUploadsEnabled, readable as a function so
@@ -550,6 +591,10 @@ func (s *Scenery) Delete() {
 		s.Submeshes[i].Delete()
 	}
 	s.Submeshes = nil
+	// And the claim on the shared classic mesh (scenery_share.go), which the
+	// last placement drawing it drops from the cache.
+	s.classic.release()
+	s.classic = nil
 	s.LocalMin, s.LocalMax = mgl32.Vec3{}, mgl32.Vec3{}
 	s.Nanite, s.NaniteGPU = nil, false
 }
@@ -655,6 +700,7 @@ func SceneryFromRaw(r RawScenery) Scenery {
 		Scale:     vec3FromRawPtr(r.Scale, mgl32.Vec3{1, 1, 1}),
 		Solid:     BoolDefault(r.Solid, true),
 		Materials: copyStringMap(r.Materials),
+		Material:  r.Material,
 		Collision: collisionModeFromRaw(r.ID, r.Collision),
 		Wind:      sceneryWindFromRaw(r.Wind),
 		Chunk:     r.Chunk,
@@ -705,6 +751,7 @@ func SceneryToRaw(s *Scenery) RawScenery {
 		Chunk:    s.Chunk,
 
 		Materials: copyStringMap(s.Materials),
+		Material:  s.Material,
 	}
 	if s.Collision != meshcollide.ModeAuto {
 		r.Collision = s.Collision.String()

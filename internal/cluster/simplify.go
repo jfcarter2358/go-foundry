@@ -634,6 +634,14 @@ func (s *simplifier) plan(p, q int32, nb *neighbourhood, nq *neighbourhood, to [
 	if pq.w > 0 {
 		cost /= pq.w
 	}
+	// A sliver's attribute fit (a near-zero determinant) can overflow the
+	// quadric into Inf − Inf: such a collapse is not costed but refused, or
+	// one NaN would become the whole DAG's error and the LOD test would never
+	// select the mesh (a generated rock went invisible; docs/canyon/PHASE_2.md).
+	// Every collapse that costed a number before costs the same now.
+	if math.IsNaN(cost) || math.IsInf(cost, 0) {
+		return 0, false
+	}
 	return max(cost, 0), true
 }
 

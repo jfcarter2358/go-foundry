@@ -39,6 +39,25 @@ uniform uint groupCount;
 uniform uint recordBase;
 uniform uint binBase;
 
+// DENSE numbering (dense = 1; render/nanite_vis.go, docs/canyon/PERF.md):
+// only a command that draws takes a record, the next of the frame's from
+// one counter every pass shares, instead of every slot its pass might have
+// had a record by. A view of thousands of placements reserved more slots
+// than an ID can name long before it drew that many commands, and every
+// pass after the 2^20th went the forward way, without the compute
+// rasteriser. A command past maxRecords (a frame that really draws that
+// many) is dropped rather than numbered wrong. A packed pass's group holds
+// counts[group] commands; the slots after them are last pass's leftovers.
+layout(std430, binding = 3) coherent buffer VisNext {
+    uint visNext;
+};
+layout(std430, binding = 4) readonly buffer Counts {
+    uint counts[];
+};
+uniform uint dense;
+uniform uint packedCounts;
+uniform uint maxRecords;
+
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= slots || groupCount == 0u) {
@@ -59,6 +78,19 @@ void main() {
     }
     uint o = i * 5u;
     uint r = recordBase + g.w + (i - g.x);
+    if (dense != 0u) {
+        if (packedCounts != 0u && i - g.x >= counts[lo]) {
+            return;
+        }
+        if (cmds[o] == 0u || cmds[o + 1u] == 0u) {
+            return; // culled: drawn as nothing, numbered as nothing
+        }
+        r = atomicAdd(visNext, 1u);
+        if (r >= maxRecords) {
+            cmds[o + 1u] = 0u;
+            return;
+        }
+    }
     records[r].a = uvec4(cmds[o + 2u], cmds[o + 3u], cmds[o + 4u], binBase + lo);
     records[r].b = uvec4(r + 1u, cmds[o], 0u, 0u);
     cmds[o + 4u] = r;

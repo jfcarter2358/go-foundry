@@ -160,6 +160,17 @@ func randomScore(r *rand.Rand) *Score {
 	if r.Intn(2) == 0 {
 		s.Tempo = append(s.Tempo, TempoMark{At: Pos{Bar: 2, Offset: F(1, 8)}, BPM: 72.5, Unit: Duration{Base: Quarter, Dots: 1}, Ramp: true})
 	}
+	if r.Intn(2) == 0 {
+		s.Tempo = append(s.Tempo, TempoMark{At: Pos{Bar: 2, Offset: F(1, 4)}, Unit: Duration{Base: Quarter}, Text: "poco rit.", To: Pos{Bar: 3}, HasTo: true},
+			TempoMark{At: Pos{Bar: 3}, Unit: Duration{Base: Quarter}, Text: "a tempo"})
+	}
+	if r.Intn(2) == 0 {
+		s.Repeats = []Repeat{{Start: 1, End: 2, Times: 3}}
+		s.Voltas = []Volta{{Start: 2, End: 2, Passes: []int{1, 2}}, {Start: 3, End: 3, Passes: []int{3}}}
+		s.Jumps = []Jump{{Kind: JumpSegno, Bar: 1}, {Kind: JumpFine, Bar: 2}, {Kind: JumpDS, Bar: 3, Al: JumpFine, Repeats: r.Intn(2) == 0}}
+	}
+	s.Concert = r.Intn(2) == 0
+	s.Playback = PlaybackOptions{IgnoreRepeats: r.Intn(2) == 0, Graces: GraceTiming(r.Intn(3))}
 	s.Sections = []Section{{Name: "a", Bar: 1}, {Name: "b", Bar: 2, Loop: true, Next: "a"}}
 	s.Markers = []Marker{{Name: "m", At: Pos{Bar: 2, Offset: F(1, 4)}}}
 	s.Gain = []float32{1, 0.5, 0}[r.Intn(3)]
@@ -175,10 +186,17 @@ func randomScore(r *rand.Rand) *Score {
 			if r.Intn(3) == 0 {
 				staff.Transpose = Interval{-1, -2}
 			}
+			if r.Intn(2) == 0 {
+				staff.Clefs = []ClefChange{{At: Pos{Bar: 1, Offset: F(1, 8)}, Clef: "bass"}, {At: Pos{Bar: 2}, Clef: "alto"}}
+			}
 			for v := 0; v < 1+r.Intn(MaxVoices); v++ {
 				staff.Voices = append(staff.Voices, randomVoice(r))
 			}
 			ln.Staves = append(ln.Staves, staff)
+		}
+		if r.Intn(2) == 0 {
+			ln.Gliss = GlissStyles[r.Intn(len(GlissStyles))]
+			ln.Overrides = []DynOverride{{From: Pos{Bar: 1, Offset: F(1, 4)}, To: Pos{Bar: 2}, Level: 0.25}}
 		}
 		if r.Intn(2) == 0 {
 			ln.Lanes = []Lane{{Name: "volume", Points: []LanePoint{{At: Pos{Bar: 1}, Value: 0.5}, {At: Pos{Bar: 2, Offset: F(1, 4)}, To: Pos{Bar: 3}, HasTo: true, Value: 1}}}}
@@ -208,19 +226,28 @@ func normScore(s *Score) *Score {
 
 func TestParseErrors(t *testing.T) {
 	cases := map[string]string{
-		"version: 9\nbars: 1\nlines: []":                                                              "format version",
-		"bars: 1\nlines: []\nbogus: 1":                                                                "bogus",
-		"bars: 1\nmeter: [{bar: 1, sig: 4/3}]\nlines: []":                                             "power of two",
-		"bars: 1\ntempo: [{bar: 1, bpm: 0}]\nlines: []":                                               "bpm",
-		"bars: 1\nlines: [{name: a, instrument: x, staves: []}]":                                      "no staves",
-		"bars: 1\nlines: [{name: a, instrument: x, staves: [{clef: grand, voices: []}]}]":             "clef",
-		"bars: 1\nlines: [{name: a, instrument: x, staves: [{clef: bass, voices: [\"| qH4 |\"]}]}]":   "line a: staff 1, voice 1: bar 1",
-		"bars: 1\nlines: [{name: a, instrument: x, staves: [{clef: bass, voices: [a, b, c, d, e]}]}]": "at most 4",
-		"bars: 1\nmaster: [{low: 1}]\nlines: []":                                                      "fx:",
-		"bars: 1\nmaster: [{fx: eq, low: high}]\nlines: []":                                           "not a number",
-		"bars: 1\nkey: [{bar: 1, fifths: 9}]\nlines: []":                                              "fifths",
-		"bars: 1\npickup: x\nlines: []":                                                               "pickup",
-		"bars: 1\nmarkers: [{name: m, bar: 1, beat: \"0\"}]\nlines: []":                               "beats count from 1",
+		"version: 9\nbars: 1\nlines: []":                                                                                                        "format version",
+		"bars: 1\nlines: []\nbogus: 1":                                                                                                          "bogus",
+		"bars: 1\nmeter: [{bar: 1, sig: 4/3}]\nlines: []":                                                                                       "power of two",
+		"bars: 1\ntempo: [{bar: 1, bpm: 0}]\nlines: []":                                                                                         "bpm",
+		"bars: 1\nlines: [{name: a, instrument: x, staves: []}]":                                                                                "no staves",
+		"bars: 1\nlines: [{name: a, instrument: x, staves: [{clef: grand, voices: []}]}]":                                                       "clef",
+		"bars: 1\nlines: [{name: a, instrument: x, staves: [{clef: bass, voices: [\"| qH4 |\"]}]}]":                                             "line a: staff 1, voice 1: bar 1",
+		"bars: 1\nlines: [{name: a, instrument: x, staves: [{clef: bass, voices: [a, b, c, d, e]}]}]":                                           "at most 4",
+		"bars: 1\nmaster: [{low: 1}]\nlines: []":                                                                                                "fx:",
+		"bars: 1\nmaster: [{fx: eq, low: high}]\nlines: []":                                                                                     "not a number",
+		"bars: 1\nkey: [{bar: 1, fifths: 9}]\nlines: []":                                                                                        "fifths",
+		"bars: 1\npickup: x\nlines: []":                                                                                                         "pickup",
+		"bars: 1\nmarkers: [{name: m, bar: 1, beat: \"0\"}]\nlines: []":                                                                         "beats count from 1",
+		"bars: 1\ntempo: [{bar: 1, bpm: 0, text: rit., ramp: true}]\nlines: []":                                                                 "bpm",
+		"bars: 1\nvoltas: [{start: 1, end: 1, passes: []}]\nlines: []":                                                                          "no passes",
+		"bars: 1\njumps: [{mark: dal_segno, bar: 1}]\nlines: []":                                                                                "want segno",
+		"bars: 1\njumps: [{mark: dc, bar: 1, al: segno}]\nlines: []":                                                                            "want fine or coda",
+		"bars: 1\njumps: [{mark: fine, bar: 1, al: coda}]\nlines: []":                                                                           "only a dc or ds",
+		"bars: 1\nplayback: {graces: sometimes}\nlines: []":                                                                                     "graces",
+		"bars: 1\nlines: [{name: a, instrument: x, gliss: smear, staves: [{clef: bass, voices: []}]}]":                                          "gliss",
+		"bars: 1\nlines: [{name: a, instrument: x, staves: [{clef: bass, clefs: [{at: \"1\", clef: grand}], voices: []}]}]":                     "clef change",
+		"bars: 1\nlines: [{name: a, instrument: x, dynamic_overrides: [{at: \"1\", to: \"2\", level: 3}], staves: [{clef: bass, voices: []}]}]": "level",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))

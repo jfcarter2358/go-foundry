@@ -11,6 +11,7 @@ import (
 	"foundry/internal/glctx"
 	"foundry/internal/hooks"
 	"foundry/internal/levelio"
+	"foundry/internal/material"
 	"foundry/internal/particle"
 	"foundry/internal/platform"
 	"foundry/internal/render"
@@ -165,7 +166,13 @@ func Run() {
 	// Materials, before any level opens: a brush face, sprite or particle layer
 	// names one and expects it to resolve the moment it is drawn. Loading them
 	// also loads the textures only they reach — see gfx.LoadMaterials.
-	log.Printf("loaded %d materials", gfx.LoadMaterials())
+	//
+	// The documents only, here: their textures are GPU uploads, and there is
+	// no GL context until the window below has one (they are loaded right
+	// after StandUpWorld). This used to call gfx.LoadMaterials, which was
+	// harmless only because the library's scan found no files at all
+	// (material.ScanMaterialFiles, docs/canyon/PHASE_5.md).
+	log.Printf("loaded %d materials", material.LoadAll())
 
 	// Biomes, before any level opens: a terrain's palette names them, and
 	// its first mesh build reads their ground texture and tint.
@@ -293,6 +300,8 @@ func Run() {
 		fatalStartup(err.Error(), "The graphics driver could not build the game's shaders. Updating the graphics driver usually fixes this; if the shader files are missing, reinstall the game.")
 	}
 	log.Printf("shader program linked OK (id=%d)", gfx.Program)
+	// The textures only the materials reach, now that there is a context.
+	gfx.EnsureMaterialTextures()
 
 	// Default camera position; overridden by the level's spawn point when it
 	// has one.

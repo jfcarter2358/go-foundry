@@ -60,6 +60,7 @@ var textExts = map[string]bool{
 	".ftrk":   true, // tracker songs, which name their library samples and instruments
 	".finst":  true, // library instruments, which name their samples
 	".fscore": true, // notated scores, which name their library instruments
+	".fgen":   true, // procedural generators, which name textures and their level
 	".obj":    true, // model source, names its .mtl
 	".mtl":    true, // and that names its textures
 }
@@ -143,6 +144,14 @@ func referenceNames(slash string) []string {
 	// would be pruned out of a release for looking unreferenced.
 	if base := strings.TrimSuffix(stem, fileutil.NormalMapSuffix); base != stem {
 		names = append(names, base, dir+"/"+base, base+filepath.Ext(base))
+	}
+	// A splat layer's height and AO maps are the same: the material names the
+	// albedo and the engine finds <name>_height and <name>_ao beside it
+	// (gfx.SplatArraysFor, docs/canyon/PHASE_5.md).
+	for _, suf := range []string{"_height", "_ao"} {
+		if base := strings.TrimSuffix(stem, suf); base != stem && dir == fileutil.TexturesDirName {
+			names = append(names, base, dir+"/"+base)
+		}
 	}
 	// A cubemap face is named by its set's base: `sky_cubemap = "dusk"` in a
 	// script, or the editor's base-name field, becomes dusk_px, dusk_nx, ...

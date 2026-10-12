@@ -1,0 +1,136 @@
+version: 1
+title: Expression
+composer: Foundry
+bars: 12
+tempo: [{bar: 1, bpm: 96, text: Moderato}, {bar: 8, text: rit., to: "9"}, {bar: 9,
+    text: a tempo}, {bar: 11, text: meno mosso}]
+meter: [{bar: 1, sig: 4/4}]
+key: [{bar: 1, fifths: 2, mode: major}]
+repeats: [{start: 3, end: 5}]
+voltas: [{start: 5, end: 5, passes: [1]}, {start: 6, end: 6, passes: [2]}]
+jumps: [{mark: segno, bar: 2}, {mark: to_coda, bar: 3}, {mark: ds, bar: 10, al: coda},
+  {mark: coda, bar: 11}]
+lines:
+- name: Violins
+  instrument: strings/violin_section
+  pan: -0.3
+  sends: {a: 0.3}
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qD5(p,cresc,slur) qE5 qF#5 qA5(hairpin_end,slur_end)
+      | hB5(f,dim) hA5(hairpin_end)
+      | qF#5(stacc) qE5(stacc) qD5(stacc,ten) qC#5(acc)
+      | hD5(tr) hE5(mord)
+      | wA4(tech=pizz.)
+      | qD5(tech=arco,sfz) qD5 qE5(fp) qF#5
+      | hG5(trem) hF#5(trem=2)
+      | hE5(cresc=text) hF#5
+      | wG5(ff)
+      | hA5(turn) hD5(ferm)
+      | wD5(mp,dim)
+      | wD5(niente,hairpin_end)
+      |
+  dynamic_overrides: [{at: "4", to: "5", level: 0.35}]
+- name: Trombone
+  instrument: brass/trombone
+  pan: 0.25
+  sends: {a: 0.25}
+  gliss: slide
+  staves:
+  - clef: bass
+    voices:
+    - |
+      | R
+      | hD3(mf,gliss) hA3
+      | wF#3
+      | hD3(gliss=wavy) hD4
+      | wA3
+      | wD3
+      | R
+      | hA2(gliss) hD3
+      | wD3(f)
+      | wA2
+      | wD3(p)
+      | wD3
+      |
+- name: Harp
+  instrument: plucked/harp
+  pan: -0.1
+  sends: {a: 0.4}
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | hD4(mp,gliss) hD5
+      | qD4+F#4+A4+D5(arp) qr qA4+D5+F#5(arp=down) qr
+      | R
+      | R
+      | R
+      | R
+      | hA4(gliss) hA5
+      | R
+      | R
+      | R
+      | R
+      | R
+      |
+- name: Piano
+  instrument: keys/grand_piano
+  pan: 0.1
+  sends: {a: 0.25}
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | /eC#5 qD5(mp) ^eE5 qF#5 hA5
+      | qB5 qA5 qG5 qF#5
+      | 3{eD5 eE5 eF#5} qG5 hA5
+      | hD5+F#5(trem2=3) hA5+D6
+      | wD5
+      | wA4
+      | wA4
+      | wD5
+      | wD5
+      | wD5
+      | wD5
+      | wD5
+      |
+    - |
+      | h_ hF#4
+      | wD4
+      | wF#4
+      | R
+      | R
+      | R
+      | R
+      | R
+      | R
+      | R
+      | R
+      | R
+      |
+  - clef: bass
+    voices:
+    - |
+      | wD3(ped)
+      | hG2(ped) hA2
+      | wD3(ped_end)
+      | wD3
+      | wA2
+      | wD3
+      | wD3
+      | wA2
+      | wD3
+      | wA2
+      | wD2
+      | wD2
+      |
+buses:
+  a:
+    fx: [{fx: reverb, size: 0.6, damping: 0.4, width: 1}]
+    return: 1
+  b:
+    fx: [{fx: delay, beats: 0.75, feedback: 0.35, tone: 0.6, ping_pong: 1}]
+    return: 1

@@ -85,6 +85,9 @@ type Level struct {
 	// is why they are pointers rather than zero-valued structs.
 	Sky *Sky
 	Fog *Fog
+	// Tonemap is the level's HDR shading and tone curve (tonemap.go), or nil
+	// for LDR shading as every level before it had.
+	Tonemap *Tonemap
 	// Player is the level's tuning for the engine-owned player it starts
 	// (player_settings.go). A value rather than a pointer, because there is
 	// always a player and its zero value is the engine's own defaults.

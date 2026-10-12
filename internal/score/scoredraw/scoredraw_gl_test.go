@@ -16,7 +16,6 @@ import (
 func TestGLAtlasUpload(t *testing.T) {
 	gltest.Context(t)
 	r := New()
-	r.FontSize = func() float32 { return 13 }
 	list := demo(t)
 	r.Draw(&rec{}, list, View{Scale: 12})
 	id := r.Texture(12)
@@ -43,6 +42,10 @@ func TestGLAtlasUpload(t *testing.T) {
 	}
 	if inked < 200 {
 		t.Errorf("only %d inked texels on the GPU", inked)
+	}
+	// The bar number's run is on the text page, on the GPU too.
+	if r.text.tex == 0 || !gl.IsTexture(r.text.tex) {
+		t.Errorf("no text texture (%d)", r.text.tex)
 	}
 	if e := gl.GetError(); e != gl.NO_ERROR {
 		t.Errorf("GL error %#x", e)

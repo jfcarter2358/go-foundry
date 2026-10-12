@@ -174,6 +174,13 @@ func inspect(rest []string, out io.Writer) int {
 		if t.Text != "" {
 			text = " " + t.Text
 		}
+		if t.HasTo {
+			ramp += " to " + s.FormatPos(t.To)
+		}
+		if t.BPM <= 0 {
+			fmt.Fprintf(out, "  tempo  %-8s%s%s\n", s.FormatPos(t.At), text, ramp)
+			continue
+		}
 		fmt.Fprintf(out, "  tempo  %-8s %s = %g%s%s\n", s.FormatPos(t.At), u, t.BPM, text, ramp)
 	}
 	for _, m := range s.Meter {
@@ -184,6 +191,25 @@ func inspect(rest []string, out io.Writer) int {
 	}
 	for _, r := range s.Repeats {
 		fmt.Fprintf(out, "  repeat bars %d..%d x%d\n", r.Start, r.End, r.Plays())
+	}
+	for _, v := range s.Voltas {
+		fmt.Fprintf(out, "  ending bars %d..%d %s\n", v.Start, v.End, v.Label())
+	}
+	for _, j := range s.Jumps {
+		rep := ""
+		if j.Repeats {
+			rep = " (repeats again)"
+		}
+		fmt.Fprintf(out, "  jump   bar %-4d %s%s\n", j.Bar, j.Text(), rep)
+	}
+	if s.Playback.IgnoreRepeats {
+		fmt.Fprintln(out, "  plays straight through (repeats and jumps ignored)")
+	}
+	if s.Playback.Graces != score.GraceAuto {
+		fmt.Fprintf(out, "  grace notes %s the beat\n", score.GraceTimings[s.Playback.Graces])
+	}
+	if s.Concert {
+		fmt.Fprintln(out, "  shown at concert pitch")
 	}
 	for _, sp := range perf.Sections {
 		next := ""
@@ -229,13 +255,28 @@ func inspect(rest []string, out io.Writer) int {
 		if l.Solo {
 			fmt.Fprint(out, " solo")
 		}
+		if l.Gliss != "" {
+			fmt.Fprintf(out, " gliss %s", l.Gliss)
+		}
+		if n := len(l.Overrides); n > 0 {
+			fmt.Fprintf(out, " %d dynamic override(s)", n)
+		}
 		fmt.Fprintln(out)
 		for si, st := range l.Staves {
 			tr := ""
 			if st.Transpose != (score.Interval{}) {
 				tr = " transposed " + st.Transpose.String()
 			}
+			for _, c := range st.Clefs {
+				tr += fmt.Sprintf(", %s from %s", c.Clef, s.FormatPos(c.At))
+			}
 			fmt.Fprintf(out, "         staff %d %s%s, %d voice(s)\n", si+1, st.Clef, tr, len(st.Voices))
+			if in != nil && st.Transpose.Chromatic != in.Playback.Transposition && st.Clef != "percussion" {
+				// Written pitch is the staff's; the instrument's file says
+				// how its parts are usually written.
+				fmt.Fprintf(out, "         note: staff %d is written %+d semitones from sounding; %s's parts are usually %+d\n",
+					si+1, -st.Transpose.Chromatic, l.Instrument, -in.Playback.Transposition)
+			}
 		}
 		if counts[i] > 0 {
 			fmt.Fprintf(out, "         %d notes, %s..%s\n", counts[i], score.SpellMIDI(lo[i], 0, 1), score.SpellMIDI(hi[i], 0, 1))

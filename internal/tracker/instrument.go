@@ -389,6 +389,19 @@ func (in *Instrument) SetLoaded(i int, s *Sample) {
 	in.loaded[i] = s
 }
 
+// Sustains reports whether the instrument can hold a note for as long as
+// it is held — one of its samples loops — rather than only dying away by
+// itself (a piano, a pluck). The Score lets a held note on a sustaining
+// instrument follow its line's dynamics.
+func (in *Instrument) Sustains() bool {
+	for _, s := range in.loaded {
+		if s != nil && s.Looped() {
+			return true
+		}
+	}
+	return false
+}
+
 // Loaded returns the decoded sample at i, or nil.
 func (in *Instrument) Loaded(i int) *Sample {
 	if i < 0 || i >= len(in.loaded) {

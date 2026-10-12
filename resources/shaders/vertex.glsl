@@ -62,6 +62,12 @@ layout(location = 5) in vec4 vertLight;
 // light's own (compile.Face.Indirect): what live GI takes back off before
 // adding its own. Read from the same buffer as vertLight, under the same gate.
 layout(location = 6) in vec3 vertLightIndirect;
+// Per-vertex colour and cavity (gfx.AttribColor): a generated rock's strata
+// tint in rgb, its baked cavity/ambient occlusion in a (docs/canyon/PHASE_2.md).
+// Read only under vertexColors, for bakedLight's reason: a disabled attribute
+// reads a driver default, so every mesh without colours passes white.
+layout(location = 15) in vec4 vertColor;
+uniform int vertexColors;
 
 // Invariant: the GPU-driven cull's depth prepass (render/nanite_prepass.go)
 // links this same stage into a program of its own, and the colour pass after
@@ -78,6 +84,8 @@ out float fragViewDepth;
 // The baked value, passed through and interpolated across the triangle.
 out vec4 fragBakedLight;
 out vec3 fragBakedIndirect;
+// The vertex colour, interpolated (white without vertexColors).
+out vec4 fragVertColor;
 
 // Sum of three travelling sine waves at different headings, so the surface
 // never reads as a single repeating ripple. Driven by world XZ, which keeps
@@ -107,6 +115,7 @@ void main() {
     fragTexCoord = uv + uvOffset;
     fragBakedLight = vertLight;
     fragBakedIndirect = vertLightIndirect;
+    fragVertColor = vertexColors != 0 ? vertColor : vec4(1.0);
     // skinPosition is the identity unless this draw call set `skinned`
     // (skin_common.glsl), so every static surface takes the same path it always
     // did.

@@ -62,7 +62,7 @@ ease_sky(3)
 
 | Field | |
 | --- | --- |
-| **Mode** | `linear`, `exp`, `exp2` |
+| **Mode** | `linear`, `exp`, `exp2`, or `none` (no distance fade: the [atmosphere](#the-atmosphere) alone) |
 | **Color** | |
 | **Start** | world units, every mode |
 | **End** | linear only |
@@ -82,6 +82,95 @@ horizon dissolves.
 
 Distance is measured radially from the eye, so fog on a stationary object does
 not change as you turn your head.
+
+## The atmosphere
+
+Distance fog is a fade. The **atmosphere** is the air itself: a medium with a
+density along every view ray, integrated exactly, in three parts that sit
+inside the `fog:` block. Each is off until you add it, so a level written
+before them looks as it always did.
+
+```yaml
+fog:
+  mode: none                      # no distance fade; the atmosphere alone
+  color: {r: 0.8, g: 0.78, b: 0.74}
+  height:                         # exponential height fog
+    density: 0.006                # extinction per metre at the base
+    base: 0                       # world height of the base
+    falloff: 0.12                 # thins by e every 1/falloff metres up
+    color: {r: 0.84, g: 0.74, b: 0.62}
+  aerial:                         # aerial perspective
+    distance: 1100                # metres over which it hides 63%
+    color: {r: 0.8, g: 0.78, b: 0.74}
+    tint: {r: 0.75, g: 1, b: 1.35}  # per-channel extinction: blue goes first
+    scale_height: 300             # thins by e this far up
+    base: 0
+  sun:                            # the sun's glow through the haze
+    strength: 0.05
+    anisotropy: 0.7               # Henyey-Greenstein g: near 1, tight round the sun
+  sky_haze: 0.6                   # how much of all this the sky takes
+  sky_distance: 20000             # how far along a sky ray it is integrated
+```
+
+- **Height fog** lies in the low ground: a canyon floor seen from the rim is
+  hazed, the rim seen from the floor through the same fog is hazed by the
+  same amount, and walking up out of it clears it. The density falls off
+  exponentially with height, and the shader integrates that exactly along the
+  ray, so there is no band where it switches on.
+- **Aerial perspective** is haze that thickens with range. Its `tint` weighs
+  the extinction per channel — blue above red is what Rayleigh scattering
+  does — so far red rock goes bluish before it goes pale. It thins with height
+  too (`scale_height`), which is what keeps the sky overhead clear.
+- **Sun glow** moves the sun's light (the level's first switched-on
+  directional light) toward the eye looking into it: the haze glows round the
+  sun and is a little duller away from it. It is unshadowed.
+- **The sky** takes the same integral along its rays (`sky_haze` of it). That
+  is what makes a far cliff melt into the horizon: they are seen through the
+  same air. A skybox with haze painted in (sky_canyon) wants `sky_haze` below 1.
+
+Every pass that shades takes it — walls, terrain, Nanite scenery, scatter,
+foliage, sprites, particles, the volumetric clouds and the sky — and additive
+and decal surfaces are swallowed by it rather than tinted. The editor's
+**Fog** group has an **Atmosphere** section with the same fields. It costs a
+few exponentials a pixel: on the canyon, no measurable frame time.
+
+A generator writes all of this for you: the [environment
+stage](33-generators.md#environment-level).
+
+## HDR and the tone curve
+
+By default a level shades in low dynamic range: the light falling on a
+surface is clamped to 1 before it multiplies the texture, so the brightest a
+sunlit wall can be is its texture, and a strong sun only flattens it. A
+`tonemap:` block opts the level into high dynamic range:
+
+```yaml
+tonemap:
+  exposure: 0.75      # scales the scene's light before the curve (default 1)
+  curve: aces         # the filmic curve: aces, the only one today
+  # disabled: true    # keep the numbers, shade LDR
+```
+
+With it, light above 1 is kept, and the frame's last pass maps it to the
+screen through `exposure` and the ACES filmic curve: highlights roll off
+instead of clipping and the mid-tones gain contrast, so a sun of 1.5 to 2 over
+an ambient of about 0.4 gives bright sunlit rock beside deep shade. The sky,
+every fog and atmosphere colour, unlit surfaces and the passes that do not
+shade in HDR (biome scatter, sprites, block terrain, foliage) are screen
+colour, and are carried through the curve's inverse first, so they look
+exactly as they did. Additive effects (sparks) are not, and read a little
+dimmer.
+
+- **Where it applies.** In frames drawn with TAA, the default anti-aliasing:
+  the renderer's scene target is a half-float target that can hold light above
+  1. The editor's own view, and the `msaa` and `off` modes, stay LDR.
+- **Baked light.** The light baker writes LDR light. In an HDR frame a baked
+  surface's light is taken as scene light at exposure 1, so its brightest
+  baked light shows at the curve's value for 1 (about 0.8). A compiled level
+  that opts in should raise the exposure or its lights to suit; levels lit
+  live, as generated canyons are, need nothing.
+- **Generators.** The environment stage's `hdr` and `exposure` write the
+  block; the desert canyon template turns it on.
 
 ## Fog volumes
 
@@ -161,6 +250,21 @@ Point lights light it too — a torch lights the smoke rising past it.
 
 A cloud volume is still a volume: it fires `:enter:` and `:exit:`, and disabling
 the volume clears the cloud.
+
+**Presets.** A cloud block can start from a named look: `preset: dust_haze` is
+desert dust hanging over the ground — warm tan, thin, wide and soft, drifting,
+lit through rather than shaded, casting no shadow. Put it in a wide, shallow
+box over a canyon floor for drifting banks of dust (the environment stage's
+`dust` does). Keys beside the preset override it; `preset: fair` is the
+default cloud. A save writes every number, not the preset's name.
+
+```yaml
+volumes:
+  - id: dust
+    position: {x: 0, y: 7, z: 0}
+    half: {x: 128, y: 9, z: 128}
+    cloud: {preset: dust_haze, density: 0.006, softness: 0.6}
+```
 
 ### Keeping cloud out
 

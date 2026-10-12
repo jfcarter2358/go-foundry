@@ -27,7 +27,9 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/nanitecook"
 	"foundry/internal/pack"
+	"foundry/internal/polyhaven/phcli"
 	"foundry/internal/preview"
+	"foundry/internal/procgen/gencli"
 	"foundry/internal/project"
 	"foundry/internal/release"
 	"foundry/internal/render"
@@ -131,6 +133,10 @@ func devRunCommand(args []string) (exitCode int, ran bool) {
 		return preview.ModelMain(commandProject(), args[1:], os.Stdout), true
 	case nanitecook.Command:
 		return nanitecook.Main(commandProject(), args[1:], os.Stdout), true
+	case gencli.Command:
+		return gencli.Main(commandProject(), args[1:], os.Stdout), true
+	case phcli.Command:
+		return phcli.Main(commandProject(), args[1:], os.Stdout), true
 	case trackercli.Command:
 		return trackercli.Main(commandProject(), args[1:], os.Stdout), true
 	case scorecli.Command:

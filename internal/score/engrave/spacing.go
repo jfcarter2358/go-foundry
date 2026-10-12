@@ -31,6 +31,9 @@ const (
 	spaceShort    = 0.45    // how values shorter than an eighth shrink
 	spaceLog      = 0.65    // what each doubling of the value adds, as a share of that
 	lastGap       = 0.8     // the last note's ink to the closing barline, at least
+	// startRepeatGap is the signatures to a repeat barline opening the
+	// layout.
+	startRepeatGap = 0.6
 )
 
 // columns gives every bar its onsets, and every event its column.
@@ -95,10 +98,17 @@ func (e *engraver) measure() {
 						}
 					}
 				}
-				if len(evs) == 0 {
-					continue
+				l, r := 0.0, 0.0
+				if len(evs) > 0 {
+					l, r = e.arrangeColumn(sb, c, evs)
 				}
-				l, r := e.arrangeColumn(sb, c, evs)
+				// A clef change stands left of everything else there.
+				for _, cm := range sc.clefMarks {
+					if cm.col == c {
+						cm.inkLeft = l
+						l += e.clefChangeWidth(cm.clef)
+					}
+				}
 				c.left, c.right = math.Max(c.left, l), math.Max(c.right, r)
 			}
 		}
@@ -111,11 +121,16 @@ func (e *engraver) measure() {
 			}
 			bc.widths[k] = math.Max(e.ideal(b.offF-a.offF), a.right+b.left+gap)
 		}
+		e.dynamicRods(bi, bc)
 		if bi > 0 {
 			bc.prefixW = e.barPrefixWidth(bc)
 		}
 		first := bc.cols[0]
 		switch {
+		case bi == 0 && e.repeatStarts(bc.bar):
+			// The layout opens on a repeat: its barline after the
+			// signatures, then the music.
+			bc.lead = startRepeatGap + e.barlineWidth(barRepeatStart) + math.Max(barGapAfter, first.left+0.6)
 		case bi == 0:
 			bc.lead = math.Max(prefixGap, first.left+0.8)
 		case bc.prefixW > 0:
@@ -128,6 +143,7 @@ func (e *engraver) measure() {
 			bc.widths[0] = math.Max(bc.widths[0], 5.5-bc.lead)
 		}
 	}
+	e.crossBarRods()
 }
 
 // ideal is the room a time between onsets (whole notes) asks for: an
@@ -144,4 +160,96 @@ func (e *engraver) ideal(d float64) float64 {
 		return e.o.Spacing * spaceShortest * math.Pow(r, spaceShort)
 	}
 	return e.o.Spacing * spaceShortest * (1 + spaceLog*math.Log2(r))
+}
+
+// crossBarRods keeps a bar's last dynamics and the next bar's first apart
+// across the barline, widening the first bar's last gap.
+func (e *engraver) crossBarRods() {
+	for i := 0; i+1 < len(e.bars); i++ {
+		a, b := e.bars[i], e.bars[i+1]
+		if len(a.widths) == 0 {
+			continue
+		}
+		// From a's last note to b's first: its last gap, the barline, b's
+		// head and its lead.
+		between := a.widths[len(a.widths)-1] + e.barlineWidth(e.barlineBefore(i+1)) + b.prefixW + b.lead
+		need := 0.0
+		for sc, tail := range a.dynTail {
+			if head, ok := b.dynHead[sc]; ok {
+				need = math.Max(need, tail-head+0.5)
+			}
+		}
+		if need > between {
+			a.widths[len(a.widths)-1] += need - between
+		}
+	}
+}
+
+// dynamicRods keeps neighbouring columns' dynamics (and expression text) on
+// a staff from touching, with room for a hairpin between two dynamics.
+func (e *engraver) dynamicRods(bi int, bc *barCtx) {
+	bc.dynHead, bc.dynTail = map[*staffCtx]float64{}, map[*staffCtx]float64{}
+	type ext struct {
+		l, r         float64
+		has, hairpin bool
+	}
+	for _, sc := range e.staves {
+		exts := make([]ext, len(bc.cols))
+		for _, v := range sc.bars[bi].voices {
+			for _, x := range v {
+				if x.grace || x.space || x.col == nil {
+					continue
+				}
+				l, r, has, hp := e.dynExtent(x)
+				if !has && !hp {
+					continue
+				}
+				for k, c := range bc.cols {
+					if c != x.col {
+						continue
+					}
+					x0 := exts[k]
+					l, r = l+x.shift, r+x.shift
+					if x0.has {
+						l, r = math.Min(l, x0.l), math.Max(r, x0.r)
+					}
+					exts[k] = ext{l, r, has || x0.has, hp || x0.hairpin}
+				}
+			}
+		}
+		// The bar's first and last dynamics, for the rod across its
+		// barlines (crossBarRods).
+		if n := len(bc.cols); n >= 2 {
+			if exts[0].has {
+				bc.dynHead[sc] = exts[0].l
+			}
+			if t := exts[n-2]; t.has || t.hairpin {
+				r := t.r
+				if !t.has {
+					r = 0
+				}
+				if t.hairpin {
+					r += 2.2
+				}
+				bc.dynTail[sc] = r
+			}
+		}
+		for k := 0; k+1 < len(bc.cols) && k < len(bc.widths); k++ {
+			a, b := exts[k], exts[k+1]
+			if !b.has {
+				continue
+			}
+			ar := a.r
+			if !a.has {
+				ar = 0
+			}
+			need := ar - b.l + 0.5
+			if a.hairpin {
+				need += 2.2
+			}
+			if a.has || a.hairpin {
+				bc.widths[k] = math.Max(bc.widths[k], need)
+			}
+		}
+	}
 }

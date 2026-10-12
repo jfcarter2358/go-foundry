@@ -120,6 +120,15 @@ shared int boxLoX, boxLoY, boxHiX, boxHiY;
 uniform uint recordBase;
 uniform uint binBase;
 uniform uint swCap;
+// Dense numbering (nanite_vis_number_comp.glsl): each listed cluster takes
+// the frame's next record from the shared counter rather than recordBase +
+// its place in the list; one past maxRecords is not drawn.
+layout(std430, binding = 4) coherent buffer VisNext {
+    uint visNext;
+};
+uniform uint dense;
+uniform uint maxRecords;
+shared uint swRec;
 
 // orient is twice the signed area of (a, b, p): positive when p is to the
 // left of a->b.
@@ -229,8 +238,15 @@ void main() {
     for (uint e = gl_WorkGroupID.x; e < n; e += gl_NumWorkGroups.x) {
         uvec4 a = swEntries[2u * e];
         uvec4 b = swEntries[2u * e + 1u];
-        uint rec = recordBase + e;
         barrier();
+        if (gl_LocalInvocationID.x == 0u) {
+            swRec = dense != 0u ? atomicAdd(visNext, 1u) : recordBase + e;
+        }
+        barrier();
+        uint rec = swRec;
+        if (rec >= maxRecords) {
+            continue; // the same for the whole workgroup: swRec is shared
+        }
         if (gl_LocalInvocationID.x == 0u) {
             records[rec].a = uvec4(a.x, a.z, a.w, binBase + b.x);
             records[rec].b = uvec4(rec + 1u, a.y, 0u, 0u);

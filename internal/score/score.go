@@ -62,6 +62,17 @@ type Score struct {
 	Sections []Section
 	Markers  []Marker
 	Repeats  []Repeat
+	// Voltas are the 1st, 2nd… endings of the repeats; Jumps the D.C.,
+	// D.S., segno, coda, To Coda and Fine marks (form.go).
+	Voltas []Volta
+	Jumps  []Jump
+
+	// Concert shows every staff at sounding pitch (the Concert Pitch
+	// toggle); off, a transposing staff shows its written pitch. Pitches
+	// are stored as they sound either way.
+	Concert bool
+	// Playback holds how the score plays rather than what it says.
+	Playback PlaybackOptions
 
 	Params   []Param
 	Bindings []Binding
@@ -95,11 +106,17 @@ type TempoMark struct {
 	// Text is what is printed: "Andante", "Allegro con brio".
 	Text string
 	// Ramp moves the tempo smoothly from this mark to the next one
-	// (rit., accel.) instead of stepping at it.
+	// instead of stepping at it.
 	Ramp bool
+	// To, with HasTo, is where a gradual change ("rit.", "accel.") ends —
+	// the end of its dashes; without it the change runs to the next mark.
+	// tempo.go has what tempo text means.
+	To    Pos
+	HasTo bool
 }
 
-// QuarterBPM is the mark's tempo in quarters a minute.
+// QuarterBPM is the mark's tempo in quarters a minute; 0 for a mark that
+// is only text ("a tempo", "rit.").
 func (t TempoMark) QuarterBPM() float64 {
 	u := t.Unit
 	if u == (Duration{}) {
@@ -223,7 +240,51 @@ type Line struct {
 	Staves []*Staff
 	// Lanes are automation over the line: "volume" multiplies its fader.
 	Lanes []Lane
+
+	// Gliss is how the line's glissandi play: "slide", "chromatic" or
+	// "diatonic"; "" is the instrument's own (.finst playback.gliss).
+	Gliss string
+	// Overrides replace the level the line's dynamics give between two
+	// points — a segment dragged in the dynamics lane — without changing a
+	// printed mark.
+	Overrides []DynOverride
 }
+
+// DynOverride holds a line's dynamic level flat from From to To (written
+// positions, To exclusive). Level is on the dynamics' scale: MIDI velocity
+// / 127, mf = 80/127.
+type DynOverride struct {
+	From, To Pos
+	Level    float32
+}
+
+// GlissStyles are the values Line.Gliss takes ("" aside).
+var GlissStyles = []string{"slide", "chromatic", "diatonic"}
+
+// PlaybackOptions are a score's own playback settings.
+type PlaybackOptions struct {
+	// IgnoreRepeats plays the score straight through as written: every
+	// bar once, every ending, no D.C. or D.S.
+	IgnoreRepeats bool
+	// Graces is when grace notes play.
+	Graces GraceTiming
+}
+
+// GraceTiming is when grace notes play against their beat.
+type GraceTiming uint8
+
+const (
+	// GraceAuto plays acciaccaturas just before the beat and appoggiaturas
+	// on it.
+	GraceAuto GraceTiming = iota
+	// GraceBefore plays every grace note before the beat.
+	GraceBefore
+	// GraceOn plays every grace note on the beat.
+	GraceOn
+)
+
+// GraceTimings are GraceTiming's names in a file, in order.
+var GraceTimings = []string{"auto", "before", "on"}
 
 // Staff is one five-line staff (or a percussion staff) of a line.
 type Staff struct {
@@ -233,6 +294,9 @@ type Staff struct {
 	// are stored as they sound; this only changes how they are shown.
 	Transpose Interval
 	Voices    []*Voice
+	// Clefs are clef changes inside the staff, in order (staff.go); Clef
+	// is the clef it starts with.
+	Clefs []ClefChange
 }
 
 // Voice is one independent rhythm on a staff.
@@ -410,6 +474,15 @@ func (s *Score) Clone() *Score {
 	c.Sections = append([]Section(nil), s.Sections...)
 	c.Markers = append([]Marker(nil), s.Markers...)
 	c.Repeats = append([]Repeat(nil), s.Repeats...)
+	c.Voltas = make([]Volta, len(s.Voltas))
+	for i, v := range s.Voltas {
+		v.Passes = append([]int(nil), v.Passes...)
+		c.Voltas[i] = v
+	}
+	if s.Voltas == nil {
+		c.Voltas = nil
+	}
+	c.Jumps = append([]Jump(nil), s.Jumps...)
 	c.Params = append([]Param(nil), s.Params...)
 	c.Bindings = append([]Binding(nil), s.Bindings...)
 	c.Buses.A.FX, c.Buses.B.FX = cloneFX(s.Buses.A.FX), cloneFX(s.Buses.B.FX)
@@ -449,12 +522,14 @@ func (l *Line) Clone() *Line {
 	if l.Lanes == nil {
 		c.Lanes = nil
 	}
+	c.Overrides = append([]DynOverride(nil), l.Overrides...)
 	return &c
 }
 
 // Clone copies the staff deeply.
 func (st *Staff) Clone() *Staff {
 	c := *st
+	c.Clefs = append([]ClefChange(nil), st.Clefs...)
 	c.Voices = make([]*Voice, len(st.Voices))
 	for i, v := range st.Voices {
 		c.Voices[i] = v.Clone()
@@ -559,6 +634,8 @@ func (s *Score) SortMaps() {
 	sort.SliceStable(s.Sections, func(i, j int) bool { return s.Sections[i].Bar < s.Sections[j].Bar })
 	sort.SliceStable(s.Markers, func(i, j int) bool { return posLess(s.Markers[i].At, s.Markers[j].At) })
 	sort.SliceStable(s.Repeats, func(i, j int) bool { return s.Repeats[i].Start < s.Repeats[j].Start })
+	sort.SliceStable(s.Voltas, func(i, j int) bool { return s.Voltas[i].Start < s.Voltas[j].Start })
+	sort.SliceStable(s.Jumps, func(i, j int) bool { return s.Jumps[i].Bar < s.Jumps[j].Bar })
 }
 
 func posLess(a, b Pos) bool {
@@ -684,4 +761,15 @@ func (s *Score) PosFrac(p Pos, starts []Frac) Frac {
 		return starts[len(starts)-1].Add(p.Offset)
 	}
 	return starts[p.Bar-1].Add(p.Offset)
+}
+
+// PosAt is a position from whole notes from the top, written order: the
+// inverse of PosFrac. A point past the last bar is in the bar after it.
+func (s *Score) PosAt(f Frac, starts []Frac) Pos {
+	for b := len(starts) - 1; b >= 1; b-- {
+		if !f.Less(starts[b-1]) {
+			return Pos{Bar: b, Offset: f.Sub(starts[b-1])}
+		}
+	}
+	return Pos{Bar: 1, Offset: f}
 }

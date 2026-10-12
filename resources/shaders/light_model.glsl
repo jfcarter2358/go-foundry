@@ -124,7 +124,17 @@ float giCascadeCover(int c, vec3 p) {
     return clamp(min(d.x, min(d.y, d.z)) - 1.0, 0.0, 1.0);
 }
 
-vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
+// giSampleCascade is cascade c's light at p facing n, seen along v — and
+// found, how much of it the probes really gave: 1 where at least one probe
+// passed the tests below, 0 where every one of the eight was buried or
+// refused. The caller (giIrradiance) counts a cascade's cover only as far as
+// found says, so a cell with no usable probe is answered by the next cascade
+// out, or the flat ambient — never by a confident zero. That zero, at full
+// cover and an ambient floor of 0, was the black patches on big cooked rocks
+// (docs/canyon/PHASE_6.md): on a rugged scan, every probe of a coarse
+// cascade's cell sat within half a spacing of SOME bump whose plane put the
+// point behind it.
+vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v, out float found) {
     float s = giCascade[c].w;
     // Off the surface, toward the viewer and along the normal, so a probe the
     // point sits exactly level with does not see it as half buried.
@@ -156,7 +166,16 @@ vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
         // floor the point stands on, behind the wall it is lit in front of.
         // Its visibility moments are least to be trusted there (see
         // gi_probe_update_comp.glsl), and the surface is between them.
-        if (dot(plane.xyz, plane.xyz) > 0.25 && dot(bp - probe, plane.xyz) < -plane.w) {
+        //
+        // Only when the point's own surface faces away from the probe's —
+        // the top of the floor the probe is under, the far face of the wall:
+        // that is the case the plane is for, a thin thing with the probe on
+        // its back. A point facing the same way as the probe's surface is on
+        // another part of the same side, round a bump of a rugged rock, and
+        // the plane through that bump says nothing about whether the probe
+        // can see it — the visibility test below does.
+        if (dot(plane.xyz, plane.xyz) > 0.25 && dot(bp - probe, plane.xyz) < -plane.w
+            && dot(n, plane.xyz) < 0.0) {
             continue;
         }
         vec3 tri = mix(1.0 - a, a, vec3(off));
@@ -190,6 +209,7 @@ vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
         sum += irr * w;
         wsum += w;
     }
+    found = wsum > 0.0 ? 1.0 : 0.0;
     return wsum > 0.0 ? sum / wsum : vec3(0.0);
 }
 
@@ -245,7 +265,12 @@ vec3 giIrradiance(vec3 p, vec3 n, out float cover) {
         if (w <= 0.0) {
             continue;
         }
-        total += giSampleCascade(c, p, n, v) * w;
+        float found;
+        vec3 irr = giSampleCascade(c, p, n, v, found);
+        // A cascade with no usable probe round p gives nothing and claims
+        // nothing: what it would have covered falls to the next one out.
+        w *= found;
+        total += irr * w;
         left -= w;
         if (left <= 0.0) {
             break;

@@ -319,11 +319,14 @@ func scorePlayStart(perf *interpret.Performance, t scoreTransport, head int64) i
 // ---------- tempo marks ----------
 
 // scoreScaleTempoMarks writes the slider into the score: every tempo mark
-// at scale times its tempo (to a whole bpm, at least 1), so the piece plays
-// as it was just heard and its tempo changes keep their proportions.
+// with a number at scale times its tempo (to a whole bpm, at least 1), so
+// the piece plays as it was just heard and its tempo changes keep their
+// proportions. Text marks ("rit.", "a tempo") are relative already.
 func scoreScaleTempoMarks(s *score.Score, scale float64) {
 	for i := range s.Tempo {
-		s.Tempo[i].BPM = math.Max(1, math.Round(s.Tempo[i].BPM*scale))
+		if s.Tempo[i].BPM > 0 {
+			s.Tempo[i].BPM = math.Max(1, math.Round(s.Tempo[i].BPM*scale))
+		}
 	}
 }
 
@@ -332,21 +335,36 @@ func scoreScaleTempoMarks(s *score.Score, scale float64) {
 // from there plays at what the slider gave it.
 func scoreSetTempoAt(s *score.Score, bar int, qpm float64) {
 	at := score.Pos{Bar: bar}
+	mark := score.TempoMark{At: at, BPM: math.Max(1, math.Round(qpm)), Unit: score.Duration{Base: score.Quarter}}
 	for i := range s.Tempo {
 		t := &s.Tempo[i]
-		if t.At.Bar == bar && t.At.Offset.IsZero() {
+		if t.At.Bar != bar || !t.At.Offset.IsZero() {
+			continue
+		}
+		switch {
+		case t.BPM > 0:
 			// Keep the mark's unit: a dotted-quarter mark stays one.
 			t.BPM = math.Max(1, math.Round(qpm/(t.QuarterBPM()/t.BPM)))
 			t.Ramp = false
-			return
+		case t.Change() == score.TempoSet:
+			// A tempo word with no number ("Andante") gets one.
+			t.BPM, t.Unit = mark.BPM, mark.Unit
+		default:
+			// A relative mark ("rit.", "a tempo") keeps its meaning; the
+			// number goes just before it, so it changes from there.
+			s.Tempo = append(s.Tempo[:i], append([]score.TempoMark{mark}, s.Tempo[i:]...)...)
 		}
+		return
 	}
-	s.Tempo = append(s.Tempo, score.TempoMark{At: at, BPM: math.Max(1, math.Round(qpm)), Unit: score.Duration{Base: score.Quarter}})
+	s.Tempo = append(s.Tempo, mark)
 	s.SortMaps()
 }
 
 // scoreTempoWords is "q = 72" for a status line, in the mark's unit.
 func scoreTempoWords(t score.TempoMark) string {
+	if t.BPM <= 0 {
+		return t.Text
+	}
 	u := score.Duration{Base: score.Quarter}
 	if t.Unit != (score.Duration{}) {
 		u = t.Unit

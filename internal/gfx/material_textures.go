@@ -15,6 +15,14 @@ package gfx
 // of them once, when the library loads, is both simpler and cheaper than
 // working out which are reachable from the level being opened.
 //
+// That reasoning holds for world textures and stops at the terrain effects'
+// own (material_fx_textures.go). A splat's layer atlases are a pair of
+// 4352² textures built from sixteen files — tens of megabytes even
+// compressed, and the better part of a second to pack — so they are built
+// only for a material something draws: at level load for the materials its
+// scenery wears (EnsureMaterialFxTextures), or on the first draw. The data
+// maps load the same way. EnsureMaterialTextures leaves both alone.
+//
 // It lives in gfx rather than in internal/material because material must not
 // import gfx: gfx imports material (material_surface.go), and the arrow only
 // goes one way.
@@ -36,7 +44,12 @@ func LoadMaterials() int {
 
 // EnsureMaterialTextures uploads every texture the loaded materials refer to —
 // their own albedo, their blend pairs and masks, their named normal maps, a
-// sky material's six cubemap faces.
+// sky material's six cubemap faces. Called at startup, on a material save and
+// on a texture reload.
+//
+// The terrain and rock effects' own maps and splat atlases are not built
+// here (see the file comment): level load and the draw path build them for
+// the materials actually in use.
 //
 // A texture that will not load is logged once and left; the surface wearing it
 // draws with whatever it names itself, which is a better failure than refusing
@@ -47,12 +60,42 @@ func EnsureMaterialTextures() {
 		if d == nil {
 			continue
 		}
+		fx := fxOwnTextures(name)
 		for _, tex := range d.Textures() {
+			if fx[tex] {
+				continue
+			}
 			if err := EnsureTextureLoaded(tex); err != nil {
 				log.Printf("material %s: texture %q: %v", name, tex, err)
 			}
 		}
 	}
+}
+
+// fxOwnTextures is the textures a material's terrain and rock effects load
+// their own way — a splat's layers (packed into arrays from their files) and
+// the data maps — which must not also be uploaded as world textures: a
+// four-layer 2k splat would cost another 85 MB, and a data map named by a
+// path is not a texture name at all.
+func fxOwnTextures(name string) map[string]bool {
+	f, ok := resolveSurfaceFx(name)
+	if !ok || !f.Any() {
+		return nil
+	}
+	out := map[string]bool{}
+	add := func(n string) {
+		if n != "" {
+			out[n] = true
+		}
+	}
+	add(f.SplatWeights)
+	add(f.SplatStrata)
+	for _, l := range f.SplatLayers {
+		add(l.Texture)
+	}
+	add(f.GroundColor)
+	add(f.GroundHeight)
+	return out
 }
 
 // MaterialTextureNames is every texture the loaded materials refer to, without

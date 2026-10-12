@@ -1,0 +1,25 @@
+# desert_ground.fmat — the terrain splat, as a worked example.
+#
+# Four layers mixed by a WEIGHTS texture laid over a world rectangle: red is
+# the first layer's weight, green the second's, blue the third's, alpha the
+# fourth's. `dirt` is standing in for a real weights map here — a
+# terrain_material generator stage writes one from the terrain's masks (sand
+# in the fans, cracked ground on the flats, gravel in the washes, rock on the
+# slopes) and names it by its path. Each layer's <name>_normal, <name>_height
+# and <name>_ao are used when they exist; the rock layer is triplanar so a
+# slope does not smear it.
+kind: surface
+doc: Terrain layers splatted by a weights map. Swap `weights` for a generated one.
+effects:
+  - effect: splat
+    weights: dirt
+    bounds_min: [-64, -64]
+    bounds_max: [64, 64]
+    layer1: sand
+    layer2: ground_desert
+    layer3: stone_floor
+    layer3_scale: 1.5
+    layer4: rock
+    layer4_triplanar: true
+    layer4_scale: 4
+  - effect: macro_variation

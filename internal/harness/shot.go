@@ -56,6 +56,7 @@ func (s *Session) standUpDrawing() error {
 	if err := render.StandUpWorld(w, h); err != nil {
 		return fmt.Errorf("stand up the world: %w", err)
 	}
+	gfx.LoadMaterials() // as the game does (app.Run)
 	ui.LoadActiveTheme()
 	if err := uidraw.Init(); err != nil {
 		return fmt.Errorf("ui renderer: %w", err)

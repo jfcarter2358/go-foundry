@@ -148,7 +148,12 @@ var alwaysDirs = []string{"shaders", "fonts"}
 // entities/shuttle.yaml, not from any level. The token scan follows that name
 // like any other, and the chunk file is itself YAML, so the textures inside it
 // come along transitively.
-var contentDirs = []string{"levels", "chunks", "ui", "scripts", "entities", "ai", "models", "skeletons", "textures", "materials", "biomes", "particles", "sounds", "video"}
+//
+// generated/ is the procedural generators' output (internal/procgen): the
+// cooked meshes, masks and materials a generator's run writes, which its
+// level's scenery names by path. Only what something names ships; the rest
+// (heightmaps, manifests) is the generator's working state.
+var contentDirs = []string{"levels", "chunks", "ui", "scripts", "entities", "ai", "models", "skeletons", "textures", "materials", "biomes", "particles", "sounds", "video", "generated"}
 
 type packer struct {
 	src      string

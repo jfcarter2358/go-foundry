@@ -135,7 +135,11 @@ type taaState struct {
 	// The frame being drawn: whether it is a scene-target frame at all
 	// (active) and whether TAA runs in it (on); the caller's target it ends
 	// in; the unjittered projection and view-projections.
-	active, on     bool
+	active, on bool
+	// editorDepth: the frame is the editor's view, whose overlays are drawn
+	// into the caller's target after it and depth-tested there, so the
+	// output pass writes the scene's depth into it too.
+	editorDepth    bool
 	final          FrameTarget
 	baseProjection mgl32.Mat4
 	jitter         mgl32.Vec2
@@ -269,8 +273,12 @@ func ForgetTAAHistory() { taa.historyValid = false }
 // TAA is the mode, the frame is not the editor's own view (whose overlays
 // and wireframe draw straight into the window), and the scene target and the
 // TAA programs exist.
+//
+// The editor's filled view takes it too while EditorSceneFrame is on
+// (editor_scene_frame.go); its overlays then read the world's depth from
+// the window, written there by the output pass (editorDepth).
 func sceneFrameWanted(o WorldDraw) bool {
-	return gfx.AntiAliasMode == gfx.AAModeTAA && !o.Editor && !o.Wireframe && taa.ready()
+	return gfx.AntiAliasMode == gfx.AAModeTAA && (!o.Editor || EditorSceneFrame) && !o.Wireframe && taa.ready()
 }
 
 // sceneFrameBegin makes the scene target the frame's target, after
@@ -278,6 +286,10 @@ func sceneFrameWanted(o WorldDraw) bool {
 // when the frame takes the forward path.
 func sceneFrameBegin(o WorldDraw) bool {
 	taa.active = false
+	// HDR shading needs the RGBA16F scene target (gfx/hdr.go): only a frame
+	// drawn into it may, and world.PackFog reads this when it fills the
+	// scene block for the frame.
+	gfx.HDRFrame = false
 	if !sceneFrameWanted(o) {
 		// A frame drawn the other way (the editor's view between two
 		// stretches of play) leaves the history describing nothing.
@@ -291,6 +303,8 @@ func sceneFrameBegin(o WorldDraw) bool {
 	}
 	taa.ensure(w, h)
 	taa.active, taa.final = true, final
+	taa.editorDepth = o.Editor
+	gfx.HDRFrame = true
 	taa.on = AntiAliasEnabled && TAAResolve
 	drawTarget.set, drawTarget.t = true, FrameTarget{FBO: scene.fbo, Viewport: [4]int32{0, 0, w, h}}
 	gl.BindFramebuffer(gl.FRAMEBUFFER, scene.fbo)
@@ -612,7 +626,29 @@ func sceneFrameEnd() {
 	gl.Uniform1f(op.U("sharpen"), sharpen)
 	gl.Uniform2i(op.U("size"), t.w, t.h)
 	gl.Uniform2i(op.U("origin"), f.Viewport[0], f.Viewport[1])
+	// The tone curve, when the frame shaded in HDR (gfx/hdr.go): the scene
+	// block says so, as world.PackFog wrote it for this frame.
+	hdr := gfx.Scene.Block.HdrMode != 0
+	gl.Uniform1i(op.U("tonemap"), boolToInt32(hdr))
+	gl.Uniform1f(op.U("exposure"), gfx.Scene.Block.HdrExposure)
+	// The editor's view: the scene's depth into the caller's depth buffer
+	// as well (editor_scene_frame.go). A depth write needs the test on;
+	// ALWAYS makes it a copy.
+	gl.Uniform1i(op.U("writeDepth"), boolToInt32(t.editorDepth))
+	if t.editorDepth {
+		gl.ActiveTexture(gl.TEXTURE1)
+		gl.BindTexture(gl.TEXTURE_2D, scene.depth)
+		gl.Uniform1i(op.U("depthSrc"), 1)
+		gl.Enable(gl.DEPTH_TEST)
+		gl.DepthFunc(gl.ALWAYS)
+		gl.DepthMask(true)
+	}
 	gl.DrawArrays(gl.TRIANGLES, 0, 3)
+	if t.editorDepth {
+		gl.DepthFunc(gl.LEQUAL)
+		gl.Disable(gl.DEPTH_TEST)
+		gl.DepthMask(false)
+	}
 	ProfileEnd()
 
 	for u := uint32(0); u < 3; u++ {
@@ -628,5 +664,6 @@ func sceneFrameEnd() {
 	t.prevViewProj, t.prevValid = t.viewProj, true
 	t.prevCam, t.prevProjection = gfx.Cam.Position, t.baseProjection
 	t.active = false
+	gfx.HDRFrame = false
 	drawTarget.t = f
 }

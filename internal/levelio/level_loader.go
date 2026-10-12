@@ -580,9 +580,16 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// unload_when_disabled is left unloaded, as its chunk is: the chunks are
 	// already built, so SyncPlacementChunks can say which those are, and builds
 	// them when the chunk comes on.
+	//
+	// The IDs are minted against one snapshot of the level's namespace
+	// (world.LevelIDIndex) rather than by UniqueSceneryID per placement,
+	// which rescans every list each time: a generated level holds tens of
+	// thousands of placements, and that was quadratic. The trees below share
+	// the snapshot, so a tree cannot take a placement's ID.
+	ids := world.NewLevelIDIndex(level)
 	for _, rsc := range raw.Scenery {
 		sc := world.SceneryFromRaw(rsc)
-		sc.ID = world.UniqueSceneryID(level, sc.ID)
+		sc.ID = ids.Unique(sc.ID, "scenery")
 		level.Scenery = append(level.Scenery, sc)
 	}
 	sceneryFrom := len(level.Scenery) - len(raw.Scenery)
@@ -594,7 +601,7 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// load: the foliage renderer draws them from the shared templates.
 	for _, rt := range raw.Trees {
 		t := world.TreeFromRaw(rt)
-		t.ID = world.UniqueTreeID(level, t.ID)
+		t.ID = ids.Unique(t.ID, "tree")
 		level.Trees = append(level.Trees, t)
 	}
 	// Which props and trees start out with their chunk, and loading the
@@ -672,6 +679,7 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// very first frame of the level or never.
 	level.Sky = world.SkyFromRaw(raw.Sky)
 	level.Fog = world.FogFromRaw(raw.Fog)
+	level.Tonemap = world.TonemapFromRaw(raw.Tonemap)
 
 	// The player's own tuning (player_settings.go). Assigned unconditionally,
 	// including for a level with no `player:` block: this loader fills a Level

@@ -23,6 +23,15 @@
 // Distance is RADIAL (from the eye), not the view-axis depth a fixed-function
 // fog would use. Planar depth makes the fog on a fixed object change as the
 // camera turns its head, which reads as the world breathing.
+//
+// A third part, the ATMOSPHERE (docs/canyon/PHASE_6.md), is the air itself
+// rather than a fade: exponential height fog lying in the low ground,
+// aerial perspective — haze that thickens with range and shifts toward blue
+// on the way — and the sun's forward-scattering glow through both. It is a
+// medium with an optical depth along the view ray, integrated in closed form
+// (fogAtmosSegment), not a blend factor, so a valley floor seen from the rim
+// and the same floor seen from inside the fog agree. Off (fogAtmos 0) unless
+// a level's fog block asks for it.
 
 // The fog's parameters — fogMode (0 = off, 1 = linear, 2 = exponential, 3 =
 // exponential-squared; world.FogMode's values), fogColor, fogStart, fogEnd,
@@ -31,10 +40,38 @@
 // names, driven by one upload" has become.
 #include "scene_block.glsl"
 
+// ---------- HDR: display-referred colour into the scene's units ----------
+//
+// In an HDR frame (hdrMode 1, gfx/hdr.go) the frame's last pass maps scene
+// light to the screen through exposure and the ACES fit. Colours authored as
+// screen colour — the fog's, the sky's, an unlit surface's, and whatever an
+// HDR-unaware pass shaded — are carried back through the curve's inverse
+// first, so they reach the screen as authored. Off, it is the identity.
+vec3 hdrFromDisplay(vec3 c) {
+    if (hdrMode == 0) {
+        return c;
+    }
+    vec3 y = clamp(c, vec3(0.0), vec3(0.999));
+    // The positive root of (Cy - A)x² + (Dy - B)x + Ey = 0 (gfx.ACESFilmInverse).
+    vec3 a = 2.43 * y - 2.51;
+    vec3 b = 0.59 * y - 0.03;
+    vec3 e = 0.14 * y;
+    vec3 x = (-b - sqrt(max(b * b - 4.0 * a * e, vec3(0.0)))) / (2.0 * a);
+    return x / max(hdrExposure, 1e-4);
+}
+
+// hdrLightMax is the most summed light a surface keeps: 1 in LDR, as it
+// always was; gfx.HDRLightMax in an HDR frame.
+float hdrLightMax() {
+    return hdrMode != 0 ? 64.0 : 1.0;
+}
+
 // fogFactor is how much of fogColor this point has turned into: 0 = untouched,
 // 1 = the fog and nothing else.
 float fogFactor(vec3 worldPos) {
-    if (fogMode == 0) {
+    // 4 is world.FogNone: a fog block with the atmosphere below and no
+    // distance fade of its own.
+    if (fogMode == 0 || fogMode == 4) {
         return 0.0;
     }
     float d = distance(worldPos, fogCamPos);
@@ -48,6 +85,110 @@ float fogFactor(vec3 worldPos) {
         f = 1.0 - exp(-t * t);
     }
     return clamp(f, 0.0, 1.0) * fogMaxOpacity;
+}
+
+// ---------- the atmosphere ----------
+//
+// Two exponential media share the ray: HEIGHT FOG, dense at its base and
+// thinning by e every 1/falloff metres up (ground fog, a canyon's floor haze),
+// and the AERIAL haze, the same shape with a scale height of hundreds of
+// metres, so across a level it is nearly uniform and it is range, not height,
+// that thickens it. The aerial part's extinction is per channel
+// (fogAerialTint): blue dies first, as Rayleigh scattering has it, so far
+// rock shifts toward the haze's blue before its red is gone.
+//
+// Each medium's optical depth along the segment from ro, length len along
+// unit dir, is the closed form of the integral of its density:
+//
+//	∫0..len  σ·e^(−k·(y0 + dir.y·t − base)) dt
+//	   = σ·len·(e^(−h0) − e^(−h1)) / (h1 − h0),   h = k·(y − base)
+//
+// which tends to σ·len·e^(−h0) as the ray goes level. The exponents are
+// clamped where e^ would overflow (deep below the base, where the medium has
+// long since hidden everything), never on the side that would make a ray
+// climbing out of the fog see more of it than there is.
+//
+// What the medium sends toward the eye is its colour, with the sun's light
+// redistributed by a Henyey-Greenstein lobe around the sun's direction,
+// relative to isotropic: a haze looking into the sun glows and looking away
+// is a little duller, and on average it is its own colour. That light is
+// unshadowed: there is no march.
+
+// fogExpDepth is the integral above for unit density at the base.
+float fogExpDepth(vec3 ro, vec3 dir, float len, float base, float k) {
+    k = max(k, 1e-6);
+    float h0 = k * (ro.y - base);
+    float dh = k * dir.y * len;
+    float e0 = exp(-clamp(h0, -30.0, 80.0));
+    if (abs(dh) < 1e-4) {
+        return len * e0;
+    }
+    float e1 = exp(-clamp(h0 + dh, -30.0, 80.0));
+    return max(len * (e0 - e1) / dh, 0.0);
+}
+
+// fogSunLobe is the in-scattered sun's phase toward the eye, looking along
+// dir: Henyey-Greenstein over isotropic, so 1 on average over the sphere.
+float fogSunLobe(vec3 dir) {
+    float g = clamp(fogSunG, -0.95, 0.95);
+    float mu = dot(dir, fogSunDir);
+    float den = max(1.0 + g * g - 2.0 * g * mu, 1e-4);
+    return (1.0 - g * g) / (den * sqrt(den));
+}
+
+// fogAtmosMedium is the two media over the segment from ro, len along unit
+// dir: what survives of what is behind it (T, per channel, capped by
+// fogMaxOpacity as the distance fog is) and the medium's own colour (each
+// part's by its share of the depth), as authored: screen colour.
+void fogAtmosMedium(vec3 ro, vec3 dir, float len, out vec3 T, out vec3 base) {
+    float th = fogHeightDensity > 0.0
+        ? fogHeightDensity * fogExpDepth(ro, dir, len, fogHeightBase, fogHeightFalloff) : 0.0;
+    vec3 ta = fogAerialDensity > 0.0
+        ? fogAerialTint * (fogAerialDensity * fogExpDepth(ro, dir, len, fogAerialBase, fogAerialFalloff))
+        : vec3(0.0);
+    vec3 tau = vec3(th) + ta;
+    T = max(exp(-tau), vec3(1.0 - fogMaxOpacity));
+    base = (fogHeightColor * th + fogAerialColor * ta) / max(tau, vec3(1e-6));
+}
+
+// fogAtmosSegmentDisplay is the atmosphere over the segment in screen
+// colour: what the air adds (returned) and what survives (T), so the result
+// is surface * T + returned. The sun's lobe is added less its average: the
+// sun's light is moved toward the eye looking into it and away from it
+// looking away, and the haze's mean brightness stays its colour's. Added on
+// top, a lobe bright enough to see near the sun turned a whole sky white.
+vec3 fogAtmosSegmentDisplay(vec3 ro, vec3 dir, float len, out vec3 T) {
+    vec3 base;
+    fogAtmosMedium(ro, dir, len, T, base);
+    vec3 c = max(base + fogSunColor * (fogSunLobe(dir) - 1.0), vec3(0.0));
+    return c * (1.0 - T);
+}
+
+// fogAtmosSegment is fogAtmosSegmentDisplay in the frame's units: the same
+// outside an HDR frame. In one (gfx/hdr.go) the medium's colour, being screen
+// colour, is carried into the scene's units, and the sun's lobe — light, not
+// a colour — is added there as it is: carried through the curve's inverse,
+// a lobe that took a channel past white would clip each channel at its own
+// point and draw coloured rings round the sun.
+vec3 fogAtmosSegment(vec3 ro, vec3 dir, float len, out vec3 T) {
+    if (hdrMode == 0) {
+        return fogAtmosSegmentDisplay(ro, dir, len, T);
+    }
+    vec3 base;
+    fogAtmosMedium(ro, dir, len, T, base);
+    vec3 c = max(hdrFromDisplay(base) + fogSunColor * (fogSunLobe(dir) - 1.0), vec3(0.0));
+    return c * (1.0 - T);
+}
+
+// fogAtmosAt is fogAtmosSegment from the eye to worldPos.
+vec3 fogAtmosAt(vec3 worldPos, out vec3 T) {
+    vec3 seg = worldPos - fogCamPos;
+    float len = length(seg);
+    if (fogAtmos == 0 || len < 1e-4) {
+        T = vec3(1.0);
+        return vec3(0.0);
+    }
+    return fogAtmosSegment(fogCamPos, seg / len, len, T);
 }
 
 // ---------- fog volumes ----------
@@ -199,6 +340,18 @@ vec3 applyFogVolumes(vec3 color, vec3 worldPos) {
         if (i >= numFogVolumes) {
             break;
         }
+        color = mix(color, hdrFromDisplay(fogVolColor[i]), fogVolumeOpacity(i, worldPos));
+    }
+    return color;
+}
+
+// applyFogVolumesDisplay is applyFogVolumes in screen colour (the sky's,
+// which is carried into the scene's units once, at its end).
+vec3 applyFogVolumesDisplay(vec3 color, vec3 worldPos) {
+    for (int i = 0; i < MAX_FOG_VOLUMES; ++i) {
+        if (i >= numFogVolumes) {
+            break;
+        }
         color = mix(color, fogVolColor[i], fogVolumeOpacity(i, worldPos));
     }
     return color;
@@ -222,14 +375,41 @@ float fogVolumeTransmittance(vec3 worldPos) {
 // ---------- what a shading pass calls ----------
 
 // applyFog is the ordinary case: the surface is replaced by the fog in front of
-// it, in proportion.
+// it, in proportion. Its colour is screen colour (every pass but
+// fragment.glsl's lit surfaces): in an HDR frame it is carried into the
+// scene's units first (hdrFromDisplay), so it reaches the screen as shaded.
+vec3 applyFogScene(vec3 color, vec3 worldPos);
+
 vec3 applyFog(vec3 color, vec3 worldPos) {
+    return applyFogScene(hdrFromDisplay(color), worldPos);
+}
+
+// applyFogScene is applyFog for a colour already in the scene's units:
+// fragment.glsl's lit surfaces, which keep light above 1 in an HDR frame.
+// Outside one it is applyFog exactly.
+vec3 applyFogScene(vec3 color, vec3 worldPos) {
     // Volumes first, then the distance fog over the top of them. The distance
     // fog fills the WHOLE segment, including the part in front of the nearest
     // volume, so it is the outermost layer; doing it the other way round would
     // let a fog bank tint the haze that is actually between the viewer and it.
+    // The atmosphere fills the whole segment too, and goes on between the two.
     color = applyFogVolumes(color, worldPos);
-    return mix(color, fogColor, fogFactor(worldPos));
+    if (fogAtmos != 0) {
+        vec3 T;
+        vec3 add = fogAtmosAt(worldPos, T);
+        color = color * T + add;
+    }
+    return mix(color, hdrFromDisplay(fogColor), fogFactor(worldPos));
+}
+
+// fogAtmosTransmittance is what survives the atmosphere in front of
+// worldPos, for the additive and multiplying blends below.
+vec3 fogAtmosTransmittance(vec3 worldPos) {
+    vec3 T = vec3(1.0);
+    if (fogAtmos != 0) {
+        fogAtmosAt(worldPos, T);
+    }
+    return T;
 }
 
 // applyFogAdditive is the same physical answer for a surface drawn with an
@@ -238,7 +418,8 @@ vec3 applyFog(vec3 color, vec3 worldPos) {
 // spark BRIGHTER than a near one; what fog does to something that only ever
 // adds light is swallow it, so the contribution is attenuated instead.
 vec3 applyFogAdditive(vec3 color, vec3 worldPos) {
-    return color * (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos);
+    return color * (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos)
+         * fogAtmosTransmittance(worldPos);
 }
 
 // applyFogModulate is the same answer again for a surface drawn with a MULTIPLY
@@ -252,5 +433,6 @@ vec3 applyFogAdditive(vec3 color, vec3 worldPos) {
 // changes nothing.
 vec3 applyFogModulate(vec3 color, vec3 worldPos) {
     return mix(vec3(1.0), color,
-               (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos));
+               (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos)
+               * fogAtmosTransmittance(worldPos));
 }

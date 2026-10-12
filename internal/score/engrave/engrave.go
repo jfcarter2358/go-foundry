@@ -22,7 +22,15 @@
 // limited by the interval and quantised against the staff lines; dots,
 // moved into spaces; rests by duration, offset for the voice in
 // multi-voice music and centred as whole-bar rests; ties; tuplet brackets
-// and numbers (nested); grace notes, small and slashed.
+// and numbers (nested); grace notes, small and slashed; clef changes inside
+// the staff, and notes under an ottava line drawn where they are written.
+//
+// And what a performer reads beside the notes (expression.go, spanner.go,
+// system.go): dynamics, hairpins and "cresc." with dashes; articulations,
+// ornaments, fermatas, tremolo strokes and arpeggio lines; slurs, glissandi,
+// ottava and pedal lines; technique and expression text; and over the
+// system the tempo marks, rehearsal marks, repeat barlines, endings and the
+// segno, coda, D.C., D.S. and Fine.
 //
 // Layout is in two passes, the way a page layout needs it (phase 5): each
 // bar is measured first — its columns (onsets shared by every staff),
@@ -58,6 +66,9 @@ type Options struct {
 	// 0 numbers only the layout's first bar (when it is not bar 1), n > 0
 	// every n-th bar as well, -1 none.
 	BarNumbers int
+	// Below leaves room under a line's last staff, in staff spaces, by line
+	// index: the editor's dynamics lane. List.Lanes says where it is.
+	Below map[int]float64
 }
 
 // Engraving constants not in the font's defaults, in staff spaces.
@@ -77,6 +88,7 @@ const (
 	staffGap     = 7.0  // bottom line of one line's staff to the top of the next
 	grandGap     = 6.0  // between the staves of a grand staff
 	inkPad       = 1.0  // clearance between one staff's ink and the next's
+	lanePad      = 0.8  // a line's ink to the room left under it (Options.Below), and that to the next staff
 	margin       = 1.0  // around the whole layout
 )
 
@@ -99,6 +111,9 @@ type engraver struct {
 	o Options
 	f *glyph.Font
 	d glyph.Defaults
+	// concert shows transposing staves at sounding pitch: the options' or
+	// the score's own Concert Pitch.
+	concert bool
 
 	from, to int
 	last     bool // the layout ends at the score's end: a final barline
@@ -123,6 +138,14 @@ type staffCtx struct {
 	percussion bool
 	first, end bool // first / last staff of its line
 	nStaves    int  // staves in its line
+	// ottavas are the staff's ottava lines (score.Ottavas).
+	ottavas []score.OttavaSpan
+	// clefMarks are the clef changes drawn inside the layout.
+	clefMarks []*clefMark
+	// sky is the staff's ink so far, for what is placed around the notes.
+	sky *sky
+	// lane is the room left under the staff (Options.Below), staff-local.
+	lane float64
 
 	bars  []*staffBar // per layout bar
 	items []Item      // staff-local y (top line at 0), absolute x
@@ -162,6 +185,9 @@ type barCtx struct {
 	// minW and ideal are the bar's content width as measured.
 	widths []float64 // per column gap: x[i+1]-x[i]
 	lead   float64   // content start to the first column
+	// dynHead and dynTail are, per staff, how far the first column's
+	// dynamics reach left and the last note column's right (dynamicRods).
+	dynHead, dynTail map[*staffCtx]float64
 }
 
 // column is one onset of a bar, shared by every staff.
@@ -198,6 +224,16 @@ type ev struct {
 
 	shift float64 // x of the head origin from the column x (voice offset, grace place)
 	x     float64 // absolute head origin x
+
+	// bottom is the diatonic number the staff's bottom line stands for at
+	// the event (its clef), and ottava the octaves an ottava line over it
+	// moves the sound by.
+	bottom, ottava int
+	// arpX is an arpeggio line's x from the column x (arrangeColumn).
+	arpX float64
+	// artTop and artBot are the event's ink with its articulations, for
+	// slurs to clear (staff-local).
+	artTop, artBot float64
 
 	// head is the notehead glyph the event's stem and width follow: its
 	// value's, or on a percussion staff the shape every note shares.
@@ -242,7 +278,7 @@ type nt struct {
 }
 
 func newEngraver(s *score.Score, o Options) *engraver {
-	e := &engraver{s: s, o: o, f: glyph.Bravura()}
+	e := &engraver{s: s, o: o, f: glyph.Bravura(), concert: o.Concert || s.Concert}
 	e.d = e.f.Defaults
 	if e.o.Spacing <= 0 {
 		e.o.Spacing = 1
@@ -268,13 +304,21 @@ func newEngraver(s *score.Score, o Options) *engraver {
 		}
 		l := s.Lines[li]
 		for si, st := range l.Staves {
-			sc := &staffCtx{line: li, staff: si, st: st, clef: st.Clef, bottom: clefBottom(st.Clef),
+			clef := st.ClefAt(score.Pos{Bar: e.from})
+			sc := &staffCtx{line: li, staff: si, st: st, clef: clef, bottom: clefBottom(clef),
 				first: si == 0, end: si == len(l.Staves)-1, nStaves: len(l.Staves), percussion: st.Clef == "percussion"}
 			if sc.percussion {
-				// A drum staff does not transpose.
-			} else if !o.Concert && (st.Transpose.Diatonic != 0 || st.Transpose.Chromatic != 0) {
-				sc.iv = score.Interval{Diatonic: -st.Transpose.Diatonic, Chromatic: -st.Transpose.Chromatic}
-				sc.transposed = true
+				// A drum staff does not transpose, change clef or take ottavas.
+				sc.clef, sc.bottom = st.Clef, clefBottom(st.Clef)
+			} else {
+				if !e.concert && (st.Transpose.Diatonic != 0 || st.Transpose.Chromatic != 0) {
+					sc.iv = score.Interval{Diatonic: -st.Transpose.Diatonic, Chromatic: -st.Transpose.Chromatic}
+					sc.transposed = true
+				}
+				sc.ottavas = s.Ottavas(st)
+			}
+			if si == len(l.Staves)-1 {
+				sc.lane = o.Below[li]
 			}
 			e.staves = append(e.staves, sc)
 		}
@@ -329,6 +373,7 @@ func (e *engraver) collect() {
 		}
 	}
 	e.columns()
+	e.collectClefChanges()
 }
 
 // collectVoice reads one voice over the layout's bars, linking ties across
@@ -395,7 +440,8 @@ func (e *engraver) lastEventBefore(sc *staffCtx, vi int, v *score.Voice, bar int
 			return nil
 		}
 		sb := &staffBar{st: sc, bar: &barCtx{bar: bar, length: e.s.BarLength(bar)}, fifths: sc.key(e.s.KeyAt(bar).Fifths)}
-		x := e.newEv(sb, vi, bar, ei, se, score.Frac{}, m)
+		offs, _ := m.Offsets(sb.bar.length)
+		x := e.newEv(sb, vi, bar, ei, se, offs[ei], m)
 		x.ref.Bar = -bar // outside the layout
 		return x
 	}
@@ -424,13 +470,22 @@ func (e *engraver) newEv(sb *staffBar, vi, bar, ei int, se *score.Event, onset s
 	case score.EventSpace:
 		x.space = true
 	case score.EventChord:
+		x.bottom = sc.bottom
+		if !sc.percussion {
+			at := score.Pos{Bar: bar, Offset: onset}
+			x.bottom = clefBottom(sc.st.ClefAt(at))
+			x.ottava = ottavaAt(sc.ottavas, at)
+		}
 		shared, same := score.DrumHead(0), true
 		for k, n := range se.Notes {
 			p := n.Pitch
 			if sc.transposed {
 				p = p.Transpose(sc.iv)
 			}
-			q := &nt{idx: k, p: p, pos: p.Diatonic() - sc.bottom, tie: n.Tie, ev: x}
+			// Under an ottava line the page shows the note an octave (or
+			// two) from where it sounds.
+			p.Octave -= int8(x.ottava)
+			q := &nt{idx: k, p: p, pos: p.Diatonic() - x.bottom, tie: n.Tie, ev: x}
 			if sc.percussion {
 				pos, h := score.DrumDisplay(n.Pitch)
 				q.p, q.pos, q.head = score.FromDiatonic(pos+sc.bottom), pos, drumHeadGlyph(h, x.base)
@@ -659,7 +714,7 @@ func (e *engraver) placeGalley() {
 		if i == 0 {
 			bc.x0, bc.content = 0, start
 		} else {
-			bc.content = x + barlineWidth(e.d, e.barlineBefore(i)) + bc.prefixW
+			bc.content = x + e.barlineWidth(e.barlineBefore(i)) + bc.prefixW
 		}
 		cx := bc.content + bc.lead
 		for k, c := range bc.cols {
@@ -692,29 +747,97 @@ const (
 	barSingle barlineKind = iota
 	barDouble
 	barFinal
+	// barRepeatEnd closes a repeat (:||), barRepeatStart opens one (||:)
+	// and barRepeatBoth does both (:||:).
+	barRepeatEnd
+	barRepeatStart
+	barRepeatBoth
 )
 
+// barlineBefore is the barline between layout bars i-1 and i: a repeat's
+// where one ends or starts, a final barline at the score's end or after a
+// Fine, a double barline before a key change.
 func (e *engraver) barlineBefore(i int) barlineKind {
+	endRep := i > 0 && e.repeatEnds(e.bars[i-1].bar)
 	if i >= len(e.bars) {
-		if e.last {
+		switch {
+		case endRep:
+			return barRepeatEnd
+		case e.last || e.s.JumpAt(e.bars[i-1].bar, score.JumpFine) != nil:
 			return barFinal
 		}
 		return barSingle
 	}
-	if i > 0 && e.bars[i].showKey {
+	startRep := i > 0 && e.repeatStarts(e.bars[i].bar)
+	switch {
+	case endRep && startRep:
+		return barRepeatBoth
+	case endRep:
+		return barRepeatEnd
+	case startRep:
+		return barRepeatStart
+	case i > 0 && e.s.JumpAt(e.bars[i-1].bar, score.JumpFine) != nil:
+		return barFinal
+	case i > 0 && e.bars[i].showKey:
 		return barDouble
 	}
 	return barSingle
 }
 
-func barlineWidth(d glyph.Defaults, k barlineKind) float64 {
+// repeatStarts and repeatEnds report a repeat opening at a bar's start or
+// closing at its end.
+func (e *engraver) repeatStarts(bar int) bool {
+	for _, r := range e.s.Repeats {
+		if r.Start == bar {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *engraver) repeatEnds(bar int) bool {
+	for _, r := range e.s.Repeats {
+		if r.End == bar {
+			return true
+		}
+	}
+	return false
+}
+
+// barlineWidth is how wide a barline is.
+func (e *engraver) barlineWidth(k barlineKind) float64 {
+	d := e.d
+	dots := e.f.Width("repeatDot") + d.RepeatBarlineDotSeparation
 	switch k {
 	case barDouble:
 		return 2*d.ThinBarlineThickness + d.BarlineSeparation
 	case barFinal:
 		return d.ThinBarlineThickness + d.ThinThickBarlineSeparation + d.ThickBarlineThickness
+	case barRepeatEnd, barRepeatStart:
+		return dots + d.ThinBarlineThickness + d.ThinThickBarlineSeparation + d.ThickBarlineThickness
+	case barRepeatBoth:
+		return 2*dots + 2*d.ThinBarlineThickness + 2*d.ThinThickBarlineSeparation + d.ThickBarlineThickness
 	}
 	return d.ThinBarlineThickness
+}
+
+// clefAtBar is the clef a staff reads at a bar's start.
+func (sc *staffCtx) clefAtBar(bar int) string {
+	if sc.percussion {
+		return sc.st.Clef
+	}
+	return sc.st.ClefAt(score.Pos{Bar: bar})
+}
+
+// ottavaAt is the octaves the ottava line over a point moves the sound by.
+func ottavaAt(spans []score.OttavaSpan, p score.Pos) int {
+	k := 0
+	for _, o := range spans {
+		if !score.PosLess(p, o.From) && score.PosLess(p, o.To) {
+			k = o.Octaves
+		}
+	}
+	return k
 }
 
 // finish stacks the staves, adds what spans them, fills the boxes and
@@ -735,6 +858,9 @@ func (e *engraver) finish() *List {
 				gap = grandGap
 			}
 			below := math.Max(0, p.ext.Max.Y-4)
+			if p.lane > 0 {
+				below += 2*lanePad + p.lane
+			}
 			above := math.Max(0, -sc.ext.Min.Y)
 			sc.top = p.top + 4 + math.Max(gap, below+above+inkPad)
 		}
@@ -750,8 +876,15 @@ func (e *engraver) finish() *List {
 	l.Items = append(l.Items, e.items...)
 
 	for _, sc := range e.staves {
-		l.Staves = append(l.Staves, StaffBox{Line: sc.line, Staff: sc.staff, Top: sc.top, Clef: sc.clef, Bottom: sc.bottom,
-			Fifths: sc.key(e.bars[0].fifths), Transposed: sc.transposed, Extent: sc.ext.Offset(Point{X: 0, Y: sc.top})})
+		sb := StaffBox{Line: sc.line, Staff: sc.staff, Top: sc.top, Clef: sc.clef, Bottom: sc.bottom,
+			Fifths: sc.key(e.bars[0].fifths), Transposed: sc.transposed, Extent: sc.ext.Offset(Point{X: 0, Y: sc.top})}
+		for _, cm := range sc.clefMarks {
+			sb.Changes = append(sb.Changes, ClefSpan{X: cm.x, Clef: cm.clef, Bottom: clefBottom(cm.clef)})
+		}
+		l.Staves = append(l.Staves, sb)
+		if sc.lane > 0 {
+			l.Lanes = append(l.Lanes, LaneBox{Line: sc.line, Top: sc.top + math.Max(4, sc.ext.Max.Y) + lanePad, Height: sc.lane})
+		}
 	}
 	for _, bc := range e.bars {
 		bb := BarBox{Bar: bc.bar, X0: bc.x0, X1: bc.x1, Content: bc.content}
@@ -775,6 +908,9 @@ func (e *engraver) finish() *List {
 	b := l.Bounds()
 	// The staves themselves count even where nothing is drawn beyond them.
 	b = b.Union(Rect{Min: Point{X: 0, Y: 0}, Max: Point{X: e.bars[len(e.bars)-1].x1, Y: e.staves[len(e.staves)-1].top + 4}})
+	for _, ln := range l.Lanes {
+		b = b.Union(Rect{Min: Point{X: 0, Y: ln.Top}, Max: Point{X: e.bars[len(e.bars)-1].x1, Y: ln.Top + ln.Height + lanePad}})
+	}
 	l.Translate(Point{X: margin - b.Min.X, Y: margin - b.Min.Y})
 	l.Width, l.Height = b.W()+2*margin, b.H()+2*margin
 	return l

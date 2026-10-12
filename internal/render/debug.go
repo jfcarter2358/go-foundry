@@ -310,6 +310,12 @@ func DebugOverlayLines() []DebugLine {
 		line("Sun shadow:   virtual, %d pages resident, %d drawn in %d rects, %d starved, %d deferred",
 			DebugStats.VSMPages, DebugStats.VSMDrawn, DebugStats.VSMRects, DebugStats.VSMStarved, DebugStats.VSMDeferred)
 	}
+	// World texture memory (gfx/texture_vram.go), with the settings that
+	// shape it beside the number they explain.
+	if tv := gfx.TextureVRAM(); tv.Count > 0 {
+		line("Textures:     %.0f MB (%d textures, %d BC7, %d BC5), compression %s, skip %d mips",
+			float64(tv.Bytes)/(1<<20), tv.Count, tv.BC7, tv.BC5, onOff(gfx.TextureCompression), gfx.TextureSkipMips)
+	}
 	line("Point shadows: %d re-rendered of %d", DebugStats.PointShadowRenders, DebugStats.PointShadows)
 	if s := GIStatsLast; s.Active {
 		line("GI:           %s, %d sources, %d probes traced", s.Tier, s.Sources, s.ProbesTraced)

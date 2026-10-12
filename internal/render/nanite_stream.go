@@ -147,6 +147,13 @@ type naniteStreamer struct {
 	slotPage      []int32 // the global page in each slot, -1 none
 	free          []int32
 	vbo, nbo, ebo uint32
+	// cbo is the pool's vertex colours, one RGBA8 word a vertex, when any
+	// of its meshes has them (nanite.Mesh.HasColors; 0 otherwise — every
+	// level without generated rocks keeps the pool it had). slotBytes is a
+	// slot's size with them.
+	cbo       uint32
+	colors    bool
+	slotBytes int
 
 	// What the cull reads (cullBatch.stream): per cluster of the pool, its
 	// page, the page it asks for and its cooked own error (infoBuf); per
@@ -304,10 +311,17 @@ func newNaniteStreamer(list []*nanite.Mesh, clusterBase, nodeBase []uint32) *nan
 	for gp := range s.pages {
 		s.pages[gp].above = s.findAncestors(int32(gp))
 	}
+	s.slotBytes = streamSlotBytes
+	for _, m := range list {
+		if m.HasColors {
+			s.colors = true
+			s.slotBytes = streamSlotBytes + streamSlotVerts*4
+		}
+	}
 	if v, err := strconv.Atoi(os.Getenv("FOUNDRY_NANITE_STREAM_PAGES_PER_FRAME")); err == nil && v > 0 {
 		streamPagesPerFrame = v
 	}
-	budget := streamPoolBudget() / streamSlotBytes
+	budget := streamPoolBudget() / s.slotBytes
 	s.slots = min(len(s.pages), budget)
 	if s.slots < roots+streamPagesPerFrame && s.slots < len(s.pages) {
 		// The root pages must fit, with room to stream: past the budget, said.
@@ -323,7 +337,7 @@ func newNaniteStreamer(list []*nanite.Mesh, clusterBase, nodeBase []uint32) *nan
 	for i := s.slots - 1; i >= 0; i-- {
 		s.free = append(s.free, int32(i))
 	}
-	s.stats.Slots, s.stats.Pages, s.stats.PoolBytes = s.slots, len(s.pages), s.slots*streamSlotBytes
+	s.stats.Slots, s.stats.Pages, s.stats.PoolBytes = s.slots, len(s.pages), s.slots*s.slotBytes
 
 	glext.Init()
 	// The pool's stores are immutable wherever the driver has buffer
@@ -335,10 +349,18 @@ func newNaniteStreamer(list []*nanite.Mesh, clusterBase, nodeBase []uint32) *nan
 	gl.GenBuffers(1, &s.vbo)
 	gl.GenBuffers(1, &s.nbo)
 	gl.GenBuffers(1, &s.ebo)
-	for _, b := range []struct {
+	bufs := []struct {
 		buf  uint32
 		size int
-	}{{s.vbo, s.slots * streamSlotVerts * 5 * 4}, {s.nbo, s.slots * streamSlotVerts * 3 * 4}, {s.ebo, s.slots * streamSlotIndices * 4}} {
+	}{{s.vbo, s.slots * streamSlotVerts * 5 * 4}, {s.nbo, s.slots * streamSlotVerts * 3 * 4}, {s.ebo, s.slots * streamSlotIndices * 4}}
+	if s.colors {
+		gl.GenBuffers(1, &s.cbo)
+		bufs = append(bufs, struct {
+			buf  uint32
+			size int
+		}{s.cbo, s.slots * streamSlotVerts * 4})
+	}
+	for _, b := range bufs {
 		gl.BindBuffer(gl.COPY_WRITE_BUFFER, b.buf)
 		if s.immutable {
 			glext.BufferStorage(gl.COPY_WRITE_BUFFER, b.size, nil, 0)
@@ -390,7 +412,7 @@ func newNaniteStreamer(list []*nanite.Mesh, clusterBase, nodeBase []uint32) *nan
 
 	s.preload()
 	log.Printf("nanite: page pool %d of %d pages (%.1f MB, budget %d MB), %d resident at load, staging %s",
-		s.slots, len(s.pages), float64(s.slots*streamSlotBytes)/(1<<20), streamPoolBudget()>>20, s.stats.Resident,
+		s.slots, len(s.pages), float64(s.slots*s.slotBytes)/(1<<20), streamPoolBudget()>>20, s.stats.Resident,
 		map[bool]string{true: "persistent", false: "glBufferSubData"}[persistent])
 	return s
 }
@@ -473,11 +495,19 @@ func (s *naniteStreamer) preload() {
 // load, before anything draws from the pool.
 func (s *naniteStreamer) writeSlotDirect(slot int32, d *nanite.PageData) {
 	vo, no, io := s.slotOffsets(slot)
-	for _, w := range []struct {
+	writes := []struct {
 		buf  uint32
 		off  int
 		data []byte
-	}{{s.vbo, vo, f32bytes(d.Vertices)}, {s.nbo, no, f32bytes(d.Normals)}, {s.ebo, io, u32bytes(d.Indices)}} {
+	}{{s.vbo, vo, f32bytes(d.Vertices)}, {s.nbo, no, f32bytes(d.Normals)}, {s.ebo, io, u32bytes(d.Indices)}}
+	if s.cbo != 0 && len(d.Colors) > 0 {
+		writes = append(writes, struct {
+			buf  uint32
+			off  int
+			data []byte
+		}{s.cbo, s.colorOffset(slot), u32bytes(d.Colors)})
+	}
+	for _, w := range writes {
 		if len(w.data) == 0 {
 			continue
 		}
@@ -501,6 +531,9 @@ func (s *naniteStreamer) writeSlotDirect(slot int32, d *nanite.PageData) {
 	}
 	gl.BindBuffer(gl.COPY_WRITE_BUFFER, 0)
 }
+
+// colorOffset is where slot's colours start in cbo, in bytes.
+func (s *naniteStreamer) colorOffset(slot int32) int { return int(slot) * streamSlotVerts * 4 }
 
 // slotOffsets is where slot's vertices, normals and indices start, in bytes.
 func (s *naniteStreamer) slotOffsets(slot int32) (vert, norm, idx int) {
@@ -624,6 +657,9 @@ func (s *naniteStreamer) update(clusters, nodes uint32) {
 			continue
 		}
 		bytes := 4 * (len(r.data.Vertices) + len(r.data.Normals) + len(r.data.Indices))
+		if s.cbo != 0 {
+			bytes += 4 * len(r.data.Colors)
+		}
 		// Room for the page (when it goes through the ring) and for what it
 		// changes in the records — a few kilobytes, as a rule (flushRecords).
 		staged := bytes
@@ -655,6 +691,9 @@ func (s *naniteStreamer) update(clusters, nodes uint32) {
 			s.ring.put(s.vbo, vo, f32bytes(r.data.Vertices))
 			s.ring.put(s.nbo, no, f32bytes(r.data.Normals))
 			s.ring.put(s.ebo, io, u32bytes(r.data.Indices))
+			if s.cbo != 0 && len(r.data.Colors) > 0 {
+				s.ring.put(s.cbo, s.colorOffset(slot), u32bytes(r.data.Colors))
+			}
 		} else {
 			// A mutable pool takes the page by glBufferSubData, which the
 			// driver stages itself — measured free of the copy's renaming.
@@ -1006,7 +1045,7 @@ func (s *naniteStreamer) dispatch() {
 func (s *naniteStreamer) release() {
 	close(s.stop)
 	s.wg.Wait()
-	for _, b := range []*uint32{&s.vbo, &s.nbo, &s.ebo, &s.infoBuf, &s.fbBuf, &s.loadStage} {
+	for _, b := range []*uint32{&s.vbo, &s.nbo, &s.ebo, &s.cbo, &s.infoBuf, &s.fbBuf, &s.loadStage} {
 		if *b != 0 {
 			gl.DeleteBuffers(1, b)
 			*b = 0

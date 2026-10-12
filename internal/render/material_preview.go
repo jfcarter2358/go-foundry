@@ -106,6 +106,10 @@ func PrepareWorldProgramForPreview(prog uint32, view, proj mgl32.Mat4, camPos mg
 	UploadShadowUniformsTo(prog, lights, frame)
 	UploadPointShadowUniformsTo(prog, lights)
 	uploadCloudShadowTo(prog)
+	// Its own context's units: the once-a-program shortcut keyed by program
+	// ID cannot tell this window's program from the main window's.
+	gl.UseProgram(prog)
+	gfx.BindSurfaceFxSamplersNow(prog)
 
 	// No fog: a preview is a lookdev booth, and distance fog would wash the
 	// far side of the sphere toward a colour the material has nothing to do

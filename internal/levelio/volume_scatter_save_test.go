@@ -8,6 +8,7 @@ package levelio
 // not be.
 
 import (
+	"reflect"
 	"testing"
 
 	"foundry/internal/world"
@@ -48,7 +49,7 @@ func TestVolumeScatterRoundTrips(t *testing.T) {
 	if got == nil {
 		t.Fatal("the scatter block did not survive the round trip")
 	}
-	if *got != want {
+	if !reflect.DeepEqual(*got, want) {
 		t.Errorf("round trip changed the scatter:\n got %+v\nwant %+v", *got, want)
 	}
 }
