@@ -19,6 +19,10 @@ type SplatLayer struct {
 	Triplanar bool
 	Height    float32
 	Tint      mgl32.Vec3
+	// AntiTile lays the texture in shifted (top down, also turned) patches.
+	AntiTile bool
+	// Relief is the parallax depth (m) of a top-down layer; 0 none.
+	Relief float32
 }
 
 // SurfaceFx is a surface's terrain and rock effects, resolved.
@@ -78,6 +82,8 @@ type SurfaceFx struct {
 	MacroScale  float32
 	MacroAmount float32
 	MacroWarmth float32
+	// MacroVertical is how much the patches vary with height too.
+	MacroVertical float32
 
 	HasGrade        bool
 	GradeMatch      float32
@@ -113,6 +119,8 @@ func resolveSurfaceFx(d *Doc, s *Surface) {
 				Triplanar: e.Bool(SplatLayerParam(i, "triplanar")),
 				Height:    e.Float(SplatLayerParam(i, "height")),
 				Tint:      e.Color(SplatLayerParam(i, "tint")),
+				AntiTile:  e.Bool(SplatLayerParam(i, "anti_tile")),
+				Relief:    e.Float(SplatLayerParam(i, "relief")),
 			}
 			if l.Texture != "" {
 				layers++
@@ -152,6 +160,7 @@ func resolveSurfaceFx(d *Doc, s *Surface) {
 	if e := d.Effect(KindMacroVariation); e != nil {
 		f.HasMacro = true
 		f.MacroScale, f.MacroAmount, f.MacroWarmth = e.Float("scale"), e.Float("strength"), e.Float("warmth")
+		f.MacroVertical = e.Float("vertical")
 	}
 	if e := d.Effect(KindColorGrade); e != nil {
 		f.HasGrade = true

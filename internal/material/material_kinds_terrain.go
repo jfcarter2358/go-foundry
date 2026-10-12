@@ -109,6 +109,14 @@ func splatParams() []ParamDef {
 				Default: FloatValue(1), Min: 0, Max: 4},
 			ParamDef{Name: SplatLayerParam(i, "tint"), Type: ParamColor, Label: "  Tint",
 				Doc: "Multiplies its albedo.", Default: ColorValue(mgl32.Vec3{1, 1, 1}), Min: 0, Max: 4},
+			ParamDef{Name: SplatLayerParam(i, "anti_tile"), Type: ParamBool, Label: "  Anti-tile",
+				Doc: "Hide the repeat: the texture is laid in patches about a repeat across, each shifted (and, top " +
+					"down, turned) its own way, blended by height where they meet, so no feature recurs on a grid. " +
+					"About half again the layer's texture reads.", Default: BoolValue(false)},
+			ParamDef{Name: SplatLayerParam(i, "relief"), Type: ParamFloat, Label: "  Relief (m)",
+				Doc: "Parallax depth, top-down layers only: the layer's height map moves its texels along the view so stones " +
+					"stand up off the plane instead of lying painted on it, and its crevices darken. Fades out with distance. " +
+					"Three more texture reads where it is on; 0 is off.", Default: FloatValue(0), Min: 0, Max: 1},
 		)
 	}
 	out = append(out,
@@ -242,6 +250,9 @@ func init() {
 				Doc: "How far the brightness swings either way.", Default: FloatValue(0.25), Min: 0, Max: 1},
 			{Name: "warmth", Type: ParamFloat, Label: "Warmth",
 				Doc: "How far the colour swings between warmer and cooler with it.", Default: FloatValue(0.3), Min: 0, Max: 1},
+			{Name: "vertical", Type: ParamFloat, Label: "Vertical",
+				Doc: "How much the patches also vary with height, so a wall changes up its face rather than " +
+					"standing one colour top to bottom. 0: by ground position only.", Default: FloatValue(0), Min: 0, Max: 1},
 		},
 	})
 

@@ -57,8 +57,9 @@ atmosphere, HDR lighting and a spawn point.
    - the canyon's course: select `ground`, switch the view to 2D and drag the
      canyon path's points (a terrain rerun is about 20 s, and everything
      downstream follows);
-   - the walls: `walls`' `max_chunks`, `spacing` and `scale`, or `cliffs`'
-     asset list (Browse… opens the Poly Haven browser);
+   - the walls: `rockface`'s `depth` (how far ledges stand out), `bed_spacing`,
+     `soft_share` and `joint_spacing` — a rerun of the walls is a few minutes;
+   - the sand against the rocks: `drift`'s `wind`, `fillet` and `tail`;
    - the light: `air`'s `sun_yaw`, `sun_pitch`, `sun_brightness`,
      `exposure` and `ambient_brightness`;
    - the plants: the `trees`, `deadwood` and `bushes` rules of `scatter`.
@@ -70,12 +71,15 @@ What it makes, stage by stage:
 | --- | --- | --- |
 | `tex` | polyhaven_textures | red sand, cracked ground, river pebbles, and `cliff_side`, a layered red cliff face, as the four ground layers |
 | `ground` | terrain | 512 m of mesa country at 0.5 m with a stepped canyon through it; a 3 km backdrop of the same country round it (`far`) |
-| `ground_mat` | terrain_material | the splat over the masks; caprock on the high flats, bedding relief and stronger normals on the walls, and the backdrop's material |
-| `cliffs` | polyhaven_rocks | scanned cliff faces from 5 to 40 m: the walls' cladding |
+| `ground_mat` | terrain_material | the splat over the masks, every layer anti-tiled; sand bars drawn out down the washes; caprock on the high flats, bedding relief and stronger normals on the walls, and the backdrop's material |
+| `rockface` | wall_sheet | the cliffs as rock geometry: hard beds as ledges over soft ones weathered back beneath them, joints, alcoves, a caprock along the rims |
+| `rockfall` | rocks | sandstone blocks in the walls' own texture, for the talus |
+| `cliffs` | polyhaven_rocks | scanned cliff faces from 5 to 40 m — phase 7's wall cladding, **off** (`rockface` builds the walls now) |
 | `boulders`, `stones` | polyhaven_rocks | Namaqualand boulders (with light copies for scatter), stone and rock sets split into pieces |
 | `trees`, `deadwood`, `bushes` | polyhaven_plants | quiver trees, a dead quiver trunk, rooibos and shrubs |
-| `walls` | cliff_wall | the scans up the canyon's walls, nearest the spawn first, colour-matched to the bare rock |
-| `scatter` | scatter | talus under the walls, boulder fields, stones in the washes, the plants on the flats |
+| `walls` | cliff_wall | the scans up the canyon's walls — **off**, as `cliffs` |
+| `scatter` | scatter | talus (the `rockfall` blocks) under the walls, boulder fields, stones in the washes, the plants on the flats |
+| `drift` | drift | sand piled against the talus, the boulders and the cliffs' feet, with tails down the wind and down the washes; the touched terrain tiles recooked |
 | `plants` | vegetation | the desert biome's dry scrub: **off** by default (see the note under Performance) |
 | `air` | environment | height fog, aerial haze, the canyon skybox, the sun, HDR with the ACES curve, the view distance the backdrop needs, the spawn |
 
@@ -809,6 +813,136 @@ as one instanced proxy of the previewed chunk.
 | ground_band | float | 0.5 | With a terrain material (the stage's `ground`), how far up a rock's foot fades into the ground's colour. 0: no blend. |
 | streaks | float | 0.3 | Dark vertical varnish streaks down the rocks' steep faces. |
 
+### wall_sheet (Placement)
+
+A terrain's cliffs built as rock geometry (phase 8). A heightfield cannot
+overhang, and its walls are a few samples stretched over tens of metres:
+however good the texture, they read as smooth extruded surfaces. This stage
+lays a **shell** of signed-distance rock over every wall, with the
+structure a weathered sandstone cliff has:
+
+- **beds** of irregular thickness, thickening and thinning in formations up
+  the wall; the **soft** ones (`soft_share`) weathered back into hollows
+  (`soft_depth`) under the **hard** ones, which stand as ledges with an eased
+  under-lip — overhangs and the shadow under them;
+- **joints**: vertical fractures about `joint_spacing` apart that cut the
+  face into panels, each set back its own amount (`panel_depth`); a joint is
+  open through a run of a few beds and dies out, so the face does not read as
+  masonry;
+- **alcoves** hollowed now and then into a panel's soft bed (`alcoves`);
+- a **caprock**: the few metres under each rim are hard and unjointed, so the
+  skyline is not notched;
+- **roughness** (`rough`) rounded by the mesher's `weathering`.
+
+The shell is the terrain's own surface pushed **out** along its normal by up
+to `depth` metres on steep ground, less the recess those features carve — so
+it always stands in front of the terrain, which never changes: no hole is
+cut in the tiles, and `drift` (which recooks them) is unaffected. On flat
+ground it lies 12 cm under the terrain, out of sight, and it comes out of
+the ground exactly where the wall starts to rise. Ground steeper than the
+`steep` band is wall, unless its relief over 8 m is under `min_wall` (a dune
+face is steep and is not a cliff).
+
+The shell may rise at most 25 cm over the ground just uphill of it, so a
+rim's caprock never stands over the mesa top as a parapet. The walls are
+meshed in 32 m sections on a world-aligned grid (dual contouring at
+`cell`). Everything buried under the terrain is dropped, and each section
+is simplified within 4 cm with its edges to the next section locked, coloured with the field's ambient occlusion and a tint
+per bed and panel, and cooked with mesh collision. They wear the `ground`
+material's rock layer alone (its strata, macro variation and anti-tiling
+included, its bedding relief turned down to fine `bedding` laminations now
+the beds are geometry) and blend into the floor's colour at their feet
+(`ground_band`).
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| terrain | stage | "" | The terrain stage whose cliffs are built. |
+| ground | stage | "" | The terrain_material stage: the walls wear its rock layer, and their feet blend into its ground. |
+| cell | float | 0.4 | The mesher's grid: the finest feature the rock has. Halving it is four times the triangles. |
+| depth | float | 2.4 | How far the rock stands out of the terrain at most: the depth of the deepest recess, the reach of the furthest ledge. |
+| steep | vec2 | (40,55) | Ground steeper than the first starts to be wall; by the second it is all wall. |
+| min_wall | float | 6 | Steep ground with less relief than this (over 8 m) is not a cliff — a dune face, a bank — and gets no rock. |
+| bed_spacing | float | 3.2 | The beds' typical thickness. |
+| soft_share | float | 0.45 | The share of beds that are soft and weather back under the hard ones (none in the caprock). |
+| soft_depth | float | 0.75 | How far back a soft bed weathers, as a share of the relief. |
+| joint_spacing | float | 17 | The vertical joints' typical spacing: the width of the panels the face breaks into. |
+| joint_depth | float | 0.55 | How deep an open joint cuts, as a share of the relief. |
+| panel_depth | float | 0.35 | How far a panel between joints can stand back from its neighbours, as a share of the relief. |
+| alcoves | float | 0.06 | The chance a panel's soft bed is hollowed into an alcove. |
+| rough | float | 0.14 | The surface's lumps and grain. |
+| weathering | int | 1 | Steps of curvature flow that round the rock's convex edges. |
+| bedding | float | 0.06 | The material's bedding relief on the walls: the beds are geometry now, so only fine laminations. |
+| ground_band | float | 0.8 | How far up a wall's foot takes the floor's colour. 0: none. |
+| cook_memory | int | 3000 | How much memory the sections' meshing and cooks may hold at once. |
+
+### drift (Placement)
+
+Sand that answers the rocks on it (phase 8). The terrain is generated
+before any rock is placed, and a scattered rock is seated by sinking it in,
+so it meets the ground in a flat cut. `drift` runs after a `scatter` stage
+and raises the terrain against each rock of the chosen `rules`:
+
+- a **fillet** where sand meets rock: `fillet` of the rock's height above
+  the ground at the contact (at most `max_height`), concave, its slope at the
+  rock 2/`spread` (34° at 3, sand's angle of repose), following the rock's
+  real outline (its cooked mesh is rasterised onto the terrain's grid);
+- a **tail** `tail` times longer downwind (`wind`, degrees clockwise from
+  +Z) and a ramp `windward` times shorter on the side the wind comes from;
+  in a wash (the `flow` mask band) the tail turns downhill — the water lays
+  the sand;
+- rocks lower than `min_height` get none (a drift a grid cell across is a
+  pimple), drifts fade out on steep ground (`slope_fade`), and two rocks'
+  drifts meet in one, never a double heap.
+
+Then the terrain tiles the sand touches are **recooked** with the terrain
+stage's own tile plan and replace its tiles (a stage can *supersede* an
+earlier stage's placements: `RunContext.Supersede`); the material's weights
+are painted sand over the drifts (`sand_cover`, full at `sand_depth`), and
+its ground colour and height maps rewritten; the scatter's rocks are
+re-placed wearing materials whose ground blend reads the new sand line
+(`ground_band`), and with `lift` the pebbles and plants standing on a drift
+are lifted onto it.
+
+**Against the cliffs** (`walls`, a `wall_sheet` stage): the cliffs' feet get
+one smooth sand surface, worked out over the whole map at once. The foot is
+read off the terrain: open, gentle ground within the wall stage's `depth` of
+steep ground that rises above it under the rock. From every foot point a
+ramp runs out — `wall_height` high (rising and falling along the wall by
+`wall_vary` over about 15 m), `wall_spread` long per metre of it, `wall_tail`
+longer downwind — standing on the foot's ground averaged along the wall, and
+the sand fills up to the highest of them: hollows at the foot are filled and
+humps buried, a bench's sand spills off it as a slope, and ground under the
+rock's flare takes the full height so the sand meets the rock with no dip.
+The terrain's own steep wall behind the rock, ledges up the face and the
+ground over a rim get none. The walls are re-placed so their feet blend into
+the sand where it now lies.
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| terrain | stage | "" | The terrain stage whose tiles the sand is added to (it must cook its tiles). |
+| ground | stage | "" | The terrain_material stage the tiles wear: its weights get the sand, and the recooked tiles wear a copy of it. |
+| scatter | stage | "" | The scatter stage whose rocks the sand piles against. |
+| rules | string | "" | The scatter's rules (by name, separated by spaces) whose rocks get drifts; empty: every rule. |
+| wind | float | 60 | The direction the wind blows toward, degrees clockwise from +Z seen from above (90: toward +X). The tails run this way. |
+| flow | vec2 | (0.2,0.5) | Between these levels of the terrain's flow mask, a rock's tail turns from the wind to downhill. |
+| walls | stage | "" | A wall_sheet stage whose cliffs get sand ramps at their feet. Empty: none. |
+| wall_height | float | 2.2 | How high the sand climbs a cliff's foot, on average. |
+| wall_spread | float | 4.5 | How far a cliff's ramp runs out per metre of its height. |
+| wall_tail | float | 0.6 | How much further a cliff's ramp runs downwind. |
+| wall_vary | float | 0.6 | How much a cliff's ramp rises and falls along the wall, over about 15 m. |
+| fillet | float | 0.3 | How high the sand climbs a rock, as a fraction of the rock's height above the ground. |
+| max_height | float | 1.2 | The most sand against any rock, metres. |
+| min_height | float | 0.45 | Rocks standing less than this above the ground get none. |
+| spread | float | 3 | How far the sand runs out per metre of its height: its slope at the rock is 2/spread. |
+| tail | float | 2.5 | How much longer the sand runs downwind, as a multiple of its run elsewhere. |
+| windward | float | 0.4 | How much shorter the ramp on the side the wind comes from is. |
+| slope_fade | vec2 | (24,36) | Drifts fade out between these ground slopes. |
+| sand_cover | float | 1 | How fully the drifts are painted the sand layer. |
+| sand_depth | float | 0.12 | The drift depth at which the sand covers fully. |
+| ground_band | float | 0 | The re-placed rocks' ground blend height; 0 keeps their scatter rule's. |
+| lift | bool | true | Lift the scatter's other placements standing on a drift onto it. |
+| cook_memory | int | 2000 | How much memory the tiles' cooks may hold at once. |
+
 ### vegetation (Placement)
 
 Sparse plants from the engine's own biomes (`biomes/*.fbio`: desert,
@@ -1026,6 +1160,20 @@ puts bare rock on the high flats (between the `cap_height` fractions of the
 height range, in patches, not where sand is deep): a mesa's caprock rather
 than a sand plateau.
 
+**Textures that do not repeat** (phase 8). `anti_tile` lays every layer in
+patches about a repeat across, each shifted (on the ground, also turned) its
+own way and height-blended where they meet, so no pebble, crack or ledge of a
+texture recurs on a grid — the splat's `layerN_anti_tile`. The far backdrop
+never takes it. `macro_vertical` lets the macro variation change with height
+too, so a wall's colour varies up its face. `wash_bars` breaks the wash's
+gravel bed into channels and **sand bars** drawn out along the flow (noise
+smeared down the downhill streamlines, `wash_bar_size` long and wide), so a
+wash is not one gravel carpet. `gravel_relief` and `cracked_relief` give
+those layers **parallax**: the height map moves each texel along the view,
+so stones overlap and stand off the ground instead of lying painted on it,
+and the gaps between them darken (three more texture reads; it fades out
+with distance).
+
 **The backdrop's material.** When the terrain has a far backdrop, the stage
 also writes `far_weights.png` (rock by slope, cracked ground in patches,
 sand, on the backdrop's lattice) and a second material,
@@ -1068,6 +1216,12 @@ terrain's `far_material` to it.
 | bedding | float | 0 | Ledges and laminations bent into the rock's normals on steep walls (the splat's bedding): each bed weathers back under a sharp lip, so the heightfield's smooth walls read as layered rock in raking light. The recess as a fraction of a bed; 0: none. |
 | bedding_spacing | float | 1.2 | The beds' typical thickness. |
 | wall_normal | float | 1 | Multiplies the rock layer's normal map on walls (its side projections) on top of Normal strength. |
+| anti_tile | bool | false | Lay every layer in shifted (on the ground, also turned) patches so no feature of a texture recurs on a grid (the splat's anti_tile). About half again the texture reads; the far backdrop never takes it. |
+| macro_vertical | float | 0 | How much the macro variation also changes with height, so a wall is not one colour top to bottom. |
+| wash_bars | float | 0 | Sand bars in the washes: streaks of sand drawn out along the flow between gravel channels, so a wash is not one gravel carpet. How much of the gravel they take; 0: none. |
+| wash_bar_size | vec2 | (28,5) | A bar's typical length along the flow and width across it. |
+| gravel_relief | float | 0 | Parallax depth of the gravel layer (the splat's relief): its stones stand up off the ground instead of lying painted on it. 0: none. |
+| cracked_relief | float | 0 | Parallax depth of the cracked-ground layer: its plates lift at their edges. 0: none. |
 
 ### Rock materials (scatter, cliff_wall, rocks, polyhaven_rocks)
 

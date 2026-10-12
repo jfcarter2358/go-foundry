@@ -58,6 +58,8 @@ uniform vec3 fxSplatParams;   // blend, normal strength, ao amount
 uniform sampler2D fxStrata;
 uniform vec4 fxStrataParams;  // lo, 1/(hi - lo), strength (0: no ramp), warp
 uniform vec4 fxSplatBedding;  // bedding relief (0: none), 1/bed spacing, side projections' normal strength, unused
+uniform vec4 fxSplatAnti;     // 1: anti-tiled (fxSplatTap), per layer
+uniform vec4 fxSplatRelief;   // parallax depth (m) of the top-down layers (fxSplatRead), per layer; 0 none
 
 // ground_blend.
 uniform sampler2D fxGroundColor;
@@ -74,8 +76,8 @@ uniform vec3 fxStreakColor;
 uniform sampler2D fxDetail;
 uniform vec4 fxDetailParams;
 
-// macro_variation: 1/scale, strength, warmth.
-uniform vec3 fxMacro;
+// macro_variation: 1/scale, strength, warmth, how much it varies with height.
+uniform vec4 fxMacro;
 
 // color_grade: the match ratio (target over source, each with its
 // brightness divided out — gfx works it out) and the amount; cos and sin of
@@ -308,10 +310,103 @@ void fxBedding(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, inout vec4 na) {
 // layer's result its own variable, so nothing is indexed at run time. The
 // arithmetic, and so the picture, is unchanged.
 
+// ANTI-TILING (fxSplatAnti). A texture laid on a grid repeats its features
+// on that grid, and across a canyon floor or up a 50 m wall the eye finds
+// them. Here the plane is cut into patches by the bands of a slow noise (a
+// band per eighth of its range, so a patch is a repeat or so across and its
+// edges wander) and each band lays the texture shifted by its own hash and,
+// top down, turned by the golden angle times its index — so no two
+// neighbours share a grid, and nine variants is plenty for nobody to match
+// them. Where two bands meet, the two patches are blended by their height
+// maps (the higher wins, the lower fills between), which keeps the blend's
+// contrast instead of cross-fading two images into a smear. Outside the
+// middle of a band only its own patch can win, and only that one is read:
+// about half the pixels pay one fetch pair, the rest two. The derivation of
+// the turned frame: u' = c·u − s·v, v' = s·u + c·v, so T' = c·T − s·B and
+// B' = s·T + c·B.
+
+// RELIEF (fxSplatRelief). A normal map turns a pebble's light but not its
+// place: seen across a wash, every stone stays pasted flat on the plane,
+// and gravel reads as a photograph of gravel. Parallax moves it. The layer's
+// height map (the albedo atlas's alpha) is a surface `rel` repeats deep,
+// centred on the mesh's plane; the texel seen along the view ray V is found
+// by fixed-point iteration, u = u0 − d·(0.5 − h(u)) with d the ray's slope
+// in the layer's frame — three height reads, which converge for gravel's
+// gentle slopes — and the crevices it reveals are darkened in the AO by
+// the same height. All of it fades out as a pixel comes to cover a good
+// share of a repeat (where the offset is sub-texel and would only shimmer),
+// and at grazing angles the slope is capped (V·N ≥ 0.3).
+
+// fxSplatRead is a layer at uv (gradients gx, gy) in the frame (T, B):
+// albedo+height and the world normal + AO, with relief rel (repeats; 0 none)
+// seen from V.
+void fxSplatRead(float layer, vec2 u, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N, float ns, float rel, vec3 V,
+                 out vec4 ah, out vec4 na) {
+    float k = 0.0;
+    if (rel > 0.0) {
+        float foot = length(gx) + length(gy);
+        k = rel * (1.0 - smoothstep(0.02, 0.12, foot));
+    }
+    if (k > 0.0) {
+        vec2 d = vec2(dot(V, T), dot(V, B)) / max(dot(V, N), 0.3) * k;
+        vec2 u0 = u;
+        u = u0 - d * (0.5 - fxAtlas(fxSplatAlbedo, layer, u, gx, gy).a);
+        u = u0 - d * (0.5 - fxAtlas(fxSplatAlbedo, layer, u, gx, gy).a);
+        u = u0 - d * (0.5 - fxAtlas(fxSplatAlbedo, layer, u, gx, gy).a);
+    }
+    ah = fxAtlas(fxSplatAlbedo, layer, u, gx, gy);
+    vec4 t = fxAtlas(fxSplatNormal, layer, u, gx, gy);
+    na = vec4(fxTangentToWorld(t.xyz * 2.0 - 1.0, T, B, N, ns), t.w);
+    if (k > 0.0) {
+        na.w *= mix(1.0, 0.45 + 0.55 * smoothstep(0.05, 0.6, ah.a), k / rel);
+    }
+}
+
+// fxSplatPatch samples patch i of a layer at uv (gradients gx, gy) in the
+// frame (T, B): albedo+height, and the world normal + AO.
+void fxSplatPatch(float layer, float i, bool turn, vec2 uv, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N, float ns,
+                  float rel, vec3 V, out vec4 ah, out vec4 na) {
+    vec2 off = vec2(fxHash(vec2(i, 1.7)), fxHash(vec2(i, 9.2))) * 7.0;
+    float ang = turn ? i * 2.39996 : 0.0;
+    float c = cos(ang), s = sin(ang);
+    vec2 u = vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y) + off;
+    vec2 rx = vec2(c * gx.x - s * gx.y, s * gx.x + c * gx.y);
+    vec2 ry = vec2(c * gy.x - s * gy.y, s * gy.x + c * gy.y);
+    fxSplatRead(layer, u, rx, ry, c * T - s * B, s * T + c * B, N, ns, rel, V, ah, na);
+}
+
+// fxSplatTap is a layer at uv in the frame (T, B), straight (anti < 0.5) or
+// anti-tiled (turn: top-down layers also turn their patches), with relief
+// rel (repeats) seen from V.
+void fxSplatTap(float layer, float anti, bool turn, vec2 uv, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N, float ns,
+                float rel, vec3 V, out vec4 ah, out vec4 na) {
+    if (anti < 0.5) {
+        fxSplatRead(layer, uv, gx, gy, T, B, N, ns, rel, V, ah, na);
+        return;
+    }
+    float l = fxNoise(uv * 0.21 + vec2(layer * 3.7, 0.0)) * 8.0;
+    float i = floor(l);
+    // The share patch i+1 has before the heights have their say (they move
+    // it by up to ±0.8): outside 0.24..0.76 of the band one patch is certain.
+    float b = (l - i - 0.5) * 5.0 + 0.5;
+    vec4 ahA = vec4(0.0), naA = vec4(N, 1.0), ahB = vec4(0.0), naB = vec4(N, 1.0);
+    bool needA = b - 0.8 < 1.0;
+    bool needB = b + 0.8 > 0.0;
+    if (needA) {
+        fxSplatPatch(layer, i, turn, uv, gx, gy, T, B, N, ns, rel, V, ahA, naA);
+    }
+    if (needB) {
+        fxSplatPatch(layer, i + 1.0, turn, uv, gx, gy, T, B, N, ns, rel, V, ahB, naB);
+    }
+    float t = needA && needB ? smoothstep(0.0, 1.0, b + (ahB.a - ahA.a) * 0.8) : (needB ? 1.0 : 0.0);
+    ah = mix(ahA, ahB, t);
+    na = vec4(normalize(mix(naA.xyz, naB.xyz, t)), mix(naA.w, naB.w, t));
+}
+
 // fxSplatAxis adds triplanar axis a's share (weight wa) of layer tile
 // `layer` at repeat 1/inv to the sums: albedo+height, world normal, AO and
 // weight.
-void fxSplatAxis(int a, float wa, float layer, float inv, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy,
+void fxSplatAxis(int a, float wa, float layer, float inv, float anti, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy,
                  inout vec4 ah, inout vec3 nrm, inout float ao, inout float sum) {
     if (wa < 0.02) {
         return;
@@ -320,34 +415,36 @@ void fxSplatAxis(int a, float wa, float layer, float inv, vec3 p, vec3 N, vec3 d
     vec2 uv = fxProj(a, p, N, true, T, B) * inv;
     vec2 gx = vec2(dot(dPdx, T), dot(dPdx, B)) * inv;
     vec2 gy = vec2(dot(dPdy, T), dot(dPdy, B)) * inv;
-    ah += wa * fxAtlas(fxSplatAlbedo, layer, uv, gx, gy);
-    vec4 s = fxAtlas(fxSplatNormal, layer, uv, gx, gy);
     float ns = a == 1 ? fxSplatParams.y : fxSplatParams.y * fxSplatBedding.z;
-    nrm += wa * fxTangentToWorld(s.xyz * 2.0 - 1.0, T, B, N, ns);
-    ao += wa * s.w;
+    vec4 tah, tna;
+    // Shifted only, never turned: the side projections stand upright so a
+    // rock's bedding stays level.
+    fxSplatTap(layer, anti, false, uv, gx, gy, T, B, N, ns, 0.0, N, tah, tna);
+    ah += wa * tah;
+    nrm += wa * tna.xyz;
+    ao += wa * tna.w;
     sum += wa;
 }
 
 // fxSplatSample is a splat layer's albedo+height and normal+AO at p — its
 // atlas tile `layer`, 1/repeat inv, top down or triplanar (tri) — with its
 // normal already in world space (xyz of the second result; w the AO).
-void fxSplatSample(float layer, float inv, bool tri, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, out vec4 ah, out vec4 na) {
+void fxSplatSample(float layer, float inv, bool tri, float anti, float relief, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, out vec4 ah, out vec4 na) {
     if (!tri) {
         vec2 uv = p.xz * inv;
         vec2 gx = dPdx.xz * inv;
         vec2 gy = dPdy.xz * inv;
-        ah = fxAtlas(fxSplatAlbedo, layer, uv, gx, gy);
-        vec4 s = fxAtlas(fxSplatNormal, layer, uv, gx, gy);
-        na = vec4(fxTangentToWorld(s.xyz * 2.0 - 1.0, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), N, fxSplatParams.y), s.w);
+        fxSplatTap(layer, anti, true, uv, gx, gy, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), N, fxSplatParams.y,
+                   relief * inv, normalize(camPos - p), ah, na);
         return;
     }
     vec3 w = fxTriWeights(N, 6.0);
     ah = vec4(0.0);
     vec3 nrm = vec3(0.0);
     float ao = 0.0, sum = 0.0;
-    fxSplatAxis(0, w.x, layer, inv, p, N, dPdx, dPdy, ah, nrm, ao, sum);
-    fxSplatAxis(1, w.y, layer, inv, p, N, dPdx, dPdy, ah, nrm, ao, sum);
-    fxSplatAxis(2, w.z, layer, inv, p, N, dPdx, dPdy, ah, nrm, ao, sum);
+    fxSplatAxis(0, w.x, layer, inv, anti, p, N, dPdx, dPdy, ah, nrm, ao, sum);
+    fxSplatAxis(1, w.y, layer, inv, anti, p, N, dPdx, dPdy, ah, nrm, ao, sum);
+    fxSplatAxis(2, w.z, layer, inv, anti, p, N, dPdx, dPdy, ah, nrm, ao, sum);
     sum = max(sum, 1e-4);
     ah /= sum;
     na = vec4(normalize(nrm), ao / sum);
@@ -382,7 +479,7 @@ float fxSplatFloor(float layer, float wt, float hgt) {
 // at most its weight plus its whole height lift (the height is in [0, 1]),
 // and the best is at least floorBest. Exact — the picture is the same as
 // sampling every layer, at a fraction of the fetches where one dominates.
-void fxSplatLayerScore(float layer, float inv, float tri, float wt, float hgt, float floorBest, float blend,
+void fxSplatLayerScore(float layer, float inv, float tri, float anti, float relief, float wt, float hgt, float floorBest, float blend,
                        vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, out vec4 ah, out vec4 na, out float score) {
     score = -1e9;
     ah = vec4(0.0);
@@ -393,7 +490,7 @@ void fxSplatLayerScore(float layer, float inv, float tri, float wt, float hgt, f
     if (wt + max(hgt, 0.0) * 0.35 * min(wt * 4.0, 1.0) <= floorBest - blend) {
         return;
     }
-    fxSplatSample(layer, inv, tri >= 0.5, p, N, dPdx, dPdy, ah, na);
+    fxSplatSample(layer, inv, tri >= 0.5, anti, relief, p, N, dPdx, dPdy, ah, na);
     // A layer's height lifts it over its neighbours, fully once it has a
     // quarter of the weight: where stones and sand meet, the stones' tops
     // win and the sand fills between them.
@@ -420,15 +517,15 @@ void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, inout vec4 albedo, ino
     vec2 wuv = (p.xz - fxSplatRect.xy) * fxSplatRect.zw;
     vec4 wt = textureGrad(fxSplatWeights, wuv, dPdx.xz * fxSplatRect.zw, dPdy.xz * fxSplatRect.zw);
     float blend = fxSplatParams.x;
-    vec4 L = fxSplatLayer, S = fxSplatInvScale, T = fxSplatTri, H = fxSplatHeight;
+    vec4 L = fxSplatLayer, S = fxSplatInvScale, T = fxSplatTri, H = fxSplatHeight, A = fxSplatAnti, R = fxSplatRelief;
     float floorBest = max(max(fxSplatFloor(L.x, wt.x, H.x), fxSplatFloor(L.y, wt.y, H.y)),
                           max(fxSplatFloor(L.z, wt.z, H.z), fxSplatFloor(L.w, wt.w, H.w)));
     vec4 ah0, ah1, ah2, ah3, na0, na1, na2, na3;
     float s0, s1, s2, s3;
-    fxSplatLayerScore(L.x, S.x, T.x, wt.x, H.x, floorBest, blend, p, N, dPdx, dPdy, ah0, na0, s0);
-    fxSplatLayerScore(L.y, S.y, T.y, wt.y, H.y, floorBest, blend, p, N, dPdx, dPdy, ah1, na1, s1);
-    fxSplatLayerScore(L.z, S.z, T.z, wt.z, H.z, floorBest, blend, p, N, dPdx, dPdy, ah2, na2, s2);
-    fxSplatLayerScore(L.w, S.w, T.w, wt.w, H.w, floorBest, blend, p, N, dPdx, dPdy, ah3, na3, s3);
+    fxSplatLayerScore(L.x, S.x, T.x, A.x, R.x, wt.x, H.x, floorBest, blend, p, N, dPdx, dPdy, ah0, na0, s0);
+    fxSplatLayerScore(L.y, S.y, T.y, A.y, R.y, wt.y, H.y, floorBest, blend, p, N, dPdx, dPdy, ah1, na1, s1);
+    fxSplatLayerScore(L.z, S.z, T.z, A.z, R.z, wt.z, H.z, floorBest, blend, p, N, dPdx, dPdy, ah2, na2, s2);
+    fxSplatLayerScore(L.w, S.w, T.w, A.w, R.w, wt.w, H.w, floorBest, blend, p, N, dPdx, dPdy, ah3, na3, s3);
     float best = max(max(s0, s1), max(s2, s3));
     if (best < -1e8) {
         return; // no layer here: the surface's own texture stands
@@ -499,8 +596,11 @@ void fxStreaksApply(vec3 p, vec3 N, inout vec4 albedo) {
 }
 
 void fxMacroApply(vec3 p, inout vec4 albedo) {
-    float v = fxFbm(p.xz * fxMacro.x) * 2.0 - 1.0;
-    float w = fxFbm(p.xz * fxMacro.x * 0.7 + vec2(31.0, 17.0)) * 2.0 - 1.0;
+    // Height sheared into the plane (fxMacro.w of it): a wall's patches
+    // change up its face. Ground rises slowly, so there it is the same noise.
+    vec2 q = p.xz + p.y * fxMacro.w * vec2(0.83, -0.56);
+    float v = fxFbm(q * fxMacro.x) * 2.0 - 1.0;
+    float w = fxFbm(q * fxMacro.x * 0.7 + vec2(31.0, 17.0)) * 2.0 - 1.0;
     albedo.rgb *= 1.0 + v * fxMacro.y;
     albedo.rgb *= vec3(1.0 + w * fxMacro.z * 0.12, 1.0, 1.0 - w * fxMacro.z * 0.12);
 }

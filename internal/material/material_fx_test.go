@@ -50,7 +50,12 @@ func TestSurfaceFxResolveAndDefaults(t *testing.T) {
 	}
 	e.Set("weights", TextureValue("generated/x/weights"))
 	e.Set(SplatLayerParam(3, "triplanar"), BoolValue(true))
+	e.Set(SplatLayerParam(2, "anti_tile"), BoolValue(true))
+	e.Set(SplatLayerParam(2, "relief"), FloatValue(0.05))
 	s := ResolveSurfaceDoc(d)
+	if !s.Fx.SplatLayers[2].AntiTile || s.Fx.SplatLayers[1].AntiTile || s.Fx.SplatLayers[2].Relief != 0.05 {
+		t.Fatalf("anti_tile resolved wrong: %+v", s.Fx.SplatLayers)
+	}
 	if !s.Fx.HasSplat || s.Fx.SplatLayers[0].Texture != "sand" || !s.Fx.SplatLayers[3].Triplanar ||
 		s.Fx.SplatLayers[1].Scale != 3 || s.Fx.SplatLayers[2].Tint != (mgl32.Vec3{1, 1, 1}) {
 		t.Fatalf("splat resolved wrong: %+v", s.Fx)
@@ -62,8 +67,10 @@ func TestSurfaceFxResolveAndDefaults(t *testing.T) {
 	}
 	g.Set("height", TextureValue("b"))
 	d.AddEffect(KindColorGrade).Set("match", FloatValue(0.5))
+	d.AddEffect(KindMacroVariation).Set("vertical", FloatValue(0.6))
 	s = ResolveSurfaceDoc(d)
-	if !s.Fx.HasGroundBlend || !s.Fx.HasGrade || s.Fx.GradeMatch != 0.5 || s.Fx.GradeSaturation != 1 {
+	if !s.Fx.HasGroundBlend || !s.Fx.HasGrade || s.Fx.GradeMatch != 0.5 || s.Fx.GradeSaturation != 1 ||
+		!s.Fx.HasMacro || s.Fx.MacroVertical != 0.6 {
 		t.Fatalf("ground blend / grade resolved wrong: %+v", s.Fx)
 	}
 	// The document round-trips, defaults left out.

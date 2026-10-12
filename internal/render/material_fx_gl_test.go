@@ -105,6 +105,13 @@ func TestMaterialFxOnEveryPath(t *testing.T) {
 		"weights": tv(weights), "bounds_min": v2(mgl32.Vec2{-10, -10}), "bounds_max": v2(mgl32.Vec2{10, 10}),
 		"layer1": tv(red), "layer1_scale": fv(1),
 	})
+	// The same splat anti-tiled and in relief: its patches are shifts of one
+	// red layer and its parallax moves over one red, so it is still red, and
+	// every path must take its extra reads alike.
+	fxMaterial(t, "fxt_splat_anti", "", material.KindSplat, map[string]material.Value{
+		"weights": tv(weights), "bounds_min": v2(mgl32.Vec2{-10, -10}), "bounds_max": v2(mgl32.Vec2{10, 10}),
+		"layer1": tv(red), "layer1_scale": fv(1), "layer1_anti_tile": material.BoolValue(true), "layer1_relief": fv(0.05),
+	})
 	fxMaterial(t, "fxt_tri", "fxt_blue", material.KindTriplanar, map[string]material.Value{"scale": fv(0.5)})
 	fxMaterial(t, "fxt_grade", "", material.KindColorGrade, map[string]material.Value{
 		"match": fv(1), "target": cv(mgl32.Vec3{0.1, 0.8, 0.1})})
@@ -118,9 +125,10 @@ func TestMaterialFxOnEveryPath(t *testing.T) {
 	fxMaterial(t, "fxt_detail", "", material.KindDetailNormal, map[string]material.Value{
 		"map": tv(detail), "scale": fv(0.2), "strength": fv(1), "distance": fv(100)})
 
-	mats := []string{"", "fxt_splat", "fxt_tri", "fxt_grade", "fxt_ground", "fxt_streaks", "fxt_macro", "fxt_detail"}
+	mats := []string{"", "fxt_splat", "fxt_tri", "fxt_grade", "fxt_ground", "fxt_streaks", "fxt_macro", "fxt_detail", "fxt_splat_anti"}
 	rock := colorTestRock(t, "fxrock", nil)
-	const step = 0.8
+	// The row's width stays what the camera frames (8 rocks at 0.8).
+	step := float32(5.6) / float32(len(mats)-1)
 	x0 := -step * float32(len(mats)-1) / 2
 	gfx.Cam.Position, gfx.Cam.Direction = mgl32.Vec3{0, 0.3, 7.6}, mgl32.Vec3{0, -0.04, -1}.Normalize()
 	gfx.UpdateCamMatrix()
@@ -195,6 +203,9 @@ func TestMaterialFxOnEveryPath(t *testing.T) {
 	plain := f[0][0]
 	if c := f[1][0]; !(c[0] > 1.6*c[1] && c[0] > 1.6*c[2]) {
 		t.Errorf("splat: the rock is not its red layer: %.0f", c)
+	}
+	if c := f[8][0]; !(c[0] > 1.6*c[1] && c[0] > 1.6*c[2]) {
+		t.Errorf("anti-tiled splat: the rock is not its red layer: %.0f", c)
 	}
 	if c := f[2][0]; !(c[2] > 1.6*c[0] && c[2] > 1.4*c[1]) {
 		t.Errorf("triplanar: the rock is not its blue texture: %.0f", c)

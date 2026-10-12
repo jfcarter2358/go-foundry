@@ -20,6 +20,37 @@ func pipeline() *Doc {
 	}}
 }
 
+// A stage that supersedes an upstream stage's placements replaces them in
+// the run's placements, and still does when it is skipped as fresh.
+func TestSupersededPlacementsAreReplaced(t *testing.T) {
+	dir := t.TempDir()
+	d := pipeline()
+	d.Stages[1].Params["replace"] = Int(2)
+	for run := 0; run < 2; run++ {
+		res, err := Run(context.Background(), d, Options{OutDir: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run == 1 && len(res.Ran) != 0 {
+			t.Fatalf("second run ran %v", res.Ran)
+		}
+		got := map[string]float32{}
+		for _, p := range res.Placements() {
+			got[p.ID] = p.Position.Y
+		}
+		want := map[string]float32{"gen.pipe.src.r002": 0, "gen.pipe.src.r003": 0,
+			"gen.pipe.sink.r000": 10, "gen.pipe.sink.r001": 10}
+		if len(got) != len(want) {
+			t.Fatalf("run %d: placements %v, want %v", run, got, want)
+		}
+		for id, y := range want {
+			if g, ok := got[id]; !ok || g != y {
+				t.Fatalf("run %d: placements %v, want %v", run, got, want)
+			}
+		}
+	}
+}
+
 func resetCounts() {
 	sourceRuns.Store(0)
 	sinkRuns.Store(0)

@@ -78,12 +78,22 @@ func init() {
 		Params: []ParamDef{
 			{Name: "from", Type: ParamStage, Default: StageRef(""), StageKinds: []string{"tsource"}},
 			{Name: "scale", Type: ParamFloat, Default: Float(2)},
+			// replace supersedes the source's first n placements with moved
+			// copies of its own (RunContext.Supersede).
+			{Name: "replace", Type: ParamInt, Default: Int(0), Min: 0, Max: 100},
 		},
 		Run: func(rc *RunContext) error {
 			sinkRuns.Add(1)
 			a, err := rc.UpstreamArtifact(rc.Params.Str("from"))
 			if err != nil {
 				return err
+			}
+			src := rc.Upstream(rc.Params.Str("from"))
+			for i := 0; i < rc.Params.Int("replace") && i < len(src.Placements); i++ {
+				p := src.Placements[i]
+				rc.Supersede(src.ID, p.ID)
+				p.Position.Y += 10
+				rc.Place(p)
 			}
 			rc.PlaceVolume(VolumeEntry{"id": "zone", "kind": "trigger"})
 			return rc.WriteFile("copy.txt", []byte(fmt.Sprint(a)))

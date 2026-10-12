@@ -65,6 +65,7 @@ type FxLocs struct {
 	splatRect, splatInvScale, splatTri, splatHeight    int32
 	splatLayer, splatTint, splatParams, splatAtlas     int32
 	strata, strataParams, splatBedding                 int32
+	splatAnti, splatRelief                             int32
 	groundColor, groundHeight, groundRect, groundRange int32
 	groundParams                                       int32
 	streaks, streakColor                               int32
@@ -92,7 +93,7 @@ func NewFxLocs(prog uint32) FxLocs {
 		streaks: loc("fxStreaks"), streakColor: loc("fxStreakColor"),
 		detail: loc("fxDetail"), detailParams: loc("fxDetailParams"),
 		macro: loc("fxMacro"), gradeMatch: loc("fxGradeMatch"), gradeHS: loc("fxGradeHS"), gradeTint: loc("fxGradeTint"),
-		splatBedding: loc("fxSplatBedding"),
+		splatBedding: loc("fxSplatBedding"), splatAnti: loc("fxSplatAnti"), splatRelief: loc("fxSplatRelief"),
 	}
 }
 
@@ -259,7 +260,7 @@ func applySurfaceFx(f *material.SurfaceFx, texture string, l *FxLocs) {
 	}
 	if f.HasMacro {
 		mask |= fxMacro
-		gl.Uniform3f(l.macro, 1/max(f.MacroScale, 1e-3), f.MacroAmount, f.MacroWarmth)
+		gl.Uniform4f(l.macro, 1/max(f.MacroScale, 1e-3), f.MacroAmount, f.MacroWarmth, f.MacroVertical)
 	}
 	if f.HasGrade {
 		mask |= fxGrade
@@ -309,12 +310,16 @@ func applySplat(f *material.SurfaceFx, l *FxLocs) bool {
 	gl.ActiveTexture(gl.TEXTURE0)
 	rect := fxRect(f.SplatMin, f.SplatMax)
 	gl.Uniform4f(l.splatRect, rect[0], rect[1], rect[2], rect[3])
-	var inv, tri, height, layer [4]float32
+	var inv, tri, height, layer, anti, relief [4]float32
 	var tint [12]float32
 	for i := 0; i < material.SplatLayers; i++ {
 		sl := &f.SplatLayers[i]
 		inv[i] = 1 / max(sl.Scale, 1e-3)
 		tri[i] = b2f(sl.Triplanar)
+		anti[i] = b2f(sl.AntiTile)
+		if !sl.Triplanar {
+			relief[i] = max(sl.Relief, 0)
+		}
 		height[i] = sl.Height
 		layer[i] = float32(arr.Layer[i])
 		t := sl.Tint
@@ -325,6 +330,8 @@ func applySplat(f *material.SurfaceFx, l *FxLocs) bool {
 	}
 	gl.Uniform4fv(l.splatInvScale, 1, &inv[0])
 	gl.Uniform4fv(l.splatTri, 1, &tri[0])
+	gl.Uniform4fv(l.splatAnti, 1, &anti[0])
+	gl.Uniform4fv(l.splatRelief, 1, &relief[0])
 	gl.Uniform4fv(l.splatHeight, 1, &height[0])
 	gl.Uniform4fv(l.splatLayer, 1, &layer[0])
 	gl.Uniform3fv(l.splatTint, 4, &tint[0])

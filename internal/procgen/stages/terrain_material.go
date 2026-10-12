@@ -177,6 +177,20 @@ func terrainMaterialParams() []procgen.ParamDef {
 			Doc: "The beds' typical thickness."},
 		{Name: "wall_normal", Added: true, Type: procgen.ParamFloat, Label: "Wall normal strength", Default: f(1), Min: 0, Max: 4, Step: 0.05,
 			Doc: "Multiplies the rock layer's normal map on walls (its side projections) on top of Normal strength."},
+		{Name: "anti_tile", Added: true, Type: procgen.ParamBool, Label: "Anti-tile", Default: procgen.Bool(false),
+			Doc: "Lay every layer in shifted (on the ground, also turned) patches so no feature of a texture recurs on a grid " +
+				"(the splat's anti_tile). About half again the texture reads; the far backdrop never takes it."},
+		{Name: "macro_vertical", Added: true, Type: procgen.ParamFloat, Label: "Macro on walls", Default: f(0), Min: 0, Max: 1, Step: 0.05,
+			Doc: "How much the macro variation also changes with height, so a wall is not one colour top to bottom."},
+		{Name: "gravel_relief", Added: true, Type: procgen.ParamFloat, Label: "Gravel relief (m)", Default: f(0), Min: 0, Max: 0.5, Step: 0.005,
+			Doc: "Parallax depth of the gravel layer (the splat's relief): its stones stand up off the ground instead of lying painted on it. 0: none."},
+		{Name: "cracked_relief", Added: true, Type: procgen.ParamFloat, Label: "Cracked relief (m)", Default: f(0), Min: 0, Max: 0.5, Step: 0.005,
+			Doc: "Parallax depth of the cracked-ground layer: its plates lift at their edges. 0: none."},
+		{Name: "wash_bars", Added: true, Type: procgen.ParamFloat, Label: "Wash bars", Default: f(0), Min: 0, Max: 1, Step: 0.01,
+			Doc: "Sand bars in the washes: streaks of sand drawn out along the flow between gravel channels, so a wash is not one " +
+				"gravel carpet. How much of the gravel they take; 0: none."},
+		{Name: "wash_bar_size", Added: true, Type: procgen.ParamVec2, Label: "Wash bar size (m)", Default: v2(28, 5), Min: 0.5, Max: 500, Step: 0.5,
+			Doc: "A bar's typical length along the flow and width across it."},
 	}
 }
 
@@ -234,6 +248,15 @@ func groundWeights(t *terrain.Terrain, p procgen.Params, seed uint64, pool terra
 	}
 	rs, fs := p.Vec2("rock_slope"), p.Vec2("flat_slope")
 	wf, sd := p.Vec2("wash_flow"), p.Vec2("sand_deposition")
+	var bars []float32
+	if amt := p.Float("wash_bars"); amt > 0 {
+		sz2 := p.Vec2("wash_bar_size")
+		var err error
+		bars, err = washBars(g, masks[terrain.MaskFlow], wf[0]*0.5, sz2[0], sz2[1], amt, noise.Hash64(seed, 77), pool)
+		if err != nil {
+			return nil, err
+		}
+	}
 	cliffW, cover := p.Float("cliff"), p.Float("cracked_cover")
 	brk, bs := p.Float("breakup"), math.Max(p.Float("breakup_scale"), 0.5)
 	sm := noise.SmoothStep
@@ -259,16 +282,23 @@ func groundWeights(t *terrain.Terrain, p procgen.Params, seed uint64, pool terra
 			}
 			rock = noise.Clamp(rock, 0, 1)
 			gravel := sm(wf[0], wf[1], flow)
+			bar := 0.0
+			if bars != nil {
+				bar = float64(bars[k])
+			}
 			flat := 1 - sm(fs[0], fs[1], slope)
 			sand := sm(sd[0], sd[1], dep)
 			patch := sm(-0.25, 0.25, n(4)+(cover-0.5)*1.2)
 			cracked := flat * (1 - sand) * patch
 			wR := rock
 			rem := 1 - wR
-			wG := rem * gravel
-			rem -= wG
+			// A bar takes its share of the gravel straight to sand: in a wash
+			// it is sediment, never cracked flat.
+			wG := rem * gravel * (1 - bar)
+			barSand := rem * gravel * bar
+			rem -= wG + barSand
 			wC := rem * cracked
-			wS := rem - wC
+			wS := rem - wC + barSand
 			out[4*k], out[4*k+1], out[4*k+2], out[4*k+3] = float32(wS), float32(wC), float32(wG), float32(wR)
 		}
 		return nil
@@ -286,6 +316,101 @@ func groundWeights(t *terrain.Terrain, p procgen.Params, seed uint64, pool terra
 		b := boxBlur(ch, sz, 1)
 		for k := range b {
 			out[4*k+c] = b[k]
+		}
+	}
+	return out, nil
+}
+
+// washBars is each sample's sand-bar share (0..amt) in the washes: blobs of
+// noise a bar's width across, smeared along the flow over a bar's length by
+// a line integral convolution — each wash sample averages the noise along
+// the downhill streamline through it, forward and back — so the bars are
+// drawn out down the wash and bend with it. (Noise in a frame turned to the
+// flow would be cheaper, but a frame that turns with position compresses
+// and tears its noise a few hundred metres from the origin.) The averaging
+// flattens the noise's spread, so the result is restretched by its own
+// spread over the washes before the bars are cut from it. Only samples with
+// flow above minFlow are traced: the rest of the map is never a wash.
+func washBars(g *terrain.Grid, flow []float32, minFlow, length, width, amt float64, seed uint64, pool terrain.Pool) ([]float32, error) {
+	sz := g.S()
+	// The downhill direction, from heights blurred over a bar's width so a
+	// cobble-sized bump does not turn the flow.
+	r := max(int(math.Round(width/g.Cell/2)), 1)
+	h := boxBlur(g.H, sz, r)
+	h = boxBlur(h, sz, r)
+	dir := make([]float32, 2*sz*sz)
+	for j := 0; j < sz; j++ {
+		for i := 0; i < sz; i++ {
+			i0, i1 := max(i-1, 0), min(i+1, sz-1)
+			j0, j1 := max(j-1, 0), min(j+1, sz-1)
+			gx := float64(h[j*sz+i1]-h[j*sz+i0]) / float64(i1-i0)
+			gz := float64(h[j1*sz+i]-h[j0*sz+i]) / float64(j1-j0)
+			l := math.Hypot(gx, gz)
+			if l < 1e-6 {
+				continue // flat: the streamline stops here
+			}
+			dir[2*(j*sz+i)], dir[2*(j*sz+i)+1] = float32(-gx/l), float32(-gz/l)
+		}
+	}
+	steps := max(int(math.Round(length/g.Cell/2)), 1)
+	src := func(x, z float64) float64 { return noise.FBM2(seed, x/width, z/width, 2, 0.5) }
+	raw := make([]float32, sz*sz)
+	in := make([]bool, sz*sz)
+	err := pool.Parallel(sz, func(j int) error {
+		for i := 0; i < sz; i++ {
+			k := j*sz + i
+			if float64(flow[k]) < minFlow {
+				continue
+			}
+			in[k] = true
+			sum, n := src(g.X(i), g.Z(j)), 1.0
+			for _, sgn := range [2]float64{1, -1} {
+				fi, fj := float64(i), float64(j)
+				for s := 0; s < steps; s++ {
+					ci, cj := int(fi+0.5), int(fj+0.5)
+					if ci < 0 || cj < 0 || ci >= sz || cj >= sz {
+						break
+					}
+					dx, dz := float64(dir[2*(cj*sz+ci)]), float64(dir[2*(cj*sz+ci)+1])
+					if dx == 0 && dz == 0 {
+						break
+					}
+					fi += sgn * dx
+					fj += sgn * dz
+					// Weighted toward the middle (a tent), so a bar's ends
+					// taper instead of stopping square.
+					w := 1 - float64(s+1)/float64(steps+1)
+					sum += w * src(g.MinX+fi*g.Cell, g.MinZ+fj*g.Cell)
+					n += w
+				}
+			}
+			raw[k] = float32(sum / n)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	var m, m2, cnt float64
+	for k, ok := range in {
+		if ok {
+			v := float64(raw[k])
+			m += v
+			m2 += v * v
+			cnt++
+		}
+	}
+	out := make([]float32, sz*sz)
+	if cnt == 0 {
+		return out, nil
+	}
+	m /= cnt
+	sd := math.Sqrt(math.Max(m2/cnt-m*m, 1e-12))
+	for k, ok := range in {
+		if ok {
+			z := (float64(raw[k]) - m) / sd
+			// About a third of the wash in bars, their edges a little soft.
+			out[k] = float32(amt * noise.SmoothStep(0.2, 0.8, z))
 		}
 	}
 	return out, nil
@@ -576,6 +701,12 @@ func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]
 		if i == 3 && p.Bool("rock_triplanar") {
 			e.Set(material.SplatLayerParam(i, "triplanar"), material.BoolValue(true))
 		}
+		if p.Bool("anti_tile") {
+			e.Set(material.SplatLayerParam(i, "anti_tile"), material.BoolValue(true))
+		}
+		if r := [4]float64{0, p.Float("cracked_relief"), p.Float("gravel_relief"), 0}[i]; r > 0 {
+			e.Set(material.SplatLayerParam(i, "relief"), material.FloatValue(float32(r)))
+		}
 		if t := tints[i]; t != [3]float64{1, 1, 1} {
 			e.Set(material.SplatLayerParam(i, "tint"), material.ColorValue(mgl32.Vec3{float32(round3(t[0])), float32(round3(t[1])), float32(round3(t[2]))}))
 		}
@@ -597,6 +728,9 @@ func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]
 		e := d.AddEffect(material.KindMacroVariation)
 		e.Set("strength", material.FloatValue(float32(m)))
 		e.Set("scale", material.FloatValue(float32(p.Float("macro_scale"))))
+		if v := p.Float("macro_vertical"); v > 0 {
+			e.Set("vertical", material.FloatValue(float32(v)))
+		}
 	}
 	if s := p.Float("streaks"); s > 0 {
 		e := d.AddEffect(material.KindStreaks)

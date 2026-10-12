@@ -86,6 +86,9 @@ type StageResult struct {
 	Volumes    []VolumeEntry
 	// Level is the level-wide settings the stage owns (LevelSettings).
 	Level LevelSettings
+	// Supersedes is the earlier stages' placements this one replaces (by
+	// stage ID, their own IDs): Result.Placements leaves them out.
+	Supersedes map[string][]string
 	// Skipped: not run this time. Normally because its outputs were fresh;
 	// Stale says they were not (a Run with Only left it alone), and Files
 	// and Placements are then the last run's, or empty.
@@ -128,12 +131,25 @@ func (r *Result) Stage(id string) *StageResult {
 	return nil
 }
 
-// Placements is every stage's scenery with level IDs (StagePrefix + ID).
+// Placements is every stage's scenery with level IDs (StagePrefix + ID),
+// less any a later stage superseded (RunContext.Supersede).
 func (r *Result) Placements() []Placement {
+	gone := map[string]bool{}
+	for _, s := range r.Stages {
+		for stage, ids := range s.Supersedes {
+			pre := StagePrefix(r.Generator, stage)
+			for _, id := range ids {
+				gone[pre+id] = true
+			}
+		}
+	}
 	var out []Placement
 	for _, s := range r.Stages {
 		pre := StagePrefix(r.Generator, s.ID)
 		for _, p := range s.Placements {
+			if gone[pre+p.ID] {
+				continue
+			}
 			p.ID = pre + p.ID
 			out = append(out, p)
 		}
@@ -344,10 +360,11 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 			e := man.Stages[id]
 			sr.Files, sr.Skipped, sr.Stale = e.Files, true, stale(p)
 			if containsStr(e.Files, id+"/"+PlacementsFileName) {
-				var err error
-				if sr.Placements, sr.Volumes, sr.Level, err = readPlacements(sr.File(PlacementsFileName)); err != nil {
+				f, err := readPlacements(sr.File(PlacementsFileName))
+				if err != nil {
 					return res, fmt.Errorf("stage %s: %w", id, err)
 				}
+				sr.Placements, sr.Volumes, sr.Level, sr.Supersedes = f.Scenery, f.Volumes, f.Level, f.Supersedes
 			}
 			res.Skipped = append(res.Skipped, id)
 			res.Stages = append(res.Stages, sr)
@@ -398,13 +415,18 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 		}
 		sort.SliceStable(rc.scenery, func(a, b int) bool { return rc.scenery[a].ID < rc.scenery[b].ID })
 		numberPlacements(rc.scenery, rc.volumes)
-		if len(rc.scenery) > 0 || len(rc.volumes) > 0 || len(rc.level) > 0 {
-			if err := writePlacements(rc.Path(PlacementsFileName), rc.scenery, rc.volumes, rc.level); err != nil {
+		for _, ids := range rc.supersedes {
+			sort.Strings(ids)
+		}
+		if len(rc.scenery) > 0 || len(rc.volumes) > 0 || len(rc.level) > 0 || len(rc.supersedes) > 0 {
+			f := placementsFile{Scenery: rc.scenery, Volumes: rc.volumes, Level: rc.level, Supersedes: rc.supersedes}
+			if err := writePlacements(rc.Path(PlacementsFileName), f); err != nil {
 				return res, fmt.Errorf("stage %s: placements: %w", id, err)
 			}
 		}
 		sr.Files = prefixFiles(id, rc.sortedFiles())
 		sr.Placements, sr.Volumes, sr.Level, sr.Artifact = rc.scenery, rc.volumes, rc.level, rc.Artifact
+		sr.Supersedes = rc.supersedes
 		man.Stages[id] = ManifestStage{Kind: p.kind.Name, Hash: p.hash, Files: sr.Files}
 		if err := man.Write(dir); err != nil {
 			return res, err

@@ -63,10 +63,10 @@ func DesertCanyon(name string) *procgen.Doc {
 		"tributaries": i(0),
 	})
 	rules := procgen.List(
-		procgen.Params{"name": s("talus"), "rocks": ref("boulders"), "max_triangles": i(6000),
+		procgen.Params{"name": s("talus"), "rocks": ref("rockfall"), "max_triangles": i(6000),
 			"density": f(5), "scale": v2(0.4, 1.5), "scale_bias": f(2.4), "slope": v2(0, 42), "cliff": v2(0, 0.55),
 			"cliff_base": f(1), "cliff_base_distance": f(12), "cluster": f(0.4), "cluster_scale": f(16),
-			"align": f(0.7), "tilt": f(18), "sink": f(0.14), "match_ground": f(0.6)},
+			"align": f(0.7), "tilt": f(18), "sink": f(0.14), "match_ground": f(0.35)},
 		procgen.Params{"name": s("boulder_field"), "rocks": ref("boulders"), "max_triangles": i(6000),
 			"density": f(0.9), "scale": v2(0.6, 2), "scale_bias": f(2.2), "slope": v2(0, 25), "deposition": v2(0.05, 1),
 			"cluster": f(1), "cluster_scale": f(28), "align": f(0.5), "sink": f(0.16), "match_ground": f(0.6)},
@@ -97,9 +97,20 @@ func DesertCanyon(name string) *procgen.Doc {
 				"far": f(3000), "far_cell": f(8), "far_blend": f(140), "far_tile": f(512), "far_material": s(mat + "_far"),
 				"cook_memory": i(2000)}},
 			{Kind: TerrainMaterialKind, ID: "ground_mat", Params: procgen.Params{"terrain": ref("ground"), "textures": ref("tex"),
-				"rock": s("cliff"), "rock_scale": f(10), "strata": f(0.45), "strata_warp": f(2.5), "streaks": f(0.4),
+				"rock": s("cliff"), "rock_scale": f(10), "anti_tile": procgen.Bool(true), "macro_vertical": f(0.6), "wash_bars": f(0.55), "gravel_relief": f(0.07), "cracked_relief": f(0.015), "strata": f(0.45), "strata_warp": f(2.5), "streaks": f(0.4),
 				"bedding": f(0.22), "bedding_spacing": f(2.4), "cap_rock": f(0.75), "rock_tint": c(1.1, 0.94, 0.84), "cracked_cover": f(0.3), "wall_normal": f(1.8), "normal_strength": f(1.2)}},
-			{Kind: PolyHavenRocksKind, ID: "cliffs", Params: procgen.Params{"assets": procgen.List(
+			// The cliffs as rock geometry (docs/canyon/PHASE_8.md): beds,
+			// ledges, joints and alcoves in the ground material's own rock.
+			{Kind: WallSheetKind, ID: "rockface", Params: procgen.Params{"terrain": ref("ground"), "ground": ref("ground_mat")}},
+			// Rockfall: sandstone blocks in the walls' texture, for the talus.
+			{Kind: RocksKind, ID: "rockfall", Params: procgen.Params{"preset": e("boulder"), "variants": i(8), "triangles": i(6000),
+				"textures": ref("tex"), "texture_layer": s("cliff"), "triplanar_scale": f(4),
+				// Near white, warmed like the walls' rock tint: the texture
+				// is the colour, as it is on the walls (Entrada red over it
+				// glowed orange against them).
+				"palette": e("custom"), "color": c(0.92, 0.8, 0.7), "band_color": c(0.97, 0.88, 0.78)}},
+			// The scanned cliff chunks of phase 7, replaced by rockface: off.
+			{Kind: PolyHavenRocksKind, ID: "cliffs", Disabled: true, Params: procgen.Params{"assets": procgen.List(
 				asset("namaqualand_cliff_01"), asset("namaqualand_cliff_02"), asset("rock_face_01"), asset("mountainside"), assetT("coastal_cliff_02", 400000)), "match_ground": f(0.7)}},
 			{Kind: PolyHavenRocksKind, ID: "boulders", Params: procgen.Params{"assets": procgen.List(
 				asset("namaqualand_boulder_02"), asset("namaqualand_boulder_03"), asset("namaqualand_boulder_04"),
@@ -112,11 +123,17 @@ func DesertCanyon(name string) *procgen.Doc {
 			{Kind: PolyHavenPlantsKind, ID: "deadwood", Params: procgen.Params{"assets": procgen.List(asset("dead_quiver_trunk"))}},
 			{Kind: PolyHavenPlantsKind, ID: "bushes", Params: procgen.Params{"assets": procgen.List(
 				asset("wild_rooibos_bush"), asset("shrub_04"))}},
-			{Kind: CliffWallKind, ID: "walls", Params: procgen.Params{"terrain": ref("ground"), "chunks": ref("cliffs"),
+			{Kind: CliffWallKind, ID: "walls", Disabled: true, Params: procgen.Params{"terrain": ref("ground"), "chunks": ref("cliffs"),
 				"ground": ref("ground_mat"), "match_ground": f(0.9), "max_chunks": i(1500), "scale": v2(1, 3), "match_to": e("rock"), "match_brightness": f(0.8),
 				"focus": v2(spawn[0], spawn[1]), "focus_range": f(220), "stretch": f(40), "spacing": f(0.45), "min_wall": f(6)}},
 			{Kind: ScatterKind, ID: "scatter", Params: procgen.Params{"terrain": ref("ground"), "ground": ref("ground_mat"),
-				"avoid": ref("walls"), "rules": rules}},
+				"rules": rules}},
+			// Sand piled against the talus and boulders (docs/canyon/PHASE_8.md):
+			// the pebbles are under a grid cell and the plants are not walls.
+			{Kind: DriftKind, ID: "drift", Params: procgen.Params{"terrain": ref("ground"), "ground": ref("ground_mat"),
+				"scatter": ref("scatter"), "rules": s("talus boulder_field"), "ground_band": f(0.35),
+				// and banked against the cliffs' feet.
+				"walls": ref("rockface")}},
 			// Off by default: on WSLg's Mesa driver the biome volumes' Nanite
 			// foliage stalled the GPU for good in some views down the canyon
 			// (docs/canyon/PHASE_7.md, known gaps), and the scanned plants the

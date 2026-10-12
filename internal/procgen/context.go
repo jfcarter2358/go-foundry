@@ -160,12 +160,13 @@ type RunContext struct {
 	// skips this stage.
 	Artifact any
 
-	upstream map[string]*StageResult
-	mu       sync.Mutex
-	files    map[string]bool
-	scenery  []Placement
-	volumes  []VolumeEntry
-	level    LevelSettings
+	upstream   map[string]*StageResult
+	mu         sync.Mutex
+	files      map[string]bool
+	scenery    []Placement
+	volumes    []VolumeEntry
+	level      LevelSettings
+	supersedes map[string][]string
 }
 
 // Path is the absolute path of a file named rel inside the stage's folder,
@@ -216,6 +217,20 @@ func (rc *RunContext) SetLevel(key string, value interface{}) {
 		rc.level = LevelSettings{}
 	}
 	rc.level[key] = value
+	rc.mu.Unlock()
+}
+
+// Supersede replaces placements an upstream stage made: the ones with the
+// given IDs (that stage's own) are left out of the run's placements
+// (Result.Placements), so this stage can put its own in their place — a
+// terrain tile recooked with sand piled against the rocks, a rock re-placed
+// wearing a material that knows the new ground. Safe from Parallel workers.
+func (rc *RunContext) Supersede(stage string, ids ...string) {
+	rc.mu.Lock()
+	if rc.supersedes == nil {
+		rc.supersedes = map[string][]string{}
+	}
+	rc.supersedes[stage] = append(rc.supersedes[stage], ids...)
 	rc.mu.Unlock()
 }
 

@@ -89,30 +89,33 @@ type placementsFile struct {
 	Scenery []Placement   `yaml:"scenery,omitempty"`
 	Volumes []VolumeEntry `yaml:"volumes,omitempty"`
 	Level   LevelSettings `yaml:"level,omitempty"`
+	// Supersedes is the earlier stages' placements this stage replaces, by
+	// stage ID (RunContext.Supersede).
+	Supersedes map[string][]string `yaml:"supersedes,omitempty"`
 }
 
 // PlacementsFileName is the file a stage's placements are written to, inside
 // its output folder.
 const PlacementsFileName = "placements.yaml"
 
-func writePlacements(path string, scenery []Placement, volumes []VolumeEntry, level LevelSettings) error {
-	data, err := yaml.Marshal(placementsFile{Scenery: scenery, Volumes: volumes, Level: level})
+func writePlacements(path string, f placementsFile) error {
+	data, err := yaml.Marshal(f)
 	if err != nil {
 		return err
 	}
 	return writeFileAtomicNoBackup(path, data)
 }
 
-func readPlacements(path string) ([]Placement, []VolumeEntry, LevelSettings, error) {
+func readPlacements(path string) (placementsFile, error) {
+	var f placementsFile
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, nil, err
+		return f, err
 	}
-	var f placementsFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return nil, nil, nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		return f, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	return f.Scenery, f.Volumes, f.Level, nil
+	return f, nil
 }
 
 // numberPlacements gives every placement and volume left without an ID one,

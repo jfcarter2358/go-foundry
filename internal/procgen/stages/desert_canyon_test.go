@@ -26,7 +26,7 @@ func TestDesertCanyonTemplateIsShippedAndValid(t *testing.T) {
 		kinds[s.Kind] = true
 	}
 	for _, k := range []string{PolyHavenTexturesKind, TerrainKind, TerrainMaterialKind, PolyHavenRocksKind, PolyHavenPlantsKind,
-		CliffWallKind, ScatterKind, VegetationKind, EnvironmentKind} {
+		WallSheetKind, RocksKind, CliffWallKind, ScatterKind, DriftKind, VegetationKind, EnvironmentKind} {
 		if !kinds[k] {
 			t.Errorf("the template has no %s stage", k)
 		}

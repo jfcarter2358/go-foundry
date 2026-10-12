@@ -95,6 +95,12 @@ func writeFarMaterial(rc *procgen.RunContext, t *terrain.Terrain, p procgen.Para
 	// apart, a crisp one cuts the layers into the lattice's squares.
 	if e := d.Find(material.KindSplat); e != nil {
 		e.Set("blend", material.FloatValue(float32(math.Max(p.Float("blend"), 0.7))))
+		// No anti-tiling: a kilometre off, the repeat is below a pixel and
+		// the extra reads would buy nothing.
+		for i := 0; i < material.SplatLayers; i++ {
+			e.Set(material.SplatLayerParam(i, "anti_tile"), material.BoolValue(false))
+			e.Set(material.SplatLayerParam(i, "relief"), material.FloatValue(0))
+		}
 	}
 	d.Doc = "Generated terrain backdrop: the map's layers splatted by the backdrop's slopes"
 	if e := d.Find(material.KindMacroVariation); e != nil {

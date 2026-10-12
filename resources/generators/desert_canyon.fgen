@@ -81,8 +81,35 @@ stages:
     bedding: 0.22
     bedding_spacing: 2.4
     wall_normal: 1.8
+    anti_tile: true
+    macro_vertical: 0.6
+    gravel_relief: 0.07
+    cracked_relief: 0.015
+    wash_bars: 0.55
+- stage: wall_sheet
+  id: rockface
+  params:
+    terrain: ground
+    ground: ground_mat
+- stage: rocks
+  id: rockfall
+  params:
+    variants: 8
+    triangles: 6000
+    palette: custom
+    color:
+      r: 0.92
+      g: 0.8
+      b: 0.7
+    band_color:
+      r: 0.97
+      g: 0.88
+      b: 0.78
+    textures: tex
+    triplanar_scale: 4
 - stage: polyhaven_rocks
   id: cliffs
+  enabled: false
   params:
     assets:
     - id: namaqualand_cliff_01
@@ -130,6 +157,7 @@ stages:
     - id: shrub_04
 - stage: cliff_wall
   id: walls
+  enabled: false
   params:
     terrain: ground
     chunks: cliffs
@@ -154,7 +182,7 @@ stages:
     terrain: ground
     rules:
     - name: talus
-      rocks: boulders
+      rocks: rockfall
       max_triangles: 6000
       density: 5
       scale:
@@ -174,7 +202,7 @@ stages:
       align: 0.7
       tilt: 18
       sink: 0.14
-      match_ground: 0.6
+      match_ground: 0.35
     - name: boulder_field
       rocks: boulders
       max_triangles: 6000
@@ -267,7 +295,15 @@ stages:
       tilt: 0
       sink: 0.05
     ground: ground_mat
-    avoid: walls
+- stage: drift
+  id: drift
+  params:
+    terrain: ground
+    ground: ground_mat
+    scatter: scatter
+    rules: talus boulder_field
+    walls: rockface
+    ground_band: 0.35
 - stage: vegetation
   id: plants
   enabled: false
