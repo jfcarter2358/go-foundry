@@ -147,6 +147,12 @@ type WallSettings struct {
 	// ignores it (tallest first, as before).
 	Focus      [2]float64
 	FocusRange float64
+	// Keep, when set, says which columns this wall set may build: an
+	// environment region's cliff_wall keeps the columns where its weight is
+	// at least a half, so two regions' walls meet along the middle of their
+	// band and never both clad one face (region.go). Nil keeps every
+	// column.
+	Keep func(x, z float64) bool
 }
 
 // DefaultWall is the stage's defaults.
@@ -331,6 +337,9 @@ func Walls(g *Ground, lines []WallLine, s WallSettings, pool interface{ Err() er
 		total := l.Length()
 		for k, a := 0, step/2; a < total; k, a = k+1, a+step {
 			p, out := l.at(a)
+			if s.Keep != nil && !s.Keep(p[0], p[1]) {
+				continue
+			}
 			h := 0.0
 			if w, ok := measureWall(g, &s, p, out); ok {
 				h = w.y1 - w.y0

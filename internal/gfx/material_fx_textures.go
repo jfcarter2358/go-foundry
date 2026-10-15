@@ -15,6 +15,26 @@ package gfx
 // a unit of its own it cost every draw in the level on Mesa's d3d12 driver
 // (material_fx.go, BindSurfaceFxSamplers).
 //
+// EIGHT LAYERS (docs/regions/PHASE_3.md): a splat in eight-layer mode with
+// more than four distinct layers packs them into 4×2 atlases on the same
+// two units — four tiles across, two down — with the same gutters, the
+// same mip and BC7 paths, cached by all eight names. Its layers are
+// resampled to at most FxArray8MaxSize (1k by default, so the pair stays
+// about the size of one four-layer 2k pair: 4352×2176 against 4352²).
+// A splat of four layers or fewer — every four-layer material — is the
+// 2×2 atlas exactly as before: the same key, the same pixels.
+//
+// A PALETTE (docs/regions/PRESETS_1.md): a region terrain whose environments
+// bring more than eight distinct ground layers names up to 32 of them as
+// every tile's shared atlas (`atlas1..32`); each tile's splat mixes at most
+// eight. Nine or more distinct layers pack into an 8-across atlas, as many
+// rows as they need (two for up to 16, four for 32), each layer at most
+// FxArrayPaletteMaxSize (512 by default): the 8×4 is 4352×2176, the same
+// texels as the eight-layer 1k pair, so a 32-layer world costs no more video
+// memory than an eight-layer one. The shader addresses the rows by
+// fxSplatRows. Eight names or fewer are keyed, packed and hashed exactly as
+// before.
+//
 // Each layer is resampled to one size (the largest albedo's, capped by
 // FxArrayMaxSize and lowered by the skip-mips setting the way the 2D textures
 // are) and framed by a GUTTER of its own texels wrapped round (a 32nd of the
@@ -80,6 +100,17 @@ import (
 // four-layer pair at about 200 MB with mipmaps; FOUNDRY_SPLAT_MAX_SIZE
 // overrides.
 var FxArrayMaxSize = envInt("FOUNDRY_SPLAT_MAX_SIZE", 2048)
+
+// FxArray8MaxSize caps a layer's edge in a 4×2 (eight-layer) atlas: 1024,
+// so the pair is 4352×2176 — half the texels of a four-layer 2k pair —
+// unless FOUNDRY_SPLAT_MAX_SIZE says otherwise.
+var FxArray8MaxSize = envInt("FOUNDRY_SPLAT_MAX_SIZE", 1024)
+
+// FxArrayPaletteMaxSize caps a layer's edge in a palette atlas (more than
+// eight distinct layers, 8 across): 512, so 32 layers are 4352×2176 — the
+// eight-layer pair's size — unless FOUNDRY_SPLAT_PALETTE_MAX_SIZE says
+// otherwise.
+var FxArrayPaletteMaxSize = envInt("FOUNDRY_SPLAT_PALETTE_MAX_SIZE", 512)
 
 func envInt(name string, def int) int {
 	if v := os.Getenv(name); v != "" {
@@ -262,11 +293,16 @@ func fxDetailTexture(ref string) (uint32, bool, bool) {
 
 // SplatArrays is one built pair of layer atlases.
 type SplatArrays struct {
-	// Albedo and Normal are 2D textures, 2×2 tiles of Size + 2·Gutter.
+	// Albedo and Normal are 2D textures, Cols×Rows tiles of Size + 2·Gutter.
 	Albedo, Normal uint32
-	// Layer is each of the four layers' tile (0..3: x = n%2, y = n/2), -1
-	// for none.
-	Layer  [4]int
+	// Layer is each named layer's tile (x = n%Cols, y = n/Cols), -1 for
+	// none: the eight of a splat, or the up to 32 of a palette.
+	Layer [material.SplatAtlasMax]int
+	// Cols is the atlas's tiles across: 2 (up to four distinct layers, the
+	// classic 2×2), 4 (the eight-layer 4×2) or 8 (a palette); Rows its
+	// tiles down: 2, or for a palette as many as it needs.
+	Cols   int
+	Rows   int
 	Size   int
 	Gutter int
 
@@ -276,11 +312,32 @@ type SplatArrays struct {
 	failed  bool
 }
 
-var splatArrays = map[[4]string]*SplatArrays{}
+var splatArrays = map[[material.SplatAtlasMax]string]*SplatArrays{}
 
 // SplatArraysFor is the arrays for four layer names (empty: no layer),
 // built on first ask; nil when none of the layers can be read.
 func SplatArraysFor(names [4]string) *SplatArrays {
+	return SplatArraysFor8(splatNames8(names))
+}
+
+// splatNames8 is four names as the eight the cache is keyed by.
+func splatNames8(names [4]string) [material.SplatLayersMax]string {
+	var n [material.SplatLayersMax]string
+	copy(n[:], names[:])
+	return n
+}
+
+// SplatArraysFor8 is SplatArraysFor for up to eight layer names (an
+// eight-layer splat; layers 5–8 empty is exactly SplatArraysFor).
+func SplatArraysFor8(names [material.SplatLayersMax]string) *SplatArrays {
+	var n [material.SplatAtlasMax]string
+	copy(n[:], names[:])
+	return SplatArraysForAtlas(n)
+}
+
+// SplatArraysForAtlas is the atlas pair for up to 32 layer names (a
+// palette; names 9–32 empty is exactly SplatArraysFor8).
+func SplatArraysForAtlas(names [material.SplatAtlasMax]string) *SplatArrays {
 	a := splatArrays[names]
 	if a != nil {
 		if time.Since(a.checked) < fxStampEvery {
@@ -335,10 +392,13 @@ type splatSources struct {
 
 // buildSplatArrays decodes, resamples, packs and uploads the arrays,
 // reusing old's GL objects when it is a rebuild.
-func buildSplatArrays(names [4]string, old *SplatArrays) (*SplatArrays, error) {
+func buildSplatArrays(names [material.SplatAtlasMax]string, old *SplatArrays) (*SplatArrays, error) {
 	t0 := time.Now()
 	splatBuilds++
-	out := &SplatArrays{Layer: [4]int{-1, -1, -1, -1}, checked: time.Now()}
+	out := &SplatArrays{Cols: 2, Rows: 2, checked: time.Now()}
+	for i := range out.Layer {
+		out.Layer[i] = -1
+	}
 	var srcs []splatSources
 	layerOf := map[string]int{}
 	for i, n := range names {
@@ -370,6 +430,20 @@ func buildSplatArrays(names [4]string, old *SplatArrays) (*SplatArrays, error) {
 	}
 	if len(srcs) == 0 {
 		return nil, fmt.Errorf("no layer could be read")
+	}
+	// Up to four distinct layers: the 2×2 atlas. More: the 4×2, its layers
+	// capped smaller (FxArray8MaxSize).
+	maxSize := FxArrayMaxSize
+	switch {
+	case len(srcs) > material.SplatLayersMax:
+		// A palette: eight across, as many rows as it takes (at least two,
+		// so 9–16 layers are the 8×2).
+		out.Cols = 8
+		out.Rows = max((len(srcs)+7)/8, 2)
+		maxSize = FxArrayPaletteMaxSize
+	case len(srcs) > 4:
+		out.Cols = 4
+		maxSize = FxArray8MaxSize
 	}
 	// Decode every file side by side.
 	type job struct {
@@ -418,7 +492,7 @@ func buildSplatArrays(names [4]string, old *SplatArrays) (*SplatArrays, error) {
 		size = max(size, b.Dx(), b.Dy())
 		layers[i] = splatDecoded{lj[i].albedo.img, img(lj[i].height), img(lj[i].normal), img(lj[i].ao)}
 	}
-	size = min(size, FxArrayMaxSize)
+	size = min(size, maxSize)
 	full, skip := size, 0
 	if s := TextureSkipMips; s > 0 && size >= TextureSkipMipsMinSize {
 		for k := 0; k < s && size/2 >= TextureSkipMipsFloor; k++ {
@@ -432,16 +506,16 @@ func buildSplatArrays(names [4]string, old *SplatArrays) (*SplatArrays, error) {
 	// atlas whose skipped geometry is exactly its full one halved is packed
 	// at full size and drops its leading levels at upload instead (see the
 	// file comment), so its disk cache serves every skip setting.
-	compress := splatCompressible(size)
+	compress := splatCompressibleRows(size, out.Cols, out.Rows)
 	pack, drop := size, 0
 	if compress && skip > 0 && splatHalvesExactly(full, skip) {
 		pack, drop = full, skip
 	}
-	albedo, normal, edge := packSplatAtlases(layers, pack)
+	albedo, normal, aw, ah := packSplatAtlasGridRows(layers, pack, out.Cols, out.Rows)
 	if old != nil && !old.failed {
 		out.Albedo, out.Normal = old.Albedo, old.Normal
 	}
-	key := fmt.Sprintf("fx:splat:%x", hashNames(names))
+	key := fmt.Sprintf("fx:splat:%x", splatKeyHash(names))
 	if compress {
 		tc := time.Now()
 		hits := 0
@@ -451,21 +525,84 @@ func buildSplatArrays(names [4]string, old *SplatArrays) (*SplatArrays, error) {
 			pix  []byte
 		}{{&out.Albedo, "albedo", albedo}, {&out.Normal, "normal", normal}} {
 			var hit bool
-			if *at.tex, hit = uploadSplatAtlasCompressed(*at.tex, key+":"+at.part, edge, at.pix, drop); hit {
+			if *at.tex, hit = uploadSplatAtlasCompressedWH(*at.tex, key+":"+at.part, aw, ah, at.pix, drop); hit {
 				hits++
 			}
 		}
-		log.Printf("material: splat atlases %d² as BC7 (%d of 2 from the cache, %d top levels dropped) in %s",
-			edge>>drop, hits, drop, time.Since(tc).Round(time.Millisecond))
+		log.Printf("material: splat atlases %d×%d as BC7 (%d of 2 from the cache, %d top levels dropped) in %s",
+			aw>>drop, ah>>drop, hits, drop, time.Since(tc).Round(time.Millisecond))
 	} else {
-		out.Albedo = uploadAtlas(out.Albedo, edge, albedo)
-		out.Normal = uploadAtlas(out.Normal, edge, normal)
-		noteTextureVRAM(key+":albedo", rgba8ChainBytes(edge, edge), TextureRGBA8)
-		noteTextureVRAM(key+":normal", rgba8ChainBytes(edge, edge), TextureRGBA8)
+		out.Albedo = uploadAtlasWH(out.Albedo, aw, ah, albedo)
+		out.Normal = uploadAtlasWH(out.Normal, aw, ah, normal)
+		noteTextureVRAM(key+":albedo", rgba8ChainBytes(aw, ah), TextureRGBA8)
+		noteTextureVRAM(key+":normal", rgba8ChainBytes(aw, ah), TextureRGBA8)
 	}
-	log.Printf("material: splat layers %s packed at %d² (atlas %d²) in %s", strings.Join(names[:], ", "), size, edge>>drop,
-		time.Since(t0).Round(time.Millisecond))
+	log.Printf("material: splat layers %s packed at %d² (atlas %d×%d) in %s", strings.Join(splatNamesShown(names), ", "), size,
+		aw>>drop, ah>>drop, time.Since(t0).Round(time.Millisecond))
 	return out, nil
+}
+
+// splatNamesShown is the names a log line lists: four for a four-layer
+// splat (as it always printed), eight for an eight-layer one, the palette's
+// named ones otherwise.
+func splatNamesShown(names [material.SplatAtlasMax]string) []string {
+	if splatUpperEmpty(names) {
+		return names[:material.SplatLayers]
+	}
+	if splatPaletteEmpty(names) {
+		return names[:material.SplatLayersMax]
+	}
+	var out []string
+	for _, n := range names {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// splatUpperEmpty reports whether layers 5 on are unnamed: a four-layer
+// splat.
+func splatUpperEmpty(names [material.SplatAtlasMax]string) bool {
+	for _, n := range names[material.SplatLayers:] {
+		if n != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// splatPaletteEmpty reports whether names 9 on are unnamed: a splat's own
+// eight (or a shared atlas of eight), not a palette.
+func splatPaletteEmpty(names [material.SplatAtlasMax]string) bool {
+	for _, n := range names[material.SplatLayersMax:] {
+		if n != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// splatKeyHash is the atlas pair's VRAM-record key hash: a four-layer
+// splat's is hashNames of its four, as it always was; eight names hash as
+// they did before palettes; a palette hashes every name.
+func splatKeyHash(names [material.SplatAtlasMax]string) uint64 {
+	if splatUpperEmpty(names) {
+		var four [4]string
+		copy(four[:], names[:])
+		return hashNames(four)
+	}
+	upto := material.SplatLayersMax
+	if !splatPaletteEmpty(names) {
+		upto = material.SplatAtlasMax
+	}
+	h := fnv.New64a()
+	for _, n := range names[:upto] {
+		h.Write([]byte(n))
+		var z [1]byte
+		h.Write(z[:])
+	}
+	return h.Sum64()
 }
 
 // splatDecoded is one layer's decoded files; all but albedo may be nil.
@@ -491,33 +628,57 @@ func splatHalvesExactly(full, skip int) bool {
 	return s<<skip == full && splatGutter(full) == splatGutter(s)<<skip
 }
 
-// splatCompressible reports whether an atlas packed at size goes up as BC7:
-// compression on and not refused by the driver, and an atlas big enough and
-// a multiple of four (the world textures' own rule, texture_compress.go).
-func splatCompressible(size int) bool {
+// splatCompressible reports whether an atlas of cols×2 tiles packed at size
+// goes up as BC7: compression on and not refused by the driver, and an
+// atlas big enough and a multiple of four (the world textures' own rule,
+// texture_compress.go; the 4×2 is twice as wide, so its height decides).
+func splatCompressible(size, cols int) bool {
+	return splatCompressibleRows(size, cols, 2)
+}
+
+// splatCompressibleRows is splatCompressible for an atlas of cols×rows
+// tiles (a palette's).
+func splatCompressibleRows(size, cols, rows int) bool {
 	if !TextureCompression || compressionRefused.Load()&(1<<texcompress.BC7) != 0 {
 		return false
 	}
 	e := splatEdge(size)
-	return e%4 == 0 && e >= TextureCompressMinSize
+	w := e / 2 * cols
+	h := e / 2 * rows
+	return e%4 == 0 && w%4 == 0 && h%4 == 0 && min(e, h) >= TextureCompressMinSize
 }
 
 // splatBuilds counts buildSplatArrays calls, for the test that startup no
 // longer builds atlases.
 var splatBuilds int
 
-// packSplatAtlases packs the layers at size into the two atlases' RGBA8
-// pixels, each layer into its tile with its gutter wrapped round.
+// packSplatAtlases packs the layers at size into the two 2×2 atlases'
+// RGBA8 pixels, each layer into its tile with its gutter wrapped round.
 func packSplatAtlases(layers []splatDecoded, size int) (albedo, normal []byte, edge int) {
+	albedo, normal, edge, _ = packSplatAtlasGrid(layers, size, 2)
+	return albedo, normal, edge
+}
+
+// packSplatAtlasGrid packs the layers at size into cols×2 atlases (2: the
+// four-layer 2×2, byte for byte what packSplatAtlases always made; 4: the
+// eight-layer 4×2), w×h texels, tile n at (n%cols, n/cols).
+func packSplatAtlasGrid(layers []splatDecoded, size, cols int) (albedo, normal []byte, w, h int) {
+	return packSplatAtlasGridRows(layers, size, cols, 2)
+}
+
+// packSplatAtlasGridRows is packSplatAtlasGrid for cols×rows tiles (a
+// palette's 8 across).
+func packSplatAtlasGridRows(layers []splatDecoded, size, cols, rows int) (albedo, normal []byte, w, h int) {
 	g := splatGutter(size)
 	tile := size + 2*g
-	edge = 2 * tile
-	albedo = make([]byte, edge*edge*4)
-	normal = make([]byte, edge*edge*4)
+	w, h = cols*tile, rows*tile
+	edge := w
+	albedo = make([]byte, w*h*4)
+	normal = make([]byte, w*h*4)
 	for i := range normal {
 		normal[i] = 255 // a flat, unoccluded empty tile (x and y fixed below)
 	}
-	for p := 0; p < edge*edge; p++ {
+	for p := 0; p < w*h; p++ {
 		normal[4*p], normal[4*p+1] = 128, 128
 	}
 	for i := range layers {
@@ -532,7 +693,7 @@ func packSplatAtlases(layers []splatDecoded, size int) (albedo, normal []byte, e
 		if l := layers[i].ao; l != nil {
 			ao = resampleRGBA(l, size)
 		}
-		tx, ty := (i%2)*tile, (i/2)*tile
+		tx, ty := (i%cols)*tile, (i/cols)*tile
 		for y := 0; y < tile; y++ {
 			sy := ((y-g)%size + size) % size
 			for x := 0; x < tile; x++ {
@@ -553,7 +714,7 @@ func packSplatAtlases(layers []splatDecoded, size int) (albedo, normal []byte, e
 			}
 		}
 	}
-	return albedo, normal, edge
+	return albedo, normal, w, h
 }
 
 func hashNames(names [4]string) uint64 {
@@ -569,12 +730,17 @@ func hashNames(names [4]string) uint64 {
 // uploadAtlas uploads an edge² RGBA8 atlas into tex (new when 0), with
 // mipmaps and the world textures' filtering.
 func uploadAtlas(tex uint32, edge int, pix []byte) uint32 {
+	return uploadAtlasWH(tex, edge, edge, pix)
+}
+
+// uploadAtlasWH is uploadAtlas for a w×h atlas (the eight-layer 4×2).
+func uploadAtlasWH(tex uint32, w, h int, pix []byte) uint32 {
 	if tex == 0 {
 		gl.GenTextures(1, &tex)
 	}
 	gl.BindTexture(gl.TEXTURE_2D, tex)
 	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(edge), int32(edge), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(pix))
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(w), int32(h), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(pix))
 	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 4)
 	gl.GenerateMipmap(gl.TEXTURE_2D)
 	ApplyWorldTextureFilterTo(gl.TEXTURE_2D)
@@ -590,7 +756,13 @@ func uploadAtlas(tex uint32, edge int, pix []byte) uint32 {
 // read. An encode error or a driver refusal uploads it RGBA8 instead,
 // halved drop times first, which is the atlas the uncompressed path packs.
 func uploadSplatAtlasCompressed(tex uint32, name string, edge int, pix []byte, drop int) (uint32, bool) {
-	rgba := &image.RGBA{Pix: pix, Stride: 4 * edge, Rect: image.Rect(0, 0, edge, edge)}
+	return uploadSplatAtlasCompressedWH(tex, name, edge, edge, pix, drop)
+}
+
+// uploadSplatAtlasCompressedWH is uploadSplatAtlasCompressed for a w×h
+// atlas (the eight-layer 4×2; BC7's chain halves both sides alike).
+func uploadSplatAtlasCompressedWH(tex uint32, name string, w, h int, pix []byte, drop int) (uint32, bool) {
+	rgba := &image.RGBA{Pix: pix, Stride: 4 * w, Rect: image.Rect(0, 0, w, h)}
 	t, hit, storeErr, err := texcompress.LoadOrEncode(pix, rgba, texcompress.BC7, 0)
 	if storeErr != nil {
 		logCompressOnce("store", "texture compression: cannot write the cache in %s: %v (encoding every load)", texcompress.CacheDir(), storeErr)
@@ -619,9 +791,9 @@ func uploadSplatAtlasCompressed(tex uint32, name string, edge int, pix []byte, d
 	for i := 0; i < drop; i++ {
 		rgba = texcompress.Downsample(rgba)
 	}
-	e := rgba.Rect.Dx()
-	tex = uploadAtlas(tex, e, rgba.Pix)
-	noteTextureVRAM(name, rgba8ChainBytes(e, e), TextureRGBA8)
+	ew, eh := rgba.Rect.Dx(), rgba.Rect.Dy()
+	tex = uploadAtlasWH(tex, ew, eh, rgba.Pix)
+	noteTextureVRAM(name, rgba8ChainBytes(ew, eh), TextureRGBA8)
 	return tex, false
 }
 
@@ -703,8 +875,11 @@ func EnsureMaterialFxTextures(name string, texture string) {
 		return
 	}
 	if s.HasSplat {
-		SplatArraysFor(splatLayerNames(&s))
+		SplatArraysForAtlas(splatAtlasNames(&s))
 		fxDataTexture(s.SplatWeights, false)
+		if s.SplatEight {
+			fxDataTexture(s.SplatWeights2, false)
+		}
 		if s.SplatStrata != "" {
 			fxDataTexture(s.SplatStrata, false)
 		}

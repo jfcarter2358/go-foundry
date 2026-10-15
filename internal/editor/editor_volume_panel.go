@@ -68,6 +68,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
 	editorPropGroup("Fog##volfoggrp", 0, func() { editorVolumeFog(v) })
 	editorPropGroup("Cloud##volcloudgrp", 0, func() { editorVolumeCloud(v) })
+	editorPropGroup("Ambient (dark interior)##volambgrp", 0, func() { editorVolumeAmbient(v) })
 	editorPropGroup("Gravity##volgravgrp", 0, func() { editorVolumeGravity(v) })
 	editorPropGroup("Scatter##volscattergrp", 0, func() { editorVolumeScatter(v) })
 	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
@@ -75,6 +76,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Checkpoint##volckgrp", func() { editorVolumeCheckpoint(v) })
 	editorPropGroup("AI Objective##volobjgrp", 0, func() { editorVolumeObjective(v) })
 	editorPropGroup("Assistant Context##volctxgrp", 0, func() { editorVolumeContext(v) })
+	editorPropGroup("Environment Region##volreggrp", 0, func() { editorVolumeRegion(v) })
 	editorObjectWaypointsUI(v)
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
 	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })
@@ -548,6 +550,12 @@ func editorVolumeDoorway(v *world.Volume) {
 // the cage is built in volume-local space, so moving or rotating a volume needs
 // no rebuild at all.
 func editorVolumeShape(v *world.Volume) {
+	if v.Region != nil {
+		// A region's box is fitted to its footprint (editor_volume_region.go):
+		// dragging X or Z here scales the footprint to match.
+		editorTextMutedWrapped("An environment region: its box is fitted to the footprint, " +
+			"and changing X or Z scales the footprint.")
+	}
 	if imguibackend.BeginCombo("Shape##volshape", world.VolumeShapeName(v.Shape)) {
 		for i, name := range world.VolumeShapeNames {
 			kind := world.VolumeShape(i)
@@ -755,6 +763,62 @@ func editorVolumeFog(v *world.Volume) {
 
 	if !v.Enabled {
 		imgui.Text("The volume is disabled, so the fog is not drawn.")
+	}
+}
+
+// editorVolumeAmbient draws the region's ambient cut (world/volume_ambient.go):
+// the checkbox that creates and removes the block, then its numbers — the
+// fog group's gesture.
+func editorVolumeAmbient(v *world.Volume) {
+	has := v.Ambient != nil
+	if imgui.Checkbox("Darkens the sky light inside##volambon", &has) {
+		EditorPushUndo()
+		if has {
+			a := world.DefaultVolumeAmbient()
+			v.Ambient = &a
+			editorSetStatus("Volume %q now darkens the ambient inside it", v.ID)
+		} else {
+			v.Ambient = nil
+			editorSetStatus("Removed the ambient cut from volume %q", v.ID)
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A cave, a slot canyon, a room: surfaces inside take less of the\n" +
+			"sky's ambient light — what live GI would find out by itself, for\n" +
+			"players who play with GI off.")
+	}
+	if v.Ambient == nil {
+		return
+	}
+	a := v.Ambient
+	on := a.Enabled
+	if imgui.Checkbox("Enabled##volamben", &on) {
+		EditorPushUndo()
+		a.Enabled = on
+	}
+	editorDragFloatStep("Sky##volambsky", &a.Sky, 0, 2, "%.2f", 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Multiplies the sky light an upward-facing surface gets deep inside:\n0 none, 1 unchanged.")
+	}
+	editorDragFloatStep("Ground##volambgnd", &a.Ground, 0, 2, "%.2f", 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The same for a surface facing down (a roof, an overhang).")
+	}
+	editorDragFloatStep("Fade (m)##volambfade", &a.Fade, 0, 100, "%.1f", 0.1)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far in from the volume's walls the cut eases in.\n0 is a hard edge.")
+	}
+	editorDragFloatStep("Fog##volambfog", &a.Fog, 0, 1, "%.2f", 0.05)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How much the sky-lit haze inside is dimmed with it.")
+	}
+	editorDragFloatStep("Dust##volambdust", &a.Dust, 0, 1, "%.3f", 0.002)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Extra light-shaft density inside, per metre (the level fog's shafts).")
+	}
+	a.Clamp()
+	if !v.Enabled {
+		imgui.Text("The volume is disabled, so the ambient is not cut.")
 	}
 }
 

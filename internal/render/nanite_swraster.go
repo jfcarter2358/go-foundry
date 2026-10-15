@@ -227,7 +227,8 @@ func (s *naniteSWRaster) build(mode int) (err error) {
 		head += "#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_NV_gpu_shader5 : enable\n" +
 			"#extension GL_NV_shader_atomic_int64 : require\n#define SW64\n"
 	}
-	rsrc, werr := gfx.InjectWind(head + mustReadShader(biomeShaderPath("nanite_swraster_comp.glsl")))
+	// The draw-distance fade's two functions (nanite_draw_distance.go).
+	rsrc, werr := gfx.InjectWind(head + drawFadeWindowGLSL + drawFadeKeepsGLSL + mustReadShader(biomeShaderPath("nanite_swraster_comp.glsl")))
 	if werr != nil {
 		return fmt.Errorf("raster: %v", werr)
 	}
@@ -450,6 +451,12 @@ func (b *cullBatch) admitSW(groups []visGroup) {
 	if b.swGroups == nil || !naniteVisActive() || !naniteSW.on() {
 		return
 	}
+	// A frame at the records' limit lists nothing: a listed cluster past the
+	// last record is lost, a hardware command past it is drawn the forward
+	// way (nanite_vis_overflow.go).
+	if naniteVisOverflow.overflowRisk() {
+		return
+	}
 	for i := 1; i < len(groups); i++ {
 		if groups[i].vbo != groups[0].vbo || groups[i].ebo != groups[0].ebo {
 			return
@@ -485,7 +492,10 @@ func (s *naniteSWRaster) rasterBatch(b *cullBatch, g *visGroup, recordBase, binB
 	gl.Uniform1ui(p.U("binBase"), uint32(binBase))
 	gl.Uniform1ui(p.U("swCap"), uint32(listCap))
 	gl.Uniform1ui(p.U("dense"), uint32(boolToInt32(NaniteVisDense)))
-	gl.Uniform1ui(p.U("maxRecords"), naniteVisMaxRecords)
+	gl.Uniform1ui(p.U("maxRecords"), naniteVisRecordLimit)
+	gl.Uniform3f(p.U("drawEye"), gfx.Cam.Position[0], gfx.Cam.Position[1], gfx.Cam.Position[2])
+	gl.Uniform1i(p.U("drawFadeOn"), boolToInt32(DrawDistances && !naniteDebugActive()))
+	gl.Uniform1i(p.U("coverageDither"), coverageDither())
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, naniteVis.next)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, b.instBuf)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, naniteVis.records)

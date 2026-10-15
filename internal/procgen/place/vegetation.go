@@ -44,6 +44,11 @@ type PatchSettings struct {
 	Seed    uint64
 	// CliffThreshold is the cliff level the rule's cliff-base term reads.
 	CliffThreshold float64
+	// Region, when set, is the environment region the patches are for
+	// (region.go): the cells' weights times its weight, the grid laid from
+	// a world multiple of Cell. Nil: the classic grid from the ground's
+	// corner.
+	Region *Region
 }
 
 // Patches is the rectangles of g where rule r's weight is over the
@@ -68,6 +73,14 @@ func Patches(g *Ground, r *Rule, s PatchSettings, pool terrain.Pool) ([]Patch, e
 	b := g.Bounds()
 	nx := int(math.Floor((b[2] - b[0]) / s.Cell))
 	nz := int(math.Floor((b[3] - b[1]) / s.Cell))
+	reg := s.Region
+	if reg != nil {
+		// The world's cell grid over the ground.
+		x0, z0 := math.Floor(b[0]/s.Cell)*s.Cell, math.Floor(b[1]/s.Cell)*s.Cell
+		nx = int(math.Floor((b[2] - x0) / s.Cell))
+		nz = int(math.Floor((b[3] - z0) / s.Cell))
+		b[0], b[1] = x0, z0
+	}
 	if nx <= 0 || nz <= 0 {
 		return nil, nil
 	}
@@ -82,7 +95,13 @@ func Patches(g *Ground, r *Rule, s PatchSettings, pool terrain.Pool) ([]Patch, e
 				for si := 0; si < s.Samples; si++ {
 					x := b[0] + (float64(i)+(float64(si)+0.5)/float64(s.Samples))*s.Cell
 					z := b[1] + (float64(j)+(float64(sj)+0.5)/float64(s.Samples))*s.Cell
-					sum += r.Weight(g, cf, s.Seed, x, z)
+					if reg == nil {
+						sum += r.Weight(g, cf, s.Seed, x, z)
+					} else if g.Contains(x, z, 0) {
+						if w := reg.At(x, z); w > 0 {
+							sum += r.Weight(g, cf, s.Seed, x, z) * w
+						}
+					}
 					y := g.Height(x, z)
 					l, h = math.Min(l, y), math.Max(h, y)
 				}

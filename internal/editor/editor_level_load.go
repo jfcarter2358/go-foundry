@@ -33,19 +33,28 @@ const editorLevelLoadFrameBudget = 12 * time.Millisecond
 const editorLevelLoadPopup = "Loading Level"
 
 // editorLevelLoad is the load in flight. path is set from the moment one is
-// asked for; job only from the frame after, because the parse that starts it
-// is itself the first long stall on a big level, and the bar has to be on
-// screen before it rather than after.
+// asked for; job only once the bar has actually been seen — see drawn.
 var editorLevelLoad struct {
 	path    string
 	job     *levelio.LoadJob
 	openPop bool
 	// shown is whether the modal is up, which outlives path by a frame: the
 	// popup can only be closed from inside its own Begin/End.
-	shown    bool
+	shown bool
+	// drawn counts the frames the modal's body has run. ImGui lays out an
+	// auto-sizing window on its first frame without showing it, so nothing
+	// that could stall starts until the second: the bar was otherwise first
+	// seen only after the work it was there to cover.
+	drawn int
+	// phase is where the load is once the job has finished: the level is
+	// installed, and its first frame drawn, behind the same bar, since on a
+	// generated level both are seconds of work.
+	phase    editorLoadPhase
 	title    string
 	fraction float32
 	label    string
+	// status is the status line the load ends with, once installed.
+	status string
 
 	// raw, when set, is the level already parsed, and the job builds it rather
 	// than reading path. reload says the load is the *same* level coming back
@@ -55,6 +64,22 @@ var editorLevelLoad struct {
 	raw    *world.RawLevel
 	reload bool
 }
+
+// editorLoadPhase is what the load is doing after (and before) the job.
+type editorLoadPhase int
+
+const (
+	// editorLoadBuilding is the job running.
+	editorLoadBuilding editorLoadPhase = iota
+	// editorLoadInstalling is the job done, its level swapped in and
+	// uploaded next frame — after a frame that says so has been shown.
+	editorLoadInstalling
+	// editorLoadFirstFrame is everything done but the level's first frame,
+	// which builds what the passes build lazily; the bar stays up over it.
+	// The world draws before this steps, so the frame after the install is
+	// that first frame.
+	editorLoadFirstFrame
+)
 
 // EditorLevelLoading reports whether a level is being opened.
 func EditorLevelLoading() bool { return editorLevelLoad.path != "" }
@@ -69,6 +94,8 @@ func EditorBeginLoadLevel(path string) {
 	editorLevelLoad.path = path
 	editorLevelLoad.job = nil
 	editorLevelLoad.openPop = true
+	editorLevelLoad.drawn = 0
+	editorLevelLoad.phase = editorLoadBuilding
 	editorLevelLoad.fraction, editorLevelLoad.label = 0, "Reading level file"
 	editorLevelLoad.raw, editorLevelLoad.reload = nil, false
 }
@@ -96,8 +123,17 @@ func editorStepLevelLoad() {
 	if ld.path == "" {
 		return
 	}
-	// The first frame only puts the bar up; the parse waits for the next.
-	if ld.openPop {
+	// Nothing starts until the bar has been on screen (see drawn).
+	if ld.openPop || ld.drawn < 2 {
+		return
+	}
+	switch ld.phase {
+	case editorLoadInstalling:
+		editorLevelLoadInstall()
+		return
+	case editorLoadFirstFrame:
+		// The frame just drawn was the level's first, under the bar.
+		editorFinishLevelLoad(ld.status)
 		return
 	}
 	if ld.job == nil {
@@ -105,7 +141,8 @@ func editorStepLevelLoad() {
 			ld.job = levelio.BeginLoadRaw(ld.path, *ld.raw)
 			ld.raw = nil // the job has it now; no reason to hold two
 		} else {
-			job, err := levelio.BeginLoad(ld.path)
+			// The parse runs off the main thread, so the bar moves over it.
+			job, err := levelio.BeginLoadAsync(ld.path)
 			if err != nil {
 				editorFinishLevelLoad(fmt.Sprintf("Load failed: %v", err))
 				return
@@ -118,8 +155,7 @@ func editorStepLevelLoad() {
 	if !done {
 		return
 	}
-	job := ld.job
-	if err := job.Err(); err != nil {
+	if err := ld.job.Err(); err != nil {
 		if ld.reload {
 			// The snapshot pushed for this reload describes a change that
 			// never happened.
@@ -128,13 +164,29 @@ func editorStepLevelLoad() {
 		editorFinishLevelLoad(fmt.Sprintf("Load failed: %v", err))
 		return
 	}
+	// Swapped in next frame, once this one has said so.
+	ld.phase, ld.fraction, ld.label = editorLoadInstalling, 0.98, "Installing level and uploading to the GPU"
+}
+
+// editorLevelLoadInstall swaps the built level in and does its GPU uploads.
+func editorLevelLoadInstall() {
+	ld := &editorLevelLoad
+	job := ld.job
 	if ld.reload {
 		editorReinstallLevel(*job.Level())
-		editorFinishLevelLoad("Applied " + filepath.Base(job.Path()) + " from the YAML editor — Ctrl+Z takes it back")
-		return
+		ld.status = "Applied " + filepath.Base(job.Path()) + " from the YAML editor — Ctrl+Z takes it back"
+	} else {
+		editorInstallLevel(*job.Level(), job.Path())
+		ld.status = "Loaded " + filepath.Base(job.Path())
 	}
-	editorInstallLevel(*job.Level(), job.Path())
-	editorFinishLevelLoad("Loaded " + filepath.Base(job.Path()))
+	ld.job = nil
+	// The uploads installLevel does for a level changed in play — the brush
+	// batches, the Nanite page pool, the raycast trees — here, under the
+	// bar, rather than inside the first frame that draws the level.
+	render.SyncChunkBatches(Editor.level)
+	render.SyncNaniteScenery(Editor.level)
+	collision.WarmRaycasts(Editor.level)
+	ld.phase, ld.fraction, ld.label = editorLoadFirstFrame, 0.99, "Drawing the first frame"
 }
 
 // editorReinstallLevel swaps in a rebuilt copy of the open level.
@@ -161,6 +213,7 @@ func editorReinstallLevel(newLevel world.Level) {
 func editorFinishLevelLoad(status string) {
 	editorLevelLoad.path = ""
 	editorLevelLoad.job = nil
+	editorLevelLoad.phase = editorLoadBuilding
 	// The job published its progress for a loading screen's sake; the editor
 	// has none, and a script reading load_progress should see 1 again.
 	hooks.ClearLoadProgress()
@@ -187,8 +240,9 @@ func editorDrawLevelLoad() {
 			imgui.CloseCurrentPopup()
 			return
 		}
+		ld.drawn++
 		imgui.Text(ld.title)
-		imgui.ProgressBarV(ld.fraction, imgui.Vec2{X: 360, Y: 0},
+		imgui.ProgressBarV(ld.fraction, imgui.Vec2{X: 420, Y: 0},
 			fmt.Sprintf("%s  %d%%", ld.label, int(ld.fraction*100+0.5)))
 	})
 }

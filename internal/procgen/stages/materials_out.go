@@ -232,7 +232,8 @@ func rockFxOf(rc *procgen.RunContext, it procgen.Params, ground *TerrainMaterial
 	return fx
 }
 
-// groundArtifact is the terrain_material stage the param names, or nil.
+// groundArtifact is the terrain_material (or region_material) stage the
+// param names, or nil.
 func groundArtifact(rc *procgen.RunContext, id string) (*TerrainMaterialArtifact, error) {
 	if id == "" {
 		return nil, nil
@@ -243,9 +244,11 @@ func groundArtifact(rc *procgen.RunContext, id string) (*TerrainMaterialArtifact
 	}
 	g, ok := a.(*TerrainMaterialArtifact)
 	if !ok {
-		return nil, fmt.Errorf("stage %s is not a terrain_material stage", id)
+		return nil, fmt.Errorf("stage %s is not a terrain_material or region_material stage", id)
 	}
-	return g, nil
+	// An environment region's stage matches its rocks to its own ground
+	// (place_region_ground.go); a classic run gets g itself.
+	return regionGround(&rc.Env, g), nil
 }
 
 // rocksTriplanarMaterial writes a generated rocks stage's base material when

@@ -73,6 +73,9 @@ struct Instance {
     vec4 sphere; // local centre, radius
     uvec4 flags;
     vec4 wind;
+    // draw: the distance window it is drawn over (render/nanite_draw_distance.go):
+    // x from, y to (0: open), z its hash, w unused.
+    vec4 draw;
 };
 
 layout(std430, binding = 0) readonly buffer Instances {

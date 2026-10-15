@@ -35,6 +35,7 @@ uniform int matFx;
 #define FX_DETAIL    16
 #define FX_MACRO     32
 #define FX_GRADE     64
+#define FX_SPLAT8    128 // the splat's eight-layer mode, beside FX_SPLAT
 
 // triplanar: 1/scale, sharpness, upright (0/1).
 uniform vec3 fxTriplanar;
@@ -51,15 +52,33 @@ uniform vec4 fxSplatRect;     // min x, min z, 1/size x, 1/size z
 uniform vec4 fxSplatInvScale; // 1/metres a repeat, per layer
 uniform vec4 fxSplatTri;      // 1: triplanar, per layer
 uniform vec4 fxSplatHeight;   // height influence, per layer
-uniform vec4 fxSplatLayer;    // the atlases' tile, per layer (x = n%2, y = n/2); -1 none
-uniform vec2 fxSplatAtlas;    // a tile's texels as a fraction of the atlas, its gutter's
-uniform vec3 fxSplatTint[4];
+uniform vec4 fxSplatLayer;    // the atlases' tile, per layer (x = n%cols, y = n/cols); -1 none
+uniform vec4 fxSplatAtlas;    // a tile's texels as a fraction of the atlas (u, v), its gutter's (u, v)
+uniform float fxSplatCols;    // the atlases' tiles across: 2 (the 2×2), or 4 (the eight-layer 4×2), 8 (a palette)
+uniform float fxSplatRows;    // the atlases' tiles down: 2, or a palette's rows (0, unset, reads as 2)
+uniform vec3 fxSplatTint[8];  // per layer; 4..7 only in eight-layer mode
 uniform vec3 fxSplatParams;   // blend, normal strength, ao amount
 uniform sampler2D fxStrata;
 uniform vec4 fxStrataParams;  // lo, 1/(hi - lo), strength (0: no ramp), warp
 uniform vec4 fxSplatBedding;  // bedding relief (0: none), 1/bed spacing, side projections' normal strength, unused
+uniform vec4 fxSplatRipple;   // sand ripples: strength (0: none), 1/wavelength, wind bearing (radians), layer 0–3
 uniform vec4 fxSplatAnti;     // 1: anti-tiled (fxSplatTap), per layer
 uniform vec4 fxSplatRelief;   // parallax depth (m) of the top-down layers (fxSplatRead), per layer; 0 none
+uniform vec4 fxSplatStrataOn; // 1: the strata ramp and bedding band this layer (when triplanar), per layer
+
+// The splat's EIGHT-LAYER MODE (FX_SPLAT8; docs/regions/PHASE_3.md): a
+// second weights map for layers 5–8 and their per-layer values, the same
+// meanings as the first four's. The layers share the two atlases (4×2
+// then), so this is one sampler more, not eight. Read only behind
+// FX_SPLAT8: a four-layer splat never touches any of it.
+uniform sampler2D fxSplatWeights2;
+uniform vec4 fxSplatInvScale2;
+uniform vec4 fxSplatTri2;
+uniform vec4 fxSplatHeight2;
+uniform vec4 fxSplatLayer2;
+uniform vec4 fxSplatAnti2;
+uniform vec4 fxSplatRelief2;
+uniform vec4 fxSplatStrataOn2;
 
 // ground_blend.
 uniform sampler2D fxGroundColor;
@@ -89,20 +108,32 @@ uniform vec3 fxGradeTint;
 
 // ---------- noise (value noise; cheap, smooth, no textures) ----------
 
+// fxHash amplifies its input ~2000×, so a corner must be hashed from
+// EXACTLY the same bits in both cells that share it. Without `precise` a
+// driver may fold (i + 1)·123.34 into i·123.34 + 123.34 (an FMA) in one
+// cell and not the other, and the value noise below jumps at cell edges:
+// the macro variation drew sharp-edged rectangles tens of metres across on
+// the prairie (docs/regions/PRESETS_2B.md). `precise` forbids the
+// reassociation, so the noise is as continuous as written.
 float fxHash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
+    precise vec2 q = fract(p * vec2(123.34, 456.21));
+    precise float d = dot(q, q + 45.32);
+    precise vec2 r = q + d;
+    precise float h = fract(r.x * r.y);
+    return h;
 }
 
 float fxNoise(vec2 p) {
-    vec2 i = floor(p);
+    precise vec2 i = floor(p);
     vec2 f = fract(p);
     vec2 u = f * f * (3.0 - 2.0 * f);
+    precise vec2 i10 = i + vec2(1.0, 0.0);
+    precise vec2 i01 = i + vec2(0.0, 1.0);
+    precise vec2 i11 = i + vec2(1.0, 1.0);
     float a = fxHash(i);
-    float b = fxHash(i + vec2(1.0, 0.0));
-    float c = fxHash(i + vec2(0.0, 1.0));
-    float d = fxHash(i + vec2(1.0, 1.0));
+    float b = fxHash(i10);
+    float c = fxHash(i01);
+    float d = fxHash(i11);
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
@@ -212,11 +243,17 @@ vec3 fxTriplanarSurface(sampler2D albedoTex, sampler2D normalTex, int hasNormal,
 // fxAtlas samples tile `tile` of a splat atlas at repeating coordinate uv:
 // the repeat folded into the tile (fract), offset past its gutter, and the
 // gradients scaled with it — taken from the continuous uv, so the fold makes
-// no seam in the mip choice.
+// no seam in the mip choice. The atlas is fxSplatCols tiles across and
+// fxSplatRows down (two, but for a palette of more than eight layers: 8
+// across, up to 4 down): for the 2×2 every factor below is the old one
+// exactly (1/cols and 1/rows are 0.5, and u's fractions equal v's), so a
+// four-layer splat reads the same texels it always did.
 vec4 fxAtlas(sampler2D s, float tile, vec2 uv, vec2 gx, vec2 gy) {
-    vec2 t = vec2(mod(tile, 2.0), floor(tile * 0.5)) * 0.5;
-    vec2 a = t + fxSplatAtlas.y + fract(uv) * fxSplatAtlas.x;
-    return textureGrad(s, a, gx * fxSplatAtlas.x, gy * fxSplatAtlas.x);
+    float cols = fxSplatCols;
+    float rows = fxSplatRows > 0.0 ? fxSplatRows : 2.0;
+    vec2 t = vec2(mod(tile, cols), floor(tile / cols)) * vec2(1.0 / cols, 1.0 / rows);
+    vec2 a = t + fxSplatAtlas.zw + fract(uv) * fxSplatAtlas.xy;
+    return textureGrad(s, a, gx * fxSplatAtlas.xy, gy * fxSplatAtlas.xy);
 }
 
 // fxBedLip is the lip of a bed at period position u: a bump about each bed
@@ -297,6 +334,47 @@ void fxBedding(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, inout vec4 na) {
     // The overhang's shadow, which reads even with the sun behind the wall.
     float under = smoothstep(1.5, 8.0, lip) * min(amt, 1.0);
     na.w *= 1.0 - 0.45 * under * k;
+}
+
+// RIPPLES (fxSplatRipple). Wind-blown sand is never a flat plane: it lies
+// in ripples a hand's breadth apart, crests across the wind, a long gentle
+// windward face and a short steep lee, and their sinuous, forking crests
+// are what make a sand floor read as sand in shade and in raking light.
+// Here they are a height h(u) over a phase u along the wind — warped by two
+// noises so the crests wander and fork — bent into the normal only: the
+// gradient is h'(u) times the phase's gradient, the latter taken by finite
+// differences (so the warp turns the crests and their normals together).
+// Patchy in strength, on level ground only, faded where a pixel covers a
+// good part of a ripple (analytic antialiasing, as the bedding does), and
+// a touch of AO in the troughs so they read under the sky light alone.
+float fxRipplePhase(vec2 q, vec2 dir, float k) {
+    float w = (fxNoise(q * 0.9) - 0.5) * 3.2 + (fxNoise(q * 3.3 + vec2(7.7, 1.3)) - 0.5) * 0.9;
+    return dot(q, dir) * k + w;
+}
+
+void fxRipple(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, float share, inout vec3 normal, inout float ao) {
+    float k = fxSplatRipple.y;
+    float level = smoothstep(0.86, 0.97, N.y);
+    float foot = (length(dPdx.xz) + length(dPdy.xz)) * k;
+    float fade = 1.0 - smoothstep(0.22, 0.55, foot);
+    float spots = smoothstep(0.25, 0.75, fxNoise(p.xz * 0.11 + vec2(3.7, 9.1)));
+    float amt = fxSplatRipple.x * share * level * fade * (0.3 + 0.7 * spots);
+    if (amt <= 0.001) {
+        return;
+    }
+    float a = fxSplatRipple.z;
+    vec2 dir = vec2(sin(a), cos(a));
+    vec2 q = p.xz;
+    float ph = fxRipplePhase(q, dir, k);
+    const float e = 0.02;
+    vec2 g = vec2(fxRipplePhase(q + vec2(e, 0.0), dir, k) - ph, fxRipplePhase(q + vec2(0.0, e), dir, k) - ph) / (e * k);
+    float t = 6.2831853 * fract(ph);
+    // h = sin t + 0.35 sin 2t: a steeper lee than stoss; h' over its peak.
+    float dh = (cos(t) + 0.7 * cos(2.0 * t)) / 1.7;
+    float h = (sin(t) + 0.35 * sin(2.0 * t)) / 1.35;
+    vec2 tilt = amt * dh * g;
+    normal = normalize(normal - vec3(tilt.x, 0.0, tilt.y));
+    ao *= 1.0 - 0.18 * min(amt, 1.0) * (0.5 - 0.5 * h);
 }
 
 // NO RUNTIME INDEXING below (docs/canyon/PERF.md). The splat used to loop
@@ -429,15 +507,10 @@ void fxSplatAxis(int a, float wa, float layer, float inv, float anti, vec3 p, ve
 // fxSplatSample is a splat layer's albedo+height and normal+AO at p — its
 // atlas tile `layer`, 1/repeat inv, top down or triplanar (tri) — with its
 // normal already in world space (xyz of the second result; w the AO).
-void fxSplatSample(float layer, float inv, bool tri, float anti, float relief, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, out vec4 ah, out vec4 na) {
-    if (!tri) {
-        vec2 uv = p.xz * inv;
-        vec2 gx = dPdx.xz * inv;
-        vec2 gy = dPdy.xz * inv;
-        fxSplatTap(layer, anti, true, uv, gx, gy, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), N, fxSplatParams.y,
-                   relief * inv, normalize(camPos - p), ah, na);
-        return;
-    }
+// strata (0/1): whether the bedding relief and the strata ramp band it when
+// it is triplanar (a second biome's rock is not the strata's).
+// fxSplatTriSum is a layer's three world projections, blended by N.
+void fxSplatTriSum(float layer, float inv, float anti, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, out vec4 ah, out vec4 na) {
     vec3 w = fxTriWeights(N, 6.0);
     ah = vec4(0.0);
     vec3 nrm = vec3(0.0);
@@ -448,6 +521,42 @@ void fxSplatSample(float layer, float inv, bool tri, float anti, float relief, v
     sum = max(sum, 1e-4);
     ah /= sum;
     na = vec4(normalize(nrm), ao / sum);
+}
+
+void fxSplatSample(float layer, float inv, bool tri, float anti, float relief, float strata, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy,
+                   out vec4 ah, out vec4 na) {
+    if (!tri) {
+        // A top-down layer (sand, gravel) on a steep face — a wall mesh the
+        // ground's weights put sand on, an overhang — would smear down it
+        // in streaks: below 53° from level it blends into its own triplanar
+        // projection, wholly so past 70°.
+        float up = abs(N.y);
+        if (up > 0.34) {
+            vec2 uv = p.xz * inv;
+            vec2 gx = dPdx.xz * inv;
+            vec2 gy = dPdy.xz * inv;
+            fxSplatTap(layer, anti, true, uv, gx, gy, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), N, fxSplatParams.y,
+                       relief * inv, normalize(camPos - p), ah, na);
+            if (up >= 0.6) {
+                return;
+            }
+        }
+        vec4 tah, tna;
+        fxSplatTriSum(layer, inv, anti, p, N, dPdx, dPdy, tah, tna);
+        float t = smoothstep(0.34, 0.6, up);
+        if (up <= 0.34) {
+            ah = tah;
+            na = tna;
+            return;
+        }
+        ah = mix(tah, ah, t);
+        na = vec4(normalize(mix(tna.xyz, na.xyz, t)), mix(tna.w, na.w, t));
+        return;
+    }
+    fxSplatTriSum(layer, inv, anti, p, N, dPdx, dPdy, ah, na);
+    if (strata < 0.5) {
+        return;
+    }
     if (fxSplatBedding.x > 0.0) {
         fxBedding(p, N, dPdx, dPdy, na);
     }
@@ -473,38 +582,51 @@ float fxSplatFloor(float layer, float wt, float hgt) {
     return fxSplatLayerOn(layer, wt) ? wt + min(hgt, 0.0) * 0.35 * min(wt * 4.0, 1.0) : -1e9;
 }
 
-// fxSplatLayerScore samples one layer and scores it (-1e9: not sampled). A layer
-// whose score cannot come within the blend of the best one adds nothing in
-// fxSplatAccum (its share is 0), so it is not sampled at all: its score is
-// at most its weight plus its whole height lift (the height is in [0, 1]),
-// and the best is at least floorBest. Exact — the picture is the same as
-// sampling every layer, at a fraction of the fetches where one dominates.
-void fxSplatLayerScore(float layer, float inv, float tri, float anti, float relief, float wt, float hgt, float floorBest, float blend,
-                       vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, out vec4 ah, out vec4 na, out float score) {
-    score = -1e9;
-    ah = vec4(0.0);
-    na = vec4(N, 1.0);
-    if (!fxSplatLayerOn(layer, wt)) {
-        return;
+// fxSplatCandidate is whether a layer can come within the blend of the best:
+// it takes part, and its score — at most its weight plus its whole height
+// lift (the height is in [0, 1]) — can beat floorBest − blend, the least the
+// best can be. A layer that cannot adds nothing in fxSplatAdd (its share is
+// 0), so it is never sampled. Exact.
+bool fxSplatCandidate(float layer, float wt, float hgt, float floorBest, float blend) {
+    return fxSplatLayerOn(layer, wt) && wt + max(hgt, 0.0) * 0.35 * min(wt * 4.0, 1.0) > floorBest - blend;
+}
+
+// fxSplatLayerScore scores a candidate layer (-1e9: not a candidate). With
+// only set — this is the sole candidate — its score cannot matter: it is the
+// best, its share the whole blend, and the result its own sample; so it is
+// not sampled here at all (0). Otherwise the layer is sampled and only its
+// HEIGHT used (the albedo atlas's alpha): the sample's normal fetch, its
+// tangent frame, bedding and strata tint are dead code the compiler drops,
+// so scoring a layer costs its albedo fetches alone.
+float fxSplatLayerScore(bool cand, bool only, float layer, float inv, float tri, float anti, float relief, float strata,
+                        float wt, float hgt, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy) {
+    if (!cand) {
+        return -1e9;
     }
-    if (wt + max(hgt, 0.0) * 0.35 * min(wt * 4.0, 1.0) <= floorBest - blend) {
-        return;
+    if (only) {
+        return 0.0;
     }
-    fxSplatSample(layer, inv, tri >= 0.5, anti, relief, p, N, dPdx, dPdy, ah, na);
+    vec4 ah, na;
+    fxSplatSample(layer, inv, tri >= 0.5, anti, relief, strata, p, N, dPdx, dPdy, ah, na);
     // A layer's height lifts it over its neighbours, fully once it has a
     // quarter of the weight: where stones and sand meet, the stones' tops
     // win and the sand fills between them.
-    score = wt + ah.a * hgt * 0.35 * min(wt * 4.0, 1.0);
+    return wt + ah.a * hgt * 0.35 * min(wt * 4.0, 1.0);
 }
 
-// fxSplatAccum adds a scored layer's share — how far it is within the blend
-// of the best — to the blend's sums.
-void fxSplatAccum(float score, float best, float blend, vec4 ah, vec4 na, vec3 tint,
-                  inout vec4 col, inout vec3 nrm, inout float occ, inout float sum) {
+// fxSplatAdd adds a scored layer's share — how far it is within the blend of
+// the best — to the blend's sums, sampling it in full (albedo, normal, AO)
+// only when that share is not 0. The sample is the very call fxSplatLayerScore
+// made, so its height (and so its score) is the one the share was judged by.
+void fxSplatAdd(float score, float best, float blend, float layer, float inv, float tri, float anti, float relief,
+                float strata, vec3 tint, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy,
+                inout vec4 col, inout vec3 nrm, inout float occ, inout float sum) {
     float b = max(score - (best - blend), 0.0);
     if (b <= 0.0) {
         return;
     }
+    vec4 ah, na;
+    fxSplatSample(layer, inv, tri >= 0.5, anti, relief, strata, p, N, dPdx, dPdy, ah, na);
     col += b * vec4(ah.rgb * tint, 1.0);
     nrm += b * na.xyz;
     occ += b * na.w;
@@ -512,34 +634,108 @@ void fxSplatAccum(float score, float best, float blend, vec4 ah, vec4 na, vec3 t
 }
 
 // fxSplatSurface is the splat: the layers' albedo, normal and AO at p,
-// height-blended by the weights over the terrain's rectangle.
-void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, inout vec4 albedo, inout vec3 normal, inout float ao) {
+// height-blended by the weights over the terrain's rectangle. eight is the
+// eight-layer mode (matFx's FX_SPLAT8, tested in main so the visibility
+// buffer's variants can fold it to a constant): layers 5–8 from the second
+// weights map, scored, skipped and blended exactly as the first four —
+// one floor, one best, one height-lifted blend over all eight, so a sand
+// of one biome and a grass of the other meet by their height maps the way
+// sand and gravel do. Off, the code below is the four-layer splat's to the
+// operation.
+//
+// TWO PASSES (docs/regions/PHASE_6.md). The first scores every layer that
+// can take part from its height alone — none at all where a single layer is
+// a candidate, whose score cannot change the result; the second samples in
+// full only the layers within the blend of the best, adding each to the sums
+// as it goes.
+// Holding every scored layer's albedo and normal until the best was known
+// kept sixteen vec4s live across eight inlined samples: on the GTX 1070 the
+// eight-layer variant then ran at half the occupancy and its material pass
+// cost twice the four-layer one's even on pixels where layers 5–8 weigh
+// nothing. The arithmetic per layer, and the order the sums are added in,
+// are unchanged, so the picture is the one-pass splat's; a winning layer's
+// albedo fetch is simply repeated (from the texture cache).
+void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, bool eight, inout vec4 albedo, inout vec3 normal, inout float ao) {
     vec2 wuv = (p.xz - fxSplatRect.xy) * fxSplatRect.zw;
     vec4 wt = textureGrad(fxSplatWeights, wuv, dPdx.xz * fxSplatRect.zw, dPdy.xz * fxSplatRect.zw);
     float blend = fxSplatParams.x;
     vec4 L = fxSplatLayer, S = fxSplatInvScale, T = fxSplatTri, H = fxSplatHeight, A = fxSplatAnti, R = fxSplatRelief;
+    vec4 Q = fxSplatStrataOn;
     float floorBest = max(max(fxSplatFloor(L.x, wt.x, H.x), fxSplatFloor(L.y, wt.y, H.y)),
                           max(fxSplatFloor(L.z, wt.z, H.z), fxSplatFloor(L.w, wt.w, H.w)));
-    vec4 ah0, ah1, ah2, ah3, na0, na1, na2, na3;
-    float s0, s1, s2, s3;
-    fxSplatLayerScore(L.x, S.x, T.x, A.x, R.x, wt.x, H.x, floorBest, blend, p, N, dPdx, dPdy, ah0, na0, s0);
-    fxSplatLayerScore(L.y, S.y, T.y, A.y, R.y, wt.y, H.y, floorBest, blend, p, N, dPdx, dPdy, ah1, na1, s1);
-    fxSplatLayerScore(L.z, S.z, T.z, A.z, R.z, wt.z, H.z, floorBest, blend, p, N, dPdx, dPdy, ah2, na2, s2);
-    fxSplatLayerScore(L.w, S.w, T.w, A.w, R.w, wt.w, H.w, floorBest, blend, p, N, dPdx, dPdy, ah3, na3, s3);
+    // Layers 5–8: their weights, and their part of the floor, before any
+    // layer is scored (a fifth layer that dominates lets the first four skip).
+    vec4 wt2 = vec4(0.0);
+    vec4 L2 = vec4(-1.0), S2 = vec4(1.0), T2 = vec4(0.0), H2 = vec4(0.0), A2 = vec4(0.0), R2 = vec4(0.0), Q2 = vec4(0.0);
+    if (eight) {
+        wt2 = textureGrad(fxSplatWeights2, wuv, dPdx.xz * fxSplatRect.zw, dPdy.xz * fxSplatRect.zw);
+        L2 = fxSplatLayer2;
+        S2 = fxSplatInvScale2;
+        T2 = fxSplatTri2;
+        H2 = fxSplatHeight2;
+        A2 = fxSplatAnti2;
+        R2 = fxSplatRelief2;
+        Q2 = fxSplatStrataOn2;
+        floorBest = max(floorBest, max(max(fxSplatFloor(L2.x, wt2.x, H2.x), fxSplatFloor(L2.y, wt2.y, H2.y)),
+                                       max(fxSplatFloor(L2.z, wt2.z, H2.z), fxSplatFloor(L2.w, wt2.w, H2.w))));
+    }
+    // The candidates: where one layer dominates (most of a wall, most of a
+    // plain) it is the only one, and pass 1 samples nothing.
+    bool c0 = fxSplatCandidate(L.x, wt.x, H.x, floorBest, blend);
+    bool c1 = fxSplatCandidate(L.y, wt.y, H.y, floorBest, blend);
+    bool c2 = fxSplatCandidate(L.z, wt.z, H.z, floorBest, blend);
+    bool c3 = fxSplatCandidate(L.w, wt.w, H.w, floorBest, blend);
+    bool c4 = false, c5 = false, c6 = false, c7 = false;
+    if (eight) {
+        c4 = fxSplatCandidate(L2.x, wt2.x, H2.x, floorBest, blend);
+        c5 = fxSplatCandidate(L2.y, wt2.y, H2.y, floorBest, blend);
+        c6 = fxSplatCandidate(L2.z, wt2.z, H2.z, floorBest, blend);
+        c7 = fxSplatCandidate(L2.w, wt2.w, H2.w, floorBest, blend);
+    }
+    bool only = int(c0) + int(c1) + int(c2) + int(c3) + int(c4) + int(c5) + int(c6) + int(c7) == 1;
+    // Pass 1: the scores.
+    float s0 = fxSplatLayerScore(c0, only, L.x, S.x, T.x, A.x, R.x, Q.x, wt.x, H.x, p, N, dPdx, dPdy);
+    float s1 = fxSplatLayerScore(c1, only, L.y, S.y, T.y, A.y, R.y, Q.y, wt.y, H.y, p, N, dPdx, dPdy);
+    float s2 = fxSplatLayerScore(c2, only, L.z, S.z, T.z, A.z, R.z, Q.z, wt.z, H.z, p, N, dPdx, dPdy);
+    float s3 = fxSplatLayerScore(c3, only, L.w, S.w, T.w, A.w, R.w, Q.w, wt.w, H.w, p, N, dPdx, dPdy);
     float best = max(max(s0, s1), max(s2, s3));
+    float s4 = -1e9, s5 = -1e9, s6 = -1e9, s7 = -1e9;
+    if (eight) {
+        s4 = fxSplatLayerScore(c4, only, L2.x, S2.x, T2.x, A2.x, R2.x, Q2.x, wt2.x, H2.x, p, N, dPdx, dPdy);
+        s5 = fxSplatLayerScore(c5, only, L2.y, S2.y, T2.y, A2.y, R2.y, Q2.y, wt2.y, H2.y, p, N, dPdx, dPdy);
+        s6 = fxSplatLayerScore(c6, only, L2.z, S2.z, T2.z, A2.z, R2.z, Q2.z, wt2.z, H2.z, p, N, dPdx, dPdy);
+        s7 = fxSplatLayerScore(c7, only, L2.w, S2.w, T2.w, A2.w, R2.w, Q2.w, wt2.w, H2.w, p, N, dPdx, dPdy);
+        best = max(best, max(max(s4, s5), max(s6, s7)));
+    }
     if (best < -1e8) {
         return; // no layer here: the surface's own texture stands
     }
+    // Pass 2: the layers within the blend, sampled and added in order.
     vec4 col = vec4(0.0);
     vec3 nrm = vec3(0.0);
     float occ = 0.0, sum = 0.0;
-    fxSplatAccum(s0, best, blend, ah0, na0, fxSplatTint[0], col, nrm, occ, sum);
-    fxSplatAccum(s1, best, blend, ah1, na1, fxSplatTint[1], col, nrm, occ, sum);
-    fxSplatAccum(s2, best, blend, ah2, na2, fxSplatTint[2], col, nrm, occ, sum);
-    fxSplatAccum(s3, best, blend, ah3, na3, fxSplatTint[3], col, nrm, occ, sum);
+    fxSplatAdd(s0, best, blend, L.x, S.x, T.x, A.x, R.x, Q.x, fxSplatTint[0], p, N, dPdx, dPdy, col, nrm, occ, sum);
+    fxSplatAdd(s1, best, blend, L.y, S.y, T.y, A.y, R.y, Q.y, fxSplatTint[1], p, N, dPdx, dPdy, col, nrm, occ, sum);
+    fxSplatAdd(s2, best, blend, L.z, S.z, T.z, A.z, R.z, Q.z, fxSplatTint[2], p, N, dPdx, dPdy, col, nrm, occ, sum);
+    fxSplatAdd(s3, best, blend, L.w, S.w, T.w, A.w, R.w, Q.w, fxSplatTint[3], p, N, dPdx, dPdy, col, nrm, occ, sum);
+    if (eight) {
+        fxSplatAdd(s4, best, blend, L2.x, S2.x, T2.x, A2.x, R2.x, Q2.x, fxSplatTint[4], p, N, dPdx, dPdy, col, nrm, occ, sum);
+        fxSplatAdd(s5, best, blend, L2.y, S2.y, T2.y, A2.y, R2.y, Q2.y, fxSplatTint[5], p, N, dPdx, dPdy, col, nrm, occ, sum);
+        fxSplatAdd(s6, best, blend, L2.z, S2.z, T2.z, A2.z, R2.z, Q2.z, fxSplatTint[6], p, N, dPdx, dPdy, col, nrm, occ, sum);
+        fxSplatAdd(s7, best, blend, L2.w, S2.w, T2.w, A2.w, R2.w, Q2.w, fxSplatTint[7], p, N, dPdx, dPdy, col, nrm, occ, sum);
+    }
     albedo = vec4(col.rgb / sum, albedo.a);
     normal = normalize(nrm);
     ao *= mix(1.0, occ / sum, fxSplatParams.z);
+    // The sand ripples, on the rippling layer's share of the blend.
+    if (fxSplatRipple.x > 0.0) {
+        float rl = fxSplatRipple.w;
+        float rs = rl < 0.5 ? s0 : (rl < 1.5 ? s1 : (rl < 2.5 ? s2 : s3));
+        float share = max(rs - (best - blend), 0.0) / sum;
+        if (share > 0.0) {
+            fxRipple(p, N, dPdx, dPdy, share, normal, ao);
+        }
+    }
 }
 
 // ---------- ground blend ----------

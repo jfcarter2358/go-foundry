@@ -67,7 +67,116 @@ type Meta struct {
 	Paths      []PathMeta `yaml:"paths,omitempty"`
 	// Far is the backdrop round the square (far.go), when the stage made one.
 	Far *FarMeta `yaml:"far,omitempty"`
+	// Biomes is a union of environment regions' record (region_terrain):
+	// which environments and regions made it, and their weight masks. Nil
+	// for a classic terrain.
+	Biomes *BiomesMeta `yaml:"biomes,omitempty"`
+	// Vents are the volcanic vents the terrain's landforms placed (world XZ
+	// and cone radius; landform.go), for the ground material's ash rule.
+	// Absent without volcanoes.
+	Vents []VentMeta `yaml:"vents,omitempty"`
+	// Lobes are the vents' lava lobes (world XZ; landform.go), for the
+	// ground material's lava rule (bare lava on the tongues, cinders round
+	// them). Absent without volcanoes or lobes.
+	Lobes []LobeMeta `yaml:"lobes,omitempty"`
+	// Water is the standing water a region terrain filled in (seas at a
+	// level, ponds in closed hollows; stages/region_terrain_water.go):
+	// its mask (water depth) and every body. Absent without water.
+	Water *WaterMeta `yaml:"water,omitempty"`
 }
+
+// VentMeta is one vent.
+type VentMeta struct {
+	X      float64 `yaml:"x"`
+	Z      float64 `yaml:"z"`
+	Radius float64 `yaml:"radius"`
+}
+
+// WaterMeta is a terrain's standing water.
+type WaterMeta struct {
+	// Mask is the depth mask's name (MaskWater: depth/WaterMaskDepth, 0..1).
+	Mask string `yaml:"mask"`
+	// Bodies are the water surfaces: each one level, its bounds and area.
+	Bodies []WaterBodyMeta `yaml:"bodies"`
+}
+
+// WaterBodyMeta is one body of water.
+type WaterBodyMeta struct {
+	// Kind is sea (a region's water level) or pond (a filled hollow).
+	Kind   string     `yaml:"kind"`
+	Level  float64    `yaml:"level"`
+	Bounds [4]float64 `yaml:"bounds,flow"`
+	Area   float64    `yaml:"area"`
+	// Region is the region whose preset asked for it.
+	Region string `yaml:"region,omitempty"`
+}
+
+// MaskWater is the water depth mask a region terrain writes when it fills
+// water in: depth below the surface over WaterMaskDepth metres, 0..1.
+const MaskWater = "water"
+
+// WaterMaskDepth is the depth the water mask's 1 stands for, metres.
+const WaterMaskDepth = 8.0
+
+// BiomesMeta is a region terrain's environments and regions. Each
+// environment's weight — the sum of its regions' shares, 0..1 — is a mask
+// like any other (`biome_<env>`, listed in Meta.Masks), so a downstream
+// stage reads it with Terrain.Mask or BiomeAt.
+type BiomesMeta struct {
+	// Overlay is the people-only picture: every pixel the environments'
+	// colours mixed by weight.
+	Overlay      string            `yaml:"overlay"`
+	Environments []BiomeEnvMeta    `yaml:"environments"`
+	Regions      []BiomeRegionMeta `yaml:"regions"`
+	// Erosion is global or tiled; Window and Margin (metres) the tiled
+	// erosion's windows; Lead the region whose drainage/droplet/talus
+	// numbers the global erosion ran with (and whose strata Meta.Strata
+	// describes).
+	Erosion string  `yaml:"erosion"`
+	Window  float64 `yaml:"window,omitempty"`
+	Margin  float64 `yaml:"margin,omitempty"`
+	Lead    string  `yaml:"lead"`
+	// Extent is what the union grid was fitted to: footprints or bands.
+	Extent string `yaml:"extent"`
+}
+
+// BiomeEnvMeta is one environment of a region terrain.
+type BiomeEnvMeta struct {
+	Name  string     `yaml:"name"`
+	Color [3]float64 `yaml:"color,flow"`
+	// Mask is its weight mask's name (biome_<name>).
+	Mask string `yaml:"mask"`
+}
+
+// BiomeRegionMeta is one region of a region terrain.
+type BiomeRegionMeta struct {
+	Key         string `yaml:"key"`
+	Environment string `yaml:"environment"`
+	// Preset is where its terrain came from ("built-in desert_canyon",
+	// "environments/savannah.fgen"); Stage the preset's terrain stage.
+	Preset string `yaml:"preset"`
+	Stage  string `yaml:"stage"`
+	// Seed is the provider's; Anchor its origin (world XZ).
+	Seed   uint64     `yaml:"seed"`
+	Anchor [2]float64 `yaml:"anchor,flow"`
+	// Bounds is the footprint's [min_x, min_z, max_x, max_z].
+	Bounds   [4]float64 `yaml:"bounds,flow"`
+	Priority int        `yaml:"priority"`
+	// Transition is the band width, metres.
+	Transition float64 `yaml:"transition"`
+	// Strata is the region's strata list (the strata mask indexes the
+	// DOMINANT region's list at each sample).
+	Strata []LayerMeta `yaml:"strata"`
+}
+
+// BiomeMaskPrefix starts an environment's weight mask's name.
+const BiomeMaskPrefix = "biome_"
+
+// BiomeMask is an environment's weight mask's name.
+func BiomeMask(env string) string { return BiomeMaskPrefix + env }
+
+// BiomesFile is a region terrain's overlay picture.
+const BiomesFile = "biomes.png"
 
 // FarMeta is the far backdrop: its heights on a coarse lattice over the
 // whole far square (the map's own square included, coarsely), and the tiles
@@ -222,6 +331,10 @@ func NewMeta(s *Settings, res *Result) Meta {
 		}
 		m.Paths = append(m.Paths, pm)
 	}
+	for _, v := range res.Vents {
+		m.Vents = append(m.Vents, VentMeta{X: round2(v.X), Z: round2(v.Z), Radius: round2(v.Radius)})
+	}
+	m.Lobes = append(m.Lobes, res.Lobes...)
 	return m
 }
 
@@ -458,4 +571,23 @@ func (t *Terrain) NormalAt(x, z float64) [3]float32 {
 func (t *Terrain) Contains(x, z float64) bool {
 	b := t.Meta.Bounds
 	return x >= b.MinX && x <= b.MaxX && z >= b.MinZ && z <= b.MaxZ
+}
+
+// Biomes is the environments of a region terrain, in its metadata's order;
+// none for a classic terrain.
+func (t *Terrain) Biomes() []string {
+	if t.Meta.Biomes == nil {
+		return nil
+	}
+	var out []string
+	for _, e := range t.Meta.Biomes.Environments {
+		out = append(out, e.Name)
+	}
+	return out
+}
+
+// BiomeAt is environment env's weight at world (x, z), 0..1. A classic
+// terrain has no biomes and answers an error.
+func (t *Terrain) BiomeAt(env string, x, z float64) (float32, error) {
+	return t.MaskAt(BiomeMask(env), x, z)
 }

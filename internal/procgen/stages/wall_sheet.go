@@ -44,6 +44,9 @@ func init() {
 		Name:     WallSheetKind,
 		Label:    "Wall sheet",
 		Category: "Placement",
+		// Per environment region of a level generation doc: the walls stand
+		// out by the region's weight (place_region.go).
+		Regional: procgen.RegionalPerRegion,
 		Version:  3,
 		Doc: "A terrain's cliffs as real rock: a shell over every wall with hard beds standing as ledges over soft ones " +
 			"weathered back beneath them, vertical joints cutting the face into panels, alcoves and a rough, rounded " +
@@ -58,10 +61,10 @@ func wallSheetParams() []procgen.ParamDef {
 	f, i, v2 := procgen.Float, procgen.Int, procgen.Vec2
 	d := wallsheet.Defaults()
 	return []procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{TerrainKind}, Default: procgen.StageRef(""),
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: TerrainSources, Default: procgen.StageRef(""),
 			Doc: "The terrain stage whose cliffs are built."},
-		{Name: "ground", Type: procgen.ParamStage, StageKinds: []string{TerrainMaterialKind}, Default: procgen.StageRef(""),
-			Doc: "The terrain_material stage: the walls wear its rock layer, and their feet blend into its ground."},
+		{Name: "ground", Type: procgen.ParamStage, StageKinds: GroundSources, Default: procgen.StageRef(""),
+			Doc: "The terrain_material (or region_material) stage: the walls wear its rock layer, and their feet blend into its ground."},
 		{Name: "cell", Type: procgen.ParamFloat, Label: "Cell (m)", Default: f(0.4), Min: 0.1, Max: 4, Step: 0.05,
 			Doc: "The mesher's grid: the finest feature the rock has. Halving it is four times the triangles."},
 		{Name: "depth", Type: procgen.ParamFloat, Label: "Relief (m)", Default: f(d.Depth), Min: 0.2, Max: 20, Step: 0.1,
@@ -94,6 +97,8 @@ func wallSheetParams() []procgen.ParamDef {
 			Doc: "How far up a wall's foot takes the floor's colour. 0: none."},
 		{Name: "cook_memory", Type: procgen.ParamInt, Label: "Cook memory (MB)", Default: i(3000), Min: 100, Max: 64000,
 			Doc: "How much memory the sections' meshing and cooks may hold at once."},
+		{Name: "caves", Added: true, Type: procgen.ParamStage, StageKinds: []string{CaveKind}, Default: procgen.StageRef(""),
+			Doc: "A cave stage whose void is cut out of the walls, so its mouths open through the rock. Empty: none."},
 	}
 }
 
@@ -139,9 +144,23 @@ func runWallSheet(rc *procgen.RunContext) error {
 	s.BedSpacing, s.SoftShare, s.SoftDepth = p.Float("bed_spacing"), p.Float("soft_share"), p.Float("soft_depth")
 	s.JointSpacing, s.JointDepth, s.PanelDepth = p.Float("joint_spacing"), p.Float("joint_depth"), p.Float("panel_depth")
 	s.Alcoves, s.Rough, s.Seed = p.Float("alcoves"), p.Float("rough"), rc.Seed
+	if reg := placeRegion(&rc.Env); reg != nil {
+		s.Weight = reg.At
+	}
 	f, err := wallsheet.NewField(t.Grid, s, &rc.Env)
 	if err != nil {
 		return err
+	}
+	if id := p.Str("caves"); id != "" {
+		ca, err := rc.UpstreamArtifact(id)
+		if err != nil {
+			return err
+		}
+		c, ok := ca.(*CaveArtifact)
+		if !ok {
+			return fmt.Errorf("stage %s is not a cave stage", id)
+		}
+		f.Carve = c.VoidOn(t.Grid).At
 	}
 	secs := f.Sections()
 	cell := p.Float("cell")
@@ -334,27 +353,61 @@ func simplifyWall(m *sdf.Mesh, sec wallsheet.Section, cell float64) {
 // layer only (a weights map of pure rock), laminations for bedding, and a
 // ground blend at the feet.
 func wallMaterial(rc *procgen.RunContext, ground *TerrainMaterialArtifact) (string, error) {
-	base := readMaterialDoc(ground.Material)
+	// Pure rock: the fourth layer of a terrain_material; in an eight-layer
+	// region material, the region's own rock layer, in whichever of the two
+	// weights maps holds it (place_region_ground.go).
+	rock := rockLayerIndex(&rc.Env, ground)
+	name, eight := ground.Material, ground.Weights2 != ""
+	if ground.Palette > 0 {
+		// A palette (region_material_palette.go) has no union material: the
+		// walls take the smallest per-tile material holding the rock layer,
+		// and the rock's place in it (its atlas is the palette's).
+		tm, at := paletteRockMaterial(ground, rock)
+		if tm == nil {
+			return "", fmt.Errorf("no per-tile material of the ground's palette holds its rock layer %d", rock+1)
+		}
+		name, rock, eight = tm.Material, at, len(tm.Layers) > material.SplatLayers
+	}
+	base := readMaterialDoc(name)
 	if base == nil {
-		return "", fmt.Errorf("the ground stage's material %s cannot be read", ground.Material)
+		return "", fmt.Errorf("the ground stage's material %s cannot be read", name)
 	}
 	const n = 4
-	pix := make([]uint8, 4*n*n)
-	for k := 0; k < n*n; k++ {
-		pix[4*k+3] = 255
+	write := func(name string, ch int) error {
+		pix := make([]uint8, 4*n*n)
+		for k := 0; k < n*n && ch >= 0; k++ {
+			pix[4*k+ch] = 255
+		}
+		data, err := terrain.EncodeRGBA(n, n, pix)
+		if err != nil {
+			return err
+		}
+		return rc.WriteFile(name, data)
 	}
-	data, err := terrain.EncodeRGBA(n, n, pix)
-	if err != nil {
+	ch1 := rock
+	if eight && rock >= 4 {
+		ch1 = -1
+	}
+	if err := write("rock_weights.png", ch1); err != nil {
 		return "", err
 	}
-	if err := rc.WriteFile("rock_weights.png", data); err != nil {
-		return "", err
+	if eight {
+		ch2 := -1
+		if rock >= 4 {
+			ch2 = rock - 4
+		}
+		if err := write("rock_weights2.png", ch2); err != nil {
+			return "", err
+		}
 	}
 	d := base.Clone()
 	d.Name = genMaterialName(rc, "")
 	d.Doc = "Generated cliff rock: the terrain material's rock layer on the wall sheets"
 	if e := d.Find(material.KindSplat); e != nil {
 		e.Set("weights", material.TextureValue(mapRef(rc, "rock_weights.png")))
+		if eight {
+			e.Set("weights2", material.TextureValue(mapRef(rc, "rock_weights2.png")))
+		}
 		if b := rc.Params.Float("bedding"); b > 0 {
 			e.Set("bedding", material.FloatValue(float32(b)))
 			e.Set("bedding_spacing", material.FloatValue(0.7))
@@ -375,4 +428,23 @@ func wallMaterial(rc *procgen.RunContext, ground *TerrainMaterialArtifact) (stri
 		return "", err
 	}
 	return d.Name, nil
+}
+
+// paletteRockMaterial is the smallest near per-tile material of a palette
+// ground holding palette layer rock (0-based), and that layer's index in it.
+func paletteRockMaterial(ground *TerrainMaterialArtifact, rock int) (*RegionTileMaterial, int) {
+	var best *RegionTileMaterial
+	at := -1
+	for i := range ground.Tiles {
+		tm := &ground.Tiles[i]
+		if tm.Far {
+			continue
+		}
+		for c, l := range tm.Layers {
+			if l == rock+1 && (best == nil || len(tm.Layers) < len(best.Layers)) {
+				best, at = tm, c
+			}
+		}
+	}
+	return best, at
 }

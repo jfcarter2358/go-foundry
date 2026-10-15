@@ -32,6 +32,13 @@ type Settings struct {
 	CliffAngle float64
 	// SandColor is the albedo hint's colour of loose deposits, 0..1 RGB.
 	SandColor [3]float64
+	// Landform is the provider's other landforms (landform.go): ridged
+	// mountains, dunes, a coast, volcanoes, hummocks and ponds. The zero
+	// value is none, and the base shape is the classic one.
+	Landform Landform
+	// Edge fades a region's relief toward a common level at its borders
+	// with other regions (edge.go); the zero value never fades.
+	Edge Edge
 }
 
 // BaseShape is the lowland: domain-warped FBM.
@@ -159,6 +166,11 @@ type Canyon struct {
 	TributaryLength float64
 	// Seed varies the meander and the tributaries.
 	Seed uint64
+	// Hold is 0..1: how much of the carved shape survives the erosion
+	// within the canyon and HoldMargin metres past its rims (stamps.go) —
+	// a slot canyon's sheer walls and open floor, which talus would
+	// otherwise fill.
+	Hold, HoldMargin float64
 }
 
 // Drainage is the coarse stream-power erosion.

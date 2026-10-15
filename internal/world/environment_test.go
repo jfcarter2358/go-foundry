@@ -43,6 +43,7 @@ func TestFogRoundTripsThroughItsRawForm(t *testing.T) {
 	want.Height, want.Aerial, want.Sun = d.Height, d.Aerial, d.Sun
 	want.Height.Color, want.Aerial.Color = want.Color, want.Color
 	want.SkyHaze, want.SkyDistance = d.SkyHaze, d.SkyDistance
+	want.Shafts = d.Shafts // off, at its defaults (fog_shafts.go)
 	got := FogFromRaw(FogToRaw(&want))
 	if got == nil {
 		t.Fatal("a full fog block round-tripped to nil")

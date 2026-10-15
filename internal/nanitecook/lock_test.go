@@ -168,6 +168,14 @@ func TestCookMeshMatchesCookingItsGLB(t *testing.T) {
 	if r, _ = CookMeshFile(m, out, false, Options{LockBorder: true}); r.Skipped {
 		t.Error("a changed option did not recook")
 	}
+	// A generator's recook replaces the file without keeping a .bak of it
+	// (a backup of every tile doubled a world's output folder).
+	if _, err := os.Stat(out + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("a recook left %s.bak (stat: %v)", filepath.Base(out), err)
+	}
+	if left, _ := filepath.Glob(out + ".tmp*"); len(left) > 0 {
+		t.Errorf("a recook left temporary files: %v", left)
+	}
 	if _, err := nanite.Load(out); err != nil {
 		t.Errorf("the cooked file does not load: %v", err)
 	}

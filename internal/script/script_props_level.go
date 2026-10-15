@@ -124,6 +124,55 @@ func levelProps() map[string]propAccess {
 			Doc: "how tall a riser the player walks up rather than being stopped by, in world units; 0 restores the default (the player's own height)",
 		},
 
+		// The player's camera (world/player_view.go): a cutscene or a tight
+		// crawlspace may want the eye back, or the boom shortened. Written
+		// onto the level's resolved camera block, so the keys a level never
+		// set keep their defaults rather than collapsing to zero.
+		"camera_mode": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				if c == nil || c.lvl == nil {
+					return nil, false
+				}
+				return flang.StrVal(c.lvl.Player.Camera.Effective().Mode), true
+			},
+			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+				m, ok := toStr(v)
+				if !ok || !world.ValidCameraMode(m) {
+					return propErr("camera_mode", `"first_person" or "third_person"`, v)
+				}
+				if c == nil || c.lvl == nil {
+					return nil
+				}
+				cam := c.lvl.Player.Camera.Effective()
+				cam.Mode = m
+				c.lvl.Player.Camera = cam
+				return nil
+			},
+			Doc: "the player's camera: \"first_person\" (the eye) or \"third_person\" (a boom behind the body)",
+		},
+		"camera_distance": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				if c == nil || c.lvl == nil {
+					return nil, false
+				}
+				return flang.FloatVal(float64(c.lvl.Player.Camera.Effective().Distance)), true
+			},
+			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok || f < 0 {
+					return propErr("camera_distance", "non-negative number", v)
+				}
+				if c == nil || c.lvl == nil {
+					return nil
+				}
+				cam := c.lvl.Player.Camera.Effective()
+				cam.Distance = f
+				c.lvl.Player.Camera = cam
+				return nil
+			},
+			Doc: "how far the third-person camera's boom reaches behind the player, in world units, before walls pull it in",
+		},
+
 		// The spawn point's two switches, for a script to hand back. They are
 		// engine state rather than fields on the level — there is one player —
 		// but they sit here beside step_height for the same reason it does.
@@ -545,6 +594,50 @@ func levelProps() map[string]propAccess {
 				return nil
 			},
 			Doc: "how far painted terrain foliage is drawn, as a multiple of its natural distances, 0.25 to 2 (1 by default); lower is faster; saved for every level and session",
+		},
+		// The player's grass instancer settings (gfx/grass_settings.go),
+		// saved to graphics.yaml like smooth_lighting.
+		"grass_density": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.GrassDensity)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("grass_density", "float", v)
+				}
+				gfx.SetGrassDensity(float32(f))
+				return nil
+			},
+			Doc: "the fraction of generated grass clumps drawn, 0.25 to 1 (1 by default); the survivors grow to keep the ground covered, so lower is faster and a little coarser; saved for every level and session",
+		},
+		"grass_distance": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.GrassDistance)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("grass_distance", "float", v)
+				}
+				gfx.SetGrassDistance(float32(f))
+				return nil
+			},
+			Doc: "how far generated grass is drawn, as a multiple of its natural distances, 0.25 to 2 (1 by default); lower is faster; saved for every level and session",
+		},
+		"grass_shadow_distance": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.GrassShadowDistance)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("grass_shadow_distance", "float", v)
+				}
+				gfx.SetGrassShadowDistance(float32(f))
+				return nil
+			},
+			Doc: "how far from the camera generated grass casts shadows, metres, 0 to 60 (14 by default; 0 turns them off); saved for every level and session",
 		},
 		// The player's Nanite LOD threshold (gfx.NaniteLODError), saved to
 		// graphics.yaml like smooth_lighting.

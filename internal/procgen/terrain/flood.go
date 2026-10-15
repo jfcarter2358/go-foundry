@@ -218,3 +218,26 @@ func (f *flood) accumulateMFD(area []float32, s int) {
 		}
 	}
 }
+
+// DrainPath is the way water runs from world (x, z) on g: the samples (row-
+// major indices) from the nearest one down the priority flood's receivers
+// toward the grid's edge, at most maxSteps of them. Along it the FILLED
+// surface never rises (pits are crossed at their spill height). For tests
+// and tools that follow a river; it floods the whole grid on each call.
+func (g *Grid) DrainPath(x, z float64, maxSteps int) []int {
+	s := g.S()
+	i := min(max(int(math.Round((x-g.MinX)/g.Cell)), 0), s-1)
+	j := min(max(int(math.Round((z-g.MinZ)/g.Cell)), 0), s-1)
+	f := newFlood(s * s)
+	f.run(g.H, s, 1e-4*float32(g.Cell))
+	out := []int{j*s + i}
+	for k := out[0]; len(out) < maxSteps; {
+		r := f.receiver[k]
+		if r < 0 {
+			break
+		}
+		k = int(r)
+		out = append(out, k)
+	}
+	return out
+}

@@ -62,6 +62,9 @@ var genRunJob struct {
 	cancel  context.CancelFunc
 	done    chan genRunOutput
 	doc     *procgen.Doc // the clone being run
+	// regions are the environment regions a Run Region asked for (nil: a
+	// whole run): the splice then replaces only their placements.
+	regions []string
 
 	openPop bool
 	shown   bool
@@ -87,8 +90,52 @@ func GeneratorRunning() bool { return genRunJob.running }
 // stage, only (when set) runs just those stages. Refused while one runs or
 // while the document has problems (which the footer lists).
 func genBeginRun(force bool, only []string) {
+	genBeginRunRegions(force, only, nil)
+}
+
+// genBeginRegionRun runs one environment region of a level generation doc:
+// its stale expanded stages (and the stale shared stages they read), its
+// placements alone spliced (genlevel.RegionScope).
+func genBeginRegionRun(region string) {
+	if genDoc == nil {
+		return
+	}
+	genSyncRegions(true)
+	d := genDoc.Clone()
+	d.Name = genName()
+	ids, err := procgen.RegionStages(d, region)
+	if err != nil {
+		genStatusf("Not run: %v", err)
+		return
+	}
+	stale, err := procgen.StaleStages(d, procgen.Options{})
+	if err != nil {
+		genStatusf("Not run: %v", err)
+		return
+	}
+	var run []string
+	for _, id := range ids {
+		if containsString(stale, id) {
+			run = append(run, id)
+		}
+	}
+	if len(run) == 0 {
+		genStatusf("Region %s is up to date", region)
+		return
+	}
+	genBeginRunRegions(false, run, []string{region})
+}
+
+func genBeginRunRegions(force bool, only, regions []string) {
 	j := &genRunJob
 	if j.running || genDoc == nil {
+		return
+	}
+	// A level generation doc takes its level's regions first: the run must
+	// hash, and the file record, the footprints it was made for.
+	genSyncRegions(true)
+	if genSeedWaiting(genDoc) {
+		genStatusf("Not run: writing the template's regions into the open level first; run again in a moment")
 		return
 	}
 	d := genDoc.Clone()
@@ -103,9 +150,12 @@ func genBeginRun(force bool, only []string) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	j.running, j.cancel, j.doc = true, cancel, d
+	j.regions = regions
 	j.began = time.Now()
 	j.title = d.Name
-	if len(only) > 0 {
+	if len(regions) > 0 {
+		j.title += " — region " + fmt.Sprint(regions)
+	} else if len(only) > 0 {
 		j.title += " — " + fmt.Sprint(only)
 	} else if force {
 		j.title += " (force)"
@@ -160,6 +210,7 @@ func genRunLog(line string) {
 
 // genStepJobs is the once-a-frame poll of both jobs. Never blocks.
 func genStepJobs() {
+	genTickRegionsSync() // a region moved in the open level re-previews
 	genStepRun()
 	genStepPreview()
 	genTrySplice() // a splice waiting for a compile or a load to finish
@@ -200,7 +251,7 @@ func genStepRun() {
 	gfx.RescanTextures()
 	material.LoadAll()
 	if j.doc.Level != "" {
-		genRequestSplice(j.doc, res)
+		genRequestSplice(j.doc, res, j.regions)
 	}
 }
 

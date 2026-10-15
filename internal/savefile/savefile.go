@@ -139,6 +139,11 @@ type WorldState struct {
 	Sky        *world.Sky
 	Music      *MusicState
 	StepHeight float32
+	// Camera is the player's camera block, which a script may switch during
+	// play (`@level.prop.camera_mode`, `camera_distance`). Gob leaves it zero
+	// in a save written before it existed, and zero is "the level said
+	// nothing" — first person.
+	Camera world.PlayerCamera
 	// Gravity is the level's ambient pull, which a script may have changed
 	// during play (`@level.prop.gravity`). A pointer, as on the level itself:
 	// nil is a level that never set one, and gob writes it as absent rather

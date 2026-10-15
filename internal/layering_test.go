@@ -101,6 +101,10 @@ var upward = map[string][]string{
 	"meshsdf":     {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
 	"nanite":      {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin"},
 	"nanitecook":  {"world", "levelio", "render", "editor", "app", "uiwin"},
+	// impostor bakes a cooked mesh's far cards on the CPU (docs/regions/
+	// PRESETS_5.md): beside the cook, below everything that draws or places
+	// one — a generator stage bakes them headless.
+	"impostor": {"nanitecook", "world", "levelio", "render", "editor", "app", "uiwin", "procgen"},
 	// glext is GL extension detection and the readback wrappers that work
 	// round a driver (glext/readback.go): above the GL binding, below
 	// everything that draws.
@@ -130,11 +134,21 @@ var upward = map[string][]string{
 	// so it stays below the engine as noise does (a scatter stage importing
 	// it must not drag gfx in).
 	"procgen/terrain": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/regions (environment regions: footprints, blend weights, the
+	// adjacency table) is pure computation the core hands out as weight
+	// functions and genlevel and the stages share: below both, as terrain is.
+	"procgen/regions": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
 	// procgen/sdf (signed-distance modelling and its mesher) and
 	// procgen/rocks (the rock generator on it) are pure computation too:
 	// the rocks stage turns their meshes into ImportMeshes and cooks them.
 	"procgen/sdf":   {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
 	"procgen/rocks": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/cave (the cave stage's void, rock, cut and sky bake) is pure
+	// computation on sdf and a terrain grid.
+	"procgen/cave": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/ruins (the ruins stage's architecture library, layout and site
+	// field) is pure computation on sdf and noise.
+	"procgen/ruins": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
 	// procgen/place (scatter, cliff walls, vegetation patches) reads a
 	// terrain and rock variants and answers instances: pure computation,
 	// the placement stages make level placements of them.
@@ -148,6 +162,11 @@ var upward = map[string][]string{
 	// texcompress (the BC7/BC5 encoders and their disk cache) is pure CPU
 	// under gfx, which uploads what it makes.
 	"texcompress": {"gfx", "world", "render", "editor", "app", "uiwin"},
+	// grassfield is the Poly Haven grass instancer's files (the .fgk kit and
+	// the per-tile .fgrass fields) and the distance rules the renderer and
+	// its tests share: pure CPU, written by a procgen stage and read by
+	// render, so below both and below the world.
+	"grassfield": {"gfx", "model", "nanite", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
 }
 
 func TestPackagesDoNotDependUpward(t *testing.T) {

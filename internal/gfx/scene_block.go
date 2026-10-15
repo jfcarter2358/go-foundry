@@ -50,6 +50,8 @@ const (
 	SceneMaxPointLights = 8
 	SceneShadowCascades = 3
 	SceneMaxFogVolumes  = 8
+	// SceneMaxAmbientVolumes is world.MaxAmbientVolumes.
+	SceneMaxAmbientVolumes = 8
 )
 
 // SceneBlock is scene_block.glsl's SceneBlock in std140 layout, member for
@@ -135,10 +137,16 @@ type SceneBlock struct {
 	// ---- HDR (gfx/hdr.go; world.Tonemap) ----
 	HdrMode     int32   // 3956: 1 in a scene-target frame of a level that asks
 	HdrExposure float32 // 3960
-	_           int32   // 3964: std140 rounds the block up to 16
+
+	// ---- ambient volumes (world.PackAmbientVolumes; light_model.glsl) ----
+	NumAmbVolumes int32                                 // 3964
+	AmbVolBasis   [SceneMaxAmbientVolumes][3][4]float32 // 3968
+	AmbVolCenter  [SceneMaxAmbientVolumes][4]float32    // 4352: xyz centre, w shape
+	AmbVolHalf    [SceneMaxAmbientVolumes][4]float32    // 4480: xyz half extents, w fade
+	AmbVolParams  [SceneMaxAmbientVolumes][4]float32    // 4608: sky, ground, fog, dust
 }
 
-// SceneBlockSize is the block's size in bytes: 3968.
+// SceneBlockSize is the block's size in bytes: 4736.
 const SceneBlockSize = int(unsafe.Sizeof(SceneBlock{}))
 
 // SceneBuffer is one SceneBlock on the CPU and the GL buffer it is sent to.

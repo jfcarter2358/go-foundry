@@ -126,11 +126,23 @@ func duplicateActiveVolume() {
 		c := *src.Cloud
 		cp.Cloud = &c
 	}
+	if src.Ambient != nil {
+		a := *src.Ambient
+		cp.Ambient = &a
+	}
 	// So is an objective, on the same reasoning: a copied console must not
 	// share its capacity and duration with the one it was copied from.
 	if src.Objective != nil {
 		o := *src.Objective
 		cp.Objective = &o
+	}
+	// And a region's footprint is a slice: a copy sharing it would move both
+	// regions' points at once.
+	cp.Region = src.Region.Clone()
+	// A grass field's block too: a copy is its own field.
+	if src.Grass != nil {
+		g := *src.Grass
+		cp.Grass = &g
 	}
 	cp.ID = world.UniqueVolumeID(lvl, src.ID)
 	cp.Position = src.Position.Add(mgl32.Vec3{src.HalfX * 2, 0, 0})

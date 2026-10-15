@@ -325,6 +325,18 @@ func (s *Session) afterTick() {
 	for _, r := range hooks.TakeSaveRequests() {
 		s.emit(Event{Kind: saveRequestNames[r.Kind], Name: r.Name})
 	}
+	// Chunks a script switched on or off this tick are reconciled here, as
+	// the game's frame does in render.DrawWorld before its first pass. A
+	// headless run draws only when it takes a picture, so without this a
+	// chunk a level script enabled stayed out of collision (its placements
+	// still off) until the next shot — a scripted walk fell through every
+	// floor of a streamed area. Uploads are off, so this only moves flags
+	// and rebuilds the indexes.
+	if world.SyncChunkGeometry(s.Level) {
+		if err := world.RebuildIndexes(s.Level); err != nil {
+			log.Printf("chunk enable: %v", err)
+		}
+	}
 	s.T += s.dt
 	s.reportWatches(false)
 }

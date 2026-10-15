@@ -55,6 +55,10 @@ func RenderScenery(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, m
 		if s.NaniteGPU || !s.InWorld() || !s.HasGeometry() || !SceneryInFrustum(s, cull) {
 			continue
 		}
+		// Past its draw distance (world/scenery_draw.go's per-instance cut).
+		if DrawDistances && !s.DrawnAt(gfx.Cam.Position, false) {
+			continue
+		}
 		model := s.ModelMatrix()
 		for si := range s.Submeshes {
 			// Single-sided: a model is a closed solid, and drawing its back
@@ -89,6 +93,9 @@ func RenderSceneryShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 		s := &lvl.Scenery[i]
 		if s.NaniteGPU || !s.InWorld() || !s.HasGeometry() || !SceneryInFrustum(s, cull) {
 			continue
+		}
+		if DrawDistances && !s.DrawnAt(gfx.Cam.Position, true) {
+			continue // past its shadow distance
 		}
 		model := s.ModelMatrix()
 		gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])

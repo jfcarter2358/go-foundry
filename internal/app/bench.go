@@ -453,6 +453,12 @@ func benchWritePose() {
 			st.Slots, float64(st.PoolBytes)/(1<<20), st.Pages, st.Resident, st.TotalUploaded, st.TotalEvicted, st.TotalStarved,
 			float64(st.MaxUpdateTime.Microseconds())/1000, map[bool]string{true: "persistent", false: "glBufferSubData"}[st.Persistent])
 	}
+	// The grass instancer's last frame (render/grass_field.go), when the
+	// level has grass fields.
+	if gs := render.GrassFieldsLastStats(); gs.Resident > 0 {
+		fmt.Fprintf(r, "grass  %d fields resident, %d drawn, %d cells, %d commands, %d instances, %.2f M triangles\n",
+			gs.Resident, gs.Drawn, gs.Cells, gs.Commands, gs.Instances, float64(gs.Triangles)/1e6)
+	}
 	// World textures' VRAM (gfx.TextureVRAM; docs/canyon/PHASE_4.md), with
 	// the compression and skip-mips settings it was measured under.
 	if tv := gfx.TextureVRAM(); tv.Count > 0 {

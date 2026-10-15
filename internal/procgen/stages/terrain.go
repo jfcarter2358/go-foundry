@@ -37,6 +37,9 @@ func init() {
 		Name:     TerrainKind,
 		Label:    "Terrain",
 		Category: "Terrain",
+		// Served by the level generation doc's shared stages for every
+		// region; never expanded per region (docs/regions/SPEC.md).
+		Regional: procgen.RegionalShared,
 		Version:  1,
 		Doc: "Eroded desert canyon country: mesas with stepped strata ledges, canyons carved along splines, " +
 			"drainage and droplet erosion, talus slopes. Writes a 16-bit heightmap, masks (flow, slope, deposition, " +
@@ -175,6 +178,11 @@ func terrainParams() []procgen.ParamDef {
 				{Name: "tributary_length", Type: procgen.ParamFloat, Label: "Tributary length (m)", Default: f(220), Min: 10, Max: 5000,
 					Doc: "How far a side canyon reaches."},
 				{Name: "seed", Type: procgen.ParamSeed, Default: procgen.Seed(0), Doc: "Varies this canyon's meanders and tributaries."},
+				{Name: "hold", Added: true, Type: procgen.ParamFloat, Label: "Hold", Default: f(0), Min: 0, Max: 1, Step: 0.01,
+					Doc: "How much of the carved shape survives the erosion: 1 keeps a slot canyon's sheer walls and open floor, which " +
+						"the talus would otherwise fill. 0: the canyon erodes like any ground."},
+				{Name: "hold_margin", Added: true, Type: procgen.ParamFloat, Label: "Hold margin (m)", Default: f(6), Min: 0, Max: 200, Step: 0.5,
+					Doc: "How far past the rims the hold reaches, easing out: the rims stay sharp."},
 			}},
 
 		// Drainage.
@@ -244,6 +252,9 @@ func terrainParams() []procgen.ParamDef {
 			Doc: "The tiles' texture; none draws them in their normal colours."},
 		{Name: "material", Added: true, Type: procgen.ParamString, Default: procgen.String(""),
 			Doc: "The .fmat the tiles wear over their texture: a terrain_material stage's, gen_<generator>_<its id> (it prints the name). Empty: none."},
+		{Name: "chunk", Added: true, Type: procgen.ParamEnum, Label: "Streaming", Default: procgen.Enum("auto"), Choices: []string{"auto", "none"},
+			Doc: "Which level chunk the tiles stream with. auto: the chunk whose footprint holds each tile's centre (as every other " +
+				"placement). none: always in — the ground under a level split into area chunks stays when an area is switched off."},
 		{Name: "uv_mode", Type: procgen.ParamEnum, Label: "UV mode", Default: procgen.Enum("world"), Choices: []string{"world", "terrain"},
 			Doc: "world: a top-down projection at UV scale, for a tiling texture. terrain: one 0..1 square over the whole terrain, " +
 				"for a terrain-wide image such as the albedo hint."},
@@ -255,7 +266,7 @@ func terrainParams() []procgen.ParamDef {
 			Doc: "How much memory the tile cooks may use together; fewer cook at once when tiles are big."},
 		{Name: "preview_cells", Type: procgen.ParamInt, Label: "Preview cells", Default: i(256), Min: 32, Max: 1024,
 			Doc: "The preview's samples a side, at most (a fast mode: the same landforms, coarser erosion)."},
-	}, farParams()...)
+	}, append(farParams(), landformParams()...)...)
 }
 
 // terrainSettings maps resolved params onto terrain.Settings.
@@ -283,6 +294,7 @@ func terrainSettings(env *procgen.Env) terrain.Settings {
 			Meander: it.Float("meander"), MeanderLength: it.Float("meander_length"),
 			Tributaries: it.Int("tributaries"), TributaryLength: it.Float("tributary_length"),
 			Seed: noise.Hash64(env.Seed, 0x4341_4E59, uint64(ci), uint64(int64(it.Int("seed")))),
+			Hold: it.Float("hold"), HoldMargin: it.Float("hold_margin"),
 		}
 		for _, q := range it.Points("path") {
 			c.Path = append(c.Path, terrain.PathPoint{X: q[0], Z: q[1], Width: q[2], Depth: q[3]})
@@ -303,6 +315,9 @@ func terrainSettings(env *procgen.Env) terrain.Settings {
 		CliffAngle: p.Float("talus_cliff_angle"), Rate: p.Float("talus_rate")}
 	s.CliffAngle = p.Float("cliff_angle")
 	s.SandColor = p.Vec3("sand_color")
+	// Ridges, dunes, coast, volcanoes, hummocks; the edge fade (all off by
+	// default: terrain_landform.go).
+	applyLandforms(p, &s)
 	return s
 }
 
@@ -336,5 +351,6 @@ func validateTerrain(_ *procgen.Doc, _ *procgen.Stage, p procgen.Params) []strin
 			out = append(out, fmt.Sprintf("canyon %d: a path needs at least two points", ci+1))
 		}
 	}
+	out = append(out, validateStamps(p)...)
 	return append(out, validateFar(p)...)
 }

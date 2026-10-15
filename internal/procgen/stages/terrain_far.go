@@ -30,6 +30,13 @@ package stages
 // triangles, seen only from far off, with no collision (nothing walks out
 // there; the player can still step off the stitch — the map's edge is the
 // playable edge).
+//
+// The map need not be centred on the origin: region_terrain's union grid
+// (region_terrain.go) sits wherever its regions are, so the lattice, the
+// ring's tile boundaries and the strips are all in world coordinates about
+// the map's centre (cx, cz) — for a classic terrain (0, 0), where every
+// coordinate is what it always was. The height source is anything with a
+// Height: the classic terrain.FarField, or a union's terrain.UnionFar.
 
 import (
 	"fmt"
@@ -58,6 +65,10 @@ func farParams() []procgen.ParamDef {
 			Doc: "Over this distance past the edge the map's edge eases into the backdrop's own landforms."},
 		{Name: "far_tile", Added: true, Type: procgen.ParamFloat, Label: "Far tile (m)", Default: f(1024), Min: 64, Max: 8192, Step: 16,
 			Doc: "The backdrop tiles' largest side."},
+		{Name: "far_terrace", Added: true, Type: procgen.ParamFloat, Label: "Far terracing", Default: f(1), Min: 0, Max: 1, Step: 0.01,
+			Doc: "How strongly the backdrop's steep ground steps through the strata (multiplies the terrain's terrace out there). " +
+				"Steep far peaks whose ground rises about a bed per far cell alias their steps into a regular pattern of scales; " +
+				"lower it for them (the haze hides the beds anyway)."},
 		{Name: "far_material", Added: true, Type: procgen.ParamString, Default: procgen.String(""),
 			Doc: "The .fmat the backdrop tiles wear: a terrain_material stage's far material, gen_<generator>_<its id>_far. " +
 				"Empty: the tiles' texture."},
@@ -79,22 +90,38 @@ func validateFar(p procgen.Params) []string {
 	return out
 }
 
+// farHeights is a backdrop's height function.
+type farHeights interface {
+	Height(x, z float64) float64
+}
+
 // farLattice is the backdrop's samples.
 type farLattice struct {
-	cell     float64
-	r        float64 // the far square's half side
-	o        float64 // the stitch's outer half side: the map's half + one cell
-	n        int     // samples a side
-	h        []float32
-	lo, hi   float32
-	minX     float64
-	segments []float64 // the tile boundaries along an axis, -r..r
+	cell       float64
+	cx, cz     float64 // the map's (and the far square's) centre
+	r          float64 // the far square's half side
+	o          float64 // the stitch's outer half side: the map's half + one cell
+	n          int     // samples a side
+	h          []float32
+	lo, hi     float32
+	minX, minZ float64
+	// segX and segZ are the tile boundaries along each axis, world.
+	segX, segZ []float64
 }
 
 func (l *farLattice) at(i, j int) float32 { return l.h[j*l.n+i] }
 
-// index is the lattice index of coordinate v (on the lattice).
-func (l *farLattice) index(v float64) int { return int(math.Round((v - l.minX) / l.cell)) }
+// normal is the lattice's normal at (i, j), by central differences over
+// the whole lattice: ring tiles and the stitch's outer edge agree on it.
+func (l *farLattice) normal(i, j int) mgl32.Vec3 {
+	at := func(i, j int) float32 { return l.at(min(max(i, 0), l.n-1), min(max(j, 0), l.n-1)) }
+	return meshout.FieldNormal(at, i, j, l.n-1, l.n-1, 1, l.cell)
+}
+
+// ix and iz are the lattice indices of world X and Z coordinates (on the
+// lattice).
+func (l *farLattice) ix(v float64) int { return int(math.Round((v - l.minX) / l.cell)) }
+func (l *farLattice) iz(v float64) int { return int(math.Round((v - l.minZ) / l.cell)) }
 
 // splitSpan cuts [a, b] (a whole number of cells) into pieces of at most
 // size, each a whole number of cells, as even as that allows.
@@ -109,20 +136,22 @@ func splitSpan(a, b, cell, size float64) []float64 {
 	return append(out, b)
 }
 
-func buildFarLattice(rc *procgen.RunContext, ff *terrain.FarField, half, cell, reach, tile float64) (*farLattice, error) {
+// buildFarLattice samples ff over the far square round a map of half side
+// half centred on (cx, cz).
+func buildFarLattice(rc *procgen.RunContext, ff farHeights, cx, cz, half, cell, reach, tile float64) (*farLattice, error) {
 	o := half + cell
 	k := int(math.Ceil(math.Max(reach-cell, cell) / cell))
 	r := o + float64(k)*cell
-	l := &farLattice{cell: cell, r: r, o: o, minX: -r}
+	l := &farLattice{cell: cell, cx: cx, cz: cz, r: r, o: o, minX: cx - r, minZ: cz - r}
 	l.n = int(math.Round(2*r/cell)) + 1
 	l.h = make([]float32, l.n*l.n)
 	err := rc.Parallel(l.n, func(j int) error {
 		if err := rc.Err(); err != nil {
 			return err
 		}
-		z := -r + float64(j)*cell
+		z := l.minZ + float64(j)*cell
 		for i := 0; i < l.n; i++ {
-			l.h[j*l.n+i] = float32(ff.Height(-r+float64(i)*cell, z))
+			l.h[j*l.n+i] = float32(ff.Height(l.minX+float64(i)*cell, z))
 		}
 		return nil
 	})
@@ -133,30 +162,51 @@ func buildFarLattice(rc *procgen.RunContext, ff *terrain.FarField, half, cell, r
 	for _, v := range l.h {
 		l.lo, l.hi = min(l.lo, v), max(l.hi, v)
 	}
-	segs := splitSpan(-r, -o, cell, tile)
-	segs = append(segs, splitSpan(-o, o, cell, tile)[1:]...)
-	l.segments = append(segs, splitSpan(o, r, cell, tile)[1:]...)
+	l.segX, l.segZ = farSegments(cx, r, o, cell, tile), farSegments(cz, r, o, cell, tile)
 	return l, nil
+}
+
+// farSegments is the ring's tile boundaries along one axis about the map's
+// centre c: the far square's half side r, the stitch's outer half side o
+// (region_material_tiles.go recomputes a ring tile's extent with it).
+func farSegments(c, r, o, cell, tile float64) []float64 {
+	segs := splitSpan(c-r, c-o, cell, tile)
+	segs = append(segs, splitSpan(c-o, c+o, cell, tile)[1:]...)
+	return append(segs, splitSpan(c+o, c+r, cell, tile)[1:]...)
 }
 
 // writeFar builds, cooks and places the backdrop; meta gains its record.
 func writeFar(rc *procgen.RunContext, s *terrain.Settings, res *terrain.Result, meta *terrain.Meta, tp tilePlan, cook bool) error {
+	if t := rc.Params.Float("far_terrace"); t != 1 {
+		fs := *s
+		fs.Strata.Terrace *= t
+		s = &fs
+	}
+	return writeFarWith(rc, res.Grid, meta, tp, cook, func(cell, blend, reach float64) farHeights {
+		return terrain.NewFarField(s, res, cell, blend, reach)
+	})
+}
+
+// writeFarWith is writeFar for any height source round the map grid g
+// (mk is called only when the backdrop is asked for).
+func writeFarWith(rc *procgen.RunContext, g *terrain.Grid, meta *terrain.Meta, tp tilePlan, cook bool,
+	mk func(cell, blend, reach float64) farHeights) error {
 	p := rc.Params
 	reach := p.Float("far")
 	if reach <= 0 || !cook {
 		return nil
 	}
 	t0 := time.Now()
-	g := res.Grid
 	half := g.Size() / 2
+	cx, cz := g.MinX+half, g.MinZ+half
 	cell := p.Float("far_cell")
-	ff := terrain.NewFarField(s, res, cell, p.Float("far_blend"), reach)
-	l, err := buildFarLattice(rc, ff, half, cell, reach, p.Float("far_tile"))
+	ff := mk(cell, p.Float("far_blend"), reach)
+	l, err := buildFarLattice(rc, ff, cx, cz, half, cell, reach, p.Float("far_tile"))
 	if err != nil {
 		return err
 	}
 	fm := &terrain.FarMeta{Cell: cell, Reach: reach, Blend: p.Float("far_blend"), Samples: l.n,
-		Bounds: terrain.Bounds{MinX: -l.r, MinZ: -l.r, MaxX: l.r, MaxZ: l.r, MinY: l.lo, MaxY: l.hi},
+		Bounds: terrain.Bounds{MinX: l.minX, MinZ: l.minZ, MaxX: cx + l.r, MaxZ: cz + l.r, MinY: l.lo, MaxY: l.hi},
 		Height: terrain.Height{File: terrain.FarHeightFile, Lo: l.lo, Hi: l.hi, Encoding: "u16"}}
 	png, err := terrain.EncodeGray16(l.n, l.n, l.h, l.lo, l.hi)
 	if err != nil {
@@ -175,12 +225,11 @@ func writeFar(rc *procgen.RunContext, s *terrain.Settings, res *terrain.Result, 
 		x0, x1, z0, z1 float64
 	}
 	var tiles []farTile
-	segs := l.segments
-	inner := func(a, b float64) bool { return a >= -l.o-1e-6 && b <= l.o+1e-6 }
-	for b := 0; b+1 < len(segs); b++ {
-		for a := 0; a+1 < len(segs); a++ {
-			x0, x1, z0, z1 := segs[a], segs[a+1], segs[b], segs[b+1]
-			if inner(x0, x1) && inner(z0, z1) {
+	inner := func(c, a, b float64) bool { return a >= c-l.o-1e-6 && b <= c+l.o+1e-6 }
+	for b := 0; b+1 < len(l.segZ); b++ {
+		for a := 0; a+1 < len(l.segX); a++ {
+			x0, x1, z0, z1 := l.segX[a], l.segX[a+1], l.segZ[b], l.segZ[b+1]
+			if inner(cx, x0, x1) && inner(cz, z0, z1) {
 				continue
 			}
 			tiles = append(tiles, farTile{fmt.Sprintf("far_%d_%d", a, b), x0, x1, z0, z1})
@@ -193,12 +242,13 @@ func writeFar(rc *procgen.RunContext, s *terrain.Settings, res *terrain.Result, 
 		}
 		t := tiles[k]
 		cx, cz := float32((t.x0+t.x1)/2), float32((t.z0+t.z1)/2)
-		i0, j0 := l.index(t.x0), l.index(t.z0)
+		i0, j0 := l.ix(t.x0), l.iz(t.z0)
 		hg := meshout.HeightGrid{
 			X0: float32(t.x0) - cx, Z0: float32(t.z0) - cz, SizeX: float32(t.x1 - t.x0), SizeZ: float32(t.z1 - t.z0),
-			NX: l.index(t.x1) - i0, NZ: l.index(t.z1) - j0,
+			NX: l.ix(t.x1) - i0, NZ: l.iz(t.z1) - j0,
 			Closed: true, Base: base, UVScale: uvs, UVOffset: [2]float32{cx * uvs, cz * uvs},
 			Height: func(i, j int) float32 { return l.at(i0+i, j0+j) },
+			Normal: func(i, j int) mgl32.Vec3 { return l.normal(i0+i, j0+j) },
 		}
 		var b meshout.Builder
 		b.Slot("ground", tex)
@@ -265,8 +315,11 @@ func stripMesh(g *terrain.Grid, tp tilePlan, l *farLattice, side byte, ti, tj in
 	cx, cz := float64(centre.X), float64(centre.Z)
 	var b meshout.Builder
 	b.Slot("ground", tex)
-	vert := func(x, y, z float64) uint32 {
-		return b.Vertex(mgl32.Vec3{float32(x - cx), float32(y), float32(z - cz)}, mgl32.Vec3{},
+	// Every vertex takes its field's normal: the inner edge the map's (as
+	// the edge tile's rim has it), the outer the lattice's (as the ring's),
+	// so the strip shades into both with no line at either edge.
+	vert := func(x, y, z float64, n mgl32.Vec3) uint32 {
+		return b.Vertex(mgl32.Vec3{float32(x - cx), float32(y), float32(z - cz)}, n,
 			mgl32.Vec2{float32(x) * uvs, float32(z) * uvs})
 	}
 	tri := func(a, c, d uint32, pa, pc, pd [3]float64) {
@@ -282,12 +335,12 @@ func stripMesh(g *terrain.Grid, tp tilePlan, l *farLattice, side byte, ti, tj in
 	ts := tp.size
 	x0 := g.MinX + float64(ti)*ts
 	z0 := g.MinZ + float64(tj)*ts
-	half := g.Size() / 2
 	type pt struct {
 		p [3]float64
 		v uint32
 	}
-	mk := func(x, y, z float64) pt { return pt{[3]float64{x, y, z}, vert(x, y, z)} }
+	mk := func(x, y, z float64, n mgl32.Vec3) pt { return pt{[3]float64{x, y, z}, vert(x, y, z, n)} }
+	lat := func(x, z float64) mgl32.Vec3 { return l.normal(l.ix(x), l.iz(z)) }
 	// Inner (the tile's rim) and outer (the lattice) runs, both along the
 	// side in increasing coordinate.
 	var in, out []pt
@@ -308,19 +361,19 @@ func stripMesh(g *terrain.Grid, tp tilePlan, l *farLattice, side byte, ti, tj in
 	}
 	for k := 0; k <= n; k++ {
 		x, z, gi, gj := along(k)
-		in = append(in, mk(x, float64(g.At(gi, gj)), z))
+		in = append(in, mk(x, float64(g.At(gi, gj)), z, gridNormal(g, gi, gj, tp.step)))
 	}
 	var fixed float64
 	var a0, a1 float64
 	switch side {
 	case 's':
-		fixed, a0, a1 = -l.o, x0, x0+ts
+		fixed, a0, a1 = l.cz-l.o, x0, x0+ts
 	case 'n':
-		fixed, a0, a1 = l.o, x0, x0+ts
+		fixed, a0, a1 = l.cz+l.o, x0, x0+ts
 	case 'w':
-		fixed, a0, a1 = -l.o, z0, z0+ts
+		fixed, a0, a1 = l.cx-l.o, z0, z0+ts
 	default:
-		fixed, a0, a1 = l.o, z0, z0+ts
+		fixed, a0, a1 = l.cx+l.o, z0, z0+ts
 	}
 	for a := a0; a <= a1+1e-6; a += l.cell {
 		var x, z float64
@@ -329,7 +382,7 @@ func stripMesh(g *terrain.Grid, tp tilePlan, l *farLattice, side byte, ti, tj in
 		} else {
 			x, z = fixed, a
 		}
-		out = append(out, mk(x, float64(l.at(l.index(x), l.index(z))), z))
+		out = append(out, mk(x, float64(l.at(l.ix(x), l.iz(z))), z, lat(x, z)))
 	}
 	coord := func(q pt) float64 {
 		if side == 's' || side == 'n' {
@@ -350,7 +403,13 @@ func stripMesh(g *terrain.Grid, tp tilePlan, l *farLattice, side byte, ti, tj in
 	// A corner: the map's corner, the two runs' ends one cell out, and the
 	// lattice's corner. The south and north strips of the end tiles own them.
 	corner := func(cxs, czs float64) {
-		mx, mz := cxs*half, czs*half
+		mx, mz := g.MinX, g.MinZ
+		if cxs > 0 {
+			mx = g.MinX + g.Size()
+		}
+		if czs > 0 {
+			mz = g.MinZ + g.Size()
+		}
 		gi, gj := 0, 0
 		if cxs > 0 {
 			gi = g.N
@@ -358,11 +417,11 @@ func stripMesh(g *terrain.Grid, tp tilePlan, l *farLattice, side byte, ti, tj in
 		if czs > 0 {
 			gj = g.N
 		}
-		c0 := mk(mx, float64(g.At(gi, gj)), mz)
-		ox, oz := cxs*l.o, czs*l.o
-		c1 := mk(ox, float64(l.at(l.index(ox), l.index(mz))), mz)
-		c2 := mk(ox, float64(l.at(l.index(ox), l.index(oz))), oz)
-		c3 := mk(mx, float64(l.at(l.index(mx), l.index(oz))), oz)
+		c0 := mk(mx, float64(g.At(gi, gj)), mz, gridNormal(g, gi, gj, tp.step))
+		ox, oz := l.cx+cxs*l.o, l.cz+czs*l.o
+		c1 := mk(ox, float64(l.at(l.ix(ox), l.iz(mz))), mz, lat(ox, mz))
+		c2 := mk(ox, float64(l.at(l.ix(ox), l.iz(oz))), oz, lat(ox, oz))
+		c3 := mk(mx, float64(l.at(l.ix(mx), l.iz(oz))), oz, lat(mx, oz))
 		tri(c0.v, c1.v, c2.v, c0.p, c1.p, c2.p)
 		tri(c0.v, c2.v, c3.v, c0.p, c2.p, c3.p)
 	}

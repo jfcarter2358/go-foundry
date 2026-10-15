@@ -171,7 +171,9 @@ func genParamRow(s *procgen.Stage, k *procgen.StageKind, path genParamPath, def 
 		genCurveWidget(def, label, &nv, id)
 	case procgen.ParamList:
 		genListWidget(s, k, path, def, label, cur, id)
-		genResetButton(s, k, path, set, def)
+		if !def.ReadOnly {
+			genResetButton(s, k, path, set, def)
+		}
 		return
 	default:
 		if genScalarWidget(def, label, &nv, s, k) {
@@ -568,6 +570,12 @@ func genListWidget(s *procgen.Stage, k *procgen.StageKind, path genParamPath, de
 		return
 	}
 	defer imgui.TreePop()
+	if def.ReadOnly {
+		// Something else writes this list (the regions stage's, synced from
+		// the level): show it, dimmed, with no way to change it here.
+		genReadOnlyList(s, k, path, def, cur)
+		return
+	}
 	write := func(v procgen.Value) {
 		GeneratorPushUndo()
 		genSetValueAt(k.Params, s.Params, path, v)
@@ -624,4 +632,37 @@ func genListWidget(s *procgen.Stage, k *procgen.StageKind, path genParamPath, de
 		}
 	}
 	genAssetListBrowse(s, path, def)
+}
+
+// genReadOnlyList draws a ReadOnly list: a note, then each item's fields
+// dimmed and inert (no move, remove or add).
+func genReadOnlyList(s *procgen.Stage, k *procgen.StageKind, path genParamPath, def *procgen.ParamDef, cur procgen.Value) {
+	editorTextMutedWrapped("Read-only: synced from the level before every run and preview. " +
+		"Edit it there (e.g. region volumes in the level editor).")
+	if len(cur.Items) == 0 {
+		editorTextMuted("(none)")
+	}
+	for i := range cur.Items {
+		imgui.PushID(fmt.Sprintf("item%d", i))
+		label := fmt.Sprintf("%d", i+1)
+		if id := cur.Items[i].Str("id"); id != "" {
+			label = id
+		}
+		if imgui.TreeNodeV(label+"##it", 0) {
+			imguibackend.EditorPushDisabled(true)
+			for f := range def.Fields {
+				fd := &def.Fields[f]
+				if fd.Type == procgen.ParamSpline {
+					// A disabled tree node cannot open, so say what it holds.
+					v, _ := genValueAt(k.Params, s.Params, path.child(i, fd.Name))
+					imgui.Text(fmt.Sprintf("%s: %d points", fd.DisplayLabel(), len(v.Points)))
+					continue
+				}
+				genParamRow(s, k, path.child(i, fd.Name), fd)
+			}
+			imguibackend.EditorPopDisabled()
+			imgui.TreePop()
+		}
+		imgui.PopID()
+	}
 }

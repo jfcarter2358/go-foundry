@@ -123,6 +123,7 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 	// spawned asks for — is queued for it rather than done here (gfx/sim_gl.go).
 	gfx.BeginSimStep()
 	defer gfx.EndSimStep()
+	stepDT = dt
 
 	render.ProfileBegin("player & vehicles")
 	if g.Play() {
@@ -349,6 +350,16 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 		// ("a light moved") needs no answer here any more.
 		world.AdvanceWaypointFollowers(lvl, dt)
 	}
+	// The third-person body (third_person.go), after the camera so it reads
+	// this frame's boom: at the feet, facing its motion, playing the clip its
+	// motion picks — on entityDT, so a hard pause stops its clip as it stops
+	// every placed entity's, and held still behind a pause menu. Hidden while
+	// the editor owns the frame.
+	bodyDT := entityDT
+	if !g.Play() {
+		bodyDT = 0
+	}
+	UpdatePlayerBody(lvl, bodyDT, !g.Dev)
 	render.ProfileEnd() // frames & waypoints
 
 	// Particles, after the frames they may be riding have been republished and

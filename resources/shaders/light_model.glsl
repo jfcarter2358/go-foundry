@@ -26,6 +26,59 @@ vec3 ambientAt(vec3 ambient, vec3 n) {
     return ambient * (1.0 + 0.5 * clamp(ambientHemisphere, 0.0, 1.0) * n.y);
 }
 
+// ---------- Ambient volumes (world/volume_ambient.go) ----------
+//
+// Regions the sky's light does not reach — a cave, a slot canyon — for the
+// frames live GI is not there to find that out. Inside one the sky term above
+// is multiplied by its sky factor (surfaces facing up) or ground factor
+// (facing down), eased in over its fade from the walls. The darkest volume a
+// point is in wins.
+
+// ambVolInside is how far inside ambient volume i the point p is, in metres
+// (<= 0 outside): the shape's own normalised space, scaled back by its half
+// extents. Mirrors world.shapeInsideDepth.
+float ambVolInside(int i, vec3 p) {
+    vec3 q = ambVolBasis[i] * (p - ambVolCenter[i].xyz);
+    vec3 h = ambVolHalf[i].xyz;
+    int shape = int(ambVolCenter[i].w + 0.5);
+    if (shape == 1) {
+        return (1.0 - length(q)) * min(h.x, min(h.y, h.z));
+    }
+    if (shape == 2) {
+        return min((1.0 - length(q.xz)) * min(h.x, h.z), (1.0 - abs(q.y)) * h.y);
+    }
+    vec3 d = (1.0 - abs(q)) * h;
+    return min(d.x, min(d.y, d.z));
+}
+
+// ambVolWeight is how fully volume i's cut applies at p: 0 outside, 1 a fade
+// or more inside.
+float ambVolWeight(int i, vec3 p) {
+    float inside = ambVolInside(i, p);
+    if (inside <= 0.0) {
+        return 0.0;
+    }
+    float fade = ambVolHalf[i].w;
+    return fade > 0.0 ? clamp(inside / fade, 0.0, 1.0) : 1.0;
+}
+
+// ambientVolumeFactor is the multiplier on the sky light at p for a surface
+// of normal n: 1 outside every ambient volume.
+float ambientVolumeFactor(vec3 p, vec3 n) {
+    float f = 1.0;
+    for (int i = 0; i < MAX_AMBIENT_VOLUMES; ++i) {
+        if (i >= numAmbVolumes) {
+            break;
+        }
+        float w = ambVolWeight(i, p);
+        if (w > 0.0) {
+            float k = mix(ambVolParams[i].y, ambVolParams[i].x, clamp(0.5 + 0.5 * n.y, 0.0, 1.0));
+            f = min(f, mix(1.0, k, w));
+        }
+    }
+    return f;
+}
+
 // ---------- Live global illumination (render/gi.go) ----------
 //
 // Bounce light from a grid of probes around the camera, traced every frame
@@ -373,7 +426,7 @@ vec3 giDebugAlbedo(vec3 albedo) {
 }
 
 vec3 ambientLight(vec3 ambient, vec3 p, vec3 n) {
-    vec3 sky = ambientAt(ambient, n);
+    vec3 sky = ambientAt(ambient, n) * ambientVolumeFactor(p, n);
     if (giEnabled == 0) {
         return sky;
     }

@@ -95,7 +95,48 @@ func avoidDiscs(rc *procgen.RunContext, id string) ([]place.Disc, error) {
 	if fa, ok := a.(*FootprintsArtifact); ok {
 		return fa.Discs, nil
 	}
+	if ra, ok := a.(*RuinsArtifact); ok {
+		return ruinsDiscs(ra), nil
+	}
 	return nil, fmt.Errorf("stage %s has no footprints", id)
+}
+
+// ruinsDiscs is a ruins stage's ground covered as footprints: its terraces
+// and plinths filled with overlapping discs, its stairs as a row down each
+// flight — so rocks and plants scattered round the ruins keep off their
+// floors, treads and walkways.
+func ruinsDiscs(ra *RuinsArtifact) []place.Disc {
+	const step, r = 2.0, 1.6
+	var out []place.Disc
+	quad := func(c [4][2]float64) {
+		// The quad as an origin and two edge vectors (corners in order).
+		ox, oz := c[0][0], c[0][1]
+		ux, uz := c[1][0]-ox, c[1][1]-oz
+		vx, vz := c[3][0]-ox, c[3][1]-oz
+		nu := max(int(math.Ceil(math.Hypot(ux, uz)/step)), 1)
+		nv := max(int(math.Ceil(math.Hypot(vx, vz)/step)), 1)
+		for i := 0; i <= nu; i++ {
+			for j := 0; j <= nv; j++ {
+				a, b := float64(i)/float64(nu), float64(j)/float64(nv)
+				out = append(out, place.Disc{X: ox + a*ux + b*vx, Z: oz + a*uz + b*vz, R: r})
+			}
+		}
+	}
+	for _, t := range ra.Terraces {
+		quad(t.Corners)
+	}
+	for _, t := range ra.Plinths {
+		quad(t.Corners)
+	}
+	for _, st := range ra.Stairs {
+		dx, dz := st.To[0]-st.From[0], st.To[2]-st.From[2]
+		n := max(int(math.Ceil(math.Hypot(dx, dz)/step)), 1)
+		for i := 0; i <= n; i++ {
+			f := float64(i) / float64(n)
+			out = append(out, place.Disc{X: st.From[0] + f*dx, Z: st.From[2] + f*dz, R: st.Width/2 + 0.8})
+		}
+	}
+	return out
 }
 
 func runScatter(rc *procgen.RunContext) error {
@@ -149,13 +190,33 @@ func runScatter(rc *procgen.RunContext) error {
 		return err
 	}
 	res, err := place.Scatter(g, place.ScatterSettings{Rules: rules, Seed: rc.Seed, CliffThreshold: p.Float("cliff_threshold"),
-		Margin: p.Float("margin"), Avoid: avoid, Progress: func(f float32) { rc.Progress(0.9 * f) }}, &rc.Env)
+		Margin: p.Float("margin"), Avoid: avoid, Region: placeRegion(&rc.Env), Progress: func(f float32) { rc.Progress(0.9 * f) }}, &rc.Env)
 	if err != nil {
 		return err
 	}
 	scatterLog(&rc.Env, res, rules)
 	counts := make([]int, len(rules))
 	var discs []place.Disc
+	// Each rule's draw distances, and its trees' impostors — baked for the
+	// variants a placement uses (scatter_draw.go).
+	draws := make([]drawRule, len(rules))
+	for k := range rules {
+		draws[k] = drawRuleOf(items[idx[k]], arts[items[idx[k]].Str("rocks")], &rules[k], rc.Env.Region != nil)
+	}
+	imps := map[string]string{}
+	for k := range res.Instances {
+		in := &res.Instances[k]
+		v := &rules[in.Rule].Variants[in.Variant]
+		if _, done := imps[v.Model]; done || !draws[in.Rule].wantsImpostor(v) {
+			continue
+		}
+		path, err := ensureImpostor(rc.Logf, v.Model)
+		if err != nil {
+			// A tree without its far tier is still a tree.
+			rc.Logf("warning: %v — drawn without an impostor", err)
+		}
+		imps[v.Model] = path
+	}
 	pls := make([]procgen.Placement, 0, len(res.Instances))
 	for k := range res.Instances {
 		in := &res.Instances[k]
@@ -163,6 +224,11 @@ func runScatter(rc *procgen.RunContext) error {
 		counts[in.Rule]++
 		pl := placementOf(fmt.Sprintf("%s_%05d", r.Name, counts[in.Rule]), in, &r.Variants[in.Variant])
 		pl.Material = mats[in.Rule]
+		imp := ""
+		if draws[in.Rule].wantsImpostor(&r.Variants[in.Variant]) {
+			imp = imps[r.Variants[in.Variant].Model]
+		}
+		draws[in.Rule].applyDraw(&pl, &r.Variants[in.Variant], in.Scale, imp)
 		pls = append(pls, pl)
 		discs = append(discs, in.Disc())
 	}

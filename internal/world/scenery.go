@@ -93,6 +93,22 @@ type Scenery struct {
 	// unload_when_disabled its buffers are released too (chunk_enable.go).
 	Chunk string
 
+	// DrawDistance is how far from the camera the placement is drawn, in
+	// metres; it fades out (a dither per pixel, per instance) over the last
+	// tenth (scenery_draw.go). 0, the default, is no limit — what every
+	// placement did before it existed. ShadowDistance is how far it casts
+	// (0: as far as it is drawn).
+	DrawDistance   float32
+	ShadowDistance float32
+	// Impostor is a far stand-in for a cooked mesh: a cooked .fnm of a few
+	// textured cards baked from it (internal/impostor), drawn instead of the
+	// mesh from ImpostorDistance out to DrawDistance, the two cross-faded by
+	// complementary dithers over a tenth of ImpostorDistance. "" is none.
+	// Drawn only by the GPU-driven cull (NaniteGPU); the classic path draws
+	// the mesh to DrawDistance.
+	Impostor         string
+	ImpostorDistance float32
+
 	// ---------- runtime, never authored and never saved ----------
 
 	// ChunkOff is whether Chunk is switched off, stamped by
@@ -119,6 +135,9 @@ type Scenery struct {
 	// it. Off, the Submeshes are uploaded and drawn as any model's are.
 	Nanite    *nanite.Mesh
 	NaniteGPU bool
+	// ImpostorMesh is Impostor loaded (shared, never modified), when the GPU
+	// cull draws the placement; nil otherwise.
+	ImpostorMesh *nanite.Mesh
 	// NoNanite keeps a cooked mesh on the classic path even when the GPU cull
 	// could draw it: for a placement that is not in the level's list, such as
 	// the editor's placement ghost, which nothing would otherwise draw.
@@ -499,7 +518,26 @@ func (s *Scenery) loadNanite() error {
 		g.Model = mgl32.Ident4()
 		s.Submeshes = append(s.Submeshes, g)
 	}
+	s.loadImpostor()
 	return nil
+}
+
+// loadImpostor loads the placement's far stand-in (Impostor), logging rather
+// than failing: a missing impostor costs the far tier, never the placement,
+// which then draws its mesh out to DrawDistance.
+func (s *Scenery) loadImpostor() {
+	if s.Impostor == "" || !nanite.IsCookedPath(s.Impostor) {
+		return
+	}
+	m, err := nanite.Load(fileutil.ResolveAssetPath(s.Impostor))
+	if err != nil {
+		log.Printf("scenery %s: impostor %q: %v — the mesh is drawn instead", s.ID, s.Impostor, err)
+		return
+	}
+	for si := range m.Slots {
+		ensureSceneryTexture(s.ID, m.Slots[si].Texture)
+	}
+	s.ImpostorMesh = m
 }
 
 // ensureSceneryTexture loads tex for placement id, logging rather than
@@ -597,6 +635,7 @@ func (s *Scenery) Delete() {
 	s.classic = nil
 	s.LocalMin, s.LocalMax = mgl32.Vec3{}, mgl32.Vec3{}
 	s.Nanite, s.NaniteGPU = nil, false
+	s.ImpostorMesh = nil
 }
 
 // HasGeometry reports whether there is anything uploaded to draw.
@@ -704,6 +743,11 @@ func SceneryFromRaw(r RawScenery) Scenery {
 		Collision: collisionModeFromRaw(r.ID, r.Collision),
 		Wind:      sceneryWindFromRaw(r.Wind),
 		Chunk:     r.Chunk,
+
+		DrawDistance:     max(r.DrawDistance, 0),
+		ShadowDistance:   max(r.ShadowDistance, 0),
+		Impostor:         r.Impostor,
+		ImpostorDistance: max(r.ImpostorDistance, 0),
 	}
 }
 
@@ -752,6 +796,11 @@ func SceneryToRaw(s *Scenery) RawScenery {
 
 		Materials: copyStringMap(s.Materials),
 		Material:  s.Material,
+
+		DrawDistance:     s.DrawDistance,
+		ShadowDistance:   s.ShadowDistance,
+		Impostor:         s.Impostor,
+		ImpostorDistance: s.ImpostorDistance,
 	}
 	if s.Collision != meshcollide.ModeAuto {
 		r.Collision = s.Collision.String()

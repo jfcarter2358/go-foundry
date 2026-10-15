@@ -168,7 +168,7 @@ surface can wear them.
 | Effect | Does | Main settings |
 | --- | --- | --- |
 | **Triplanar** | The surface's own texture and normal map projected along the three world axes, blended by the normal. Upright: the side projections keep the texture's top toward the sky, so bedding stays level | `scale` (m a repeat), `sharpness`, `upright` |
-| **Splat (terrain layers)** | Up to four layers mixed by a **weights** texture laid over a world rectangle (red the first layer's weight, green the second's, blue, alpha), height-blended by each layer's `_height`, with its `_normal` and `_ao`. A layer can be triplanar; a **strata** ramp (a strip of tints read by world height) bands the triplanar layers. The surface's own texture is not drawn | `weights`, `bounds_min/max`, `layer1..4` + `_scale`, `_triplanar`, `_height`, `_tint`; `blend`, `ao`; `strata`, `strata_range`, `strata_strength`, `strata_warp`; `bedding`, `bedding_spacing`, `wall_normal` (phase 7: ledges bent into the triplanar layers' normals on steep faces, and a stronger normal map on walls); `layer1..4_relief` (phase 8: parallax depth in metres for a top-down layer — its height map moves its texels along the view so stones stand up off the ground, crevices darkened; fades with distance); `layer1..4_anti_tile` (phase 8: the layer is laid in patches about a repeat across, each shifted — and, top down, turned — its own way and height-blended where they meet, so no feature recurs on a grid; about half again the layer's texture reads) |
+| **Splat (terrain layers)** | Up to four layers (eight with `weights2`: see "Eight layers" below) mixed by a **weights** texture laid over a world rectangle (red the first layer's weight, green the second's, blue, alpha), height-blended by each layer's `_height`, with its `_normal` and `_ao`. A layer can be triplanar; a **strata** ramp (a strip of tints read by world height) bands the triplanar layers. The surface's own texture is not drawn | `weights`, `bounds_min/max`, `layer1..4` + `_scale`, `_triplanar`, `_height`, `_tint`; `blend`, `ao`; `strata`, `strata_range`, `strata_strength`, `strata_warp`; `bedding`, `bedding_spacing`, `wall_normal` (phase 7: ledges bent into the triplanar layers' normals on steep faces, and a stronger normal map on walls); `layer1..4_relief` (phase 8: parallax depth in metres for a top-down layer — its height map moves its texels along the view so stones stand up off the ground, crevices darkened; fades with distance); `layer1..4_anti_tile` (phase 8: the layer is laid in patches about a repeat across, each shifted — and, top down, turned — its own way and height-blended where they meet, so no feature recurs on a grid; about half again the layer's texture reads) |
 | **Ground blend** | Fades the surface toward the ground's colour within a band above the ground's height — a rock's foot takes the sand's colour, which hides the seam — with a contact shadow at the line | `ground` (colour map), `height` (16-bit map: red high byte, green low), `bounds_min/max`, `height_range`, `band`, `breakup`, `strength`, `contact` |
 | **Streaks (desert varnish)** | Dark vertical streaks down steep faces and a darkening under overhangs, in world space, so a wall of many pieces streaks as one | `strength`, `scale` (width), `length`, `color`, `overhang` |
 | **Detail normal** | A second normal map at a small scale, world-projected, fading out with distance | `map`, `scale`, `strength`, `distance` |
@@ -184,6 +184,25 @@ layer (`FOUNDRY_SPLAT_MAX_SIZE`); the data maps are read exactly, never
 compressed. Every effect is a branch a surface without it does not take, so
 nothing else draws differently, and they look the same on the forward path,
 the classic path and the Nanite visibility buffer.
+
+**Eight layers.** A splat with `weights2` and any of `layer5..8` mixes eight
+layers: layers 5–8 take `weights2`'s red, green, blue and alpha over the
+same rectangle, with the same per-layer settings (`layer5..8_scale`,
+`_triplanar`, `_height`, `_tint`, `_anti_tile`, `_relief`). All eight are
+height-blended together, so where two biomes meet their layers settle by
+their height maps. This is what a world generator's
+[region_material](33-generators.md#region_material-materials) writes for a
+world of two environments. More than four distinct layers pack into 4×2
+atlases on the same two units, at most 1024² a layer by default (the pair
+is 4352×2176; `FOUNDRY_SPLAT_MAX_SIZE` still caps it). It costs one more
+texture unit (the second weights map), and a pixel reads only the layers
+whose weight can still win, as with four. A splat that names no layer 5–8
+is the four-layer splat exactly — same atlas, same shader path (layers 5–8
+are behind their own effect bit, compiled out of the visibility buffer's
+four-layer variants). `layer1..8_strata` (default on) says whether the
+strata ramp and the bedding band a triplanar layer: a region material turns
+it off on every environment's rock but the lead's, whose strata the ramp
+is.
 
 `desert_rock`, `desert_ground` and `rock_foot` are the shipped examples (with
 stand-in maps; a generator writes the real ones).

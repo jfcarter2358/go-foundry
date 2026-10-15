@@ -21,9 +21,26 @@ package gfx
 // to build, a ground blend whose maps are missing) leaves its bit off, so the
 // surface draws as if it did not carry it rather than sampling black.
 //
-// The textures are on units 24-30 (FxUnit*), which nothing else that links
+// The textures are on units 24-31 (FxUnit*), which nothing else that links
 // fragment.glsl uses — but the samplers point there only while an effect
 // draws (see BindSurfaceFxSamplers for why, and for where they rest).
+//
+// EIGHT-LAYER SPLAT (docs/regions/PHASE_3.md). A splat in eight-layer mode
+// (material.SurfaceFx.SplatEight) also binds its second weights map on unit
+// 31 and writes layers 5–8's uniforms (the *2 vec4s, the tints' second
+// half), and sets its own matFx bit, fxSplat8, which is the shader's ONLY
+// way into the 5–8 code. A four-layer splat leaves that bit off, so its
+// pixels run the four-layer path; the visibility buffer's material
+// variants (render/nanite_vis_variants.go) also compile that path out of
+// every bin that has no eight-layer surface.
+//
+// SHARED ATLAS (docs/regions/PHASE_6.md, "Per-tile materials"). A splat
+// whose `atlas1..8` name a set of layers (material.SurfaceFx.SplatAtlas) is
+// packed into THAT set's atlas, and each of its layers samples the tile of
+// the same texture there (splatLayerTiles). A region terrain's four-layer
+// tile material names its eight-layer union's layers, so the two share one
+// atlas pair — no second copy in video memory — and a tile and its
+// eight-layer neighbour read the very same texels at the same mips.
 
 import (
 	"math"
@@ -45,6 +62,10 @@ const (
 	FxUnitGroundColor  = 28
 	FxUnitGroundHeight = 29
 	FxUnitDetail       = 30
+	// FxUnitSplatWeights2 is an eight-layer splat's second weights map
+	// (layers 5–8). 31: free in every program that links fragment.glsl
+	// (render's TestFxUnitsAreFree).
+	FxUnitSplatWeights2 = 31
 )
 
 // The matFx bits: surface_fx.glsl's FX_*.
@@ -56,16 +77,25 @@ const (
 	fxDetail
 	fxMacro
 	fxGrade
+	// fxSplat8 is the splat's eight-layer mode, set beside fxSplat.
+	fxSplat8
 )
 
 // FxLocs is one program's locations for the effects' uniforms.
 type FxLocs struct {
-	mask, triplanar                                    int32
-	splatWeights, splatAlbedo, splatNormal             int32
-	splatRect, splatInvScale, splatTri, splatHeight    int32
-	splatLayer, splatTint, splatParams, splatAtlas     int32
-	strata, strataParams, splatBedding                 int32
-	splatAnti, splatRelief                             int32
+	mask, triplanar                                 int32
+	splatWeights, splatAlbedo, splatNormal          int32
+	splatRect, splatInvScale, splatTri, splatHeight int32
+	splatLayer, splatTint, splatParams, splatAtlas  int32
+	strata, strataParams, splatBedding              int32
+	splatAnti, splatRelief, splatRipple             int32
+	// Eight-layer mode: the second weights map, layers 5–8's vec4s, the
+	// per-layer strata switches and the atlas's columns.
+	splatWeights2, splatInvScale2, splatTri2, splatHeight2 int32
+	splatLayer2, splatAnti2, splatRelief2                  int32
+	splatStrataOn, splatStrataOn2, splatCols               int32
+	// splatRows is a palette atlas's rows (fxSplatRows; 2 otherwise).
+	splatRows                                          int32
 	groundColor, groundHeight, groundRect, groundRange int32
 	groundParams                                       int32
 	streaks, streakColor                               int32
@@ -94,6 +124,11 @@ func NewFxLocs(prog uint32) FxLocs {
 		detail: loc("fxDetail"), detailParams: loc("fxDetailParams"),
 		macro: loc("fxMacro"), gradeMatch: loc("fxGradeMatch"), gradeHS: loc("fxGradeHS"), gradeTint: loc("fxGradeTint"),
 		splatBedding: loc("fxSplatBedding"), splatAnti: loc("fxSplatAnti"), splatRelief: loc("fxSplatRelief"),
+		splatRipple:   loc("fxSplatRipple"),
+		splatWeights2: loc("fxSplatWeights2"), splatInvScale2: loc("fxSplatInvScale2"), splatTri2: loc("fxSplatTri2"),
+		splatHeight2: loc("fxSplatHeight2"), splatLayer2: loc("fxSplatLayer2"), splatAnti2: loc("fxSplatAnti2"),
+		splatRelief2: loc("fxSplatRelief2"), splatStrataOn: loc("fxSplatStrataOn"), splatStrataOn2: loc("fxSplatStrataOn2"),
+		splatCols: loc("fxSplatCols"), splatRows: loc("fxSplatRows"),
 	}
 }
 
@@ -191,14 +226,15 @@ func bindSurfaceFxSamplers(prog uint32, force bool) {
 	fxSamplersRest(l)
 }
 
-// fxSamplerLocs is l's seven sampler locations, in FxUnit order.
-func fxSamplerLocs(l *FxLocs) [7]int32 {
-	return [7]int32{l.splatWeights, l.splatAlbedo, l.splatNormal, l.strata, l.groundColor, l.groundHeight, l.detail}
+// fxSamplerLocs is l's eight sampler locations, in FxUnit order.
+func fxSamplerLocs(l *FxLocs) [8]int32 {
+	return [8]int32{l.splatWeights, l.splatAlbedo, l.splatNormal, l.strata, l.groundColor, l.groundHeight, l.detail,
+		l.splatWeights2}
 }
 
-// fxUnits is the seven samplers' own units, in the same order.
-var fxUnits = [7]int32{FxUnitSplatWeights, FxUnitSplatAlbedo, FxUnitSplatNormal, FxUnitStrata, FxUnitGroundColor,
-	FxUnitGroundHeight, FxUnitDetail}
+// fxUnits is the eight samplers' own units, in the same order.
+var fxUnits = [8]int32{FxUnitSplatWeights, FxUnitSplatAlbedo, FxUnitSplatNormal, FxUnitStrata, FxUnitGroundColor,
+	FxUnitGroundHeight, FxUnitDetail, FxUnitSplatWeights2}
 
 // fxSamplersRest points l's samplers at unit 0.
 func fxSamplersRest(l *FxLocs) {
@@ -238,8 +274,13 @@ func applySurfaceFx(f *material.SurfaceFx, texture string, l *FxLocs) {
 		mask |= fxTriplanar
 		gl.Uniform3f(l.triplanar, 1/max(f.TriplanarScale, 1e-3), max(f.TriplanarSharpness, 1), b2f(f.TriplanarUpright))
 	}
-	if f.HasSplat && applySplat(f, l) {
-		mask |= fxSplat
+	if f.HasSplat {
+		if ok, eight := applySplat(f, l); ok {
+			mask |= fxSplat
+			if eight {
+				mask |= fxSplat8
+			}
+		}
 	}
 	if f.HasGroundBlend && applyGround(f, l) {
 		mask |= fxGround
@@ -282,16 +323,26 @@ var FxDebugMask = func() int32 {
 	return -1
 }()
 
-// applySplat binds the splat's textures and writes its uniforms; false when
-// its arrays or weights cannot be had.
-func applySplat(f *material.SurfaceFx, l *FxLocs) bool {
-	arr := SplatArraysFor(splatLayerNames(f))
+// applySplat binds the splat's textures and writes its uniforms; ok false
+// when its arrays or weights cannot be had, eight whether it drew in
+// eight-layer mode (an eight-layer splat whose second weights map is
+// missing draws its first four layers).
+func applySplat(f *material.SurfaceFx, l *FxLocs) (ok, eight bool) {
+	arr := SplatArraysForAtlas(splatAtlasNames(f))
 	if arr == nil {
-		return false
+		return false, false
 	}
+	tiles := splatLayerTiles(f, arr)
 	w, ok := fxDataTexture(f.SplatWeights, false)
 	if !ok {
-		return false
+		return false, false
+	}
+	if f.SplatEight {
+		if w2, ok2 := fxDataTexture(f.SplatWeights2, false); ok2 {
+			eight = true
+			gl.ActiveTexture(gl.TEXTURE0 + FxUnitSplatWeights2)
+			gl.BindTexture(gl.TEXTURE_2D, w2)
+		}
 	}
 	gl.ActiveTexture(gl.TEXTURE0 + FxUnitSplatWeights)
 	gl.BindTexture(gl.TEXTURE_2D, w)
@@ -310,18 +361,23 @@ func applySplat(f *material.SurfaceFx, l *FxLocs) bool {
 	gl.ActiveTexture(gl.TEXTURE0)
 	rect := fxRect(f.SplatMin, f.SplatMax)
 	gl.Uniform4f(l.splatRect, rect[0], rect[1], rect[2], rect[3])
-	var inv, tri, height, layer, anti, relief [4]float32
-	var tint [12]float32
-	for i := 0; i < material.SplatLayers; i++ {
+	n := material.SplatLayers
+	if eight {
+		n = material.SplatLayersMax
+	}
+	var inv, tri, height, layer, anti, relief, strataOn [material.SplatLayersMax]float32
+	var tint [3 * material.SplatLayersMax]float32
+	for i := 0; i < n; i++ {
 		sl := &f.SplatLayers[i]
 		inv[i] = 1 / max(sl.Scale, 1e-3)
 		tri[i] = b2f(sl.Triplanar)
 		anti[i] = b2f(sl.AntiTile)
+		strataOn[i] = b2f(!sl.NoStrata)
 		if !sl.Triplanar {
 			relief[i] = max(sl.Relief, 0)
 		}
 		height[i] = sl.Height
-		layer[i] = float32(arr.Layer[i])
+		layer[i] = float32(tiles[i])
 		t := sl.Tint
 		if t == (mgl32.Vec3{}) {
 			t = mgl32.Vec3{1, 1, 1}
@@ -334,10 +390,28 @@ func applySplat(f *material.SurfaceFx, l *FxLocs) bool {
 	gl.Uniform4fv(l.splatRelief, 1, &relief[0])
 	gl.Uniform4fv(l.splatHeight, 1, &height[0])
 	gl.Uniform4fv(l.splatLayer, 1, &layer[0])
-	gl.Uniform3fv(l.splatTint, 4, &tint[0])
+	gl.Uniform4fv(l.splatStrataOn, 1, &strataOn[0])
+	gl.Uniform3fv(l.splatTint, int32(n), &tint[0])
+	if eight {
+		gl.Uniform4fv(l.splatInvScale2, 1, &inv[4])
+		gl.Uniform4fv(l.splatTri2, 1, &tri[4])
+		gl.Uniform4fv(l.splatAnti2, 1, &anti[4])
+		gl.Uniform4fv(l.splatRelief2, 1, &relief[4])
+		gl.Uniform4fv(l.splatHeight2, 1, &height[4])
+		gl.Uniform4fv(l.splatLayer2, 1, &layer[4])
+		gl.Uniform4fv(l.splatStrataOn2, 1, &strataOn[4])
+	}
 	gl.Uniform3f(l.splatParams, max(f.SplatBlend, 0.005), f.SplatNormal, f.SplatAO)
+	// The atlas: a tile's texels and its gutter as fractions of the atlas,
+	// across (u: Cols tiles) and down (v: Rows, two but for a palette), and
+	// the columns and rows.
 	tile := float32(arr.Size) + 2*float32(arr.Gutter)
-	gl.Uniform2f(l.splatAtlas, float32(arr.Size)/(2*tile), float32(arr.Gutter)/(2*tile))
+	cols := float32(max(arr.Cols, 2))
+	rows := float32(max(arr.Rows, 2))
+	gl.Uniform4f(l.splatAtlas, float32(arr.Size)/(cols*tile), float32(arr.Size)/(rows*tile),
+		float32(arr.Gutter)/(cols*tile), float32(arr.Gutter)/(rows*tile))
+	gl.Uniform1f(l.splatCols, cols)
+	gl.Uniform1f(l.splatRows, rows)
 	span := f.SplatStrataHi - f.SplatStrataLo
 	if span == 0 {
 		span = 1
@@ -351,7 +425,11 @@ func applySplat(f *material.SurfaceFx, l *FxLocs) bool {
 		wallN = 1
 	}
 	gl.Uniform4f(l.splatBedding, max(f.SplatBedding, 0), 1/max(f.SplatBeddingSpacing, 0.05), wallN, 0)
-	return true
+	// The sand ripples: strength (0: off), 1/wavelength, the wind's bearing
+	// in radians, the layer.
+	gl.Uniform4f(l.splatRipple, max(f.SplatRipple, 0), 1/max(f.SplatRippleWave, 0.02),
+		f.SplatRippleAngle*math.Pi/180, f.SplatRippleLayer)
+	return true, eight
 }
 
 // applyGround binds the ground blend's two maps and writes its uniforms.
@@ -389,12 +467,52 @@ func fxRect(lo, hi mgl32.Vec2) [4]float32 {
 	return [4]float32{lo.X(), lo.Y(), 1 / sx, 1 / sz}
 }
 
-func splatLayerNames(f *material.SurfaceFx) [material.SplatLayers]string {
-	var n [material.SplatLayers]string
+func splatLayerNames(f *material.SurfaceFx) [material.SplatLayersMax]string {
+	var n [material.SplatLayersMax]string
 	for i := range n {
 		n[i] = f.SplatLayers[i].Texture
 	}
 	return n
+}
+
+// splatAtlasNames is the names a splat's atlas is built from: its shared
+// atlas's (SurfaceFx.SplatAtlas, a region terrain's per-tile material
+// borrowing its union's) when it names one, else its own layers.
+func splatAtlasNames(f *material.SurfaceFx) [material.SplatAtlasMax]string {
+	if f.SplatAtlas != ([material.SplatAtlasMax]string{}) {
+		return f.SplatAtlas
+	}
+	var out [material.SplatAtlasMax]string
+	own := splatLayerNames(f)
+	copy(out[:], own[:])
+	return out
+}
+
+// splatLayerTiles is each of the splat's layers' tile in arr (the atlas
+// splatAtlasNames built), -1 none: its own index's for its own atlas, and
+// for a shared one the tile of the first atlas layer of the same texture —
+// the tile the union material's layer of that texture samples.
+func splatLayerTiles(f *material.SurfaceFx, arr *SplatArrays) [material.SplatLayersMax]int {
+	if f.SplatAtlas == ([material.SplatAtlasMax]string{}) {
+		var own [material.SplatLayersMax]int
+		copy(own[:], arr.Layer[:])
+		return own
+	}
+	var out [material.SplatLayersMax]int
+	for i := range out {
+		out[i] = -1
+		tex := f.SplatLayers[i].Texture
+		if tex == "" {
+			continue
+		}
+		for j, n := range f.SplatAtlas {
+			if n == tex {
+				out[i] = arr.Layer[j]
+				break
+			}
+		}
+	}
+	return out
 }
 
 // GradeValues is the colour grade as the shader takes it.

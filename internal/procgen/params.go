@@ -127,6 +127,17 @@ type ParamDef struct {
 	// browser (docs/canyon/PHASE_4.md). It changes nothing else — the hash,
 	// the YAML and validation treat it as the plain list it is.
 	AssetList string
+	// Closed marks a spline whose last point joins its first: a polygon (a
+	// region's footprint) rather than a path. The editor draws the closing
+	// segment; nothing else changes.
+	Closed bool
+	// ReadOnly marks a parameter the editor shows but does not let an
+	// author change, because something else writes it (the regions stage's
+	// region list, which genlevel.SyncRegions copies from the level before
+	// every run). Its splines are not drawn as editable in the 2D view. It
+	// changes nothing else: the file, the hash and validation treat it as
+	// any parameter.
+	ReadOnly bool
 }
 
 // DisplayLabel is Label, or Name when there is none.

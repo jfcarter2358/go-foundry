@@ -30,6 +30,9 @@
 #define VSM_LEVELS 11
 #define VSM_PAGES 32
 #define VSM_PAGE_TEXELS 128.0
+// What a level's lookup answers when its pages are not all resident: any
+// answer above it is an occlusion in [0, 1] (vsmSampleLevel clamps its own).
+#define VSM_NOT_RESIDENT -0.5
 
 // One more than the directional light the map shadows; 0 (what a program
 // nobody told holds) for none — the cascades as before.
@@ -134,16 +137,56 @@ float vsmSampleLevel(vec3 worldPos, vec3 normal, vec3 lightDir, int l) {
             lit += vsmCompare(uv, float(layer), ref);
         }
     }
-    return 1.0 - lit / 9.0;
+    // Clamped: nine bilinear weights that should sum to 9 on a fully lit
+    // receiver can round to a hair over it, and 1 - 9.0000005/9 is a hair
+    // under zero — which vsmShadow took for "not resident" (VSM_NOT_RESIDENT)
+    // and walked on to the coarser levels, whose pages nobody asks for: a
+    // lit pixel then read whatever a coarse page held when it was last
+    // drawn, and a moving character left its shadow behind on them
+    // (docs/adventure/PHASE_B.md, "the ghost shadow").
+    return clamp(1.0 - lit / 9.0, 0.0, 1.0);
 }
 
 // vsmShadow is the occlusion at worldPos (geometric normal, the light's
 // direction of travel): its level's pages, or the nearest coarser level's
 // that are resident, or lit.
+// vsmSampleLevel1 is vsmSampleLevel's one bilinear tap, for a caller that
+// evaluates the shadow per VERTEX by the million (the grass instancer,
+// render/grass_field.go): a blade is narrower than a texel, so the nine-tap
+// filter's softness is lost on it, and it cost the grass ~8 ms on the GTX
+// 1070 (docs/regions/PRESETS_2B.md). -1 when the page is not resident.
+float vsmSampleLevel1(vec3 worldPos, vec3 normal, vec3 lightDir, int l) {
+    float texel = vsmTexel0 * exp2(float(l));
+    vec3 p = worldPos + normal * (texel * vsmNormalOffset);
+    vec3 ls = vsmRot * (p - vsmCamPos);
+    vec2 t = vsmWindowTexel(ls, l);
+    ivec2 pg = ivec2(floor(t / VSM_PAGE_TEXELS));
+    int layer = vsmLayer(pg, l);
+    if (layer < 0) {
+        return -1.0;
+    }
+    float cosTheta = clamp(abs(dot(normal, lightDir)), 0.05, 1.0);
+    float slope = min(sqrt(1.0 - cosTheta * cosTheta) / cosTheta, 8.0);
+    float ref = (ls.z + vsmDepthOffset) * vsmDepthScale - texel * (vsmBias + 0.5 * slope) * vsmDepthScale;
+    vec2 uv = (t - vec2(pg) * VSM_PAGE_TEXELS) / VSM_PAGE_TEXELS;
+    return clamp(1.0 - vsmCompare(uv, float(layer), ref), 0.0, 1.0);
+}
+
+// vsmShadow1 is vsmShadow with one tap a level (vsmSampleLevel1).
+float vsmShadow1(vec3 worldPos, vec3 normal, vec3 lightDir) {
+    for (int l = vsmLevelFor(distance(worldPos, vsmCamPos)); l < VSM_LEVELS; l++) {
+        float s = vsmSampleLevel1(worldPos, normal, lightDir, l);
+        if (s > VSM_NOT_RESIDENT) {
+            return s;
+        }
+    }
+    return 0.0;
+}
+
 float vsmShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
     for (int l = vsmLevelFor(distance(worldPos, vsmCamPos)); l < VSM_LEVELS; l++) {
         float s = vsmSampleLevel(worldPos, normal, lightDir, l);
-        if (s >= 0.0) {
+        if (s > VSM_NOT_RESIDENT) {
             return s;
         }
     }

@@ -245,7 +245,7 @@ const (
 	rangeMaxClusters = cluster.WindowMaxClusters
 )
 
-// gpuInstance is an instance (std430, 112 bytes). Its first 64 bytes are also
+// gpuInstance is an instance (std430, 128 bytes). Its first 64 bytes are also
 // the per-instance model matrix the vertex stage reads at locations 7-10, so
 // one buffer serves the cull and the draw; its Sphere and Wind are the
 // vertex stage's instanceSphere and instanceWind (locations 13 and 14).
@@ -259,6 +259,11 @@ type gpuInstance struct {
 	Sphere [4]float32
 	Flags  [4]uint32
 	Wind   [4]float32
+	// Draw is the distance window the instance is drawn over
+	// (nanite_draw_distance.go): from, to (0: open at that end), its
+	// placement's hash, unused. Zero — every instance but a cooked
+	// placement's with a draw distance — is drawn at any distance.
+	Draw [4]float32
 }
 
 const (
@@ -270,6 +275,10 @@ const (
 	// instLOD: the instance's mesh has a cluster DAG; Flags[1] is its tree's
 	// root node and Flags[2] the first of its leaf marks.
 	instLOD = 1 << 3
+	// instShadowHidden: past its shadow distance this frame, so no shadow
+	// pass draws it (nanite_draw_distance.go). Set by the CPU, which the
+	// virtual shadow map's tracker asks the same question of.
+	instShadowHidden = 1 << 4
 )
 
 // gpuInstanceStride is gpuInstance's size, the vertex attribute stride of its
@@ -970,6 +979,7 @@ func (b *cullBatch) cull(v cullView) bool {
 	b.upload()
 	b.ensureHistory(1)
 	passStore(b.cmdBuf, &b.cmdSize, b.slots*20)
+	warnCmdBlock(b.slots * 20)
 
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, b.instBuf)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, b.visBuf)
@@ -1008,9 +1018,13 @@ func (b *cullBatch) cull(v cullView) bool {
 		b.stream.bind()
 		streamFrame, streamPages = b.stream.frame, uint32(len(b.stream.pages))
 	}
+	// The draw-distance windows (nanite_draw_distance.go), from the eye.
+	drawMode := drawModeFor(v)
 	setCommon := func(p *progUniforms) {
 		gl.UseProgram(p.prog)
 		gl.Uniform1i(p.U("mode"), v.mode)
+		gl.Uniform1i(p.U("drawMode"), drawMode)
+		gl.Uniform3f(p.U("drawEye"), v.eye[0], v.eye[1], v.eye[2])
 		gl.Uniform4fv(p.U("planes"), 6, &v.planes[0][0])
 		gl.UniformMatrix4fv(p.U("projView"), 1, false, &v.projView[0])
 		gl.Uniform4f(p.U("eye"), v.eye[0], v.eye[1], v.eye[2], v.eye[3])

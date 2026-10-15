@@ -59,6 +59,7 @@ and is always current.
 | [Scores](32-score-editor.md) | Music as notation: the Score editor, entering notes and its keymaps, lines, instruments and the mixer, the .fscore file and its note text, .finst instruments, a score in a level and from scripts, importing MIDI and MusicXML, the `foundry score` commands |
 | [Generators](33-generators.md) | Procedural content as documents: stages that build terrain, rocks and scatter, previewed live and run into a level |
 | [Poly Haven assets](34-polyhaven.md) | The CC0 scan library: the Poly Haven browser, what an import makes, `foundry polyhaven`, the generator stages, texture compression and memory |
+| [Environment regions](35-regions.md) | Several environments in one generated world: region volumes, presets, the world generator, the region list, adjacency rules and "Insert intermediate region", incremental runs |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
 | [Saves and checkpoints](26-saves-and-checkpoints.md) | Checkpoint volumes, Retry, save slots, per-level save mode |

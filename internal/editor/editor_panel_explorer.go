@@ -535,6 +535,11 @@ func editorExplorerVolumeNodes(lvl *world.Level) {
 		if v.FromEntity != "" {
 			label += "  (from " + v.FromEntity + ")"
 		}
+		if v.Region != nil {
+			// An environment region is authoring data for the world
+			// generator, not a trigger; the tag says which environment.
+			label += "  (region " + v.Region.Environment + ")"
+		}
 		if editorExplorerLeaf(fmt.Sprintf("%s##vol%d", label, i), i == Editor.ActiveVolumeIdx, panelFocusVolume) {
 			editorSelectVolume(i)
 		}

@@ -82,6 +82,7 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 	ws := savefile.WorldState{
 		GlobalLight:  lvl.Lights.Global,
 		StepHeight:   lvl.Player.StepHeight,
+		Camera:       lvl.Player.Camera,
 		Gravity:      world.CopyFloatPtr(lvl.Gravity),
 		ViewDistance: lvl.ViewDistance,
 	}
@@ -401,6 +402,11 @@ func applyWorld(lvl *world.Level, ws *savefile.WorldState) {
 			Resume: m.Playing, ResumeOrder: m.Order, ResumeRow: m.Row, ResumeTick: m.Tick}
 	}
 	lvl.Player.StepHeight = ws.StepHeight
+	// A save from before the camera was saved has none; the level's own
+	// stands rather than being reset to first person.
+	if ws.Camera != (world.PlayerCamera{}) {
+		lvl.Player.Camera = ws.Camera
+	}
 	lvl.Gravity = world.CopyFloatPtr(ws.Gravity)
 	lvl.ViewDistance = ws.ViewDistance
 }

@@ -52,10 +52,12 @@ const (
 	visKeyDetail    = 1 << 4
 	visKeyMacro     = 1 << 5
 	visKeyGrade     = 1 << 6
-	visKeyWater     = 1 << 8
-	visKeyBlend     = 1 << 9
-	visKeyBaked     = 1 << 10
-	visKeyDecal     = 1 << 11
+	// visKeySplat8 is the splat's eight-layer mode (FX_SPLAT8).
+	visKeySplat8 = 1 << 7
+	visKeyWater  = 1 << 8
+	visKeyBlend  = 1 << 9
+	visKeyBaked  = 1 << 10
+	visKeyDecal  = 1 << 11
 )
 
 // visSpecs are the tests in fragment.glsl's main a variant fixes, each with
@@ -77,6 +79,7 @@ var visSpecs = []struct {
 	{"(matFx & FX_DETAIL) != 0", visKeyDetail},
 	{"(matFx & FX_MACRO) != 0", visKeyMacro},
 	{"(matFx & FX_GRADE) != 0", visKeyGrade},
+	{"(matFx & FX_SPLAT8) != 0", visKeySplat8},
 }
 
 // visShadeKey is the variant a bin of surface st is shaded with.
@@ -89,7 +92,7 @@ func visShadeKey(st *gfx.SurfaceState, baked bool) uint32 {
 	}{
 		{f.HasTriplanar, visKeyTriplanar}, {f.HasSplat, visKeySplat}, {f.HasGroundBlend, visKeyGround},
 		{f.HasStreaks, visKeyStreaks}, {f.HasDetailNormal, visKeyDetail}, {f.HasMacro, visKeyMacro},
-		{f.HasGrade, visKeyGrade},
+		{f.HasGrade, visKeyGrade}, {f.HasSplat && f.SplatEight, visKeySplat8},
 	} {
 		if b.on {
 			k |= b.bit

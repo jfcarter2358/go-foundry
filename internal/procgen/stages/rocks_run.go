@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -98,6 +99,20 @@ func rockImport(m *rocks.Mesh, texture string) *model.ImportMesh {
 }
 
 func runRocks(rc *procgen.RunContext) error {
+	if rc.Region != nil {
+		return runRocksForRegion(rc)
+	}
+	metas, err := makeRockVariants(rc, rc.Seed, rc.Path)
+	if err != nil {
+		return err
+	}
+	return finishRocks(rc, metas, "")
+}
+
+// makeRockVariants generates and cooks the stage's variants with seed,
+// writing each variant's file at path(its file name) — the stage's folder,
+// or a region's shared cache (place_region.go).
+func makeRockVariants(rc *procgen.RunContext, stageSeed uint64, path func(string) string) ([]rocks.VariantMeta, error) {
 	p := rc.Params
 	s := rocksSettings(&rc.Env)
 	n := p.Int("variants")
@@ -139,7 +154,7 @@ func runRocks(rc *procgen.RunContext) error {
 		}
 		vs := s
 		vs.Workers = each
-		seed := variantSeed(rc.Seed, i)
+		seed := variantSeed(stageSeed, i)
 		r, err := rocks.Generate(vs, seed)
 		if err != nil {
 			return err
@@ -156,19 +171,19 @@ func runRocks(rc *procgen.RunContext) error {
 		t1 := time.Now()
 		if cook {
 			meta.File = name + ".fnm"
-			if _, err := meshout.Cook(m, rc.Path(meta.File), meshout.CookOptions{
+			if _, err := meshout.Cook(m, path(meta.File), meshout.CookOptions{
 				CollisionMesh: meta.Collision == "mesh", CollisionHulls: meta.Collision == "hulls"}); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
 		} else {
 			meta.File = name + ".glb"
-			if err := meshout.WriteGLB(rc.Path(meta.File), m); err != nil {
+			if err := meshout.WriteGLB(path(meta.File), m); err != nil {
 				return err
 			}
 		}
 		meta.CookMS = math.Round(float64(time.Since(t1).Microseconds())/100) / 10
 		var size int64
-		if st, err := os.Stat(rc.Path(meta.File)); err == nil {
+		if st, err := os.Stat(path(meta.File)); err == nil {
 			size = st.Size()
 		}
 		metas[i] = meta
@@ -179,11 +194,25 @@ func runRocks(rc *procgen.RunContext) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rc.Logf("%d variants in %s", n, time.Since(t0).Round(time.Millisecond))
+	return metas, nil
+}
+
+// finishRocks writes the stage's manifest (variants at model, when set,
+// otherwise beside it) and its material, and places the gallery.
+func finishRocks(rc *procgen.RunContext, metas []rocks.VariantMeta, modelDir string) error {
+	p := rc.Params
+	s := rocksSettings(&rc.Env)
+	if modelDir != "" {
+		for i := range metas {
+			metas[i].Model = modelDir + "/" + metas[i].File
+		}
+	}
 	man := &rocks.Manifest{Version: rocks.ManifestVersion, Preset: s.Preset, Lithology: s.Lithology, Palette: s.Palette,
 		Frame: rocks.FrameDoc, Variants: metas}
+	var err error
 	if man.Material, err = rocksTriplanarMaterial(rc); err != nil {
 		return err
 	}
@@ -197,9 +226,59 @@ func runRocks(rc *procgen.RunContext) error {
 	art := &RocksArtifact{Dir: rc.Dir, RelDir: rc.RelDir, Manifest: man}
 	rc.Artifact = art
 	if p.Bool("gallery") {
-		placeGallery(rc, art, p.Vec3("gallery_origin"))
+		if rc.Region != nil {
+			rc.Logf("gallery: not placed for a region (every region would place it)")
+		} else {
+			placeGallery(rc, art, p.Vec3("gallery_origin"))
+		}
 	}
 	return nil
+}
+
+// runRocksForRegion is the stage expanded for an environment region: the
+// variants come from the shared cache (place_region.go) — made there by the
+// first region to need them, seeded by the preset stage rather than the
+// region — and the stage writes its own manifest pointing at them.
+func runRocksForRegion(rc *procgen.RunContext) error {
+	seed := sharedAssetSeed(&rc.Env)
+	dir, rel := sharedAssetDir(rc, seed)
+	mu := sharedAssetLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	if man, err := rocks.LoadManifest(dir); err == nil && rockFilesPresent(dir, man) {
+		rc.Logf("%d variants from the shared cache %s", len(man.Variants), rel)
+		return finishRocks(rc, man.Variants, rel)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	metas, err := makeRockVariants(rc, seed, func(name string) string { return filepath.Join(dir, name) })
+	if err != nil {
+		return err
+	}
+	// The cache's own manifest last: it marks the folder complete.
+	data, err := (&rocks.Manifest{Version: rocks.ManifestVersion, Frame: rocks.FrameDoc, Variants: metas}).Encode()
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, rocks.ManifestFile), data, 0o644); err != nil {
+		return err
+	}
+	rc.Logf("variants made into the shared cache %s", rel)
+	return finishRocks(rc, append([]rocks.VariantMeta(nil), metas...), rel)
+}
+
+// rockFilesPresent reports whether every variant file of man is in dir.
+func rockFilesPresent(dir string, man *rocks.Manifest) bool {
+	if len(man.Variants) == 0 {
+		return false
+	}
+	for _, v := range man.Variants {
+		if _, err := os.Stat(filepath.Join(dir, v.File)); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // placeGallery puts every variant in a row along +X from origin.

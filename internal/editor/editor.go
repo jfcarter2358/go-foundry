@@ -924,7 +924,10 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
 			if Editor.Mode == Mode3D {
-				if t.Button == sdl.ButtonRight {
+				if t.Button == sdl.ButtonRight && editorRegionRightClick(t.X, t.Y) {
+					// Deleted a region's footprint point (editor_volume_region.go):
+					// no turn, no context menu.
+				} else if t.Button == sdl.ButtonRight {
 					// Right-drag turns the camera; a right-click that does not
 					// drag opens the context menu instead, which is what
 					// editor3DContextPressed is watching for.
@@ -964,6 +967,13 @@ func EditorHandleEvent(event sdl.Event) bool {
 		if editorGizmoDragging() {
 			editorGizmoMouseMove(t.X, t.Y)
 			return true
+		}
+		// A region footprint point being dragged, or the handle highlight.
+		if Editor.Mode == Mode3D {
+			editorRegionMouseMove(t.X, t.Y)
+			if editorRegionDragging() {
+				return true
+			}
 		}
 		if Editor.Mode == Mode3D && (Editor.MouseDragging3D || Editor.MiddleDragging3D) {
 			dx := t.X - Editor.LastDragX
@@ -1287,6 +1297,10 @@ func editorEndViewportDrag(button sdl.Button) bool {
 	case sdl.ButtonLeft:
 		if editorGizmoDragging() {
 			editorGizmoMouseUp()
+			return true
+		}
+		if editorRegionDragging() {
+			editorRegionEndDrag()
 			return true
 		}
 		// A terrain stroke ends wherever the button comes up, the panel

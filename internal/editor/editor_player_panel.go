@@ -56,6 +56,136 @@ func editorPlayerSection(lvl *world.Level) {
 		editorViewmodelSection(lvl)
 	})
 	render.EditorPreviewActive = viewmodelOpen
+
+	editorPropGroup("Camera##playercameragrp", 0, func() {
+		editorPlayerCamera(lvl)
+	})
+	editorPropGroup("Body (third person)##playerbodygrp", 0, func() {
+		editorPlayerBody(lvl)
+	})
+}
+
+// ---------- camera ----------
+
+// editorPlayerCamera edits the `player: camera:` block. Every field writes the
+// resolved camera back whole, so touching one key leaves the others at their
+// defaults — and world.PlayerCameraToRaw writes only what differs from them.
+func editorPlayerCamera(lvl *world.Level) {
+	c := lvl.Player.Camera.Effective()
+	before := c
+	third := c.ThirdPerson()
+	if imgui.Checkbox("Third person##plcamthird", &third) {
+		if third {
+			c.Mode = world.CameraThirdPerson
+		} else {
+			c.Mode = world.CameraFirstPerson
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("First person: the camera is the player's eye and the\n" +
+			"viewmodel is drawn in front of it. Third person: a boom\n" +
+			"behind and over the shoulder looks at the Body below,\n" +
+			"pulled in by walls and eased back out.")
+	}
+	if !c.ThirdPerson() {
+		editorTextMutedWrapped("First person: the camera is the player's eye. The boom settings below apply once third person is ticked.")
+	}
+	editorDragFloatStep("Distance##plcamdist", &c.Distance, 0, 30, "%.2f", 0.1)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Boom length behind the pivot, in world units, before\nanything pulls it in.")
+	}
+	editorDragFloatStep("Pivot height##plcamheight", &c.Height, -2, 4, "%.2f", 0.05)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The pivot's height above the body's centre. The\nfirst-person eye is 1.7 above it.")
+	}
+	editorDragFloatStep("Shoulder##plcamshoulder", &c.Shoulder, -3, 3, "%.2f", 0.05)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Slides the pivot to the camera's right (negative: the\nleft shoulder; 0 centres the body on the reticle).")
+	}
+	editorDragFloatStep("Pitch min (deg)##plcampmin", &c.PitchMin, -89, 89, "%.0f", 1)
+	editorDragFloatStep("Pitch max (deg)##plcampmax", &c.PitchMax, -89, 89, "%.0f", 1)
+	editorDragFloatStep("Collision radius##plcamradius", &c.Radius, 0, 2, "%.2f", 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far the camera keeps from a wall that pulls it in.")
+	}
+	editorDragFloatStep("Ease-out rate##plcamsmooth", &c.Smoothing, 0, 30, "%.1f", 0.5)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How fast the boom grows back once a wall stops pulling it\n" +
+			"in (fraction of the gap closed per second). Pulling in is\nalways immediate.")
+	}
+	editorDragFloatStep("Hide body under##plcamhide", &c.HideDistance, 0, 5, "%.2f", 0.05)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The boom length below which the body is hidden, so a camera\n" +
+			"squeezed against the player's back does not see inside the head.")
+	}
+	if c != before {
+		EditorPushUndo()
+		lvl.Player.Camera = c
+	}
+}
+
+// ---------- body ----------
+
+// editorPlayerBody edits the `player: body:` block: the third-person body's
+// models (the same widgets as a placed entity's, on the loaded body as the
+// viewmodel's are on the loaded player) and its turn rate and clips.
+func editorPlayerBody(lvl *world.Level) {
+	if world.PlayerBodyEntity == nil {
+		world.PlayerBodyEntity = world.NewPlayerBody()
+	}
+	editorTextMutedWrapped("Drawn in the world, with shadows, while the camera is third person. The body's origin is the player's feet, facing -Z: a model facing +Z (the human rig) mounts with rotation y = 3.1416.")
+	tmp := &world.Entity{ID: world.PlayerBodyID, Models: world.PlayerBodyEntity.Models}
+	editorEntityModels(tmp)
+	world.PlayerBodyEntity.Models = tmp.Models
+	lvl.Player.Body.Models = playerAuthoredModels(world.PlayerBodyEntity.Models)
+
+	imgui.Spacing()
+	turn := lvl.Player.Body.TurnRate
+	if turn <= 0 {
+		turn = world.DefaultBodyTurnRate
+	}
+	if editorDragFloatStep("Turn rate (deg/s)##plbodyturn", &turn, 30, 3600, "%.0f", 10) {
+		EditorPushUndo()
+		lvl.Player.Body.TurnRate = turn
+	}
+
+	imgui.Spacing()
+	imgui.Text("Locomotion clips")
+	editorTextMutedWrapped("Animation names on the body's models, or clip names in the model. Empty follows the human rig's default (shown greyed).")
+	l := &lvl.Player.Body.Locomotion
+	d := world.DefaultLocomotion()
+	before := *l
+	clipField := func(label, id string, v *string, def string) {
+		imgui.PushItemWidth(-1)
+		imgui.Text(label)
+		imgui.InputTextWithHint("##plloco"+id, def, v)
+		imgui.PopItemWidth()
+	}
+	clipField("Idle", "idle", &l.Idle, d.Idle)
+	clipField("Walk", "walk", &l.Walk, d.Walk)
+	clipField("Run", "run", &l.Run, d.Run)
+	clipField("Sprint", "sprint", &l.Sprint, d.Sprint)
+	clipField("Jump", "jump", &l.Jump, d.Jump)
+	clipField("Jump at a run", "jumprun", &l.JumpRun, d.JumpRun)
+	clipField("Fall", "fall", &l.Fall, d.Fall)
+	clipField("Crouch idle", "cidle", &l.CrouchIdle, d.CrouchIdle)
+	clipField("Crouch walk", "cwalk", &l.CrouchWalk, d.CrouchWalk)
+	ws, rs := l.Effective().WalkSpeed, l.Effective().RunSpeed
+	if editorDragFloatStep("Walk clip speed##pllocows", &ws, 0.1, 20, "%.2f", 0.05) {
+		l.WalkSpeed = ws
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The ground speed, units a second, the walk clip was authored\nat; playback is scaled to the real speed so the feet do not skate.")
+	}
+	if editorDragFloatStep("Run clip speed##pllocors", &rs, 0.1, 30, "%.2f", 0.05) {
+		l.RunSpeed = rs
+	}
+	if *l != before {
+		after := *l
+		*l = before
+		EditorPushUndo()
+		*l = after
+	}
 }
 
 // ---------- viewmodel ----------

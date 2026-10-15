@@ -343,6 +343,15 @@ func lenientPlan(d *Doc) map[string]*plannedStage {
 		if !ok {
 			continue
 		}
+		if k.HashExtra != nil {
+			if x, err := k.HashExtra(d, s, p); err == nil {
+				if x != "" { // as plan: an empty extra is no extra
+					up = append(up, "extra:"+x)
+				}
+			} else {
+				up = append(up, "extra-error:"+err.Error())
+			}
+		}
 		ps.hash = PreviewHash(k, ps.seed, p, up)
 		out[s.ID] = ps
 	}

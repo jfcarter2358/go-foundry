@@ -38,6 +38,8 @@ func init() {
 		Name:     VegetationKind,
 		Label:    "Vegetation",
 		Category: "Placement",
+		// Per environment region of a level generation doc (place_region.go).
+		Regional: procgen.RegionalPerRegion,
 		Version:  1,
 		Doc: "Sparse plants from the engine's biomes (desert, badlands, mesa...) grown on a terrain where its masks allow: " +
 			"each rule's weighted cells merged into rectangles, each a `kind: biome` scatter volume over the terrain's tiles.",
@@ -69,7 +71,7 @@ func vegetationParams() []procgen.ParamDef {
 	}
 	fields = append(fields, bandParams()...)
 	return []procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{TerrainKind}, Default: procgen.StageRef(""),
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: TerrainSources, Default: procgen.StageRef(""),
 			Doc: "The terrain stage to grow on."},
 		{Name: "seed", Type: procgen.ParamSeed, Default: procgen.Seed(0), Doc: "Moves the clumps."},
 		{Name: "rules", Type: procgen.ParamList, MinItems: 1, Fields: fields, Default: procgen.List(),
@@ -80,6 +82,13 @@ func vegetationParams() []procgen.ParamDef {
 			Doc: "The longest side a volume may have (each regrows on its own when edited, and large ones take longer)."},
 		{Name: "headroom", Type: procgen.ParamFloat, Label: "Headroom (m)", Default: f(4), Min: 0.5, Max: 1000, Step: 0.5,
 			Doc: "How far a volume reaches above the highest ground under it (and below the lowest)."},
+		// Added: 0 (the default) is the classic, hard-edged rectangles, so
+		// no existing stage's output or hash moves (docs/regions/PHASE_6.md).
+		{Name: "fray", Added: true, Type: procgen.ParamFloat, Label: "Fray (m)", Default: f(0), Min: 0, Max: 200, Step: 0.5,
+			Doc: "Cross-fades neighbouring volumes: each grows by 0.625 × fray past its cells on every side and fades its " +
+				"plants out over fray at its edge (its edge_fade_distance), so where two volumes of different density meet their " +
+				"plants blend over the overlap instead of stepping along a ruled line, and the outer edge of a patch is ragged. " +
+				"0: hard rectangles. About three quarters of the cell is a good start."},
 	}
 }
 
@@ -132,7 +141,7 @@ func vegetationPatches(env *procgen.Env, g *place.Ground) ([][]place.Patch, erro
 		r := place.DefaultRule()
 		bandRule(it, &r)
 		ps, err := place.Patches(g, &r, place.PatchSettings{Cell: p.Float("cell"), Threshold: it.Float("threshold"),
-			MaxSize: p.Float("max_size"), Seed: noiseSeed(env.Seed, i)}, env)
+			MaxSize: p.Float("max_size"), Seed: noiseSeed(env.Seed, i), Region: placeRegion(env)}, env)
 		if err != nil {
 			return nil, err
 		}
@@ -156,6 +165,12 @@ func runVegetation(rc *procgen.RunContext) error {
 		return err
 	}
 	head := p.Float("headroom")
+	// fray: each rectangle grows by fray·(0.35+0.9)/2 a side, so two
+	// neighbours overlap by fray·1.25 and their edge fades — smoothstep(0.35,
+	// 0.9, inset/fray) in world.GrowVolumePlants — are complementary across
+	// it (S(t) + S(1.25 − t) = 1): their densities cross-fade.
+	fray := p.Float("fray")
+	grow := fray * (0.35 + 0.9) / 2
 	total := 0
 	for i, it := range p.Items("rules") {
 		if patches[i] == nil {
@@ -184,11 +199,16 @@ func runVegetation(rc *procgen.RunContext) error {
 			}
 			cx, cz := (pt.MinX+pt.MaxX)/2, (pt.MinZ+pt.MaxZ)/2
 			y0, y1 := pt.MinY-head, pt.MaxY+head
+			scatter := map[interface{}]interface{}{"kind": "biome", "biome": biome}
+			if fray > 0 {
+				scatter["edge_fade_distance"] = round2(fray)
+			}
 			rc.PlaceVolume(procgen.VolumeEntry{
 				"id":       fmt.Sprintf("%s_%04d", name, k+1),
 				"position": map[interface{}]interface{}{"x": round2(cx), "y": round2((y0 + y1) / 2), "z": round2(cz)},
-				"half":     map[interface{}]interface{}{"x": round2((pt.MaxX - pt.MinX) / 2), "y": round2((y1 - y0) / 2), "z": round2((pt.MaxZ - pt.MinZ) / 2)},
-				"scatter":  map[interface{}]interface{}{"kind": "biome", "biome": biome},
+				"half": map[interface{}]interface{}{"x": round2((pt.MaxX-pt.MinX)/2 + grow), "y": round2((y1 - y0) / 2),
+					"z": round2((pt.MaxZ-pt.MinZ)/2 + grow)},
+				"scatter": scatter,
 			})
 			area += (pt.MaxX - pt.MinX) * (pt.MaxZ - pt.MinZ)
 		}

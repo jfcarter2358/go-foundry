@@ -77,6 +77,12 @@ type Rule struct {
 	// Cluster (0..1) clumps the rule in patches about ClusterScale metres
 	// across.
 	Cluster, ClusterScale float64
+	// Near, when it has points, keeps the rule to an area: within each
+	// point's radius ([x, z, radius]) of the polyline through them (one
+	// point: a disc), fading out over NearSoft metres past it. Empty: the
+	// whole ground.
+	Near     [][3]float64
+	NearSoft float64
 	// Satellites is candidates per metre of footprint radius round each
 	// rock the earlier rules kept, out to SatelliteSpread radii beyond it.
 	Satellites, SatelliteSpread float64
@@ -122,6 +128,11 @@ type ScatterSettings struct {
 	// Block is the candidate blocks' side (0: 32 m); Cell the weight cells'
 	// (0: max(2 m, the ground's cell)).
 	Block, Cell float64
+	// Region, when set, is the environment region this scatter places for
+	// (region.go): weights times its weight, blocks counted and seeded
+	// from the world origin. Nil: the classic scatter over the whole
+	// ground.
+	Region *Region
 	// Progress, when set, is called with 0..1.
 	Progress func(float32)
 }
@@ -227,6 +238,12 @@ func (r *Rule) Weight(g *Ground, cf *CliffField, seed uint64, x, z float64) floa
 	if w == 0 {
 		return 0
 	}
+	if len(r.Near) > 0 {
+		w *= r.nearWeight(x, z)
+		if w == 0 {
+			return 0
+		}
+	}
 	if r.CliffBase > 0 {
 		near := 0.0
 		if cf != nil {
@@ -285,6 +302,27 @@ func scatterRule(g *Ground, cf *CliffField, s *ScatterSettings, ri int, r *Rule,
 	cell := s.Block / float64(per)
 	seed := noise.Hash64(s.Seed, 0x7363, uint64(ri))
 	wseed := noise.Hash64(seed, 0x636c)
+	// The blocks: the ground's from its corner (classic), or — for a
+	// region — the world-aligned blocks over the ground, each seeded by its
+	// world coordinates, so the region's candidates do not move when the
+	// union grows or another region changes (the region's weight, 0 where
+	// it has no share, does the rest).
+	origin := [2]float64{b[0], b[1]}
+	var wb0 [2]int64
+	reg := s.Region
+	if reg != nil {
+		wb0 = [2]int64{int64(math.Floor(b[0] / s.Block)), int64(math.Floor(b[1] / s.Block))}
+		nbx = int(int64(math.Ceil(b[2]/s.Block)) - wb0[0])
+		nbz = int(int64(math.Ceil(b[3]/s.Block)) - wb0[1])
+		origin = [2]float64{float64(wb0[0]) * s.Block, float64(wb0[1]) * s.Block}
+	}
+	weight := func(x, z float64) float64 {
+		w := r.Weight(g, cf, wseed, x, z)
+		if reg != nil && w > 0 {
+			w *= reg.At(x, z)
+		}
+		return w
+	}
 	type blockOut struct {
 		cands    []candidate
 		expected float64
@@ -293,7 +331,7 @@ func scatterRule(g *Ground, cf *CliffField, s *ScatterSettings, ri int, r *Rule,
 	outs := make([]blockOut, nbx*nbz)
 	err := pool.Parallel(nbx*nbz, func(bi int) error {
 		bx, bz := bi%nbx, bi/nbx
-		x0, z0 := b[0]+float64(bx)*s.Block, b[1]+float64(bz)*s.Block
+		x0, z0 := origin[0]+float64(bx)*s.Block, origin[1]+float64(bz)*s.Block
 		ws := make([]float64, per*per)
 		sum := 0.0
 		for j := 0; j < per; j++ {
@@ -302,7 +340,7 @@ func scatterRule(g *Ground, cf *CliffField, s *ScatterSettings, ri int, r *Rule,
 				if !g.Contains(x, z, 0) {
 					continue
 				}
-				w := r.Weight(g, cf, wseed, x, z)
+				w := weight(x, z)
 				ws[j*per+i] = w
 				sum += w
 			}
@@ -314,6 +352,9 @@ func scatterRule(g *Ground, cf *CliffField, s *ScatterSettings, ri int, r *Rule,
 			return nil
 		}
 		rng := noise.NewRNG(noise.Hash64(seed, uint64(bi)))
+		if reg != nil {
+			rng = noise.NewRNG(noise.Hash64(seed, 0x776f726c64, uint64(wb0[0]+int64(bx)), uint64(wb0[1]+int64(bz))))
+		}
 		n := int(o.expected)
 		if rng.Chance(o.expected - float64(n)) {
 			n++
@@ -332,7 +373,13 @@ func scatterRule(g *Ground, cf *CliffField, s *ScatterSettings, ri int, r *Rule,
 			i, j := ci%per, ci/per
 			x := x0 + (float64(i)+rng.Float64())*cell
 			z := z0 + (float64(j)+rng.Float64())*cell
-			o.cands = append(o.cands, r.draw(rng, x, z, bi<<20|k))
+			order := bi<<20 | k
+			if reg != nil {
+				// The tie-break by world block too, so nothing about a
+				// region's rocks follows the union's extent.
+				order = int((wb0[1]+int64(bz)+1<<20)<<41 | (wb0[0]+int64(bx)+1<<20)<<20 | int64(k))
+			}
+			o.cands = append(o.cands, r.draw(rng, x, z, order))
 		}
 		return nil
 	})
@@ -362,7 +409,7 @@ func scatterRule(g *Ground, cf *CliffField, s *ScatterSettings, ri int, r *Rule,
 				// Denser near the host, thinning out to the spread.
 				d := h.Radius * (1 + r.SatelliteSpread*math.Pow(rng.Float64(), 1.6))
 				x, z := h.Pos[0]+d*math.Cos(a), h.Pos[2]+d*math.Sin(a)
-				if !g.Contains(x, z, 0) || !rng.Chance(math.Min(r.Weight(g, cf, wseed, x, z), 1)) {
+				if !g.Contains(x, z, 0) || !rng.Chance(math.Min(weight(x, z), 1)) {
 					continue
 				}
 				sats[hi] = append(sats[hi], r.draw(rng, x, z, 1<<40|hi<<12|k))
@@ -472,4 +519,38 @@ func collisionFor(choice string, v *Variant, s, minSize, hullMax float64) string
 		return "hulls"
 	}
 	return "mesh"
+}
+
+// nearWeight is the Near area's weight at (x, z): 1 within the radius of
+// the polyline (interpolated along each segment), easing to 0 over NearSoft
+// past it.
+func (r *Rule) nearWeight(x, z float64) float64 {
+	best := math.Inf(1)
+	at := func(px, pz, rad float64) {
+		if d := math.Hypot(x-px, z-pz) - rad; d < best {
+			best = d
+		}
+	}
+	n := r.Near
+	if len(n) == 1 {
+		at(n[0][0], n[0][1], n[0][2])
+	}
+	for i := 0; i+1 < len(n); i++ {
+		a, b := n[i], n[i+1]
+		dx, dz := b[0]-a[0], b[1]-a[1]
+		l2 := dx*dx + dz*dz
+		t := 0.0
+		if l2 > 0 {
+			t = math.Max(0, math.Min(1, ((x-a[0])*dx+(z-a[1])*dz)/l2))
+		}
+		at(a[0]+t*dx, a[1]+t*dz, a[2]+t*(b[2]-a[2]))
+	}
+	if best <= 0 {
+		return 1
+	}
+	soft := math.Max(r.NearSoft, 0)
+	if soft == 0 || best >= soft {
+		return 0
+	}
+	return 1 - smooth(0, soft, best)
 }

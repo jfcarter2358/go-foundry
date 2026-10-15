@@ -90,11 +90,18 @@ struct VisInstance {
     vec4 sphere;
     uvec4 flags;
     vec4 wind;
+    vec4 draw;
 };
 layout(std430, binding = 0) readonly buffer VisInstances {
     VisInstance visInstances[];
 };
-flat out uint visCmd;`)
+flat out uint visCmd;
+// The instance's draw-distance fade (render/nanite_draw_distance.go): the
+// noise band [x, y) of the pixels it keeps, and its hash in z.
+flat out vec3 visFade;
+uniform vec3 drawEye;
+uniform int drawFadeOn;
+`+drawFadeWindowGLSL+``)
 	src = reMain.ReplaceAllString(src, "void nvVertexMain()")
 	return src + `
 
@@ -104,6 +111,8 @@ void main() {
     instanceWind = visInstances[visRecA.z].wind;
     nvVertexMain();
     visCmd = visRecB.x;
+    vec4 dr = visInstances[visRecA.z].draw;
+    visFade = drawFadeOn != 0 ? vec3(drawFadeWindow(distance(drawEye, instanceModel[3].xyz), dr), dr.z) : vec3(0.0, 1.0, 0.0);
 }
 `, nil
 }

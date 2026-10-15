@@ -34,6 +34,10 @@ func init() {
 		Label:    "Rocks",
 		Category: "Rocks",
 		Version:  1,
+		// Per environment region of a level generation doc, its variants
+		// made once into a shared cache (place_region.go).
+		Regional: procgen.RegionalPerRegion,
+		OnDemand: true,
 		Doc: "A family of weathered rock variants — boulders, cliff chunks, mesa caps, ledges, hoodoos, rubble or " +
 			"pebbles in sandstone or granite — modelled as signed distance fields (fracture faces, joints, undercut " +
 			"strata, chips), meshed, decimated to a triangle budget and baked with vertex colour (strata tint, cavity, " +

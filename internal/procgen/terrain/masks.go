@@ -60,9 +60,15 @@ const (
 	flowAreaMax = 250000
 )
 
-// computeMasks fills res's masks, strata index and albedo.
-func computeMasks(s *Settings, res *Result, c *compiledStrata, off []float32, pool Pool) error {
-	g := res.Grid
+// computeMasks fills res's masks, strata index and albedo from the field.
+// The flow, slope, deposition and curvature are the surface's own; the
+// cliff angle, the strata layer and the colours are the material model's —
+// for a band sample the cliff mask and the albedo blend the regions' by
+// weight, and the strata index and height are the dominant region's (an
+// index cannot be blended: it indexes that region's strata list, and the
+// biome masks say whose).
+func computeMasks(fd *field, res *Result, pool Pool) error {
+	g := fd.g
 	sz := g.S()
 	n := sz * sz
 	m := map[string][]float32{}
@@ -78,22 +84,48 @@ func computeMasks(s *Settings, res *Result, c *compiledStrata, off []float32, po
 	fl := newFlood(n)
 	fl.run(g.H, sz, 1e-4*cell)
 	area := make([]float32, n)
-	fl.accumulate(area)
-	fl = nil
+	if fd.mfdFlow {
+		fl.accumulateMFD(area, sz)
+	} else {
+		fl.accumulate(area)
+	}
 	lmin, lmax := math.Log(flowAreaMin), math.Log(flowAreaMax)
 	raw := m[MaskFlow]
 	ca := float64(cell * cell)
 	for k, a := range area {
 		raw[k] = float32(noise.Clamp((math.Log(float64(a)*ca)-lmin)/(lmax-lmin), 0, 1))
 	}
+	if fd.mfdFlow {
+		// A closed hollow the flood filled — a canyon's trench ending in a
+		// plain, a basin in a band — is a playa, not a channel: its filled
+		// surface is a flat the routed area fans across from the spill
+		// point in straight rays. Under more than a few decimetres of fill
+		// there is no wash, and neither is there on ground flatter than
+		// about half a degree (a pan, a fan's toe), where the routing is
+		// only the flood's forced gradient.
+		for j := 0; j < sz; j++ {
+			for i := 0; i < sz; i++ {
+				k := j*sz + i
+				f := 1.0
+				if d := fl.filled[k] - g.H[k]; d > 0 {
+					f = 1 - noise.SmoothStep(0.1, 0.8, float64(d))
+				}
+				il, ir := max(i-2, 0), min(i+2, sz-1)
+				jl, jr := max(j-2, 0), min(j+2, sz-1)
+				gx := float64(g.H[j*sz+ir]-g.H[j*sz+il]) / float64(cell*float32(ir-il))
+				gz := float64(g.H[jr*sz+i]-g.H[jl*sz+i]) / float64(cell*float32(jr-jl))
+				f *= noise.SmoothStep(0.002, 0.012, math.Hypot(gx, gz))
+				raw[k] *= float32(f)
+			}
+		}
+	}
+	fl = nil
 	area = nil
 	widen(raw, sz, max(int(math.Round(2.5/g.Cell)), 1))
 
-	cliffLo, cliffHi := s.CliffAngle-6, s.CliffAngle+6
 	cr := max(int(math.Round(2/g.Cell)), 1)
 	cspan := float32(cr) * cell
-	vary := noise.Fractal{Seed: noise.Hash64(s.Seed, 0x414C_4244), Octaves: 4, Frequency: 1.0 / 40, Gain: 0.55}
-	sand := s.SandColor
+	model := fd.m
 	return rows(pool, sz, func(j int) {
 		for i := 0; i < sz; i++ {
 			k := j*sz + i
@@ -103,32 +135,70 @@ func computeMasks(s *Settings, res *Result, c *compiledStrata, off []float32, po
 			gz := (g.H[jr*sz+i] - g.H[jl*sz+i]) / (cell * float32(jr-jl))
 			ang := math.Atan(math.Hypot(float64(gx), float64(gz))) * 180 / math.Pi
 			m[MaskSlope][k] = float32(ang / 90)
-			m[MaskCliff][k] = float32(noise.SmoothStep(cliffLo, cliffHi, ang))
-			d := res.Deposit[k]
+			d := fd.deposit[k]
 			m[MaskDeposition][k] = d / (d + 1)
-			idx, u := c.layer(float64(g.H[k] + off[k]))
-			res.StrataIndex[k] = uint8(min(idx, 255))
-			m[MaskStrata][k] = float32(min(idx, 255)) / 255
-			m[MaskStrataHeight][k] = float32(u)
 			// Curvature: a Laplacian over about 2 m.
 			lap := (g.At(i+cr, j) + g.At(i-cr, j) + g.At(i, j+cr) + g.At(i, j-cr) - 4*g.H[k]) / (cspan * cspan)
 			m[MaskCurvature][k] = float32(0.5 + 0.5*math.Tanh(float64(lap)*3))
 
-			// The albedo hint.
-			col := c.layers[idx].Color
-			v := 1 + 0.12*vary.At2(g.X(i), g.Z(j))
-			r, gg, b := col[0]*v, col[1]*v, col[2]*v
-			cl := float64(m[MaskCliff][k])
-			r, gg, b = r*(1-0.3*cl), gg*(1-0.33*cl), b*(1-0.3*cl)
-			sd := noise.Clamp(float64(m[MaskDeposition][k])*1.4+float64(raw[k])*0.5*(1-cl), 0, 1)
-			r += (sand[0] - r) * sd
-			gg += (sand[1] - gg) * sd
-			b += (sand[2] - b) * sd
-			res.Albedo[3*k] = to8(r)
-			res.Albedo[3*k+1] = to8(gg)
-			res.Albedo[3*k+2] = to8(b)
+			if r := model.reg[k]; r < mixed {
+				mat := model.mats[r]
+				m[MaskCliff][k] = float32(noise.SmoothStep(mat.cliffLo, mat.cliffHi, ang))
+				idx, u := mat.c.layer(float64(g.H[k] + model.off[k]))
+				res.StrataIndex[k] = uint8(min(idx, 255))
+				m[MaskStrata][k] = float32(min(idx, 255)) / 255
+				m[MaskStrataHeight][k] = float32(u)
+				r, gg, b := albedoAt(mat, idx, g.X(i), g.Z(j), float64(m[MaskCliff][k]), float64(m[MaskDeposition][k]), float64(raw[k]))
+				res.Albedo[3*k] = to8(r)
+				res.Albedo[3*k+1] = to8(gg)
+				res.Albedo[3*k+2] = to8(b)
+				continue
+			}
+			// A band sample.
+			cliff := float32(0)
+			for _, e := range model.entries(k) {
+				mat := model.mats[e.r]
+				cliff += e.w * float32(noise.SmoothStep(mat.cliffLo, mat.cliffHi, ang))
+			}
+			m[MaskCliff][k] = cliff
+			dr, doff := model.dominant(k)
+			idx, u := model.mats[dr].c.layer(float64(g.H[k] + doff))
+			res.StrataIndex[k] = uint8(min(idx, 255))
+			m[MaskStrata][k] = float32(min(idx, 255)) / 255
+			m[MaskStrataHeight][k] = float32(u)
+			var col [3]float64
+			for _, e := range model.entries(k) {
+				mat := model.mats[e.r]
+				li, _ := mat.c.layer(float64(g.H[k] + e.off))
+				r, gg, b := albedoAt(mat, li, g.X(i), g.Z(j), float64(cliff), float64(m[MaskDeposition][k]), float64(raw[k]))
+				w := float64(e.w)
+				col[0] += w * r
+				col[1] += w * gg
+				col[2] += w * b
+			}
+			res.Albedo[3*k] = to8(col[0])
+			res.Albedo[3*k+1] = to8(col[1])
+			res.Albedo[3*k+2] = to8(col[2])
 		}
 	})
+}
+
+// albedoAt is a material's albedo hint for layer idx at world (x, z) given
+// the sample's cliff, deposition and flow mask values: the layer colour,
+// varied by noise, darkened on cliffs, blended to sand by deposits and
+// washes.
+func albedoAt(mat *material, idx int, x, z, cl, dep, flow float64) (float64, float64, float64) {
+	col := mat.c.layers[idx].Color
+	lx, lz := mat.local(x, z)
+	v := 1 + 0.12*mat.vary.At2(lx, lz)
+	r, gg, b := col[0]*v, col[1]*v, col[2]*v
+	r, gg, b = r*(1-0.3*cl), gg*(1-0.33*cl), b*(1-0.3*cl)
+	sd := noise.Clamp(dep*1.4+flow*0.5*(1-cl), 0, 1)
+	sand := mat.sand
+	r += (sand[0] - r) * sd
+	gg += (sand[1] - gg) * sd
+	b += (sand[2] - b) * sd
+	return r, gg, b
 }
 
 func to8(v float64) uint8 { return uint8(noise.Clamp(v, 0, 1)*255 + 0.5) }

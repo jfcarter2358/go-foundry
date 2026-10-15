@@ -61,6 +61,14 @@ type Placement struct {
 	Chunk string `yaml:"chunk,omitempty"`
 	// Wind is the sway, or nil for still.
 	Wind *PlacementWind `yaml:"wind,omitempty"`
+	// DrawDistance and ShadowDistance are how far from the camera it is
+	// drawn and casts (world.Scenery's; 0: no limit, as drawn); Impostor
+	// its far cards and ImpostorDistance where they take over
+	// (docs/regions/PRESETS_5.md).
+	DrawDistance     float32 `yaml:"draw_distance,omitempty"`
+	ShadowDistance   float32 `yaml:"shadow_distance,omitempty"`
+	Impostor         string  `yaml:"impostor,omitempty"`
+	ImpostorDistance float32 `yaml:"impostor_distance,omitempty"`
 }
 
 // ChunkAuto is Placement.Chunk's "pick it for me".

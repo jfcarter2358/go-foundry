@@ -38,6 +38,8 @@
 #define MAX_POINT_LIGHTS 8
 #define SHADOW_CASCADES  3
 #define MAX_FOG_VOLUMES  8
+// Must match world.MaxAmbientVolumes (and gfx.SceneMaxAmbientVolumes).
+#define MAX_AMBIENT_VOLUMES 8
 
 layout(std140, binding = 0) uniform SceneBlock {
     // ---- lights (world.UploadLightsTo) ----
@@ -136,6 +138,16 @@ layout(std140, binding = 0) uniform SceneBlock {
     // by fog.glsl's hdrFromDisplay; taa_output_frag.glsl applies the curve.
     int   hdrMode;
     float hdrExposure;
+
+    // ---- ambient volumes (world.PackAmbientVolumes; light_model.glsl) ----
+    // Regions whose sky light is cut down — a cave, a slot canyon, a room —
+    // for the frames GI is not there to find it out: ambientLight scales
+    // its sky term by them, and fog.glsl the haze lit by that sky.
+    int   numAmbVolumes;
+    mat3  ambVolBasis[MAX_AMBIENT_VOLUMES];  // world offset -> normalized shape space
+    vec4  ambVolCenter[MAX_AMBIENT_VOLUMES]; // xyz centre, w shape (world.VolumeShape)
+    vec4  ambVolHalf[MAX_AMBIENT_VOLUMES];   // xyz half extents, w fade (metres)
+    vec4  ambVolParams[MAX_AMBIENT_VOLUMES]; // x sky, y ground, z fog, w dust
 };
 
 #endif

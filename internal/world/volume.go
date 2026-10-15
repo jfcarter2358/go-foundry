@@ -116,6 +116,10 @@ type Volume struct {
 	// nil is the ordinary case, and a pointer for the reason Fog is.
 	Cloud *VolumeCloud
 
+	// Ambient cuts the sky's ambient light inside the region — a cave, a slot
+	// canyon, a room — see volume_ambient.go. nil is the ordinary case.
+	Ambient *VolumeAmbient
+
 	// Gravity replaces the level's ambient pull inside the region, in units per
 	// second squared — a low-gravity chamber, a well that throws things up, a
 	// pocket of vacuum with nothing to fall toward. nil is the ordinary case: a
@@ -152,6 +156,15 @@ type Volume struct {
 	// what the volume does in the game: it is authoring metadata, and a level
 	// that ships with one behaves exactly as it would without.
 	Context *VolumeContext
+
+	// Region makes the volume an environment region for a level generation
+	// doc — see volume_region.go. nil is the ordinary case. Authoring data
+	// only, like Context: the game never reads it.
+	Region *VolumeRegion
+
+	// Grass makes the volume a grass field — see volume_grass.go. nil is the
+	// ordinary case. Drawing only: it is not a trigger.
+	Grass *VolumeGrass
 
 	// FromPrefab is runtime-only, never serialized: the prefab instance whose
 	// file put this here (prefab.go). Empty for one the level file authored.
@@ -487,6 +500,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		LoadLevel:    r.LoadLevel,
 		Checkpoint:   r.Checkpoint,
 		Fog:          VolumeFogFromRaw(r.Fog),
+		Ambient:      VolumeAmbientFromRaw(r.Ambient),
 		Cloud:        VolumeCloudFromRaw(r.Cloud),
 		Gravity:      CopyFloatPtr(r.Gravity),
 		ClearsClouds: r.ClearsClouds,
@@ -494,6 +508,8 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		Scatter:      VolumeScatterFromRaw(r.Scatter),
 		Objective:    VolumeObjectiveFromRaw(r.Objective),
 		Context:      VolumeContextFromRaw(r.Context),
+		Region:       VolumeRegionFromRaw(r.Region),
+		Grass:        VolumeGrassFromRaw(r.Grass),
 	}, nil
 }
 
@@ -511,6 +527,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		LoadLevel:     v.LoadLevel,
 		Checkpoint:    v.Checkpoint,
 		Fog:           VolumeFogToRaw(v.Fog),
+		Ambient:       VolumeAmbientToRaw(v.Ambient),
 		Cloud:         VolumeCloudToRaw(v.Cloud),
 		Gravity:       CopyFloatPtr(v.Gravity),
 		ClearsClouds:  v.ClearsClouds,
@@ -518,6 +535,8 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Scatter:       VolumeScatterToRaw(v.Scatter),
 		Objective:     VolumeObjectiveToRaw(v.Objective),
 		Context:       VolumeContextToRaw(v.Context),
+		Region:        VolumeRegionToRaw(v.Region),
+		Grass:         VolumeGrassToRaw(v.Grass),
 	}
 }
 
@@ -570,6 +589,10 @@ func (v *Volume) Load() error {
 // CageMesh returns the line-list vertices and indices for the volume's shape, in
 // volume-local space.
 func (v *Volume) CageMesh() ([][]float32, []int) {
+	// A region draws its footprint, not the box fitted round it.
+	if v.Region != nil && len(v.Region.Footprint) >= 3 {
+		return RegionCage(v.Region.Footprint, v.HalfY)
+	}
 	switch v.Shape {
 	case VolumeSphere:
 		return EllipsoidCage(v.HalfX, v.HalfY, v.HalfZ)

@@ -22,7 +22,12 @@ package material
 //     rectangle, height-blended so sand fills the gaps between gravel stones
 //     rather than fading through them. A layer can be triplanar — the rock of
 //     a cliff — and a strata ramp can band the triplanar layers by height.
-//     This is what a terrain stage's tiles wear.
+//     This is what a terrain stage's tiles wear. EIGHT-LAYER MODE
+//     (docs/regions/PHASE_3.md): layers 5–8 and a second weights texture
+//     (`weights2`, its RGBA layers 5–8) — what a region_material writes for
+//     a world of two biomes, four ground layers each. A splat that names no
+//     layer 5–8 is the four-layer splat exactly: same uniforms, same atlas,
+//     same shader path (the eight-layer branch is behind its own matFx bit).
 //   - ground_blend: a rock fades toward the colour of the ground under it,
 //     within a band above the ground's height there: the seam where a rock
 //     meets the terrain stops being a line between two photographs.
@@ -41,7 +46,11 @@ package material
 // draws exactly as it did. The textures they sample are bound by
 // gfx/material_fx.go.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"strconv"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // The terrain and rock effect kind names.
 const (
@@ -54,9 +63,20 @@ const (
 	KindColorGrade     = "color_grade"
 )
 
-// SplatLayers is how many layers a splat mixes: one per channel of its
-// weights texture.
+// SplatLayers is how many layers one weights texture mixes: one per
+// channel. The first four layers read `weights`; layers 5–8 (eight-layer
+// mode) read `weights2`.
 const SplatLayers = 4
+
+// SplatLayersMax is how many layers a splat can mix at all: two weights
+// textures' worth (eight-layer mode, docs/regions/PHASE_3.md).
+const SplatLayersMax = 2 * SplatLayers
+
+// SplatAtlasMax is how many layers a shared atlas (`atlas1..32`) can hold:
+// a region terrain's ground PALETTE when its environments bring more than
+// eight distinct layers (docs/regions/PRESETS_1.md). A splat still mixes at
+// most SplatLayersMax of them; the atlas is what they are packed into.
+const SplatAtlasMax = 32
 
 // SplatLayerParam is splat layer i's (0-based) parameter called field:
 // "layer1", "layer1_scale" and so on. Exported for the generator that writes
@@ -93,34 +113,82 @@ func splatParams() []ParamDef {
 			Default: FloatValue(1), Min: 0, Max: 1},
 	}
 	for i := 0; i < SplatLayers; i++ {
-		ch := []string{"red", "green", "blue", "alpha"}[i]
-		out = append(out,
-			ParamDef{Name: SplatLayerParam(i, ""), Type: ParamTexture, Label: "Layer " + string(rune('1'+i)),
-				Doc: "The layer's albedo, weighted by the weights texture's " + ch + ". Its <name>_normal, <name>_height " +
-					"and <name>_ao are used when they exist (a Poly Haven import writes all three).",
-				Default: TextureValue("")},
-			ParamDef{Name: SplatLayerParam(i, "scale"), Type: ParamFloat, Label: "  Scale (m)",
-				Doc: "Metres a repeat.", Default: FloatValue(3), Min: 0.01, Max: 1000},
-			ParamDef{Name: SplatLayerParam(i, "triplanar"), Type: ParamBool, Label: "  Triplanar",
-				Doc: "Project along all three axes rather than straight down — for rock on slopes and cliffs, which " +
-					"a top-down projection smears.", Default: BoolValue(false)},
-			ParamDef{Name: SplatLayerParam(i, "height"), Type: ParamFloat, Label: "  Height",
-				Doc:     "How much its height map lifts it over its neighbours in the blend.",
-				Default: FloatValue(1), Min: 0, Max: 4},
-			ParamDef{Name: SplatLayerParam(i, "tint"), Type: ParamColor, Label: "  Tint",
-				Doc: "Multiplies its albedo.", Default: ColorValue(mgl32.Vec3{1, 1, 1}), Min: 0, Max: 4},
-			ParamDef{Name: SplatLayerParam(i, "anti_tile"), Type: ParamBool, Label: "  Anti-tile",
-				Doc: "Hide the repeat: the texture is laid in patches about a repeat across, each shifted (and, top " +
-					"down, turned) its own way, blended by height where they meet, so no feature recurs on a grid. " +
-					"About half again the layer's texture reads.", Default: BoolValue(false)},
-			ParamDef{Name: SplatLayerParam(i, "relief"), Type: ParamFloat, Label: "  Relief (m)",
-				Doc: "Parallax depth, top-down layers only: the layer's height map moves its texels along the view so stones " +
-					"stand up off the plane instead of lying painted on it, and its crevices darken. Fades out with distance. " +
-					"Three more texture reads where it is on; 0 is off.", Default: FloatValue(0), Min: 0, Max: 1},
-		)
+		out = append(out, splatLayerParams(i)...)
 	}
-	out = append(out,
-		ParamDef{Name: "strata", Type: ParamTexture, Label: "Strata ramp",
+	out = append(out, splatTailParams()...)
+	// Eight-layer mode, appended after everything a four-layer splat has so
+	// that file order and every existing .fmat stay as they were (a param at
+	// its default is never written).
+	out = append(out, ParamDef{Name: "weights2", Type: ParamTexture, Label: "Weights 5–8",
+		Doc: "Eight-layer mode: layers 5 to 8's weights, red to alpha, over the same rectangle as Weights. A splat " +
+			"with layers 5–8 and this map mixes all eight; without it, layers 5–8 are ignored.",
+		Default: TextureValue("")})
+	for i := SplatLayers; i < SplatLayersMax; i++ {
+		out = append(out, splatLayerParams(i)...)
+	}
+	for i := 0; i < SplatLayersMax; i++ {
+		out = append(out, ParamDef{Name: SplatLayerParam(i, "strata"), Type: ParamBool, Label: "Layer " + string(rune('1'+i)) + " strata",
+			Doc: "Whether the strata ramp and the bedding relief apply to this layer when it is triplanar. On by default " +
+				"(every triplanar layer, as always); a world of two biomes turns it off on the biome whose rock is not " +
+				"the strata's.", Default: BoolValue(true)})
+	}
+	// The shared atlas (docs/regions/PHASE_6.md, "Per-tile materials"),
+	// appended last for the same reason as eight-layer mode; atlas9..32
+	// (a palette of more than eight, docs/regions/PRESETS_1.md) after those.
+	for i := 0; i < SplatAtlasMax; i++ {
+		out = append(out, ParamDef{Name: SplatAtlasParam(i), Type: ParamTexture, Label: "Atlas layer " + strconv.Itoa(i+1),
+			Doc: "Advanced: pack this splat's layers into the atlas of THESE eight layers rather than of its own. A region " +
+				"terrain's per-tile four-layer materials name their eight-layer union's layers here, so a tile wearing " +
+				"the four-layer material samples the very texels its eight-layer neighbour does. Every layer of this " +
+				"splat must be among them, or they are ignored. Up to 32 (a region terrain's palette of more than eight " +
+				"ground layers: every tile's material names all of them). Empty (all): the splat's own layers.",
+			Default: TextureValue("")})
+	}
+	return out
+}
+
+// SplatAtlasParam is the splat's i-th (0-based) shared-atlas layer
+// parameter: "atlas1" … "atlas32".
+func SplatAtlasParam(i int) string { return "atlas" + strconv.Itoa(i+1) }
+
+// splatLayerParams is layer i's (0-based) parameters.
+func splatLayerParams(i int) []ParamDef {
+	ch := []string{"red", "green", "blue", "alpha"}[i%SplatLayers]
+	tex := "the weights texture's "
+	if i >= SplatLayers {
+		tex = "Weights 5–8's "
+	}
+	return []ParamDef{
+		{Name: SplatLayerParam(i, ""), Type: ParamTexture, Label: "Layer " + string(rune('1'+i)),
+			Doc: "The layer's albedo, weighted by " + tex + ch + ". Its <name>_normal, <name>_height " +
+				"and <name>_ao are used when they exist (a Poly Haven import writes all three).",
+			Default: TextureValue("")},
+		ParamDef{Name: SplatLayerParam(i, "scale"), Type: ParamFloat, Label: "  Scale (m)",
+			Doc: "Metres a repeat.", Default: FloatValue(3), Min: 0.01, Max: 1000},
+		ParamDef{Name: SplatLayerParam(i, "triplanar"), Type: ParamBool, Label: "  Triplanar",
+			Doc: "Project along all three axes rather than straight down — for rock on slopes and cliffs, which " +
+				"a top-down projection smears.", Default: BoolValue(false)},
+		ParamDef{Name: SplatLayerParam(i, "height"), Type: ParamFloat, Label: "  Height",
+			Doc:     "How much its height map lifts it over its neighbours in the blend.",
+			Default: FloatValue(1), Min: 0, Max: 4},
+		ParamDef{Name: SplatLayerParam(i, "tint"), Type: ParamColor, Label: "  Tint",
+			Doc: "Multiplies its albedo.", Default: ColorValue(mgl32.Vec3{1, 1, 1}), Min: 0, Max: 4},
+		ParamDef{Name: SplatLayerParam(i, "anti_tile"), Type: ParamBool, Label: "  Anti-tile",
+			Doc: "Hide the repeat: the texture is laid in patches about a repeat across, each shifted (and, top " +
+				"down, turned) its own way, blended by height where they meet, so no feature recurs on a grid. " +
+				"About half again the layer's texture reads.", Default: BoolValue(false)},
+		ParamDef{Name: SplatLayerParam(i, "relief"), Type: ParamFloat, Label: "  Relief (m)",
+			Doc: "Parallax depth, top-down layers only: the layer's height map moves its texels along the view so stones " +
+				"stand up off the plane instead of lying painted on it, and its crevices darken. Fades out with distance. " +
+				"Three more texture reads where it is on; 0 is off.", Default: FloatValue(0), Min: 0, Max: 1},
+	}
+}
+
+// splatTailParams are the parameters after the first four layers: the
+// strata ramp, the bedding and the walls' normal strength.
+func splatTailParams() []ParamDef {
+	return []ParamDef{
+		{Name: "strata", Type: ParamTexture, Label: "Strata ramp",
 			Doc: "A ramp of tints read by world height (left the bottom of the range, right the top): the bedding " +
 				"of the rock, banding the triplanar layers. Multiplied in, so mid-grey is no change. Empty: none.",
 			Default: TextureValue("")},
@@ -143,8 +211,19 @@ func splatParams() []ParamDef {
 			Doc: "Multiplies the triplanar layers' normal maps on their side projections only (walls), on top of " +
 				"Normal strength: a wall seen across a canyon wants more relief than ground seen underfoot.",
 			Default: FloatValue(1), Min: 0, Max: 4},
-	)
-	return out
+		ParamDef{Name: "ripple", Type: ParamFloat, Label: "Sand ripples",
+			Doc: "Wind ripples bent into one layer's normals (Ripple layer, the sand): sinuous crests a hand's breadth " +
+				"apart, a gentle windward face and a steep lee, stronger in patches, on level ground only, faded out " +
+				"where a pixel spans a ripple. The slope of a ripple's face; 0 is off.",
+			Default: FloatValue(0), Min: 0, Max: 2},
+		ParamDef{Name: "ripple_wavelength", Type: ParamFloat, Label: "Ripple wavelength (m)",
+			Doc: "Crest to crest.", Default: FloatValue(0.14), Min: 0.02, Max: 5},
+		ParamDef{Name: "ripple_angle", Type: ParamFloat, Label: "Ripple wind (°)",
+			Doc:     "The way the wind blows across them, degrees clockwise from +Z seen from above; the crests run across it.",
+			Default: FloatValue(60), Min: -360, Max: 360},
+		ParamDef{Name: "ripple_layer", Type: ParamFloat, Label: "Ripple layer",
+			Doc: "Which of the first four layers ripples (0 the first).", Default: FloatValue(0), Min: 0, Max: 3},
+	}
 }
 
 func init() {
@@ -170,7 +249,8 @@ func init() {
 		Name: KindSplat, Domains: surfaceOnly, Label: "Splat (terrain layers)",
 		Doc: "Mix up to four texture layers by a weights texture laid over a world rectangle — sand, cracked " +
 			"ground, gravel, rock — height-blended by each layer's _height map, with its normal map and AO. " +
-			"What a generated terrain's tiles wear. The surface's own texture is not drawn.",
+			"What a generated terrain's tiles wear. The surface's own texture is not drawn. With layers 5–8 and " +
+			"Weights 5–8 it mixes eight (two biomes' ground: a region_material writes these).",
 		Params: splatParams(),
 	})
 

@@ -294,6 +294,10 @@ func (v *naniteVisPass) build() (err error) {
 // cull's work their own way).
 func naniteVisBegin() {
 	v := &naniteVis
+	// The frame that just ended asked for so many records: read back a frame
+	// or two later, it decides whether this one hands its overflow to the
+	// forward path (nanite_vis_overflow.go).
+	naniteVisOverflow.note(v.next, v.used && v.ready())
 	v.active = sceneFrameActive() && NaniteVisBuffer && !naniteDebugActive() && naniteCull.ok && v.ready()
 	v.used = false
 	v.recordsUsed = 0
@@ -416,7 +420,7 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	gl.Uniform1ui(n.U("binBase"), uint32(base))
 	gl.Uniform1ui(n.U("dense"), uint32(boolToInt32(NaniteVisDense)))
 	gl.Uniform1ui(n.U("packedCounts"), uint32(boolToInt32(b.compacted)))
-	gl.Uniform1ui(n.U("maxRecords"), naniteVisMaxRecords)
+	gl.Uniform1ui(n.U("maxRecords"), naniteVisRecordLimit)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, v.next)
 	if b.compacted {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, b.countBuf)
@@ -443,6 +447,9 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	gl.Uniform1i(p.U("blendMask"), gfx.BlendMaskUnit)
 	gl.Uniform1i(p.U("alphaSharpen"), 1)
 	gl.Uniform1i(p.U("coverageDither"), coverageDither())
+	// The draw-distance fades, dithered here (nanite_draw_distance.go).
+	gl.Uniform3f(p.U("drawEye"), gfx.Cam.Position[0], gfx.Cam.Position[1], gfx.Cam.Position[2])
+	gl.Uniform1i(p.U("drawFadeOn"), boolToInt32(DrawDistances && !naniteDebugActive()))
 	gl.Uniform1f(p.U("time"), gfx.MaterialScrollTime)
 	// Never water: a water material is not prepassable, and is drawn the
 	// forward way below.
@@ -492,6 +499,13 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	}
 	drawBuffersColour()
 	gl.StencilFunc(gl.ALWAYS, 0, 0xff)
+	// What the frame's records could not number, the forward way, while the
+	// frame is at the records' limit (nanite_vis_overflow.go).
+	if naniteVisOverflow.overflowRisk() {
+		ProfileBegin("nanite: vis overflow")
+		naniteVisOverflow.drawOverflow(b, groups, cmd)
+		ProfileEnd()
+	}
 	gl.UseProgram(gfx.Program)
 	ProfileEnd()
 

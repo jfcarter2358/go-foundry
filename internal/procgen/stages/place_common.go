@@ -31,6 +31,29 @@ import (
 // read the artifact, never the kind, so a new source only joins this list.
 var RockSources = []string{RocksKind, "polyhaven_rocks"}
 
+// sizedVariants keeps the variants whose largest side is at least min
+// (0: all), or the largest one when none is.
+func sizedVariants(vs []place.Variant, min float64) []place.Variant {
+	if min <= 0 || len(vs) == 0 {
+		return vs
+	}
+	side := func(v place.Variant) float64 { return math.Max(v.Extent[0], math.Max(v.Extent[1], v.Extent[2])) }
+	var out []place.Variant
+	big := 0
+	for i, v := range vs {
+		if side(v) >= min {
+			out = append(out, v)
+		}
+		if side(v) > side(vs[big]) {
+			big = i
+		}
+	}
+	if len(out) == 0 {
+		return []place.Variant{vs[big]}
+	}
+	return out
+}
+
 // lightVariants keeps the variants of at most max triangles (0: all) —
 // what a dense rule places by the thousand — or, when none is that light,
 // the lightest one.
@@ -83,6 +106,13 @@ func bandParams() []procgen.ParamDef {
 			Doc: "Clumping: 0 spreads it evenly over the ground its bands allow, 1 gathers it in patches with bare ground between."},
 		{Name: "cluster_scale", Type: procgen.ParamFloat, Label: "Cluster size (m)", Default: f(25), Min: 0.5, Max: 1000, Step: 0.5,
 			Doc: "The patches' size."},
+		// Added: an empty area is the whole ground, so no rule's hash moves.
+		{Name: "near", Added: true, Type: procgen.ParamSpline, Label: "Area", Default: procgen.Spline(),
+			Channels: []string{"radius"}, ChannelDefaults: []float64{20},
+			Doc: "Keep the rule to an area: within each point's radius of the path through the points (one point: a disc) — " +
+				"rubble along a slot canyon's floor, plants down a stairway. Empty: the whole ground."},
+		{Name: "near_soft", Added: true, Type: procgen.ParamFloat, Label: "Area fade (m)", Default: f(4), Min: 0, Max: 500, Step: 0.5,
+			Doc: "How far past the area's radius the rule fades out."},
 	}
 }
 
@@ -93,6 +123,13 @@ func bandRule(it procgen.Params, r *place.Rule) {
 	r.Curvature, r.Cliff, r.Soft = it.Vec2("curvature"), it.Vec2("cliff"), it.Float("soft")
 	r.CliffBase, r.CliffBaseDistance = it.Float("cliff_base"), it.Float("cliff_base_distance")
 	r.Cluster, r.ClusterScale = it.Float("cluster"), it.Float("cluster_scale")
+	r.Near = nil
+	for _, q := range it.Points("near") {
+		if len(q) >= 3 {
+			r.Near = append(r.Near, [3]float64{q[0], q[1], q[2]})
+		}
+	}
+	r.NearSoft = it.Float("near_soft")
 }
 
 // placeVariant is a rocks manifest entry as place sees it.

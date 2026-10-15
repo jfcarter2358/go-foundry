@@ -372,6 +372,41 @@ float fogVolumeTransmittance(vec3 worldPos) {
     return t;
 }
 
+// ---------- ambient volumes: the haze inside them ----------
+//
+// The fog's colour is light the sky put into the air; inside an ambient
+// volume (world/volume_ambient.go) the sky does not reach, so the share of
+// the eye-to-surface segment that lies inside one is dimmed by the volume's
+// cut (the mean of its sky and ground factors, weighted by its fog share,
+// ambVolParams.z). 1 when no volume is crossed.
+float ambVolFogPath(vec3 worldPos) {
+    if (numAmbVolumes <= 0) {
+        return 1.0;
+    }
+    vec3 seg = worldPos - fogCamPos;
+    float segLen = length(seg);
+    if (segLen < 1e-4) {
+        return 1.0;
+    }
+    vec3 dir = seg / segLen;
+    float f = 1.0;
+    for (int i = 0; i < MAX_AMBIENT_VOLUMES; ++i) {
+        if (i >= numAmbVolumes) {
+            break;
+        }
+        float t0 = 0.0;
+        float t1 = segLen;
+        if (!fogShapeInterval(int(ambVolCenter[i].w + 0.5), ambVolBasis[i], ambVolCenter[i].xyz,
+                              fogCamPos, dir, t0, t1)) {
+            continue;
+        }
+        float frac = clamp((t1 - t0) / segLen, 0.0, 1.0);
+        float k = mix(1.0, 0.5 * (ambVolParams[i].x + ambVolParams[i].y), ambVolParams[i].z);
+        f *= 1.0 - frac * (1.0 - k);
+    }
+    return f;
+}
+
 // ---------- what a shading pass calls ----------
 
 // applyFog is the ordinary case: the surface is replaced by the fog in front of
@@ -394,12 +429,15 @@ vec3 applyFogScene(vec3 color, vec3 worldPos) {
     // let a fog bank tint the haze that is actually between the viewer and it.
     // The atmosphere fills the whole segment too, and goes on between the two.
     color = applyFogVolumes(color, worldPos);
+    // The haze is lit by the sky; inside an ambient volume (a cave) it is
+    // not, as the walls are not (light_model.glsl's ambientVolumeFactor).
+    float amb = ambVolFogPath(worldPos);
     if (fogAtmos != 0) {
         vec3 T;
         vec3 add = fogAtmosAt(worldPos, T);
-        color = color * T + add;
+        color = color * T + add * amb;
     }
-    return mix(color, hdrFromDisplay(fogColor), fogFactor(worldPos));
+    return mix(color, hdrFromDisplay(fogColor) * amb, fogFactor(worldPos));
 }
 
 // fogAtmosTransmittance is what survives the atmosphere in front of

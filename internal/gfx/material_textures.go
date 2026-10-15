@@ -89,6 +89,7 @@ func fxOwnTextures(name string) map[string]bool {
 		}
 	}
 	add(f.SplatWeights)
+	add(f.SplatWeights2)
 	add(f.SplatStrata)
 	for _, l := range f.SplatLayers {
 		add(l.Texture)

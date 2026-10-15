@@ -112,3 +112,44 @@ func TestSplatPackFullThenHalveIsPackSmall(t *testing.T) {
 		}
 	}
 }
+
+// The eight-layer packing: cols 2 is the classic 2×2 byte for byte, and
+// cols 4 puts layer n in tile (n%4, n/4) of a 4×2 atlas.
+func TestSplatPackGrid(t *testing.T) {
+	const size = 64
+	layer := func(seed int) splatDecoded {
+		img := image.NewRGBA(image.Rect(0, 0, size, size))
+		for i := range img.Pix {
+			img.Pix[i] = uint8((i*5 + seed*41) % 253)
+		}
+		return splatDecoded{albedo: img}
+	}
+	var layers []splatDecoded
+	for i := 0; i < 6; i++ {
+		layers = append(layers, layer(i))
+	}
+	a2, n2, e2 := packSplatAtlases(layers[:4], size)
+	g2a, g2n, w, h := packSplatAtlasGrid(layers[:4], size, 2)
+	if w != e2 || h != e2 || string(a2) != string(g2a) || string(n2) != string(g2n) {
+		t.Fatal("the 2×2 grid differs from packSplatAtlases")
+	}
+	a4, _, w4, h4 := packSplatAtlasGrid(layers, size, 4)
+	g := splatGutter(size)
+	tile := size + 2*g
+	if w4 != 4*tile || h4 != 2*tile {
+		t.Fatalf("4×2 atlas %d×%d, want %d×%d", w4, h4, 4*tile, 2*tile)
+	}
+	for n, l := range layers {
+		for _, q := range [][2]int{{0, 0}, {33, 7}, {size - 1, size - 1}, {-1, 5}} {
+			sx, sy := (q[0]+size)%size, (q[1]+size)%size // the gutter wraps
+			o := 4 * (((n/4)*tile+g+q[1])*w4 + (n%4)*tile + g + q[0])
+			s := 4 * (sy*size + sx)
+			if a4[o] != l.albedo.Pix[s] || a4[o+1] != l.albedo.Pix[s+1] || a4[o+2] != l.albedo.Pix[s+2] {
+				t.Fatalf("layer %d texel %v: %v, want %v", n, q, a4[o:o+3], l.albedo.Pix[s:s+3])
+			}
+		}
+	}
+	if !splatCompressible(1024, 4) && TextureCompression {
+		t.Error("a 4×2 1k atlas is not compressible")
+	}
+}

@@ -137,6 +137,44 @@ few exponentials a pixel: on the canyon, no measurable frame time.
 A generator writes all of this for you: the [environment
 stage](33-generators.md#environment-level).
 
+## Light shafts
+
+The atmosphere above is unshadowed: haze in a canyon's shade glows as brightly
+as haze in the sun. **Light shafts** are the part of the air that is marched
+instead — a few dozen samples from the eye to the first surface, each lit by
+the sun *through its shadow* (the virtual shadow map, or the cascades when it
+is off) and the clouds' shadow — so sunlight falling through a slot canyon's
+gaps or a cave mouth streams as visible beams through dusty air, and the
+shaded air stays dark.
+
+```yaml
+fog:
+  mode: none            # shafts work with any mode, or with none
+  shafts:
+    density: 0.012      # extinction per metre at base: 0.01 takes 63% over 100 m
+    distance: 150       # how far from the eye the march reaches, metres
+    steps: 24           # samples a ray (4..64); halved below High quality under TAA
+    color: {r: 1, g: 0.95, b: 0.85}   # tints the scattered light
+    base: 0             # height the density is measured at
+    falloff: 0          # thins by e every 1/falloff m above base; 0 = uniform
+    anisotropy: 0.5     # Henyey-Greenstein g: toward 1, beams glow looking at the sun
+    strength: 1         # scales the scattered sunlight
+    ambient: 0.5        # sky light the dust scatters (cut by ambient volumes)
+    # disabled: true    # keep the numbers, switch them off
+```
+
+Absent is off. An [ambient volume](13-volumes.md#ambient-volumes-dark-interiors)'s
+`dust` adds to the density inside it — a cave's dusty beam without fogging the
+valley. The editor's **Fog** group has a **Light shafts** section; the
+[environment stage](33-generators.md#environment-level) writes the block from
+its `shafts*` parameters.
+
+It is drawn by the volumetric pass, at its resolution (half the screen's by
+default, F4 cycles it) with a depth-aware upsample, its jitter turning every
+frame for TAA to average. `FOUNDRY_SHAFTS=0` switches the pass off whatever
+the level says. Budget: about 1 ms at 2560×1080 on a GTX 1070 (24 steps
+halved, half resolution) — see `docs/adventure/PHASE_B.md`.
+
 ## HDR and the tone curve
 
 By default a level shades in low dynamic range: the light falling on a

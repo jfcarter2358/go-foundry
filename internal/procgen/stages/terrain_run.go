@@ -45,6 +45,7 @@ import (
 	"foundry/internal/procgen/meshout"
 	"foundry/internal/procgen/terrain"
 
+	"github.com/go-gl/mathgl/mgl32"
 	"gopkg.in/yaml.v2"
 )
 
@@ -65,6 +66,10 @@ type tilePlan struct {
 	size             float64 // metres
 	base             float32
 	quant            float32 // the shared quantisation step
+	// reuse: an Incremental stage's tiles, each hashed from its own inputs
+	// and kept from the previous run when the hash matches
+	// (region_terrain_incremental.go). Off for the classic stage.
+	reuse bool
 }
 
 func planTiles(p procgen.Params, g *terrain.Grid) tilePlan {
@@ -104,8 +109,17 @@ func tileGridAt(g *terrain.Grid, tp tilePlan, ti, tj int, uvScale float32, terra
 		Height: func(i, j int) float32 {
 			return g.At(ti*tp.per+i*tp.step, tj*tp.per+j*tp.step)
 		},
+		// From the whole field, across the tile's edge: neighbours agree.
+		Normal: func(i, j int) mgl32.Vec3 { return gridNormal(g, ti*tp.per+i*tp.step, tj*tp.per+j*tp.step, tp.step) },
 	}
 	return hg, procgen.Point3{X: cx, Y: 0, Z: cz}
+}
+
+// gridNormal is the field's normal at sample (gi, gj) by central
+// differences step samples each way — what a tile vertex there is shaded
+// with, whichever tile (or stitch strip) it belongs to.
+func gridNormal(g *terrain.Grid, gi, gj, step int) mgl32.Vec3 {
+	return meshout.FieldNormal(g.At, gi, gj, g.N, g.N, step, g.Cell)
 }
 
 // tileTriangles is a tile's triangle count: the top, the skirts, the bottom.
@@ -214,19 +228,44 @@ func writeTiles(rc *procgen.RunContext, g *terrain.Grid, tp tilePlan, tris int, 
 	var skipped int
 	type outcome struct{ skipped bool }
 	results := make([]outcome, n)
-	err := rc.Parallel(n, func(k int) error {
+	err := rc.Parallel(n, func(k int) (ferr error) {
 		sem <- struct{}{}
 		defer func() { <-sem }()
 		if err := rc.Err(); err != nil {
 			return err
 		}
 		ti, tj := k%tp.count, k/tp.count
+		name := tileName(ti, tj)
+		var th string
+		if tp.reuse {
+			ext := ".glb"
+			if cook {
+				ext = ".fnm"
+			}
+			th = tileInputHash(rc, g, tp, ti, tj, cook, meshOnly)
+			if rc.ReuseTile(name, th, name+ext) {
+				results[k] = outcome{true}
+				if cook {
+					rc.Progress(share + (1-share)*float32(done.Add(1))/float32(n))
+					rc.Place(procgen.Placement{
+						ID: name, Model: rc.AssetPath(name + ".fnm"), Position: tileCentre(g, tp, ti, tj),
+						Collision: collision, Chunk: terrainTileChunk(p), Material: p.Str("material"),
+					})
+				}
+				return nil
+			}
+			rc.BeginTile(name)
+			defer func() {
+				if ferr == nil {
+					rc.SetTile(name, th)
+				}
+			}()
+		}
 		hg, centre := tileGridAt(g, tp, ti, tj, uv, p.Str("uv_mode") == "terrain")
 		var b meshout.Builder
 		b.Slot("ground", tex)
 		hg.Build(&b)
 		m := b.Mesh()
-		name := tileName(ti, tj)
 		if !cook {
 			return meshout.WriteGLB(rc.Path(name+".glb"), m)
 		}
@@ -240,7 +279,7 @@ func writeTiles(rc *procgen.RunContext, g *terrain.Grid, tp tilePlan, tris int, 
 		rc.Progress(share + (1-share)*float32(done.Add(1))/float32(n))
 		rc.Place(procgen.Placement{
 			ID: name, Model: rc.AssetPath(name + ".fnm"), Position: centre,
-			Collision: collision, Chunk: procgen.ChunkAuto, Material: p.Str("material"),
+			Collision: collision, Chunk: terrainTileChunk(p), Material: p.Str("material"),
 		})
 		return nil
 	})
@@ -294,4 +333,13 @@ func tilePreviewMesh(name string, g *terrain.Grid, tp tilePlan, ti, tj int) proc
 		pm.UVs[i] = [2]float32{(m.Positions[i][0] - float32(g.MinX)) / size, (m.Positions[i][2] - float32(g.MinZ)) / size}
 	}
 	return pm
+}
+
+// terrainTileChunk is the tiles' streaming chunk: procgen.ChunkAuto, or ""
+// (always in) with `chunk: none`.
+func terrainTileChunk(p procgen.Params) string {
+	if p.Str("chunk") == "none" {
+		return ""
+	}
+	return procgen.ChunkAuto
 }

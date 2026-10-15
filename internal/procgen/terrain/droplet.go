@@ -84,9 +84,12 @@ func heightGrad(h []float32, s int, x, z float64) (float32, float32, float32) {
 	return ht, gx, gz
 }
 
-// droplets erodes g; it returns how many droplets ran.
-func droplets(s *Settings, g *Grid, c *compiledStrata, off, deposit []float32, pool Pool, progress func(float32)) (int, error) {
-	d := s.Droplets
+// droplets erodes the field; it returns how many droplets ran. The
+// droplets' numbers and seed are the knobs'; the erodibility at each sample
+// is the material model's.
+func droplets(fd *field, pool Pool, progress func(float32)) (int, error) {
+	g, deposit := fd.g, fd.deposit
+	d := fd.k.droplets
 	if d.Density <= 0 || d.Lifetime <= 0 {
 		return 0, nil
 	}
@@ -148,7 +151,7 @@ func droplets(s *Settings, g *Grid, c *compiledStrata, off, deposit []float32, p
 				if n == 0 {
 					return nil
 				}
-				rng := noise.NewRNG(noise.Hash64(s.Seed, 0x4452_4F50, uint64(pass), uint64(b.bj*nb+b.bi)))
+				rng := noise.NewRNG(noise.Hash64(fd.k.seed, 0x4452_4F50, uint64(pass), uint64(b.bj*nb+b.bi)))
 				bx0, bz0 := float64(b.bi*B), float64(b.bj*B)
 				bw := float64(min(B, sz-1-b.bi*B))
 				bh := float64(min(B, sz-1-b.bj*B))
@@ -210,7 +213,7 @@ func droplets(s *Settings, g *Grid, c *compiledStrata, off, deposit []float32, p
 							left := depositAt(h, deposit, sz, k, u, v, amt/cellArea, ht)
 							sed -= amt - left*cellArea
 						} else {
-							er := c.erodibility(float64(ht + off[k]))
+							er := fd.m.erod(k, ht)
 							amt := (capacity - sed) * eroRate * er
 							if amt > 0 {
 								// From the brush about the nearest sample,

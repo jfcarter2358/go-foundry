@@ -101,7 +101,10 @@ func CookMeshFile(m *model.ImportMesh, out string, force bool, opt Options) (Coo
 	if err != nil {
 		return res, err
 	}
-	if err := cooked.Write(out); err != nil {
+	// No .bak: CookMeshFile is the generators' cook (procgen/meshout), whose
+	// outputs are rebuilt on demand; a backup of each recooked tile doubled
+	// a world's output folder on every rerun.
+	if err := cooked.WriteNoBackup(out); err != nil {
 		return res, err
 	}
 	res.Mesh = cooked

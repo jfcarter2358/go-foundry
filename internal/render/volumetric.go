@@ -1004,16 +1004,31 @@ var previewVolumeLighting = volumeLight{
 // over what is in the current framebuffer's viewport. See the file comment for
 // where in the frame it belongs.
 func RenderVolumetrics(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, cull *Frustum, t *VolumeTargets) {
+	renderVolumetrics(lvl, projView, camPos, cull, t, nil)
+}
+
+// RenderVolumetricsLit is RenderVolumetrics in a frame with a shadow pass
+// behind it: the level's light shafts (shafts.go) are marched too, shadowed
+// by frame — the shadow the frame's surfaces were drawn with.
+func RenderVolumetricsLit(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, cull *Frustum, t *VolumeTargets, frame ShadowFrame) {
+	if !volumes.ready || !Volumetrics.Enabled || lvl == nil || t == nil {
+		DebugStats.VolumeDraws, DebugStats.VolumeBlobs = 0, 0
+		return
+	}
+	renderVolumetrics(lvl, projView, camPos, cull, t, levelShafts(lvl, frame))
+}
+
+func renderVolumetrics(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, cull *Frustum, t *VolumeTargets, sh *shaftsDraw) {
 	DebugStats.VolumeDraws, DebugStats.VolumeBlobs = 0, 0
 	if !volumes.ready || !Volumetrics.Enabled || lvl == nil || t == nil {
 		return
 	}
 	draws := gatherLevelVolumes(lvl, camPos, cull)
-	if len(draws) == 0 {
+	if len(draws) == 0 && sh == nil {
 		return
 	}
 	gatherCloudClears(lvl, cull)
-	renderVolumeDraws(t, draws, projView, camPos, levelVolumeLighting(lvl), func(prog uint32) {
+	renderVolumeDraws(t, draws, sh, projView, camPos, levelVolumeLighting(lvl), func(prog uint32) {
 		// With the effects' flashes, so an explosion's smoke is lit by its own
 		// fire and by the one that went off beside it.
 		world.UploadLightsTo(prog, world.SceneLights(lvl), false)
@@ -1046,7 +1061,7 @@ func DrawVolumeParticlePreview(t *VolumeTargets, systems []*particle.System, pro
 	// go into a block of their own, stood in for the scene's for this draw.
 	gfx.PushScene(gfx.BlankScene)
 	defer gfx.PopScene()
-	renderVolumeDraws(t, draws, projView, camPos, previewVolumeLighting, func(prog uint32) {
+	renderVolumeDraws(t, draws, nil, projView, camPos, previewVolumeLighting, func(prog uint32) {
 		world.UploadLightsTo(prog, world.LightSet{}, false)
 		world.UploadFogTo(prog, nil, nil, nil)
 	})
@@ -1054,7 +1069,7 @@ func DrawVolumeParticlePreview(t *VolumeTargets, systems []*particle.System, pro
 
 // renderVolumeDraws is the four steps, with every piece of GL state it touches
 // put back on the way out.
-func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4, camPos mgl32.Vec3, light volumeLight, uploadScene func(prog uint32)) {
+func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, sh *shaftsDraw, projView mgl32.Mat4, camPos mgl32.Vec3, light volumeLight, uploadScene func(prog uint32)) {
 	vp := boundViewport()
 	src := boundFramebuffer()
 	w, h := vp[2], vp[3]
@@ -1123,6 +1138,14 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 	gl.Enable(gl.BLEND)
 	gl.BlendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 	gl.Enable(gl.DEPTH_CLAMP)
+
+	// The light shafts first: spread along the whole ray, behind (and
+	// marched under) every cloud and fireball drawn after them.
+	if sh != nil {
+		ProfileBegin("shafts")
+		sh.draw(t, t.lowDist, invPV, camPos)
+		ProfileEnd()
+	}
 
 	m := &volumes.march
 	uploadScene(m.prog)

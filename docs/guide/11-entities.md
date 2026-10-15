@@ -554,3 +554,78 @@ table in [Scripting](18-scripting.md#events) for the full shape, and
 `enemy_combat.flang` for the state-machine pattern (fire-on-a-timer while
 held, one-shot clips, a carried grenade) a player-side handler for these wants
 too.
+
+### Third-person camera and body
+
+A level can put the camera behind the player instead of in their head. Two
+more keys in the `player:` block do it: `camera:` chooses the mode and shapes
+the boom, `body:` is what that camera looks at.
+
+```yaml
+player:
+  camera:
+    mode: third_person   # first_person (the default) | third_person
+    distance: 4.8        # boom length behind the pivot
+    height: 1.55         # pivot above the body's centre (the FP eye is 1.7)
+    shoulder: -0.8       # pivot to the camera's right; negative = left shoulder
+    pitch_min: -65       # degrees, while third person
+    pitch_max: 70
+    radius: 0.3          # how far the camera keeps from walls
+    smoothing: 5         # how fast the boom eases back out
+    hide_distance: 0.9   # boom shorter than this hides the body
+  body:
+    turn_rate: 600       # degrees a second toward the way it moves
+    models:
+    - name: body
+      path: models/marine.fmdl
+      texture: marine_unsc
+      rotation: {x: 0, "y": 3.14159265, z: 0}   # the human rig faces +Z
+      scale: {x: 1.5, "y": 1.5, z: 1.5}
+    locomotion:          # every key optional; defaults are the human rig's
+      idle: idle
+      walk: walk
+      run: run
+      sprint: run        # e.g. rifle_sprint for an armed body
+      jump: jump_up
+      jump_run: jump_run
+      fall: jet_fall
+      crouch_idle: crouch_idle
+      crouch_walk: crouch_walk
+      walk_speed: 1.8    # ground speed the walk clip was authored at
+      run_speed: 4.95
+```
+
+Every key is optional, and a level without `camera:` is first person exactly as
+before. The mouse (or the look stick) still turns the player's own look: in
+third person it orbits the camera round a pivot over the shoulder, and the
+reticle — and every hitscan a script casts from `eye_position` /
+`look_direction` — goes from the camera through the middle of the screen. The
+boom is cast against the level's geometry and solid props every frame and pulled
+in to keep `radius` clear of them, so a narrow passage or a low cave roof
+shortens it rather than putting the camera inside rock; it eases back out
+when the way clears. Props smaller than about a metre across (pebbles, pots,
+shrubs) are looked through rather than pulling it in; other characters never
+pull it in.
+
+The body is an entity in all but name: the same attachments, sockets and
+animations as an entity type's `models:`, drawn in the world pass with shadows.
+Its origin is the player's **feet**, facing −Z, so the human rig (which faces
++Z) mounts with `rotation: {y: π}`. It turns toward the way it is moving at
+`turn_rate`, and plays the locomotion clip its motion picks — idle, walk or run
+by ground speed (playback scaled to the speed so the feet do not skate),
+sprint while sprinting, the crouch pair while crouched, and the jump then fall
+clips in the air. A name is first looked up among the attachment's own
+`animations:` (so its speed, loop and blend apply), then taken as a clip in the
+model. The first-person viewmodel is not drawn while the camera is third
+person, and the body is not drawn in first person.
+
+The Player panel has a **Camera** group (the checkbox is the mode) and a
+**Body (third person)** group with the same attachment editor as the
+viewmodel, the turn rate and the clip names.
+
+Scripts can switch it: `@level.prop.camera_mode = "first_person"` (or
+`"third_person"`) and `@level.prop.camera_distance = 2.5` take effect on the
+next frame, and a save keeps them.
+
+Third person is on foot only: riding in a frame (a ship's hold) or sitting in
+a seat keeps the first-person eye, and the body is hidden.

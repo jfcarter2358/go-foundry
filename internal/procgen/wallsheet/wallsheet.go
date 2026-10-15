@@ -77,6 +77,15 @@ type Settings struct {
 	// Section is a section's side (m).
 	Section float64
 	Seed    uint64
+	// Weight, when set, scales how far the shell stands out at world
+	// (x, z), 0..1: an environment region's share
+	// (docs/regions/PHASE_4.md), so its walls stand out of the terrain
+	// fully where it owns the ground and sink back under it across its
+	// transition band. The wall mask, the band and the sections are the
+	// unweighted ones (a mask cut at the weight's half would end the shell
+	// in a cut face); sections the region has no share of are not meshed.
+	// Nil: 1 everywhere.
+	Weight func(x, z float64) float64
 }
 
 // Defaults is a sandstone canyon's walls.
@@ -93,9 +102,13 @@ type Field struct {
 	gx, gz []float32 // the height's gradient
 	ux, uz []float32 // the uphill direction, from the gradient blurred over a few metres
 	steep  []float32 // 0..1, softened
+	wt     []float32 // Settings.Weight per sample (nil: none)
 	band   []float32 // metres to the nearest wall sample
 	top    []float32 // the highest ground within TopReach: a wall's rim above
 	lo, hi float32   // the height range
+	// Carve, when set, is a void's signed distance (negative inside) cut out
+	// of the shell: a cave's (stages/cave.go). Nil: none.
+	Carve func(p sdf.Vec3) float64
 }
 
 // Hidden is how far under the terrain the shell lies on flat ground (m):
@@ -111,6 +124,9 @@ const TopReach = 12
 func NewField(g *terrain.Grid, s Settings, pool terrain.Pool) (*Field, error) {
 	sz := g.S()
 	f := &Field{S: s, g: g, gx: make([]float32, sz*sz), gz: make([]float32, sz*sz), steep: make([]float32, sz*sz)}
+	if s.Weight != nil {
+		f.wt = make([]float32, sz*sz)
+	}
 	f.lo, f.hi = g.Range()
 	// Relief: the height range over a Reach-square window (two separable
 	// passes of a running max and min).
@@ -128,6 +144,9 @@ func NewField(g *terrain.Grid, s Settings, pool terrain.Pool) (*Field, error) {
 			st := noise.SmoothStep(s.SteepDeg[0], s.SteepDeg[1], slope)
 			st *= noise.SmoothStep(0.6*s.MinWall, s.MinWall, float64(mx[k]-mn[k]))
 			f.steep[k] = float32(st)
+			if f.wt != nil {
+				f.wt[k] = float32(s.Weight(g.X(i), g.Z(j)))
+			}
 		}
 		return nil
 	})
@@ -276,7 +295,11 @@ func (f *Field) F(p sdf.Vec3) float64 {
 	gx, gz := f.sample(f.gx, x, z), f.sample(f.gz, x, z)
 	fh := (p[1] - h) / math.Sqrt(1+gx*gx+gz*gz)
 	off := -Hidden
-	if st := f.sample(f.steep, x, z); st > 0 {
+	st := f.sample(f.steep, x, z)
+	if f.wt != nil && st > 0 {
+		st *= f.sample(f.wt, x, z)
+	}
+	if st > 0 {
 		r, _, _ := f.Recess(p)
 		off = st*(f.S.Depth-r) - (1-st)*Hidden
 	}
@@ -287,7 +310,13 @@ func (f *Field) F(p sdf.Vec3) float64 {
 	// face (the wall above is far higher), and on a top, the top.
 	reach := 1.2 * f.S.Depth
 	up := f.sample(f.g.H, x+f.sample(f.ux, x, z)*reach, z+f.sample(f.uz, x, z)*reach)
-	return math.Max(d, p[1]-up-RimLip)
+	d = math.Max(d, p[1]-up-RimLip)
+	if f.Carve != nil {
+		// A cave's void (stages/cave.go) cut out of the shell, so its mouth
+		// opens through the wall.
+		d = math.Max(d, -f.Carve(p))
+	}
+	return d
 }
 
 // RimLip is how far a caprock may stand above the top behind it (m).
@@ -322,7 +351,7 @@ func (f *Field) Sections() []Section {
 					if float64(f.band[k]) > f.S.Margin+f.S.Depth {
 						continue
 					}
-					wall = wall || f.steep[k] >= 0.5
+					wall = wall || (f.steep[k] >= 0.5 && (f.wt == nil || f.wt[k] > 0.02))
 					lo = math.Min(lo, float64(g.H[k]))
 					hi = math.Max(hi, float64(g.H[k]))
 				}

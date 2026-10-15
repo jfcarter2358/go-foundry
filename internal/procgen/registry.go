@@ -50,6 +50,50 @@ type StageKind struct {
 	// Validate reports problems Doc.Validate cannot know about — a size that
 	// is not a multiple of the tile size, say. p is resolved. Optional.
 	Validate func(d *Doc, s *Stage, p Params) []string
+
+	// Regional says how the kind takes part in a level generation doc's
+	// environment regions (regional.go): RegionalNone (the default — a
+	// region's preset stage of this kind is skipped, with a log line),
+	// RegionalPerRegion (expanded once per region as r_<region>_<stage>) or
+	// RegionalShared (one stage serves every region; never expanded). Not
+	// hashed: setting it changes no existing document's hashes.
+	Regional RegionalMode
+	// OnDemand, with RegionalPerRegion, expands a preset stage of this kind
+	// only when another expanded stage of the same region refers to it
+	// (directly or through others): an asset stage — rocks, Poly Haven
+	// imports — that no placement of the region reads would only download
+	// and cook for nothing (regional.go). Not hashed.
+	OnDemand bool
+	// SharedFor names the preset kinds a Shared stage stands in for: an
+	// expanded stage's ref to a preset stage of one of these kinds is
+	// rewritten to the level doc's stage of this kind (region_terrain for a
+	// preset's terrain). Optional.
+	SharedFor []string
+	// HashExtra, when set, is folded into the stage's hash (after its refs'
+	// hashes): for a stage whose output depends on more than its params and
+	// its upstream stages — region_terrain reads each region's environment
+	// preset, a file of its own, so editing a preset must rerun it. p is
+	// resolved. An error refuses the run (and the preview hashes without
+	// it). Optional; a kind without it — or whose HashExtra returns "" —
+	// hashes exactly as before it existed.
+	HashExtra func(d *Doc, s *Stage, p Params) (string, error)
+	// Expand, on the kind that DEFINES the regions (the `regions` stage),
+	// lists each region with the preset document it grows, at plan time.
+	// p is resolved. Optional; see regional.go.
+	Expand func(d *Doc, s *Stage, p Params) ([]RegionExpansion, error)
+	// Warn reports things an author should hear about that do not stop a
+	// run — the regions stage's forbidden adjacent environments. p is
+	// resolved. Run logs them (and returns them in Result.Warnings);
+	// Warnings collects them for `foundry gen check` and the editor.
+	// Optional; may be slow-ish (a coarse raster), so it is not called per
+	// frame.
+	Warn func(d *Doc, s *Stage, p Params) []string
+	// Incremental marks a kind that manages its own files across runs
+	// (incremental.go): when it reruns, the engine keeps its previous
+	// outputs instead of deleting them first, and hands it the previous
+	// manifest entry (RunContext.Previous, with per-tile hashes) so it can
+	// reuse what is still fresh and prune the rest. Not hashed.
+	Incremental bool
 }
 
 // Param is the named parameter's definition, or nil.

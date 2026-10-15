@@ -662,6 +662,11 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			ProfileBegin("foliage")
 			RenderFoliageDirShadow(level, lsm, c, &cull)
 			ProfileEnd()
+			// The grass instancer's near clumps (grass_field_shadow.go).
+			// Restores Shadows.Program.
+			ProfileBegin("grass")
+			RenderGrassFieldsDirShadow(level, lsm, c, &cull)
+			ProfileEnd()
 			layer++
 		}
 	}

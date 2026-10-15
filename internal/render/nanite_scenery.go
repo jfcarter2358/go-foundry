@@ -43,6 +43,12 @@ package render
 // mesh's, and it writes no motion vectors of its own (TAA reprojects its
 // leaves with the camera's motion, as the classic foliage path's).
 //
+// Draw distances and impostors (nanite_draw_distance.go): a member is a
+// placement's mesh or, for a placement with an impostor
+// (world.Scenery.ImpostorMesh), its impostor's cards — a second member of
+// the same placement, a second mesh in the pool, each with the distance
+// window it is drawn over in its instance record.
+//
 // What is not here yet: translucent slots (a cooked mesh draws in the opaque
 // pass, alpha-to-coverage cutouts and all — a texture with partial alpha is
 // not sorted as a classic model's is), and skinning (a cooked mesh is static,
@@ -50,7 +56,7 @@ package render
 
 import (
 	"encoding/binary"
-	"hash/fnv"
+	"hash/maphash"
 	"log"
 	"math"
 	"sort"
@@ -82,8 +88,10 @@ type naniteSceneryRenderer struct {
 	cbo      uint32
 	clusters uint32
 	nodes    uint32
-	// cpuClusters is the cluster records as uploaded, for the draw bound's
-	// LOD keys (nanite_draw_lod_bound.go).
+	// cpuClusters is the cluster records for the draw bound's LOD keys
+	// (nanite_draw_lod_bound.go): as uploaded for a flat pool; for a page
+	// pool with their cooked errors, never the residency's
+	// (staticClusterRecords).
 	cpuClusters []gpuCluster
 
 	// preparedFrame is the DrawWorld frame (naniteStreamFrame) prepare last
@@ -95,11 +103,14 @@ type naniteSceneryRenderer struct {
 	preparedLvl   *world.Level
 	prepared      bool
 
-	// members are the level's placements drawn here, by index; sig what the
-	// groups and tiles were built from.
-	lvl     *world.Level
-	members []int
-	sig     uint64
+	// members are the level's placements drawn here, by index, and
+	// memberImp whether each is the placement's impostor rather than its
+	// mesh (nanite_draw_distance.go); sig what the groups and tiles were
+	// built from.
+	lvl       *world.Level
+	members   []int
+	memberImp []bool
+	sig       uint64
 
 	batch  cullBatch
 	groups []gfx.Material
@@ -111,6 +122,16 @@ type naniteSceneryRenderer struct {
 	reach   []float32
 	// inMask is which placements the last inView found in its frustum.
 	inMask []bool
+	// camMay is, per member, whether its draw window can hold the camera's
+	// distance this frame (placementMayDraw): what a camera pass's inView
+	// keeps of the frustum's.
+	camMay []bool
+	// placed is each member's placedInstance as last worked out and placedAt
+	// the matrix it was worked out under: a member that has not moved keeps
+	// it, rather than a coneSafe test (a 3x3 determinant and three dot
+	// products) a member a frame. Cleared by rebuild.
+	placed   []gpuInstance
+	placedAt []mgl32.Mat4
 	// leafBase is each placement's first leaf mark.
 	leafBase []uint32
 
@@ -162,12 +183,19 @@ func (r *naniteSceneryRenderer) prepare(lvl *world.Level) bool {
 	}
 	r.preparedFrame = 0
 	r.members = r.members[:0]
+	r.memberImp = r.memberImp[:0]
 	for i := range lvl.Scenery {
 		// A placement whose chunk is off is not a member: the signature
 		// below then rebuilds the tiles without it, and a mesh none of the
 		// members uses leaves the pool.
 		if s := &lvl.Scenery[i]; s.NaniteGPU && s.Nanite != nil && s.InWorld() {
 			r.members = append(r.members, i)
+			r.memberImp = append(r.memberImp, false)
+			// And its impostor's cards, a member of their own.
+			if DrawDistances && s.HasImpostor() {
+				r.members = append(r.members, i)
+				r.memberImp = append(r.memberImp, true)
+			}
 		}
 	}
 	if len(r.members) == 0 {
@@ -199,31 +227,39 @@ func (r *naniteSceneryRenderer) markPrepared(lvl *world.Level, ok bool) {
 // placements, which mesh each uses, and each one's resolved slot textures and
 // materials.
 func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
-	h := fnv.New64a()
-	var b [8]byte
-	for _, i := range r.members {
-		s := &lvl.Scenery[i]
-		binary.LittleEndian.PutUint64(b[:], uint64(i))
+	// maphash, not fnv: this runs every frame over every member's every
+	// slot name, and fnv's byte at a time (with a []byte copy of each name)
+	// was 2.6 ms a frame over the biome showcase's 14,800 members
+	// (docs/regions/PRESETS_5.md). The seed is the process's, and a
+	// signature is only ever compared within one.
+	var h maphash.Hash
+	h.SetSeed(naniteSigSeed)
+	var b [16]byte
+	for k, i := range r.members {
+		m := r.memberMesh(lvl, k)
+		binary.LittleEndian.PutUint64(b[:8], uint64(i))
+		binary.LittleEndian.PutUint64(b[8:], uint64(uintptr(unsafe.Pointer(m))))
 		h.Write(b[:])
-		binary.LittleEndian.PutUint64(b[:], uint64(uintptr(unsafe.Pointer(s.Nanite))))
-		h.Write(b[:])
-		for si := range s.Nanite.Slots {
-			h.Write([]byte(s.SlotTexture(si)))
-			h.Write([]byte{0})
-			h.Write([]byte(s.SlotMaterial(si)))
-			h.Write([]byte{0})
+		for si := range m.Slots {
+			h.WriteString(r.slotTexture(lvl, k, si))
+			h.WriteByte(0)
+			h.WriteString(r.slotMaterial(lvl, k, si))
+			h.WriteByte(0)
 		}
 	}
 	// A debug view tiles a cluster a command (appendLeafTiles).
 	if naniteDebugActive() {
-		h.Write([]byte{1})
+		h.WriteByte(1)
 	}
 	// The pool's kind.
 	if naniteStreaming() {
-		h.Write([]byte{2})
+		h.WriteByte(2)
 	}
 	return h.Sum64()
 }
+
+// naniteSigSeed is signature's hash seed, fixed for the process.
+var naniteSigSeed = maphash.MakeSeed()
 
 // rebuild remakes the pool (if a mesh came that it lacks) and the groups and
 // tiles.
@@ -239,8 +275,8 @@ func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
 func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 	used := map[*nanite.Mesh]bool{}
 	var list []*nanite.Mesh
-	for _, i := range r.members {
-		m := lvl.Scenery[i].Nanite
+	for k := range r.members {
+		m := r.memberMesh(lvl, k)
 		if !used[m] {
 			used[m] = true
 			list = append(list, m)
@@ -287,15 +323,14 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 	}
 	var runs []run
 	hist := uint32(0)
-	for k, i := range r.members {
-		s := &lvl.Scenery[i]
-		m := s.Nanite
+	for k := range r.members {
+		m := r.memberMesh(lvl, k)
 		pm := r.meshes[m]
 		for si, slot := range m.Slots {
 			if slot.Count == 0 {
 				continue
 			}
-			kk := key{s.SlotTexture(si), s.SlotMaterial(si), slot.Smooth, m.HasColors && r.cbo != 0}
+			kk := key{r.slotTexture(lvl, k, si), r.slotMaterial(lvl, k, si), slot.Smooth, m.HasColors && r.cbo != 0}
 			g, ok := groupOf[kk]
 			if !ok {
 				g = len(r.groups)
@@ -311,9 +346,9 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 	// Each placement's leaf marks.
 	r.leafBase = r.leafBase[:0]
 	leaves := uint32(0)
-	for _, i := range r.members {
+	for k := range r.members {
 		r.leafBase = append(r.leafBase, leaves)
-		leaves += r.meshes[lvl.Scenery[i].Nanite].leaves
+		leaves += r.meshes[r.memberMesh(lvl, k)].leaves
 	}
 	r.batch.leaves = int(leaves)
 	r.batch.nodes = r.nodes
@@ -348,6 +383,7 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 	r.batch.setSWGroups(sw)
 	r.batch.ensureHistory(int(hist))
 	r.insts = r.insts[:0]
+	r.placed, r.placedAt = nil, nil
 }
 
 // naniteStreaming is whether cooked meshes go through the page pool: the
@@ -462,6 +498,9 @@ func (r *naniteSceneryRenderer) buildPagePool(list []*nanite.Mesh) bool {
 		return false
 	}
 	var clusters []gpuCluster
+	// static: the same records with their cooked errors, for the draw
+	// bound (staticClusterRecords) — never the residency's.
+	var static []gpuCluster
 	var nodes []gpuNode
 	var cbuf []gpuCluster
 	var nbuf []gpuNode
@@ -476,6 +515,7 @@ func (r *naniteSceneryRenderer) buildPagePool(list []*nanite.Mesh) bool {
 		cbuf = s.clusterRecords(i, cbuf)
 		nbuf = s.nodeRecords(i, nbuf)
 		clusters = append(clusters, cbuf...)
+		static = staticClusterRecords(m, static)
 		nodes = append(nodes, nbuf...)
 		s.meshes[i].gpuClusters = append([]gpuCluster(nil), cbuf...)
 		s.meshes[i].gpuNodes = append([]gpuNode(nil), nbuf...)
@@ -503,7 +543,7 @@ func (r *naniteSceneryRenderer) buildPagePool(list []*nanite.Mesh) bool {
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
 	uploadClusters(&r.clusters, clusters)
-	r.cpuClusters = clusters
+	r.cpuClusters = static
 	uploadNodes(&r.nodes, nodes)
 	return true
 }
@@ -516,11 +556,41 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 		r.spheres = make([]mgl32.Vec4, len(r.members))
 		r.reach = make([]float32, len(r.members))
 	}
+	if len(r.camMay) != len(r.members) {
+		r.camMay = make([]bool, len(r.members))
+	}
+	if len(r.placed) != len(r.members) {
+		r.placed = make([]gpuInstance, len(r.members))
+		r.placedAt = make([]mgl32.Mat4, len(r.members))
+		for k := range r.placedAt {
+			r.placedAt[k][15] = float32(math.NaN()) // never matches
+		}
+	}
+	eye := gfx.Cam.Position
 	for k, i := range r.members {
 		s := &lvl.Scenery[i]
-		in := placedInstance(sceneryModel(lvl, s), s.Nanite.Center, s.Nanite.Radius)
-		if pm := r.meshes[s.Nanite]; pm != nil {
-			if pm.closed {
+		imp := r.memberImp[k]
+		mesh := r.memberMesh(lvl, k)
+		model := sceneryModel(lvl, s)
+		if r.placedAt[k] != model {
+			r.placedAt[k], r.placed[k] = model, placedInstance(model, mesh.Center, mesh.Radius)
+		}
+		in := r.placed[k]
+		// Its distance window, and whether it casts this frame
+		// (nanite_draw_distance.go).
+		var casts bool
+		in.Draw, casts = placementDraw(s, imp, eye)
+		if !casts {
+			in.Flags[0] |= instShadowHidden
+		}
+		r.camMay[k] = placementMayDraw(s, imp, eye)
+		if pm := r.meshes[mesh]; pm != nil {
+			// An impostor's cards are cone-tested from the light too: only
+			// the cards facing the sun cast (impostor/cones.go) — the top
+			// card under a high sun, the side card turned to it under a low
+			// one. All nine cast a crown far denser than the tree's, and
+			// shadowed the cards themselves into dark cones.
+			if pm.closed || imp {
 				in.Flags[0] |= instShadowCone
 			}
 			if pm.leaves > 0 {
@@ -528,7 +598,9 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 				in.Flags[1], in.Flags[2] = pm.nodeBase, r.leafBase[k]
 			}
 		}
-		if w, ok := sceneryWindRecord(s); ok {
+		// An impostor stands still: its sway is lost in the distance, and
+		// its cards' cones stay true.
+		if w, ok := sceneryWindRecord(s); ok && !imp {
 			in.Wind = w
 			// A bent cluster's triangles no longer face where its cone
 			// says.
@@ -537,9 +609,12 @@ func (r *naniteSceneryRenderer) updateInstances(lvl *world.Level) {
 		}
 		if in != r.insts[k] {
 			r.insts[k] = in
-			c, rad := naniteSceneryBounds(s)
+			c, rad := naniteMeshBounds(s, mesh)
 			r.spheres[k] = c.Vec4(rad)
-			r.reach[k] = sceneryWindReach(s, 1)
+			r.reach[k] = 0
+			if !imp {
+				r.reach[k] = sceneryWindReach(s, 1)
+			}
 			changed = true
 		}
 	}
@@ -606,7 +681,7 @@ func RenderNaniteScenery(lvl *world.Level, frustum Frustum, projView mgl32.Mat4)
 	}
 	DebugStats.NaniteInstances = len(r.members)
 	DebugStats.NaniteClusters += r.batch.slots
-	in := r.inView(&frustum)
+	in := r.inView(&frustum, true)
 	if in == 0 {
 		// Every placement behind the camera: nothing to cull, and nothing
 		// for the occlusion pass to finish. Their history goes stale, which
@@ -652,7 +727,7 @@ func (r *naniteSceneryRenderer) drawOcclusion() {
 	r.pass2 = false
 	// The first pass's frustum, asked again: a shadow pass between the two
 	// would have left its own marks.
-	r.inView(&Frustum{Planes: r.pass2View.planes})
+	r.inView(&Frustum{Planes: r.pass2View.planes}, true)
 	r.batch.setBoundLOD(r.pass2View.lod, true)
 	r.batch.boundDraws(r.inMask)
 	r.batch.admitSW(r.visGroups())
@@ -718,7 +793,7 @@ func renderNaniteSceneryShadow(lvl *world.Level, prog uint32, cull *Frustum) {
 	if !r.prepare(lvl) {
 		return
 	}
-	in := r.inView(cull)
+	in := r.inView(cull, false)
 	if in == 0 {
 		// Nothing this light can see: no cull at all. A point light's six
 		// faces mostly look at none of a level's dense props.
@@ -754,8 +829,11 @@ func renderNaniteSceneryShadow(lvl *world.Level, prog uint32, cull *Frustum) {
 // none), marking them in r.inMask (nil for none) for the pass's draw bound
 // (cullBatch.boundDraws). The sphere is grown a little past the GPU's: a
 // placement its instance test passes must pass here too, or what it packs
-// past the bound is never drawn.
-func (r *naniteSceneryRenderer) inView(cull *Frustum) int {
+// past the bound is never drawn. A camera pass keeps only members whose draw
+// window can hold the camera (camMay), a shadow pass only those casting this
+// frame (instShadowHidden), as the instance stage does
+// (nanite_draw_distance.go).
+func (r *naniteSceneryRenderer) inView(cull *Frustum, camera bool) int {
 	if cull == nil {
 		r.inMask = nil
 		return len(r.spheres)
@@ -765,7 +843,14 @@ func (r *naniteSceneryRenderer) inView(cull *Frustum) int {
 	}
 	n := 0
 	k := gfx.Wind.Strength()
+	drawOn := DrawDistances && !naniteDebugActive()
 	for i, sp := range r.spheres {
+		if drawOn && i < len(r.insts) && i < len(r.camMay) {
+			if camera && !r.camMay[i] || !camera && r.insts[i].Flags[0]&instShadowHidden != 0 {
+				r.inMask[i] = false
+				continue
+			}
+		}
 		rad := sp[3] + r.reach[i]*k
 		in := sphereInFrustum(*cull, sp.Vec3(), rad*1.01+0.05)
 		r.inMask[i] = in
@@ -816,8 +901,40 @@ func sceneryWindReach(s *world.Scenery, k float32) float32 {
 // naniteSceneryBounds is a placement's world sphere, for tests and the
 // point-shadow cache.
 func naniteSceneryBounds(s *world.Scenery) (mgl32.Vec3, float32) {
+	return naniteMeshBounds(s, s.Nanite)
+}
+
+// naniteMeshBounds is the world sphere of mesh (the placement's own, or its
+// impostor's) under s's placement.
+func naniteMeshBounds(s *world.Scenery, mesh *nanite.Mesh) (mgl32.Vec3, float32) {
 	m := s.ModelMatrix()
-	c := m.Mul4x1(s.Nanite.Center.Vec4(1))
+	c := m.Mul4x1(mesh.Center.Vec4(1))
 	sc := float32(math.Sqrt(float64(max(m.Col(0).Vec3().LenSqr(), m.Col(1).Vec3().LenSqr(), m.Col(2).Vec3().LenSqr()))))
-	return c.Vec3(), s.Nanite.Radius * sc
+	return c.Vec3(), mesh.Radius * sc
+}
+
+// memberMesh is member k's mesh: its placement's, or its impostor's cards.
+func (r *naniteSceneryRenderer) memberMesh(lvl *world.Level, k int) *nanite.Mesh {
+	s := &lvl.Scenery[r.members[k]]
+	if k < len(r.memberImp) && r.memberImp[k] {
+		return s.ImpostorMesh
+	}
+	return s.Nanite
+}
+
+// slotTexture and slotMaterial are what member k's slot si draws with: the
+// placement's (its overrides and its .fmat) for its mesh; an impostor's own
+// baked texture, and no material, for its cards.
+func (r *naniteSceneryRenderer) slotTexture(lvl *world.Level, k, si int) string {
+	if r.memberImp[k] {
+		return lvl.Scenery[r.members[k]].ImpostorMesh.Slots[si].Texture
+	}
+	return lvl.Scenery[r.members[k]].SlotTexture(si)
+}
+
+func (r *naniteSceneryRenderer) slotMaterial(lvl *world.Level, k, si int) string {
+	if r.memberImp[k] {
+		return ""
+	}
+	return lvl.Scenery[r.members[k]].SlotMaterial(si)
 }

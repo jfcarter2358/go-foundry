@@ -135,7 +135,12 @@ float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, 
     if (vsmShadows(lightIdx)) {
         float vsmMaxDist = cascadeSplit[SHADOW_CASCADES - 1];
         float vsmFadeBegin = vsmMaxDist * (1.0 - SHADOW_FADE_FRACTION);
-        return vsmShadow(worldPos, normal, lightDir) *
+#ifdef BIOME_LIGHT_VSM_ONE_TAP
+        float vs = vsmShadow1(worldPos, normal, lightDir);
+#else
+        float vs = vsmShadow(worldPos, normal, lightDir);
+#endif
+        return vs *
             (1.0 - clamp((viewDepth - vsmFadeBegin) / max(vsmMaxDist - vsmFadeBegin, 1e-4), 0.0, 1.0));
     }
     int layerBase = dirLightShadowLayer[lightIdx];

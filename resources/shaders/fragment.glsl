@@ -231,7 +231,21 @@ mat3 cotangentFrame(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
     vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
     // Scale both axes by the same factor so the frame stays orthonormal-ish
     // rather than stretching the normal along whichever axis is denser.
-    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    float m = max(dot(T, T), dot(B, B));
+    // A surface whose UVs do not change across the pixel has NO tangent
+    // frame: T and B are zero, inversesqrt(0) is infinite and 0 * inf is
+    // NaN — a NaN normal, NaN light, which the GTX 1070 showed as white and
+    // Mesa as black. Scans carry such faces (fir_tree_01's trunk_c has no
+    // TEXCOORD_0 at all, so every vertex sits at UV 0,0), and a DAG level
+    // can collapse a small UV island to a point. Any frame about N is as
+    // right as another there (the map reads one texel), so build one from N
+    // alone. `!(m > ...)` also catches a NaN that came in.
+    if (!(m > 1e-24)) {
+        vec3 a = abs(N.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 t = normalize(cross(a, N));
+        return mat3(t, cross(N, t), N);
+    }
+    float invmax = inversesqrt(m);
     return mat3(T * invmax, B * invmax, N);
 }
 
@@ -510,7 +524,9 @@ void main() {
         normal = fxTriplanarSurface(tex, normalMap, isWater == 0 ? hasNormalMap : 0, fragWorldPos, normal, dPdx, dPdy, texColor);
     }
     if ((matFx & FX_SPLAT) != 0) {
-        fxSplatSurface(fragWorldPos, normal, dPdx, dPdy, texColor, normal, fxAO);
+        // FX_SPLAT8 tested here, in main, so the material variants fold it
+        // (render/nanite_vis_variants.go): a four-layer bin drops 5–8.
+        fxSplatSurface(fragWorldPos, normal, dPdx, dPdy, (matFx & FX_SPLAT8) != 0, texColor, normal, fxAO);
     }
     if ((matFx & FX_GRADE) != 0) {
         fxGradeApply(texColor);

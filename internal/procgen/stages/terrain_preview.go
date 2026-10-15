@@ -87,6 +87,27 @@ func previewTerrain(pc *procgen.PreviewContext) (*procgen.PreviewData, error) {
 			out.Points = append(out.Points, pl)
 		}
 	}
+	// The stamps: each point's radius, and a mountain's or plateau's reach
+	// along its crest (the editor draws and edits the points themselves).
+	for _, st := range s.Landform.Stamps {
+		col := stampColor(st.Kind)
+		pl := procgen.PointLayer{Name: "Stamp " + terrain.StampKindNames[st.Kind], Color: col}
+		for _, q := range st.Points {
+			pl.Points = append(pl.Points, [2]float64{q.X, q.Z})
+			pl.Radii = append(pl.Radii, q.Radius)
+		}
+		if len(pl.Points) > 0 {
+			out.Points = append(out.Points, pl)
+		}
+		if st.Falloff > 0 && st.Kind != terrain.StampMountain {
+			fl := procgen.PointLayer{Name: "Stamp falloff", Color: [4]float32{col[0], col[1], col[2], 0.25}}
+			for _, q := range st.Points {
+				fl.Points = append(fl.Points, [2]float64{q.X, q.Z})
+				fl.Radii = append(fl.Radii, q.Radius+st.Falloff)
+			}
+			out.Points = append(out.Points, fl)
+		}
+	}
 	// The tile grid, and the tiles as preview meshes.
 	tp := tilePlan{size: p.Float("tile_size"), step: 1}
 	tp.count, _ = whole(g.Size(), tp.size)
@@ -116,6 +137,21 @@ func previewTerrain(pc *procgen.PreviewContext) (*procgen.PreviewData, error) {
 		fmt.Sprintf("preview %d² at %.2f m (run: %d² at %g m, %d tiles), %s", sz, g.Cell, fn+1, full.Cell, ft*ft,
 			time.Since(t0).Round(time.Millisecond)))
 	return out, nil
+}
+
+// stampColor is a stamp kind's colour in the preview.
+func stampColor(k terrain.StampKind) [4]float32 {
+	switch k {
+	case terrain.StampMountain:
+		return [4]float32{1, 0.55, 0.3, 0.7}
+	case terrain.StampPlateau:
+		return [4]float32{0.95, 0.85, 0.4, 0.7}
+	case terrain.StampPlatform:
+		return [4]float32{0.5, 1, 0.5, 0.8}
+	case terrain.StampRamp:
+		return [4]float32{0.4, 0.9, 0.9, 0.8}
+	}
+	return [4]float32{1, 0.4, 0.8, 0.7}
 }
 
 // strataImage paints each sample its layer's colour, shaded by the position

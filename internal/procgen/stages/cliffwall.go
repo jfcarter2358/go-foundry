@@ -34,6 +34,9 @@ func init() {
 		Name:     CliffWallKind,
 		Label:    "Cliff wall",
 		Category: "Placement",
+		// Per environment region of a level generation doc: the columns
+		// the region owns (place_region.go).
+		Regional: procgen.RegionalPerRegion,
 		Version:  8, // 2: WallSlope, turned backs; 3: ledges on the face above the tiers, steeper foot and rim; 4-6: tallest stretches first, bigger chunks; 7: materials, seating by the back's silhouette; 8: contact and backing tests, tiers pitched by the chunk placed, focus
 		Doc: "Cliff chunks stacked in tiers up a terrain's walls — along the feet of the cliffs traced from the cliff mask, " +
 			"or along splines — faces out, backs seated into the heightfield's stretched faces so they cover them, with " +
@@ -58,7 +61,7 @@ func cliffWallParams() []procgen.ParamDef {
 		return procgen.ParamDef{Name: name, Type: procgen.ParamFloat, Label: label, Default: f(def), Min: 0, Max: 1, Step: 0.01, Doc: doc}
 	}
 	out := []procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{TerrainKind}, Default: procgen.StageRef(""),
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: TerrainSources, Default: procgen.StageRef(""),
 			Doc: "The terrain stage whose walls are lined."},
 		{Name: "chunks", Type: procgen.ParamStage, StageKinds: RockSources, Default: procgen.StageRef(""),
 			Doc: "The cliff chunks to stack: a rocks stage of the cliff_chunk preset, or any stage whose rocks manifest gives its variants a back (a scanned cliff's back need not be flat: its box's face across the back direction is seated, buried by Inset)."},
@@ -129,8 +132,8 @@ func cliffWallParams() []procgen.ParamDef {
 				"and dropped if none fits: it would vanish into the wall."},
 		{Name: "back_cover", Type: procgen.ParamFloat, Label: "Back cover", Default: f(d.BackCover), Min: 0.1, Max: 1, Step: 0.01,
 			Doc: "The share of the back's rim the silhouette seating buries (1: all of it; lower lets the odd far-forward lip stay out rather than bury the piece)."},
-		{Name: "ground", Type: procgen.ParamStage, StageKinds: []string{TerrainMaterialKind}, Default: procgen.StageRef(""),
-			Doc: "A terrain_material stage: the chunks blend into its ground colour at their feet and match toward it."},
+		{Name: "ground", Type: procgen.ParamStage, StageKinds: GroundSources, Default: procgen.StageRef(""),
+			Doc: "A terrain_material (or region_material) stage: the chunks blend into its ground colour at their feet and match toward it."},
 		{Name: "match_to", Added: true, Type: procgen.ParamEnum, Label: "Match to", Default: procgen.Enum("ground"), Choices: []string{"ground", "rock"},
 			Doc: "What the chunks' colour match (match_ground) aims at: the ground's average colour, or the terrain material's rock layer — the colour of the bare heightfield walls the chunks stand on, which is what they must not stand out from."},
 		{Name: "match_brightness", Added: true, Type: procgen.ParamFloat, Label: "Match brightness", Default: f(1), Min: 0.1, Max: 4, Step: 0.01,
@@ -155,7 +158,7 @@ func cliffWallParams() []procgen.ParamDef {
 
 // wallSettings maps the params onto place.WallSettings (variants filled by
 // the caller).
-func wallSettings(p procgen.Params, seed uint64) place.WallSettings {
+func wallSettings(env *procgen.Env, p procgen.Params, seed uint64) place.WallSettings {
 	s := place.DefaultWall()
 	s.Seed = seed
 	s.Scale, s.ScaleJitter = p.Vec2("scale"), p.Float("scale_jitter")
@@ -177,12 +180,15 @@ func wallSettings(p procgen.Params, seed uint64) place.WallSettings {
 	s.BackCover = p.Float("back_cover")
 	s.MinContact, s.ContactGap, s.Backing = p.Float("min_contact"), p.Float("contact_gap"), p.Float("backing")
 	s.TierJitter, s.HeightNorm = p.Float("tier_jitter"), p.Float("height_norm")
-	s.Focus, s.FocusRange = p.Vec2("focus"), p.Float("focus_range")
+	s.Focus, s.FocusRange = presetPoint(env, p.Vec2("focus")), p.Float("focus_range")
+	s.Keep = regionWallKeep(env)
 	return s
 }
 
 // wallLines is the lines the walls run along.
-func wallLines(g *place.Ground, p procgen.Params) []place.WallLine {
+// For a region the splines and the rectangle are in the preset's
+// coordinates, moved by the region's anchor (presetPoint).
+func wallLines(env *procgen.Env, g *place.Ground, p procgen.Params) []place.WallLine {
 	var lines []place.WallLine
 	src := p.Str("source")
 	if src == "traced" || src == "both" {
@@ -190,7 +196,7 @@ func wallLines(g *place.Ground, p procgen.Params) []place.WallLine {
 			MinLength: p.Float("min_length"), Smooth: p.Int("smooth")})
 		lo, hi := p.Vec2("region_min"), p.Vec2("region_max")
 		if lo != hi {
-			traced = clipLines(traced, lo, hi, p.Float("min_length"))
+			traced = clipLines(traced, presetPoint(env, lo), presetPoint(env, hi), p.Float("min_length"))
 		}
 		lines = append(lines, traced...)
 	}
@@ -198,7 +204,7 @@ func wallLines(g *place.Ground, p procgen.Params) []place.WallLine {
 		for _, it := range p.Items("paths") {
 			var pts [][2]float64
 			for _, q := range it.Points("path") {
-				pts = append(pts, [2]float64{q[0], q[1]})
+				pts = append(pts, presetPoint(env, [2]float64{q[0], q[1]}))
 			}
 			lines = append(lines, place.SplineLines(g, pts, it.Str("side"))...)
 		}
@@ -258,7 +264,7 @@ func runCliffWall(rc *procgen.RunContext) error {
 	if err != nil {
 		return err
 	}
-	s := wallSettings(p, rc.Seed)
+	s := wallSettings(&rc.Env, p, rc.Seed)
 	var chunkArt, ledgeArt *RocksArtifact
 	if s.Chunks, chunkArt, err = runVariants(rc, p.Str("chunks")); err != nil {
 		return err
@@ -304,7 +310,7 @@ func runCliffWall(rc *procgen.RunContext) error {
 			break
 		}
 	}
-	lines := wallLines(g, p)
+	lines := wallLines(&rc.Env, g, p)
 	rc.Progress(0.3)
 	res, err := place.Walls(g, lines, s, &rc.Env)
 	if err != nil {
@@ -360,7 +366,7 @@ func previewCliffWall(pc *procgen.PreviewContext) (*procgen.PreviewData, error) 
 	if err != nil {
 		return nil, err
 	}
-	s := wallSettings(p, pc.Seed)
+	s := wallSettings(&pc.Env, p, pc.Seed)
 	cv, cm := previewRock(pc, p.Str("chunks"))
 	s.Chunks = []place.Variant{cv}
 	var lm procgen.PreviewMesh
@@ -369,7 +375,7 @@ func previewCliffWall(pc *procgen.PreviewContext) (*procgen.PreviewData, error) 
 		s.Ledges = []place.Variant{lv}
 		lm = proxyMesh("ledges", lmesh, 200)
 	}
-	lines := wallLines(g, p)
+	lines := wallLines(&pc.Env, g, p)
 	res, err := place.Walls(g, lines, s, &pc.Env)
 	if err != nil {
 		return nil, err

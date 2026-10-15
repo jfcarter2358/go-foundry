@@ -71,7 +71,7 @@ func driftParams() []procgen.ParamDef {
 	f, v2 := procgen.Float, procgen.Vec2
 	d := place.DefaultDrift()
 	return []procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{TerrainKind}, Default: procgen.StageRef(""),
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: TerrainSources, Default: procgen.StageRef(""),
 			Doc: "The terrain stage whose tiles the sand is added to (it must cook its tiles)."},
 		{Name: "ground", Type: procgen.ParamStage, StageKinds: []string{TerrainMaterialKind}, Default: procgen.StageRef(""),
 			Doc: "The terrain_material stage the tiles wear: its weights get the sand, and the recooked tiles wear a copy of it."},
@@ -209,6 +209,12 @@ func runDrift(rc *procgen.RunContext) error {
 	}
 	if ground == nil {
 		return fmt.Errorf("choose a ground stage")
+	}
+	// The drifts are painted into a four-layer splat's weights, sand in the
+	// first channel. An eight-layer region material (docs/regions/PHASE_4.md)
+	// holds its sand in whichever layer its environments chose: not yet.
+	if ground.Weights2 != "" || ground.Palette > 0 {
+		return fmt.Errorf("the ground stage %s is an eight-layer or palette region material; drift paints only a four-layer terrain_material", p.Str("ground"))
 	}
 	sc := rc.Upstream(p.Str("scatter"))
 	if sc == nil {

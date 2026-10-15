@@ -12,8 +12,10 @@ package procgen
 //     them. With Only: those stages, forced, plus any upstream stage they
 //     depend on that is stale (a stage cannot run against outputs that do not
 //     match its inputs' hashes).
-//  4. Run each in turn: forget its manifest entry and delete its old files,
-//     call the kind's Run, write its placements, record its new entry.
+//  4. Run each in turn: forget its manifest entry and delete its old files
+//     (an Incremental kind keeps them and is handed the old entry to reuse
+//     its fresh tiles: incremental.go), call the kind's Run, write its
+//     placements, record its new entry.
 //     Skipped stages read their placements back from their file, so the
 //     Result always describes the whole document.
 //  5. Prune the entries (and files) of stages no longer in the document.
@@ -70,6 +72,9 @@ type Result struct {
 	Ran     []string
 	Skipped []string
 	Elapsed time.Duration
+	// Warnings are the stages' Warn lines ("[stage] ..."), logged at the
+	// start: things to fix that did not stop the run.
+	Warnings []string
 }
 
 // StageResult is one stage's outputs.
@@ -208,12 +213,23 @@ type plannedStage struct {
 	seed   uint64
 	hash   string
 	refs   []string
+	// region is set on a stage expanded for an environment region
+	// (regional.go); such a stage is not in d.Stages.
+	region *RegionContext
 }
 
-// plan hashes every enabled stage in order.
+// plan hashes every enabled stage in order, then appends the stages expanded
+// for environment regions (regional.go), if the document has any.
 func plan(d *Doc) ([]*plannedStage, error) {
+	out, _, err := planWithNotes(d)
+	return out, err
+}
+
+// planWithNotes is plan, and the log lines the region expansion had to say
+// (preset stages it skipped).
+func planWithNotes(d *Doc) ([]*plannedStage, []string, error) {
 	if probs := d.Validate(); len(probs) > 0 {
-		return nil, &ValidationError{Problems: probs}
+		return nil, nil, &ValidationError{Problems: probs}
 	}
 	byID := map[string]*plannedStage{}
 	var out []*plannedStage
@@ -230,11 +246,27 @@ func plan(d *Doc) ([]*plannedStage, error) {
 		for _, r := range ps.refs {
 			up = append(up, byID[r].hash) // Validate guarantees r is an enabled stage above
 		}
+		if k.HashExtra != nil {
+			x, err := k.HashExtra(d, s, p)
+			if err != nil {
+				return nil, nil, fmt.Errorf("stage %s: %w", s.ID, err)
+			}
+			// An empty extra hashes as no extra at all, so a kind that
+			// gains a HashExtra moves no hash until it has something to
+			// say (the regions stage's pair widths).
+			if x != "" {
+				up = append(up, "extra:"+x)
+			}
+		}
 		ps.hash = StageHash(k, ps.seed, p, up)
 		byID[s.ID] = ps
 		out = append(out, ps)
 	}
-	return out, nil
+	extra, notes, err := expandRegions(d, out, byID)
+	if err != nil {
+		return nil, notes, err
+	}
+	return append(out, extra...), notes, nil
 }
 
 // StageHashes is every enabled stage's hash, by ID — what the editor shows
@@ -279,7 +311,7 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 	if !ValidDocName(d.Name) {
 		return res, fmt.Errorf("generator name %q: must be lower-case letters, digits and underscores", d.Name)
 	}
-	planned, err := plan(d)
+	planned, notes, err := planWithNotes(d)
 	if err != nil {
 		return res, err
 	}
@@ -292,6 +324,14 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 		if opts.Log != nil {
 			opts.Log(fmt.Sprintf(format, args...))
 		}
+	}
+	for _, n := range notes {
+		logf("%s", n)
+	}
+	// Warnings never stop a run (StageKind.Warn).
+	res.Warnings = Warnings(d)
+	for _, w := range res.Warnings {
+		logf("warning: %s", w)
 	}
 	relRoot := filepath.ToSlash(d.OutputDir())
 	if opts.OutDir != "" {
@@ -306,13 +346,15 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 	only := map[string]bool{}
 	for _, id := range opts.Only {
 		only[id] = true
-		if d.StageByID(id) == nil {
-			return res, fmt.Errorf("no stage %q", id)
-		}
 	}
 	byID := map[string]*plannedStage{}
 	for _, p := range planned {
 		byID[p.stage.ID] = p
+	}
+	for id := range only {
+		if d.StageByID(id) == nil && byID[id] == nil {
+			return res, fmt.Errorf("no stage %q", id)
+		}
 	}
 	stale := func(p *plannedStage) bool {
 		e, ok := man.Stages[p.stage.ID]
@@ -373,10 +415,19 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 			continue
 		}
 
-		// Forget the old outputs before making new ones.
+		// Forget the old outputs before making new ones — or, for an
+		// Incremental kind (incremental.go), keep them to reuse, with an
+		// entry that claims nothing fresh until the stage finishes.
+		var prev *ManifestStage
 		if old, ok := man.Stages[id]; ok {
-			old.removeFiles(dir)
-			delete(man.Stages, id)
+			if p.kind.Incremental && !opts.Force {
+				o := old
+				prev = &o
+				man.Stages[id] = ManifestStage{Kind: p.kind.Name, Files: old.Files}
+			} else {
+				old.removeFiles(dir)
+				delete(man.Stages, id)
+			}
 			if err := man.Write(dir); err != nil {
 				return res, err
 			}
@@ -387,8 +438,8 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 		label := id + " (" + p.kind.Name + ")"
 		rc := &RunContext{
 			Env: Env{Ctx: ctx, Doc: d, Stage: p.stage, Kind: p.kind, Params: p.params, Seed: p.seed,
-				Workers: opts.Workers, logf: opts.Log},
-			Dir: sr.Dir, RelDir: sr.RelDir, upstream: results, files: map[string]bool{},
+				Workers: opts.Workers, Region: p.region, logf: opts.Log},
+			Dir: sr.Dir, RelDir: sr.RelDir, upstream: results, files: map[string]bool{}, Previous: prev,
 		}
 		if opts.Progress != nil {
 			rc.progress = func(f float32) { opts.Progress(label, f) }
@@ -401,10 +452,20 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 		if err == nil && ctx.Err() != nil {
 			err = ErrCancelled
 		}
-		if err != nil {
+		if err != nil && p.kind.Incremental && prev != nil {
+			// Keep everything (the next run reuses what it can) under an
+			// entry with no hash: only the tiles that are certainly whole.
+			man.Stages[id] = ManifestStage{Kind: p.kind.Name, Files: unionFiles(prev.Files, prefixFiles(id, rc.sortedFiles())),
+				Tiles: rc.survivingTiles()}
+			if werr := man.Write(dir); werr != nil {
+				logf("[%s] manifest: %v", id, werr)
+			}
+		} else if err != nil {
 			// The half-made files are not in the manifest; delete what was
 			// recorded so the folder does not fill with orphans.
 			ManifestStage{Files: prefixFiles(id, rc.sortedFiles())}.removeFiles(dir)
+		}
+		if err != nil {
 			res.Elapsed = time.Since(began)
 			if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
 				logf("[%s] cancelled", id)
@@ -427,9 +488,14 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 		sr.Files = prefixFiles(id, rc.sortedFiles())
 		sr.Placements, sr.Volumes, sr.Level, sr.Artifact = rc.scenery, rc.volumes, rc.level, rc.Artifact
 		sr.Supersedes = rc.supersedes
-		man.Stages[id] = ManifestStage{Kind: p.kind.Name, Hash: p.hash, Files: sr.Files}
+		man.Stages[id] = ManifestStage{Kind: p.kind.Name, Hash: p.hash, Files: sr.Files, Tiles: rc.tileHashes()}
 		if err := man.Write(dir); err != nil {
 			return res, err
+		}
+		if prev != nil {
+			// What the previous run made and this one neither wrote nor
+			// reused.
+			removeStale(dir, prev.Files, sr.Files)
 		}
 		rc.Progress(1)
 		logf("[%s] done in %s: %d files, %d placements", id, sr.Elapsed.Round(time.Millisecond), len(sr.Files), len(sr.Placements)+len(sr.Volumes))
@@ -443,7 +509,9 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 	// result, so nothing splices it.
 	pruned := false
 	for id, e := range man.Stages {
-		if d.StageByID(id) == nil {
+		// An expanded region stage is not in d.Stages; it is in the plan
+		// for as long as its region and preset stage are.
+		if d.StageByID(id) == nil && byID[id] == nil {
 			e.removeFiles(dir)
 			delete(man.Stages, id)
 			pruned = true
@@ -457,6 +525,35 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 	}
 	res.Elapsed = time.Since(began)
 	return res, nil
+}
+
+// Warnings is every enabled stage's Warn lines, prefixed "[stage] ", in
+// document order — what `foundry gen check` prints and a run logs. A kind's
+// panic is reported as a warning rather than crashing the caller.
+func Warnings(d *Doc) []string {
+	var out []string
+	for i := range d.Stages {
+		s := &d.Stages[i]
+		if s.Disabled {
+			continue
+		}
+		k := KindByName(s.Kind)
+		if k == nil || k.Warn == nil {
+			continue
+		}
+		p := Resolve(k.Params, s.Params)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					out = append(out, fmt.Sprintf("[%s] its warnings failed: %v", s.ID, r))
+				}
+			}()
+			for _, w := range k.Warn(d, s, p) {
+				out = append(out, "["+s.ID+"] "+w)
+			}
+		}()
+	}
+	return out
 }
 
 // runStage calls the kind's Run, turning a panic into an error: a broken

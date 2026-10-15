@@ -224,6 +224,124 @@ error, and every such problem in the file is listed at once with where it is
 
 A vec2's `y` is written `"y"`, quoted: YAML 1.1 reads a bare `y` as `true`.
 
+## World generation: environment regions
+
+One generator can grow several environments at once, blended into each
+other: a desert canyon running into savannah with no seam. The workflow,
+the Generator's region list, the adjacency rules ("Insert intermediate
+region") and incremental runs are in [Environment regions](35-regions.md);
+this section is how the stages do it. The pieces:
+
+- **Region volumes** in the level (a volume's `region:` block — see
+  [Environment regions](13-volumes.md#environment-regions)): a polygon
+  footprint, the environment it grows, a priority and a transition width.
+  The level is the source of truth.
+- **Environment presets**: ordinary `.fgen` documents under
+  `resources/environments/<name>.fgen`. A preset's `terrain` stage is the
+  region's ground, its materials the region's ground material, and its
+  placement stages run once per region. The built-ins (`desert_canyon`,
+  `savannah` — wide rolling plains with shallow dry washes, gold dry-grass
+  ground, the savannah biome's dense grass and acacia clumps as vegetation,
+  scanned searsia and quiver trees in clumps, shrubs and granite boulders)
+  are written to
+  the project only when no file of that name exists, so an edited preset is
+  never overwritten. `foundry gen env list` shows them; `foundry gen env
+  write <name>` writes one.
+- **The world generator**, `resources/generators/<level>_world.fgen`, made
+  from the `level_world` template by the region inspector's **Open World
+  Generator**, the Generator's **File > Generate World…**, or `foundry gen
+  world <level>` — or from the `canyon_savannah` template, which ships a
+  two-region layout: its regions stage has `seed_level` on, so the first
+  run writes the layout into the target level as region volumes (making the
+  level if needed; a level with regions keeps its own) and turns the switch
+  off ([Environment regions](35-regions.md#quick-start-a-canyon-running-into-savannah)). Its first stage, `regions`, holds a copy of the level's
+  region volumes, synced (sorted by id) before every run and — while the
+  level is open — every preview. The copy is read-only in the parameter
+  panel.
+
+The `regions` stage's preview is the **biome overlay**: each environment's
+colour, mixed by its share across the bands, with every footprint outlined.
+Edit a footprint in the level editor and the overlay follows.
+
+**How the shares work.** Each region's share of a point is a smoothstep of
+the distance to its footprint across its band — 1 half a band inside, 0 half a
+band outside, an even split on the edge between two equal neighbours — with
+the edge meandering (`warp_amount`, `warp_scale`) so the band follows a
+natural line. Higher priorities take their share first; what is left goes to
+the nearest region. The shares always sum to 1.
+
+**One terrain for every region.** The world generator's second stage,
+`ground` ([region_terrain](#region_terrain-level)), grows each region's ground
+from its preset's `terrain` stage and blends them across the bands BEFORE
+erosion; then drainage, droplets and talus run once over the whole union, so
+a river leaving a canyon carries on across the savannah and the canyon
+country's edge wears down into the plain through gullies rather than a ramp.
+It writes what a `terrain` stage writes — heightmap, masks, albedo, tiles on
+one world tile grid, the far backdrop — plus a weight mask per environment
+(`mask_biome_<env>.png`) and `biomes.png`, so later stages read it like any
+terrain. Its preview shows the relief shaded in the biome colours.
+
+**What runs per region.** At plan time each region's preset stages that can
+run per region are added as `r_<region>_<stage>` (their placements are
+`gen.<doc>.r_<region>_<stage>.…`), seeded from the region and the preset
+stage so two regions of one preset differ; a preset stage's ref to its
+preset's `terrain` is rewritten to the world generator's `region_terrain`,
+and one to its `terrain_material` to the world generator's
+`region_material`. The kinds that run per region are the placement stages —
+`scatter`, `vegetation`, `cliff_wall`, `wall_sheet` — and the asset stages
+they read — `rocks`, `polyhaven_rocks`, `polyhaven_plants`,
+`polyhaven_textures` (an asset stage is added only when a placement stage of
+the same region reads it, so a region whose placements are skipped downloads
+nothing). `drift` does not run per region (it recooks the shared terrain's
+tiles); the run logs it, and any preset stage whose stand-in the world
+generator lacks (a scatter needing a `region_material`), as skipped.
+
+**Placement by biome weight.** A region's placement stages place only its
+share:
+
+- `scatter`: every candidate's weight is multiplied by the region's share
+  there, so rocks and plants thin out across the transition band instead of
+  stopping at a line; its 32 m candidate blocks are counted from the world
+  origin and seeded by world position, so a region's placements depend only
+  on its own preset and the ground under it — editing, adding or moving
+  another region's *preset* leaves them byte-identical (editing a region's
+  footprint changes every region's shares, so every region reruns).
+- `vegetation`: each cell's weight times the share, on a grid from a world
+  multiple of `cell`.
+- `cliff_wall`: only the columns where the region's share is at least ½
+  (two regions' walls meet in the middle of their band). Its `paths`,
+  `region_min`/`region_max` and `focus` are in the preset's coordinates,
+  measured from the region's anchor.
+- `wall_sheet`: the rock stands out of the terrain by the region's share, so
+  a wall sinks back into the slope across the band; it wears its own
+  environment's rock layer of the region material.
+- A rock's `match_ground` aims at the ground colour of its own region (the
+  region material's ground map weighed by the region's share), not the
+  whole world's.
+- Generated `rocks` are made once per preset stage and parameters into
+  `generated/<doc>/_shared/rocks_<hash>/` and every region of that preset
+  places the same files; Poly Haven imports were always shared (one folder
+  per asset), and a second region's stage reuses an import the first made
+  in the same run.
+
+**Running one region.** `foundry gen run <doc> -region <id>` (or the
+Generator's **Run > Run Region**) runs only that region's expanded stages,
+plus any shared stage they need that is stale, and splices only their
+placements (and those of the shared stages that ran): every other region's
+placements stay in the level as they are. A plain run still splices
+everything.
+
+**One ground material for every region.** The world generator's third stage,
+`ground_mat` ([region_material](#region_material-materials)), paints the
+union with every environment's own ground: each preset's `terrain_material`
+rules (rock on steep ground, gravel in the washes, cracked ground on the
+flats, sand between) and its Poly Haven textures, evaluated over the whole
+terrain and weighted by that environment's biome mask, baked into ONE splat
+of up to eight layers. Across a band the two biomes' layers meet by their
+height maps, the way sand and gravel do inside one biome. `ground`'s tiles
+wear it (the template names it in `ground`'s `material`; a region terrain
+with no material named wears the region_material that reads it).
+
 ## Stage kinds
 
 `foundry gen list` prints every stage kind this build has; `foundry gen list
@@ -363,6 +481,8 @@ shows the tiles painted with the albedo hint.
 | canyons.tributaries | int | 4 | Side canyons branching off upstream, narrower and shallower, graded down to the main floor. |
 | canyons.tributary_length | float | 220 | How far a side canyon reaches. |
 | canyons.seed | seed | 0 | Varies this canyon's meanders and tributaries. |
+| canyons.hold | float | 0 | How much of the carved shape survives the erosion (see [Authored landforms](#authored-landforms-stamps)): 1 keeps a slot canyon's sheer walls and open floor, which the talus would otherwise fill. |
+| canyons.hold_margin | float | 6 | How far past the rims the hold reaches, easing out. |
 | drainage | float | 2 | Stream-power erosion of the whole map: washes and dendritic gully networks cut back into the rims. 0 turns it off. |
 | drainage_iterations | int | 100 | Routing-and-incision rounds. More is a more mature network. |
 | drainage_cell | float | 4 | The drainage grid's spacing: the narrowest wash it cuts is a couple of these. |
@@ -390,6 +510,7 @@ shows the tiles painted with the albedo hint.
 | collision | enum | mesh | How the tiles collide. mesh is the terrain's real surface; tiles are closed, so nav sees each as one solid. |
 | texture | texture | "" | The tiles' texture; none draws them in their normal colours. |
 | material | string | "" | The .fmat the tiles wear over their texture: a terrain_material stage's, gen_<generator>_<its id> (it prints the name). Empty: none. |
+| chunk | enum | auto | Which level chunk the tiles stream with: `auto`, the chunk whose footprint holds each tile's centre (as every placement); `none`, always in — the ground under a level split into area chunks stays when an area is switched off. |
 | uv_mode | enum | world | world: a top-down projection at UV scale, for a tiling texture. terrain: one 0..1 square over the whole terrain, for a terrain-wide image such as the albedo hint. |
 | uv_scale | float | 0.125 | UVs per metre, in the world UV mode. |
 | cook | bool | true | Cook and place the tiles. Off writes them as .glb and places nothing. |
@@ -400,6 +521,7 @@ shows the tiles painted with the albedo hint.
 | far_blend | float | 400 | Over this distance past the edge the map's edge eases into the backdrop's own landforms. |
 | far_tile | float | 1024 | The backdrop tiles' largest side. |
 | far_material | string | "" | The .fmat the backdrop tiles wear: a terrain_material stage's far material, gen_<generator>_<its id>_far. Empty: the tiles' texture. |
+| far_terrace | float | 1 | How strongly the backdrop's steep ground steps through the strata (multiplies `terrace` out there). Steep far peaks whose ground rises about a bed per far cell alias their steps into a regular pattern of scales; lower it for them (the haze hides the beds). |
 
 **Outputs**, in the stage's folder:
 
@@ -459,6 +581,84 @@ backdrop has no collision.
 To see the tiles in the game's colours before the material phases exist, copy
 `albedo.png` into `textures/` under a name, set `texture` to it and `uv_mode`
 to `terrain`.
+
+#### Landforms beyond canyon country
+
+Environment presets other than the desert canyon need other ground. Each of
+these is part of the **base shape** — added before anything erodes, so the
+drainage, droplets and talus work it over like any other ground, and the far
+backdrop continues it past the edge — and each is **off at its default**
+(an existing document's hash and output do not move):
+
+| Landform | Switch | What it makes |
+| --- | --- | --- |
+| Ridged mountains | `ridge_height` > 0 | Sharp crests and branching spurs `ridge_height` metres above the lowland, ranges `ridge_scale` apart (`ridge_octaves`, `ridge_warp`). `ridge_valleys` flattens the valley floors into broad, flat-floored troughs under steepened walls — glacial U-valleys (a cheap reshaping; no ice is simulated). Keep height/scale under about 0.25 or the walls stand steeper than talus lets them. |
+| Dune field | `dune_height` > 0 | Transverse dunes across the wind (`dune_wind`: the bearing it blows toward, degrees from +X toward +Z): a long gentle stoss slope up to the crest and a short lee slip face (`dune_asymmetry`, held at the 34° angle of repose), crests `dune_wavelength` apart and bent by `dune_sinuosity`, broken into dune trains and flat interdune corridors (`dune_cover`), with wind ripples (`dune_ripple`, `dune_ripple_wavelength`) on the stoss slopes. |
+| Coastline | `coast` ≠ off | A shoreline `coast_offset` metres inside one side of the region's footprint (`+x`, `-x`, `+z`, `-z`: the sea lies that way), or along the drawn `coast_line` (the sea on its right, walking it in order), wandering by `coast_meander`: the sea floor shelving to `sea_depth` below `sea_level` over `shelf_width`, a beach `beach_width` wide rising `beach_rise`, an optional wave-cut cliff (`cliff_height`, `cliff_width`), and the land's own relief returning over `coast_inland`. Fill the sea with the region terrain's water (below). |
+| Volcanoes | `volcanoes` > 0 or `volcano_vents` | Cones `volcano_height` high and `volcano_radius` across (placed by seed inside the footprint, at least 1.2 radii apart, or at the vents you draw) with gullied flanks, a summit crater (`crater` of the radius, `crater_depth` deep) and `lava_lobes` lava tongues per cone — flat-topped, steep-fronted, `lava_length` × `lava_width` × `lava_thickness`. The vents are written to terrain.yaml (`vents:`) for the ground material's ash rule, and the lobes (`lobes:`: start, direction, length, half width, outline seed) for its lava rule. |
+| Hummocks and ponds | `hummock_height` or `pond_cover` > 0 | Frost-heave hummocks (`hummock_height`, `hummock_spacing`) and flat-floored hollows over `pond_cover` of the ground (`pond_depth`, `pond_scale`): thermokarst ponds, which the region terrain fills with water (below). |
+
+#### Authored landforms (stamps)
+
+Noise puts landforms wherever the seed says. A level is laid out by its
+designer: the slot canyon here, the mountain behind it, a ledge high on the
+mountain for the cave to come out on, a long slope down for the ruins.
+`stamps` is a list of such landforms. Each is a **kind** and **points**
+drawn in the 2D view (a spline: click to add, drag, right-click to delete),
+each point with a `radius` and a `height`. Like the landforms above they are
+part of the **base shape** — applied after them, in list order, before
+anything erodes — so the drainage, droplets, strata and talus work them over
+like any other ground and the backdrop continues them. The preview draws
+each point's radius (and, dimmer, the falloff past it).
+
+| Kind | Points | `height` is | What it makes |
+| --- | --- | --- | --- |
+| `mountain` | the crest (one point: a peak) | the rise | A massif: a concave profile out to `radius`, spurs and gullies from a ridged noise (`ridges`), a lumpy outline (`rough`). Segments of the crest combine by the larger rise. |
+| `plateau` | the top's spine (one point: a round table) | the rise | A flat top `radius` out from the points, its rim falling over `falloff`. The strata turn the rim into cliffs. |
+| `platform` | each point a disc | the **absolute** height | Flattens the ground to the height within `radius`, easing out over `falloff` — a ledge on a mountainside, a terrace. |
+| `ramp` | a path | the **absolute** height along it | A flattened way `radius` either side of the path at the heights interpolated along it — a road down a slope. |
+| `cut` | a path or a point | the depth | Lowers the ground — a notch, a pass, a pit. |
+
+| Field | Type | Default | |
+| --- | --- | --- | --- |
+| stamps.kind | enum | mountain | As above. |
+| stamps.points | spline | 0 points | x, z, radius, height. |
+| stamps.falloff | float | 20 | How far past the radius a plateau, platform, ramp or cut eases out. |
+| stamps.rough | float | 0.4 | Ragged outlines; lumpy mountain flanks. |
+| stamps.ridges | float | 0.6 | A mountain's spurs and gullies. |
+| stamps.strength | float | 1 | How fully a platform or ramp flattens the ground. |
+| stamps.hold | float | 0 | How much of the stamp's shape survives the erosion: 1 for a ledge that must stay flat. |
+| stamps.seed | seed | 0 | Varies the stamp's noise. |
+
+**Hold.** Erosion is what makes the ground look old, and what fills a slot
+canyon with talus and rounds a ledge into a slope. A stamp's `hold` (and a
+canyon's, with `hold_margin` past its rims) keeps its footprint: after the
+drainage, terracing, droplets and talus, the heights there are blended back
+toward their pre-erosion shape by `hold` (then the fine detail goes on). Use
+it on the shapes a layout depends on — a walkable ledge, a slot's floor and
+sheer walls — and leave it 0 on mountains. With no stamps and no hold, the
+terrain is exactly what it was (the parameters are `Added`).
+
+A slot canyon, for instance: `profile: slot`, `floor: 0.35`, widths 4–10 m,
+depths 30–45 m, `meander` 5 over `meander_length` 70, `tributaries: 0`,
+`hold: 1` at 0.5 m resolution carves sheer walls with a flat sandy floor.
+The floor is graded downstream from the ground at its rims, so where a slot
+heads into rising ground (a mountain's foot) its floor climbs steeply: keep
+the head on level ground, or lower its `depth` there.
+
+Two more only mean something in a world of several regions
+([Environment regions](35-regions.md)), and the plain terrain stage ignores
+them:
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| base_elevation | float | 0 | The ground level this region meets its neighbours at. |
+| edge_rise | float | 0 | Across the transition band the region stands at `base_elevation`, and its relief rises back over this many metres inside its own footprint — mountains climbing out of the plain instead of meeting it as an escarpment across the band. Only borders with another region fade; the union's outer edge does not. 0: off. |
+| water | bool | false | Ground of this region below `water_level` is under water (a sea, a flooded wetland): the region terrain places water surfaces over it. |
+| water_level | float | 0 | That water's height. |
+| ponds | bool | false | This region's closed hollows fill with water to just below their rims. |
+| pond_min_depth | float | 0.3 | A hollow shallower than this stays dry. |
+| pond_min_area | float | 40 | A hollow smaller than this (m²) stays dry. |
 
 ### rocks (Rocks)
 
@@ -646,6 +846,35 @@ are one draw. `preview_max` caps a rule in the preview only.
 Each run writes `footprints.yaml` (every rock's footprint disc and each rule's
 counts) beside its placements, which a later stage's `avoid` reads.
 
+#### Draw distances and impostors
+
+In a level generation doc's regions (the environment presets' scatters) every
+placement is written with a `draw_distance`, a `shadow_distance` and, for a
+tree, an `impostor` (see [Scenery](14-scenery-brush.md#draw-distance-and-impostors)),
+all from the placement's own size: its bounding sphere's radius r, scaled.
+
+| | Automatic value |
+| --- | --- |
+| draw distance | 220·r m, 120–1500 m; a tree with an impostor 800–1500 m |
+| shadow distance | half the draw distance; a tree with an impostor 0.6 of it |
+| impostor | a Poly Haven plant variant 3 m tall or more at the rule's largest scale |
+| impostor distance | 25·r m, 80–300 m |
+
+A rule's own `draw_distance`, `shadow_distance`, `impostor` and
+`impostor_distance` override them. A classic document's rules write nothing
+unless they set these (its output is pinned to the byte, so an existing level
+regenerates exactly as before). The new keys are at their defaults in every
+existing document, so no scatter goes stale for them; to give an existing
+region world its draw distances, force its scatters:
+`foundry gen run <doc> -stage r_<region>_scatter …` (one `-stage` a region).
+
+An impostor is baked once per cooked variant (on the CPU, headless: about a
+second for a 50k-triangle fir), beside it as `<stem>_imp.fnm` with
+`<stem>_imp.yaml` (what it was baked from), its atlas
+`textures/ph_imp_<stem>_cov.png` (a coverage-preserving cutout, so distant
+crowns keep their density) and that atlas's `_normal` map. A rerun bakes again
+only when the variant's cook changed.
+
 | Param | Type | Default | |
 | --- | --- | --- | --- |
 | terrain | stage | "" | The terrain stage to scatter over: its heights and masks. |
@@ -672,6 +901,8 @@ counts) beside its placements, which a later stage's `avoid` reads.
 | rules.cliff_base_distance | float | 25 | How far out from a cliff's foot the cliff-base weight reaches. |
 | rules.cluster | float | 0.5 | Clumping: 0 spreads it evenly over the ground its bands allow, 1 gathers it in patches with bare ground between. |
 | rules.cluster_scale | float | 25 | The patches' size. |
+| rules.near | spline | 0 points | Keep the rule to an area: within each point's `radius` of the path through the points (one point: a disc) — rubble along a slot canyon's floor, plants down a stairway. Empty: the whole ground. |
+| rules.near_soft | float | 4 | How far past the area's radius the rule fades out. |
 | rules.satellites | float | 0 | Extra candidates round each rock the EARLIER rules placed, per metre of its footprint radius: rubble skirting the boulders. |
 | rules.satellite_spread | float | 2.5 | How far out the satellites reach, in the host's footprint radii. |
 | rules.align | float | 0.6 | How far each rock is turned toward the ground's normal (averaged over its footprint): 0 upright, 1 flush with the slope. |
@@ -682,11 +913,89 @@ counts) beside its placements, which a later stage's `avoid` reads.
 | rules.collision_min | float | 0.35 | Rocks smaller than this (largest extent, scaled) do not collide: a body would only snag on them. |
 | rules.hull_max | float | 4 | Rocks up to this size collide as their hulls; larger ones as their mesh. |
 | rules.max_instances | int | 20000 | The most this rule places (0: no cap). The biggest are kept. |
+| rules.draw_distance | float | 0 | How far from the camera the rule's placements are drawn (fading out over the last tenth). 0: by size in a region world (about 220 m a metre of bounding radius, 120–1500 m; trees with impostors at least 800 m), unlimited in a classic document. Negative: no limit. |
+| rules.shadow_distance | float | 0 | How far they cast a shadow. 0: half the draw distance (a tree's impostor 0.6 of it). Negative: as far as drawn. |
+| rules.impostor | enum | auto | Far impostors baked from each cooked variant. auto: a region world's Poly Haven plant trees (3 m or taller at the rule's largest scale); on: every variant; off: none. |
+| rules.impostor_distance | float | 0 | Where a placement's mesh hands over to its impostor. 0: by size, 80–300 m. |
 | avoid | stage | "" | A cliff_wall (or another scatter) stage whose footprints these rocks keep clear of. |
 | cliff_threshold | float | 0.5 | The cliff mask level that counts as a cliff for the cliff-base weight. |
 | margin | float | 2 | Footprints keep this far in from the terrain's edge. |
 | preview_max | int | 20000 | The most rocks a rule places in the preview (the run uses Max rocks). |
 | preview_triangles | int | 240 | The 3D preview draws each rule's rocks as one proxy of its previewed variant, decimated to this many triangles. |
+
+### grass_field (Placement)
+
+Poly Haven grass, flowers, ferns and reeds as a **dense sward drawn by the
+grass instancer** — hundreds of thousands of clumps per square kilometre —
+instead of one scenery placement per clump (which a `scatter` rule makes, at
+about 1 ms of CPU frame per thousand in view). Each **rule** names a
+`polyhaven_plants` stage (`plants`) and grows its clumps where its bands
+allow; every enabled rule grows at once (unlike scatter's, they do not keep
+clear of each other: a meadow is grass and flowers mixed). The environment
+presets' grass is all on this stage (`sward`).
+
+How a rule places its clumps: a **jittered lattice** at `density` clumps per
+m², counted from the world origin, each point kept with probability equal to
+its weight — the scatter bands' (`slope`, `height`, `flow`, `deposition`,
+`curvature`, `cliff`, `cliff_base`, `cluster`), times the region's share in a
+region world, times the optional `shore` band (metres from standing water;
+reeds round a pond are `shore: [0, 6]`). No clump stands deeper in water than
+`max_depth`. Its scale is drawn from `scale` and shortened where its weight
+is low (`edge_shrink`: a patch's margin is shorter, sparser grass); its tint
+mixes `tint_a` and `tint_b` by a slow noise `tint_scale` metres across, with
+`tint_jitter` per clump. `avoid` (a scatter stage) keeps grass out of its
+rocks' footprints (taken at `avoid_shrink`).
+
+**Which clumps.** Every variant of the plants stage is a clump kind:
+`pieces` keeps only those whose names contain one of its words (`tall`
+takes grass_medium_01's tall_a/b/c), `min_size` drops the small ones. Poly
+Haven's grass pieces are about a quarter of life size as scanned: a 1–2 m
+tallgrass sward is the tall pieces at `scale: [4.4, 6.4]`.
+
+**What it writes.** `grass.fgk`, the kit: each kind as up to three meshes —
+as imported (capped at `max_triangles`), then thinned to `lod_ratios` of that
+by keeping whole blades, each widened to keep the clump's cover — with its
+`_cov` albedo and its wind (`wind_bend`, `wind_flutter`). One
+`grass_<i>_<j>.fgrass` per terrain tile with any clump: 12 bytes a clump,
+sorted into `cell`-metre cells by kind in a fixed hashed order. And one level
+**volume** per field with a `grass:` block naming it (see Volumes), boxed to
+the tile, `chunk: auto`, owned by the stage's prefix like every placement.
+`grass.yaml` sums it up (clumps per rule, kinds).
+
+**How it draws.** Per cell on the CPU: cells out of the frustum or past the
+draw range are skipped; each kind's run draws the prefix its nearest point
+admits, thinning past ~22 m in that fixed order (instances fade over a narrow
+band of rank — no popping wave) while the survivors grow to keep the ground
+covered; the mid and far meshes take over at ~16 m and ~45 m, cross-faded per
+clump. Wind is the scene's (the same gust the trees bend in), shadows only
+within the player's grass shadow distance and only for rules with `shadows`
+on, alpha-to-coverage (or TAA's dither) on the cutout. `range` stops a rule's
+clumps short of the full range (flowers). The player's `grass_density`,
+`grass_distance` and `grass_shadow_distance` (graphics.yaml, or
+`@level.prop.<name>`) scale all of it; the F3 profiler's `grass` row is its
+cost.
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| terrain | stage | "" | The terrain stage to grow on: its heights, masks, tiles and water. |
+| seed | seed | 0 | Changes every rule's clumps. |
+| rules | list | — | The rules (below). |
+| avoid | stage | "" | A scatter (or cliff_wall) stage whose footprints the grass keeps out of. |
+| avoid_shrink | float | 0.7 | Each avoided footprint's radius is taken at this fraction. |
+| cell | float | 16 | The culling cell (metres). |
+| lod_ratios | vec2 | 0.35, 0.1 | The mid and far meshes' share of the near mesh's triangles (0: none). |
+| margin | float | 0.5 | Clumps keep this far in from the terrain's edge. |
+| preview_density | float | 0.05 | The preview's dots per m² at most. |
+
+Rule fields: `name`, `enabled`, `plants`, `pieces`, `min_size`,
+`max_triangles` (1200), `density` (1.5/m²), `scale` (3–5), `edge_shrink`
+(0.4), the scatter bands (with `cluster` 0.25 over 30 m and `cliff` 0–0.3 by
+default), `shore`, `shore_soft`, `max_depth`, `tint_a`, `tint_b`,
+`tint_scale`, `tint_jitter`, `wind_bend` (0.25), `wind_flutter` (0.04 m),
+`range` (1) and `shadows` (on).
+
+The preview draws each rule's clumps as dots, thinned to `preview_density`
+(a preview never imports, so it has no kit).
 
 ### cliff_wall (Placement)
 
@@ -799,7 +1108,7 @@ as one instanced proxy of the previewed chunk.
 | seat | enum | silhouette | How a chunk's back is buried: silhouette pushes it in until the rim of its back — what is seen of an open-backed scan from the side — is in the wall; box buries its bounding box's back face (phase 3's rule, which leaves an open-backed scan standing proud with a gap behind it). |
 | max_back_gap | float | 0.75 | A chunk that the silhouette seating would bury deeper than this fraction of its depth past the box seating is tried as another variant, and dropped if none fits: it would vanish into the wall. |
 | back_cover | float | 0.6 | The share of the back's rim the silhouette seating buries (1: all of it; lower lets the odd far-forward lip stay out rather than bury the piece). |
-| ground | stage | "" | A terrain_material stage: the chunks blend into its ground colour at their feet and match toward it. |
+| ground | stage | "" | A terrain_material (or region_material) stage: the chunks blend into its ground colour at their feet and match toward it. |
 | match_to | enum | ground | What the chunks' colour match (match_ground) aims at: the ground's average colour, or the terrain material's rock layer — the colour of the bare heightfield walls the chunks stand on, which is what they must not stand out from. |
 | match_brightness | float | 1 | Scales the chunks' colour after the match (with match_ground above 0): below 1 darkens pale scans to sit with the walls. |
 | min_contact | float | 0.65 | The share of a chunk's back that must touch the face (buried, or within Contact gap of it). A piece with less hangs off the wall with daylight behind it — a rock stuck to a pillar's flank — and is tried as another variant, then dropped. 0: no test. |
@@ -857,7 +1166,7 @@ the beds are geometry) and blend into the floor's colour at their feet
 | Param | Type | Default | |
 | --- | --- | --- | --- |
 | terrain | stage | "" | The terrain stage whose cliffs are built. |
-| ground | stage | "" | The terrain_material stage: the walls wear its rock layer, and their feet blend into its ground. |
+| ground | stage | "" | The terrain_material (or region_material) stage: the walls wear its rock layer (in an eight-layer region material, the region's own environment's rock), and their feet blend into its ground. |
 | cell | float | 0.4 | The mesher's grid: the finest feature the rock has. Halving it is four times the triangles. |
 | depth | float | 2.4 | How far the rock stands out of the terrain at most: the depth of the deepest recess, the reach of the furthest ledge. |
 | steep | vec2 | (40,55) | Ground steeper than the first starts to be wall; by the second it is all wall. |
@@ -874,6 +1183,263 @@ the beds are geometry) and blend into the floor's colour at their feet
 | bedding | float | 0.06 | The material's bedding relief on the walls: the beds are geometry now, so only fine laminations. |
 | ground_band | float | 0.8 | How far up a wall's foot takes the floor's colour. 0: none. |
 | cook_memory | int | 3000 | How much memory the sections' meshing and cooks may hold at once. |
+| caves | stage | "" | A cave stage whose void is cut out of the walls, so its mouths open through the rock. |
+
+### cave (Placement)
+
+A sandstone cave system along an authored path through a terrain
+(docs/adventure/PHASE_C.md): a sandy floor strewn with fallen blocks, walls
+stepped by strata ledges, a vault hung with rock drapery, dark inside and
+bright at its mouths. It cuts the terrain open where it comes through the
+ground.
+
+**The path** is a 3D spline (`x, y, z, width, height`): each point is on the
+cave's **floor**, with its width wall to wall and height floor to roof. Start
+and end it outside the ground — those are the mouths — with the floor at the
+ground there (where the ground lies up to 2.5 m over the floor, the floor
+rises to just under it, so the ground itself is the floor out of a mouth). A
+wide, tall point is a chamber. The 2D view draws the path, its walls and each
+point's width; the 3D view a coarse shell round the void.
+
+**The void** is cut from the path: vertical walls up to the vault
+(`arch`), a flat, rippled sand floor (`sand`), the walls and roof pushed
+about by noise (`rough`), soft beds weathered back between hard ones as
+ledges and roof steps (`ledges`, `bed_spacing`), thin fins and curtains of
+rock hanging from the roof in patches (`drapery`, `drapery_length`,
+`drapery_spacing`), and angular blocks fallen on the floor, big ones and
+rubble, half buried in the sand (`blocks`, `block_size`). `clear` keeps a
+lane down the middle: fewer blocks, its rubble no higher than a step, its
+rocks small and without collision.
+
+**The cut.** Every terrain quad the void passes through (within
+`cut_margin`, more than half a metre over its floor — ground at the floor is
+the floor carried out of a mouth) is dropped. Every terrain tile the cave
+touches — a hole, or the cave passing under it — is recooked from the terrain
+stage's own heights, tile plan, quantisation step and base, without the
+dropped quads and without skirts (a skirt would be a wall across the
+tunnel), and **supersedes** the terrain stage's tile (as `drift` does). The
+recooked tiles are open meshes: navigation reads them triangle by
+triangle, which is what lets an agent walk into the cave a closed tile would
+fill.
+
+**The rock** is the terrain's solid less the void, near the cave: its top
+lies 12 cm under the terrain except round a hole in steep ground, where it
+stands `lip` over it (falling off over `lip_band`) and covers the cut
+tiles' ragged edge. It is meshed in 32 m sections on a world-aligned grid
+(dual contouring at `cell`; each box overlaps its neighbours by half a cell
+so a wall crossing a seam is meshed whole), the triangles nobody sees
+dropped (the box's faces through rock, the top under the terrain), and
+simplified within 1.2 cm with its open edges and box sides locked. Each
+section is three meshes:
+
+| Part | Triangles | Material |
+| --- | --- | --- |
+| `sand_*` | the void's floor | the ground material's sand layer alone |
+| `rock_*` | walls, roof, blocks | the ground material's rock layer, its feet blended into the floor's sand colour (`ground_band`) at the cave floor's own height (`floor_height.png`, `floor_color.png`) |
+| `ground_*` | the rock's top round a mouth | the terrain tiles' own material |
+
+all with mesh collision, `draw_distance` and `shadow_distance`.
+
+**Dark inside.** Vertex AO (alpha, which scales the ambient light) is the
+field's near AO times the **sky's visibility**: on a voxel grid
+(`sky_cell`) reaching `sky_reach` round the cave, the share of a hemisphere
+of rays from each voxel of air that reach the open sky — out through a mouth,
+or past the grid over the terrain. The interior loses `darkness` of its
+ambient where it sees no sky; `sky_gain` keeps more light round a mouth. The
+mouths stay bright; the deep interior is close to black without lights.
+
+**Rocks.** With `rocks` (a rocks or polyhaven_rocks stage), its variants are
+strewn on the floor at `rock_density` per m², `rock_size` metres, more
+against the walls, each wearing a copy of its material darkened by the sky
+it sees (a scan has no AO of the cave's own), with a fifth of the cave's
+draw and shadow distances.
+
+**Outputs.** `cave.yaml` holds the settings (from which the void is rebuilt
+exactly), the **mouths** (floor point, the direction out, width, height),
+the **interior** as boxes of 16 m of path under the ground (where an
+ambient-darkening volume goes), and **samples** every 6 m of path a third of
+the height up with the sky's visibility there and whether they are under the
+ground (where lights go). Later stages read it as the artifact; `wall_sheet`'s
+`caves` cuts the void out of its shell so the mouth opens through the cliff.
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| terrain | stage | "" | The terrain stage the cave is cut through (it must cook its tiles). |
+| ground | stage | "" | The terrain_material stage: the walls wear its rock layer, the floor its sand layer. |
+| path | spline | 0 points | The course: floor points with width and height. |
+| arch | float | 0.6 | The share of the height that is vaulted roof. |
+| wander | float | 2 | How far the cave wanders off the drawn path (never at the mouths). |
+| rough | float | 0.6 | Lumps and hollows in the walls and the roof (m). |
+| ledges | float | 0.7 | How far soft beds weather back (m). |
+| bed_spacing | float | 1.6 | The beds' typical thickness (m). |
+| drapery | float | 0.5 | The share of the roof hung with drapery. |
+| drapery_length | float | 3 | How far the longest drapery hangs (at most half the height). |
+| drapery_spacing | float | 2.2 | The fins' typical spacing. |
+| blocks | float | 0.45 | How thickly the floor is strewn with fallen blocks. |
+| block_size | float | 2.2 | The big blocks' typical size; rubble is about a third of it. |
+| clear | float | 0.6 | How much clearer the middle lane is. |
+| sand | float | 0.08 | The sand floor's ripple (m). |
+| cell | float | 0.3 | The mesher's grid. Halving it is four times the triangles. |
+| weathering | int | 1 | Curvature-flow steps that round convex edges. |
+| cut_margin | float | 0.3 | A terrain quad this close to the void is cut. |
+| lip | float | 0.4 | How far the rock stands over a hole's edge in steep ground. |
+| lip_band | float | 2.2 | How far round a hole the lip reaches. |
+| sky_cell | float | 1 | The sky bake's grid. |
+| sky_reach | float | 24 | How far round the cave the sky grid reaches. |
+| darkness | float | 0.95 | How much ambient the deep interior loses. |
+| sky_gain | float | 2.5 | Scales the sky's visibility before it darkens. |
+| sand_color | color | (0,0,0) | The floor colour the walls' feet blend into; black: the ground material's own sand. |
+| ground_band | float | 0.7 | How far up the walls and blocks the sand colour reaches. |
+| rocks | stage | "" | A rocks or polyhaven_rocks stage strewn on the floor. |
+| rock_density | float | 0.12 | Rocks per m² of floor. |
+| rock_size | vec2 | (0.25,1.4) | The rocks' sizes (small ones far more often). |
+| draw_distance | float | 700 | How far the sections are drawn (the rocks: a fifth). |
+| shadow_distance | float | 250 | How far they cast (the rocks: a fifth). |
+| cook_memory | int | 3000 | Memory for the sections' and tiles' cooks. |
+| preview_cell | float | 1 | The 3D preview's grid. |
+| chunk | string | "" | The level chunk the sections and rocks stream with (an ID), except those within `chunk_mouth` of a mouth, which stream by their place (a mouth seen from outside stays when the interior is switched off). Empty: every placement by its place. |
+| chunk_mouth | float | 28 | How far from a mouth placements keep streaming by their place. |
+| ambient | bool | false | Place an ambient-darkening volume (a volume's `ambient:` block) over each interior box, grown by `ambient_margin` so the walls and roof lie inside it past the fade — the player, scanned rocks and entities in the cave lose the sky's ambient as the walls do. A box whose samples see sky keeps more. |
+| ambient_sky, ambient_ground | float | 0.1, 0.15 | The share of the sky ambient left deep inside on upward and downward faces. |
+| ambient_fade, ambient_margin, ambient_dust | float | 3, 4, 0.02 | The volumes' fade inside their faces, how far each box is grown, and extra dust for the light shafts inside. |
+
+**Performance** (dev box, `-workers 6`, the phase-C test: a 180 m cave
+climbing 60 m, 12 sections): the cut and 4 tile recooks 5 s, the sky 0.7 s,
+the sections 24 s in all (1.9 M triangles meshed, 0.16 M kept), about 9 MB
+of meshes; peak memory 0.45 GB.
+
+**Known limits.** A `drift` stage that recooks a tile the cave cut would
+seal it again (put no drift on the cave's tiles). The recooked tiles are
+open, so a nav build reads them triangle by triangle. A scanned rock's
+darkening is in its material, not its lighting: a light carried into the
+cave lights it less than the walls.
+
+### ruins (Placement)
+
+Ancient sandstone architecture laid out along a path down a slope
+(docs/adventure/PHASE_D.md): terraces held by battered retaining walls,
+stairs between them, stepped temple towers with cornices, dentils, carved
+niches and blind arches, domed crowns and miniature corner shrines,
+pavilions on columns, gateways over the walkway, crenellated walls,
+colonnades, fallen columns and rubble — weathered, some of it collapsed.
+
+**The path** (`x, z, width`) runs top to bottom in plan. It is cut into
+**terraces** and **stairs** alternately, each a chord of the path, so one ends
+exactly where the next begins and the way down is unbroken:
+
+- a terrace's floor is `clearance` over the highest ground under its
+  walkway; each side reaches out to the point's `width` or until the ground
+  rises to the floor (a side slope's uphill side is cut back); its body
+  reaches `foundation` under the lowest ground beneath it, so on a slope its
+  downhill side is a retaining wall (battered, coursed in big blocks,
+  buttressed where it is tall, an overhanging coping and a crenellated
+  parapet opened for the walkway);
+- a stair drops to the next floor in risers no taller than `rise` on treads
+  of `tread`: the fewest steps that reach the ground under the next terrace,
+  or, where the ground falls faster than a stair can, `max_flight` and a
+  floor standing on a foundation. Steep ground ahead shortens the terraces.
+  Keep `rise` under the player's step height (0.5 by default): the stairs are
+  walkable with mesh collision.
+
+Buildings stand on the terraces either side of the walkway (`walkway`
+wide), fronts to it; a gateway (`gates`) may stand over the walkway at a
+terrace's top; colonnades line it on some terraces; walls (`walls`) run along
+long edges; `outliers` towers and shrines stand on the slope beside the path
+within `spread`, each on a plinth reaching into the ground (none taller than
+`max_plinth`); `debris` rubble and fallen columns lie in the courts and at
+ruined plinths' feet. `ruin` is the share of ruined variants.
+
+**Instanced library.** The buildings are a library of 14 variants (four
+towers — one with an open arched pavilion and dome on top, one fallen — a
+shrine, two pavilions, a gateway, two walls, a column, a fallen column, two
+rubble heaps), each modelled as a signed-distance field (mouldings as
+profiles swept round stepped plans; carving cut in face frames with
+repetition), meshed **once** at a fine cell (3–7 cm × `detail`; the tallest
+are capped by the mesher's 512 cells), its buried base dropped, simplified
+within `simplify`, baked (vertex AO from the field and the floor under it,
+`dust` on what faces up) and cooked to Nanite with mesh collision. Only the
+variants the layout uses are cooked; each placement is a transform.
+**The site** (terraces, stairs, plinths) is one field meshed in 32 m world
+sections at `site_cell` (nothing more than a metre under the terrain is
+meshed; box sides and open edges locked in the simplification; one
+quantisation step), placed with mesh collision.
+
+**Materials.** Three, `gen_<gen>_<id>_temple`, `_wall` and `_site`: the
+`textures` stage's `temple_layer`, `wall_layer` and `site_layer` (falling
+back to each other) projected triplanar at the layer's size ×
+`texture_scale`, colour-graded toward a mix of `stone_color` and the
+`ground` stage's rock (`rock_share`, `match`) with each scan's mean
+brightness brought to `brightness`, macro variation and desert varnish
+(`streaks`); the site's feet blend into the ground (`ground_band`). Good
+Poly Haven layers: `old_sandstone_02` (temples: warm, weathered blocks),
+`medieval_blocks_02` (walls: warm rubble masonry), `sandstone_cracks`
+(terraces — their block joints are geometry already). Avoid
+`large_sandstone_blocks` on the temples: it is a grey trim sheet whose
+green-stained band and yellow line repeat along every moulding, and
+`rabdentse_ruins_wall` reads near-black in shade.
+
+**ruins.yaml** (the artifact): every terrace's and plinth's corners and
+floor, every stair (from, to, steps, rise, tread, width), every instance, the
+free **spots** on the floors (for props), and each variant's triangles,
+size and instance count.
+
+```yaml
+- stage: polyhaven_textures
+  id: masonry
+  params:
+    layers:
+    - {name: temple, id: old_sandstone_02}
+    - {name: masonry, id: medieval_blocks_02}
+    - {name: terrace, id: sandstone_cracks}
+- stage: ruins
+  id: ruins
+  params:
+    terrain: ground
+    ground: ground_mat
+    textures: masonry
+    path:                     # top to bottom; zigzag across steep slopes
+    - {x: 0, z: -22, width: 28}
+    - {x: 22, z: -62, width: 30}
+    - {x: -18, z: -112, width: 32}
+    outliers: 30
+```
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| terrain | stage | "" | The terrain stage the ruins stand on. |
+| ground | stage | "" | Optional terrain_material: colour match toward its rock, the site's ground blend. |
+| textures | stage | "" | The polyhaven_textures stage with the masonry layers. |
+| temple_layer, wall_layer, site_layer | string | temple, masonry, terrace | Its layers for the temples, the walls, the terraces. |
+| texture_scale | float | 1 | Multiplies the layers' metres a repeat. |
+| path | spline | 0 points | The way down: x, z, width. |
+| terrace_length | vec2 | (12,22) | A terrace's length along the path. |
+| walkway | float | 3.6 | The clear way, and the stairs' width. |
+| rise, tread | float | 0.18, 0.34 | The tallest riser, a step's run. |
+| max_flight | float | 20 | The longest stair (m). |
+| clearance | float | 0.25 | A floor's height over the ground under the walkway. |
+| foundation | float | 1.5 | How far bodies reach under the lowest ground. |
+| buildings | float | 0.75 | How full the terraces' sides are. |
+| gates, walls | float | 0.35, 0.5 | Chance of a gateway per terrace, of a wall per long edge. |
+| outliers, spread, max_plinth | int, float, float | 14, 40, 24 | Buildings on the slope beside the path, how far out, their tallest plinth. |
+| ruin, debris | float | 0.35, 0.5 | Share of ruined variants; how much rubble. |
+| scale | vec2 | (0.9,1.15) | The buildings' size range. |
+| weathering | float | 1 | Erosion: swells, grain, eroded patches (≈5 cm). |
+| rounding | int | 1 | Curvature-flow steps rounding convex edges. |
+| detail | float | 1 | Scales the buildings' meshing resolution. |
+| site_cell | float | 0.1 | The terraces' meshing grid (under the riser). |
+| simplify | float | 0.006 | Simplification error (m). |
+| stone_color, rock_share, match, brightness, saturation | color, float, float, float, float | (0.8,0.56,0.37), 0.4, 0.85, 0.5, 1.25 | The colour grade (version 2: warmer and more saturated; scans shot under grey skies read grey in desert light). |
+| dust, streaks, ground_band | float | 0.4, 0.25, 1.2 | Up-facing dust (vertex colour), varnish, the site's ground blend. |
+| draw_distance, shadow_distance | float | 1500, 500 | Buildings and terraces. |
+| small_draw_distance | float | 350 | Columns, walls, rubble (shadows a third). |
+| cook_memory | int | 3000 | Memory for the site sections' meshing and cooks. |
+| preview_cell | float | 0.5 | The 3D preview's grid (the site; buildings as boxes). |
+
+**Performance** (dev box, `-workers 6`, the phase-D test: 8 terraces, 7
+flights of 58 steps, 30 plinths, ~70 instances): the library about 2 min
+(0.65 M triangles kept, 29 MB), the site 5–6 min (61 sections, 2.6 M
+triangles kept of 13 M meshed, 113 MB); peak memory 2.5 GB. The site
+dominates: raise `site_cell` toward the riser or `simplify` to cut it.
 
 ### drift (Placement)
 
@@ -920,7 +1486,7 @@ the sand where it now lies.
 | Param | Type | Default | |
 | --- | --- | --- | --- |
 | terrain | stage | "" | The terrain stage whose tiles the sand is added to (it must cook its tiles). |
-| ground | stage | "" | The terrain_material stage the tiles wear: its weights get the sand, and the recooked tiles wear a copy of it. |
+| ground | stage | "" | The terrain_material stage the tiles wear: its weights get the sand, and the recooked tiles wear a copy of it. An eight-layer region material is refused (drift paints a four-layer splat). |
 | scatter | stage | "" | The scatter stage whose rocks the sand piles against. |
 | rules | string | "" | The scatter's rules (by name, separated by spaces) whose rocks get drifts; empty: every rule. |
 | wind | float | 60 | The direction the wind blows toward, degrees clockwise from +Z seen from above (90: toward +X). The tails run this way. |
@@ -985,6 +1551,7 @@ the plants themselves grow in the level.
 | rules.cluster | float | 0.5 | Clumping: 0 spreads it evenly over the ground its bands allow, 1 gathers it in patches with bare ground between. |
 | rules.cluster_scale | float | 25 | The patches' size. |
 | cell | float | 16 | The grid the weights are judged on: finer follows the masks closer with more volumes. |
+| fray | float | 0 | Cross-fades neighbouring volumes: each grows 0.625 × fray past its cells and fades its plants over fray at its edge (`edge_fade_distance`), so two volumes of different density blend over their overlap instead of meeting on a ruled line, and a patch's outer edge is ragged. 0: hard rectangles. About three quarters of `cell`. |
 | max_size | float | 96 | The longest side a volume may have (each regrows on its own when edited, and large ones take longer). |
 | headroom | float | 4 | How far a volume reaches above the highest ground under it (and below the lowest). |
 
@@ -1211,6 +1778,8 @@ terrain's `far_material` to it.
 | normal_strength | float | 1 | Scales the layers' normal maps. |
 | ao | float | 0.8 | How much the layers' ambient occlusion darkens the ambient light. |
 | rock_tint | color | (1,1,1) | Multiplies the rock layer's colour on top of the layer match: warmer and redder makes desert-varnished sandstone of a pale scan. |
+| sand_tint | color | (1,1,1) | Multiplies the sand layer's colour (the everywhere layer: a savannah's grass); less blue deepens a bleached scan toward gold. |
+| cracked_tint | color | (1,1,1) | Multiplies the cracked layer's colour on top of the layer match (a volcanic preset's bare lava, a prairie's dry grass). In a region world a texture several environments share is one palette entry wearing the tint of the first environment by name. |
 | cap_rock | float | 0 | Bare rock on the high flats — a mesa's caprock, slickrock with sand in its hollows — rather than sand: how much, in patches. 0: the flats are sand and cracked ground at any height. |
 | cap_height | vec2 | (0.5,0.7) | Caprock fades in between these fractions of the terrain's height range. |
 | bedding | float | 0 | Ledges and laminations bent into the rock's normals on steep walls (the splat's bedding): each bed weathers back under a sharp lip, so the heightfield's smooth walls read as layered rock in raking light. The recess as a fraction of a bed; 0: none. |
@@ -1220,8 +1789,35 @@ terrain's `far_material` to it.
 | macro_vertical | float | 0 | How much the macro variation also changes with height, so a wall is not one colour top to bottom. |
 | wash_bars | float | 0 | Sand bars in the washes: streaks of sand drawn out along the flow between gravel channels, so a wash is not one gravel carpet. How much of the gravel they take; 0: none. |
 | wash_bar_size | vec2 | (28,5) | A bar's typical length along the flow and width across it. |
+| sand_ripple | float | 0 | Wind ripples on the sand layer (the splat's `ripple`): sinuous crests a hand's breadth apart bent into the normals, a steep lee and a gentle windward face, patchy, on level ground only, faded where a pixel spans a ripple; a little AO in the troughs. The ripples' slope; 0: none. The cave's sand floor takes them too. |
+| sand_ripple_wavelength | float | 0.14 | Crest to crest (m). |
+| sand_ripple_wind | float | 60 | The way the wind blows across them, degrees clockwise from +Z seen from above. |
 | gravel_relief | float | 0 | Parallax depth of the gravel layer (the splat's relief): its stones stand up off the ground instead of lying painted on it. 0: none. |
 | cracked_relief | float | 0 | Parallax depth of the cracked-ground layer: its plates lift at their edges. 0: none. |
+| snow, wet, ash | string | "" | Cover layers (below): the textures stage's layer for each. Empty: off. |
+| snow_height | vec2 | (300,400) | Snow fades in between these heights: world metres, or with `snow_reference: region` fractions (0–1) of the environment's own height range. |
+| snow_reference | enum | world | `world`: `snow_height` is in world metres. `region`: it is fractions of the environment's own height range — the 2nd to 98th percentile of the terrain's heights where its biome weight is at least 0.9 (the whole terrain on a classic one) — so a region's snow line sits at the same share of its relief whatever its size, base or neighbours. |
+| snow_slope | vec2 | (35,50) | Snow holds below the first slope and is gone by the second: cliffs stay rock. |
+| snow_breakup | float | 0.5 | How much noise bends the snow line and its slope limit into drifts and bare patches. |
+| snow_breakup_scale | float | 40 | Their size. |
+| wet_distance | float | 8 | Wet ground reaches this far from standing water's edge. |
+| wet_height | float | 1.5 | ...and this far above its surface. |
+| ash_radius | vec2 | (1,2.2) | Ash covers the ground within the first of these distances from a vent and is gone by the second, in cone radii. |
+| ash_cover | float | 1 | The most of the ground the ash takes: below 1 the cinders show through (a dusting rather than a blanket). |
+| ash_hole | float | 0 | No ash within this distance of a vent (cone radii), fading in over its last fifth: with `ash_radius` past it the ash is an apron round the cone's foot rather than a cap. 0: none. |
+| lava_lobes | float | 0 | The share of the ground the cracked layer (a volcanic preset's bare lava) takes on the terrain's lava lobes (terrain.yaml `lobes:`), so the tongues read against the field. 0: off. |
+
+**Cover layers.** Besides the four rules, a ground can be covered by what
+lies on it rather than how it eroded: **snow** by altitude and slope,
+**wet** ground (mud, wet sand) under and beside standing water (the
+terrain's water mask, which a region terrain writes when a preset fills
+water in), **ash** and cinders round volcanic vents (terrain.yaml's
+`vents:`). Each is a layer key like the four; set any and the material is an
+[eight-layer splat](28-materials.md#terrain-and-rock): the covers are layers
+5–7, their weights `weights2.png`. They stack in that order, each taking its
+share of everything under it, so snow lies over ash and mud alike. The far
+backdrop takes snow and ash by the same rules from its own heights. With no
+cover key set the material is the four-layer splat it always was.
 
 ### Rock materials (scatter, cliff_wall, rocks, polyhaven_rocks)
 
@@ -1325,6 +1921,15 @@ floor and 30 m up, and per channel at 500 m.
 | spawn_at | vec2 | (0,0) | Where the spawn stands, world X and Z — moved onto the nearest canyon centreline within 80 m, so it lands on the floor; its height is the terrain's there. |
 | spawn_yaw | float | 0 | Which way the player starts facing, degrees about +Y from +X (the sun's yaw convention). |
 | ambient_color | color | (0.62,0.7,0.85) | The ambient light's colour, set with Ambient brightness: the blue sky's light in the shadows. |
+| shafts | bool | false | Light shafts: shadowed sunlight in dusty air near the eye (the level fog's `shafts:` block; [Sky and fog](08-sky-and-fog.md#light-shafts)). |
+| shafts_density | float | 0.01 | The dust's extinction per metre at its base. |
+| shafts_distance | float | 150 | How far from the eye the march reaches (m). |
+| shafts_steps | int | 24 | Samples a ray takes. |
+| shafts_color | color | (1,1,1) | Tints the light the dust scatters. |
+| shafts_falloff | float | 0 | Per metre above the terrain's lowest point; 0 is uniform. |
+| shafts_anisotropy | float | 0.5 | Henyey-Greenstein g of the scattering. |
+| shafts_ambient | float | 0.5 | How much of the level's ambient light the dust scatters (the shafts block's `ambient`): low keeps the shade clear so only the sunbeams glow. |
+| shafts_strength | float | 1 | Scales the sunlight the dust scatters. |
 | dust | bool | false | A drifting dust haze over the terrain: one box volume of the dust_haze cloud preset, marched by the volumetrics. Costs a march over much of the screen. |
 | dust_height | float | 18 | How deep the dust layer is, from the base up. |
 | dust_density | float | 0.006 | The dust's extinction per metre in its thickest parts. |
@@ -1351,6 +1956,204 @@ on the floor, facing `spawn_yaw`.
 The level settings a generator may write are `fog`, `sky`, `view_distance`,
 `sun`, `ambient`, `tonemap` and `spawn`; the splice decodes each through the
 level's own schema.
+
+### regions (Level)
+
+A level generation doc's environment regions (see
+[World generation](#world-generation-environment-regions)). Writes
+`regions.yaml` — the resolved set: keys, anchors, bounds, the warp — and
+previews as the biome overlay plus one grey weight layer per region.
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| regions | list | [] | The level's region volumes, synced before every run (sorted by id). Read-only: edit the volumes. Fields: id, environment, generator, priority, transition, anchored, anchor, footprint (a closed spline, world XZ). |
+| warp_amount | float | 40 | How far the boundary wanders from the footprint's straight edges, m. 0 keeps them straight. |
+| warp_scale | float | 300 | The wavelength of the boundary's wander, m. |
+| resolution | float | 0.5 | The union terrain's (region_terrain's) sample spacing, m. Must divide tile_size. |
+| tile_size | float | 128 | The world tile grid every region's terrain tiles share: the union is whole tiles from the world origin. |
+| margin | float | 64 | With tiled erosion, the overlap round each window, m; window seams are cross-faded over it. |
+| erosion | enum | global | `global`: erosion once over the union (rivers cross the whole world). `tiled`: in overlapping windows with fixed per-window seeds, so editing one region leaves distant tiles' heights byte-identical. |
+| preview_size | int | 384 | The overlay's longer side in pixels (preview only). |
+| seed_level | bool | false | Set by a template that ships a layout (`canyon_savannah`): before the first run, a target level with no region volumes gets this list as region volumes, then the switch turns itself off. |
+
+It also applies the **adjacency table** (built in, plus
+`resources/environments/adjacency.yaml`; see
+[Environment regions](35-regions.md#4-adjacency-which-environments-may-touch)):
+a region left at the default transition (150) blends over the table's width
+for each neighbouring environment (the widths it took are in regions.yaml's
+`pair_transitions` and in the stage's hash, so editing them in
+adjacency.yaml reruns the world), and every forbidden pair whose shares
+overlap is a **warning** in `gen check`, `gen run` and the run's log — the
+run proceeds. A broken adjacency.yaml refuses the run.
+
+### region_terrain (Level)
+
+One eroded terrain over every region of a world generator. For each region
+it loads the preset (the region's `generator`, else
+`resources/environments/<environment>.fgen`, else the built-in) and reads its
+first enabled `terrain` stage exactly as that stage would — except its size
+(the region supplies the extent), its resolution (the regions stage's) and
+its seed (the region's own, so two regions of one preset differ). The
+preset's coordinates are measured from the region's anchor (the footprint's
+centroid unless anchored): its canyon paths land relative to it, and moving
+the region volume moves its mesas. Each region's mesa coverage is measured
+over its own footprint.
+
+The **union grid** is world-aligned: whole tiles from the world origin
+covering every footprint (`extent: footprints`) or footprint plus band
+(`bands`), padded to a square. Each region's ground is evaluated only where
+it has a share, blended by the regions stage's weights (the overlay's), and
+then the shared passes run over the union. Erodibility, drainage strength,
+terrace, talus and cliff angles, detail and colours are each region's,
+blended per sample; the strata index is the dominant region's (its own
+strata list, recorded under `biomes:` in terrain.yaml). The few numbers no
+sample can own — drainage iterations, droplet run, talus rounds — are the
+**lead** region's: the one covering the most ground (per window, when tiled).
+A canyon drawn to a region's edge is carried on straight through the band so
+it runs into its neighbour instead of ending in a dam.
+
+With `erosion: tiled` (the regions stage) the union is eroded in windows of
+`window` tiles plus the regions stage's `margin` round each, each window with
+a seed fixed by its position, cross-faded into its neighbours over the
+margin: a tile's heights then depend only on the regions with a share in its
+window's square (and, inside a fade, its neighbour's). Rivers may change
+course only within a window.
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| regions | stage | | The regions stage it grows from (and whose resolution, tile size, erosion and margin it uses). |
+| seed | seed | 0 | Changes the tiled erosion's window seeds. |
+| extent | enum | footprints | What the union covers: the footprints, or footprints plus half a band and the edge meander. |
+| window | int | 4 | Tiled erosion's window side, in tiles. |
+| mesh_step, collision, texture, material, uv_mode, uv_scale, cook, cook_memory | | | As the terrain stage's. |
+| preview_cells | int | 256 | The preview's samples a side at most (always global erosion). |
+| far, far_cell, far_blend, far_tile, far_material | | | As the terrain stage's backdrop: each region's own country continued past the union's edge, blended by the shares at the nearest edge point. |
+| lead | string | "" | The lead region (volume ID); empty: the one owning the most ground. |
+| flow_mask | enum | d8 | d8 or mfd (see above). |
+| water_material | string | "" | The material the water surfaces wear (any .fmat with a water effect); empty: the stage writes `gen_<doc>_<stage>_water`. |
+| water_texture | texture | water | That written material's texture. |
+| water_waves | float | 0.06 | Its swell, metres. |
+
+**Water.** A region whose preset's terrain stage says `water: true` stands
+under water wherever its ground (after erosion) is below `water_level`; with
+`ponds: true` its closed hollows fill to just below their spill height. A
+sample belongs to the region with the largest share there. The stage places
+the water the way a level's water is authored — a surface wearing a material
+with the `water` effect — as one flat mesh per terrain tile,
+`water_<i>_<j>` (collision none, not solid, `chunk: auto`), running a couple
+of cells on under the banks so the shoreline is where the ground rises
+through the water; and writes `mask_water.png` (depth over 8 m; the ground
+material's wet rule reads it) and terrain.yaml's `water:` (each body: sea or
+pond, level, bounds, area, region). There is no water volume (nothing in the
+engine swims yet).
+
+With `material` (or `far_material`, when it has a backdrop) left empty, the
+tiles wear the material of the first enabled `region_material` stage that
+names this terrain — `gen_<doc>_<that stage>` (and `_far`).
+
+`lead` (a region's volume ID; empty: the region owning the most ground) sets
+the lead region by hand: its erosion numbers, its strata for the strata mask,
+and its material-wide look in the region material (varnish, bedding,
+banding). Lead with the region that has cliffs.
+
+`flow_mask: mfd` draws the flow mask by multiple flow directions instead of
+one downhill neighbour per sample (`d8`, the terrain stage's), and cuts it
+under filled hollows (more than a few decimetres of fill) and on ground
+flatter than about half a degree. A band and a canyon's mouth leave broad
+flats that d8 crosses in ruled 0°/45° lines, which the material's washes and
+the wash stones then drew. Heights are the same either way. The
+`level_world` and `canyon_savannah` templates set it.
+
+Outputs: everything the terrain stage writes, plus `mask_biome_<env>.png`
+per environment (the sum of its regions' shares; listed in terrain.yaml's
+`masks`, so `Terrain.Mask("biome_<env>")` and `BiomeAt` read it),
+`biomes.png` (the environments' colours mixed by share) and terrain.yaml's
+`biomes:` section (environments with colours, regions with their preset,
+seed, anchor, bounds and strata, the erosion mode and the lead). One region
+whose footprint is a terrain stage's square, anchored at the origin, writes
+that terrain stage's files byte for byte.
+
+**Incremental.** A rerun keeps the previous run's tiles and reuses each one
+whose inputs (its heights and normal ring, the shared base and quantisation
+step, the mesh and cook settings) hash the same — recorded per tile in
+`manifest.yaml`'s `tiles:` — without meshing or cooking it. With tiled
+erosion each eroded window is kept as `erosion/w_<i>_<j>.bin` and read back
+when its inputs are unchanged, and the tiles' base snaps to a multiple of
+64 m so a far edit does not move it. With global erosion every region edit
+changes every tile, so every tile is recooked. See
+[Environment regions](35-regions.md#5-incremental-runs).
+
+### region_material (Materials)
+
+The ground material of a world generator's region terrain: every
+environment's own ground, one splat. For each environment the terrain holds
+it takes the preset of that environment's first region (by id) — the same
+preset its ground grew from — and reads the preset's first enabled
+`terrain_material` stage and the `polyhaven_textures` stage that names. It
+imports those four layers itself (the same importer and download cache as the
+textures stage, so a preset's textures stage is never run per region), then:
+
+1. evaluates that `terrain_material`'s rules over the whole region terrain,
+   with that preset's numbers — rock slope, wash flow, cracked cover,
+   caprock, wash bars, breakup — exactly as the stage would;
+2. multiplies the four weights by the environment's biome mask
+   (`mask_biome_<env>`);
+3. puts every environment's layers into ONE list, the same Poly Haven
+   texture at the same repeat and projection being one layer (two biomes
+   that share a rock share its weight), and sums the weights into it.
+
+Four layers or fewer make the ordinary four-layer splat; five to eight make
+the [eight-layer splat](28-materials.md#terrain-and-rock) (`weights2` holds
+layers 5–8). Cover layers (snow, wet, ash) are layers like the four.
+
+**More than eight is a palette** (up to 32). No splat mixes more than eight,
+but a tile only ever sees the few environments within reach of it. The
+layers are packed into ONE shared atlas — 8 across, 512 texels a layer, so
+32 layers take the eight-layer atlas's 4352×2176 — and per-tile materials
+become mandatory (whatever `per_tile` says): each terrain tile, stitch strip
+and backdrop ring tile wears a material of the layers that weigh anything
+within `tile_margin` of it (four or fewer: a four-layer splat; five to
+eight: an eight-layer one), all naming the palette's atlas, with their
+weights over an aligned rectangle round the tiles that wear them. There is
+no union material. A tile that needs more than eight layers is an error
+naming the tile and its layers: share textures between the presets that
+meet there, or keep those regions apart. More than 32 distinct layers is an
+error that lists them.
+
+Per-layer settings (scale, triplanar, tint, anti-tile, relief) are each
+environment's own; a shared layer keeps the first environment's (by name).
+The material-wide settings — height blend, normal strength, AO, the strata
+ramp, bedding, wall normal, macro variation, varnish, detail normal — are
+the **lead** environment's (the lead region's, the one owning most of the
+union), and so is the strata ramp (terrain.yaml's strata are the lead's): a
+triplanar layer of any other environment has its `layerN_strata` off, so a
+savannah's rock is not banded with the canyon's beds.
+
+The far backdrop (when the terrain has one) gets `<material>_far`: each
+environment's backdrop rules (as `terrain_material`'s far material) blended
+by the biome shares at the nearest union sample — the shares the backdrop's
+heights are blended by.
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| terrain | stage | | The region terrain (a `region_terrain` stage). |
+| offline | bool | false | Use only Poly Haven textures already downloaded. |
+| preview_layers | bool | false | Preview only: one grey picture per layer's weight as well. |
+
+Outputs: `weights.png` (layers 1–4) and `weights2.png` (5–8, when there
+are more than four), `ground.png`, `height.png`, `strata.png`,
+`far_weights.png` (+ `far_weights2.png`), `region_material.yaml` (what a
+`terrain_material` writes, plus `weights2`, `far_weights2` and `layers`:
+each layer's texture, Poly Haven id, role, environments, scale and share),
+and `materials/gen_<doc>_<stage>.fmat` (+ `_far`). The preview shows the
+layers in false colour (the note lists which colour is which, with each
+layer's share) and the ground colour on the terrain's meshes.
+
+The stage's hash folds in every environment's preset `terrain_material` and
+textures params, so editing a preset's ground reruns only the material.
+It stands in for the presets' `terrain_material` stages: a preset placement
+stage expanded per region that names its preset's `terrain_material` is
+rewritten to it.
 
 ## Outputs on disk
 
@@ -1379,7 +2182,14 @@ foundry gen run <name|file.fgen> [-force] [-stage id]... [-no-splice] [-workers 
 foundry gen check <name|file.fgen>        validate; say what a run would run
 foundry gen list [-kind name]             stage kinds, their params, templates
 foundry gen new <name> [-template name] [-force]
+foundry gen world <level>                 make the level's world generator (<level>_world)
+foundry gen env list                      environment presets: built-in, file, or both
+foundry gen env write <name>|-all         write a built-in preset's file, only if absent
 ```
+
+A document with a `regions` stage takes its level's region volumes before
+`run` (and writes itself back when they changed); `check` reports when they
+differ.
 
 `run` places into the document's level by rewriting the level file, as the
 editor does for a level that is not open. Placements marked `chunk: auto` take
@@ -1485,9 +2295,15 @@ On WSLg the frame is GPU-bound at 110–290 ms (judge it on real hardware).
   out of.
 - Turn on texture compression for a canyon (a generated canyon is about 1 GB
   of textures uncompressed): it also compresses the splat atlases.
-- The vegetation stage's biome volumes cost about 9 ms a frame on WSLg and
-  stalled its GPU in some views; the template ships it disabled, with the
-  scanned plants placed by scatter instead.
+- The vegetation stage's biome volumes: the GPU stall seen on WSLg in phase 7
+  of the canyon work does not reproduce in this tree, on WSLg or natively on
+  a GTX 1070 (docs/regions/PHASE_6.md); natively they cost 2–3.6 ms a frame
+  (camera) plus ~0.6 ms (shadows) for the savannah's dense grass. The
+  savannah preset grows its grass with them; the `desert_canyon` template
+  still ships its own `plants` stage off (unchanged).
+- Every placement costs CPU each frame (about 1 ms per thousand in view on a
+  GTX 1070 machine): keep the small, numerous pieces (stones, bushes) to a
+  few thousand.
 
 ## Writing a stage
 

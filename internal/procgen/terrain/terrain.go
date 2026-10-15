@@ -244,12 +244,35 @@ type Result struct {
 	Timings map[Phase]time.Duration
 	// Droplets is how many droplets were simulated.
 	Droplets int
+	// WindowsCached and WindowsEroded count a tiled union's erosion windows
+	// taken from Union.Cache and eroded this time (tiled_cache.go).
+	WindowsCached, WindowsEroded int
+
+	// For a union (union.go): PathRegions is the provider each of Paths
+	// came from, Lead the provider whose knobs the global erosion ran
+	// with. model is the per-sample material model (RegionWeights reads
+	// it); nil for a classic terrain.
+	PathRegions []int
+	Lead        int
+	model       *fieldModel
+
+	// Vents are the volcanic vents the providers' landforms placed (world
+	// XZ; landform.go), and VentRegions the provider each came from (0 for
+	// a classic terrain). Nil without volcanoes.
+	Vents       []Vent
+	VentRegions []int
+	// Lobes are the vents' lava lobes (world XZ; landform.go Lobes), for the
+	// ground material's lava rule. Nil without volcanoes or lobes.
+	Lobes []LobeMeta
 }
 
 // Progress is told how far through Generate is, 0..1, and the phase.
 type Progress func(phase Phase, done float32)
 
-// Generate builds the field from s on pool.
+// Generate builds the field from s on pool: the classic one-square terrain,
+// which is the one-provider case of GenerateUnion (union.go) — one material
+// owning every sample, the shared passes' knobs straight from s — and is
+// pinned byte for byte by golden_test.go.
 func Generate(s *Settings, pool Pool, progress Progress) (*Result, error) {
 	if err := s.Check(); err != nil {
 		return nil, err
@@ -257,6 +280,50 @@ func Generate(s *Settings, pool Pool, progress Progress) (*Result, error) {
 	n := s.Cells()
 	g := NewGrid(n, s.Cell)
 	res := &Result{Grid: g, Deposit: make([]float32, len(g.H)), Timings: map[Phase]time.Duration{}}
+	step := res.stepper(pool, progress)
+	mat := compileMaterial(s, [2]float64{})
+	off := make([]float32, len(g.H)) // strata offset per sample (strata.go)
+
+	if err := step(PhaseShape, func(pr func(float32)) error {
+		if err := baseShape(s, g, CentredSquare(s.Size), pool); err != nil {
+			return err
+		}
+		return strataOffsets(s, g, off, pool)
+	}); err != nil {
+		return nil, err
+	}
+	var hold []float32
+	if s.holds() {
+		hold = make([]float32, len(g.H))
+	}
+	if err := step(PhaseCanyons, func(pr func(float32)) error {
+		paths, err := carveCanyonsHold(s, g, nil, pool, hold)
+		if err == nil && hold != nil {
+			err = stampHold(s, g, hold, pool)
+		}
+		res.Paths = paths
+		res.Vents = Vents(s, CentredSquare(s.Size), [2]float64{})
+		res.Lobes = Lobes(s, CentredSquare(s.Size), [2]float64{})
+		if len(res.Vents) > 0 {
+			res.VentRegions = make([]int, len(res.Vents))
+		}
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	fd := &field{g: g, m: singleModel(mat, off), deposit: res.Deposit, k: knobsOf(s)}
+	if hold != nil {
+		fd.hold, fd.held = hold, append([]float32(nil), g.H...)
+	}
+	if err := runSharedPasses(fd, res, step, pool); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// stepper is Generate's phase runner: it times each phase into res.Timings
+// and reports progress weighted by phaseWeights.
+func (res *Result) stepper(pool Pool, progress Progress) func(Phase, func(func(float32)) error) error {
 	var base float32
 	report := func(p Phase, f float32) {
 		if progress == nil {
@@ -271,10 +338,10 @@ func Generate(s *Settings, pool Pool, progress Progress) (*Result, error) {
 		}
 		progress(p, base+w*min(max(f, 0), 1))
 	}
-	step := func(p Phase, fn func(func(float32)) error) error {
+	return func(p Phase, fn func(func(float32)) error) error {
 		t0 := time.Now()
 		err := fn(func(f float32) { report(p, f) })
-		res.Timings[p] = time.Since(t0)
+		res.Timings[p] += time.Since(t0)
 		for _, pw := range phaseWeights {
 			if pw.p == p {
 				base += pw.w
@@ -285,57 +352,51 @@ func Generate(s *Settings, pool Pool, progress Progress) (*Result, error) {
 		}
 		return err
 	}
-	strata := s.Strata.compile()
-	off := make([]float32, len(g.H)) // strata offset per sample (strata.go)
+}
 
-	if err := step(PhaseShape, func(pr func(float32)) error {
-		if err := baseShape(s, g, pool); err != nil {
-			return err
-		}
-		return strataOffsets(s, g, off, pool)
-	}); err != nil {
-		return nil, err
-	}
-	if err := step(PhaseCanyons, func(pr func(float32)) error {
-		paths, err := carveCanyons(s, g, pool)
-		res.Paths = paths
+// runSharedPasses is the erosion and the masks over a field: drainage,
+// terrace, droplets, thermal, detail, masks.
+func runSharedPasses(fd *field, res *Result, step func(Phase, func(func(float32)) error) error, pool Pool) error {
+	if err := erodeField(fd, res, step, pool); err != nil {
 		return err
-	}); err != nil {
-		return nil, err
 	}
+	return step(PhaseMasks, func(pr func(float32)) error {
+		return computeMasks(fd, res, pool)
+	})
+}
+
+// erodeField is the shared passes before the masks.
+func erodeField(fd *field, res *Result, step func(Phase, func(func(float32)) error) error, pool Pool) error {
 	if err := step(PhaseDrainage, func(pr func(float32)) error {
-		return drainage(s, g, strata, off, res.Deposit, pool, pr)
+		return drainage(fd, pool, pr)
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := step(PhaseStrata, func(pr func(float32)) error {
-		return terrace(s, g, strata, off, pool)
+		return terrace(fd, pool)
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := step(PhaseDroplets, func(pr func(float32)) error {
-		nd, err := droplets(s, g, strata, off, res.Deposit, pool, pr)
-		res.Droplets = nd
+		nd, err := droplets(fd, pool, pr)
+		res.Droplets += nd
 		return err
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := step(PhaseThermal, func(pr func(float32)) error {
-		return thermal(s, g, strata, off, res.Deposit, pool, pr)
+		if err := thermal(fd, pool, pr); err != nil {
+			return err
+		}
+		// Held ground (stamps.go) back to its carved shape before the
+		// detail texture goes on.
+		return fd.applyHold(pool)
 	}); err != nil {
-		return nil, err
+		return err
 	}
-	if err := step(PhaseDetail, func(pr func(float32)) error {
-		return detail(s, g, strata, off, res.Deposit, pool)
-	}); err != nil {
-		return nil, err
-	}
-	if err := step(PhaseMasks, func(pr func(float32)) error {
-		return computeMasks(s, res, strata, off, pool)
-	}); err != nil {
-		return nil, err
-	}
-	return res, nil
+	return step(PhaseDetail, func(pr func(float32)) error {
+		return detail(fd, pool)
+	})
 }
 
 // rows runs fn over every row of an s-sample grid in parallel.

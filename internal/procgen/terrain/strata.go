@@ -168,17 +168,18 @@ func strataOffsets(s *Settings, g *Grid, off []float32, pool Pool) error {
 // the ground is: erosion makes cliffs where it cuts down through the layers,
 // so an escarpment steps and a plateau top or a gentle lowland stays smooth.
 // The slope is measured over a few metres on the unterraced surface; the
-// stepping fades in between TerraceSlopeLo and TerraceSlopeHi degrees.
-func terrace(s *Settings, g *Grid, c *compiledStrata, off []float32, pool Pool) error {
-	if c.terrace <= 0 {
+// stepping fades in between TerraceSlopeLo and TerraceSlopeHi degrees — the
+// material model's (model.go), so each region terraces through its own
+// strata, blended across a band.
+func terrace(fd *field, pool Pool) error {
+	if !fd.m.anyTerrace() {
 		return nil
 	}
+	g := fd.g
 	src := append([]float32(nil), g.H...)
 	sz := g.S()
 	r := max(int(math.Round(3/g.Cell)), 1)
 	span := float32(2 * float64(r) * g.Cell)
-	lo := math.Tan(s.Strata.SlopeLo * math.Pi / 180)
-	hi := math.Tan(max(s.Strata.SlopeHi, s.Strata.SlopeLo+1) * math.Pi / 180)
 	return rows(pool, sz, func(j int) {
 		for i := 0; i < sz; i++ {
 			k := j*sz + i
@@ -186,12 +187,11 @@ func terrace(s *Settings, g *Grid, c *compiledStrata, off []float32, pool Pool) 
 			jl, jr := max(j-r, 0), min(j+r, sz-1)
 			gx := (src[j*sz+ir] - src[j*sz+il]) / span
 			gz := (src[jr*sz+i] - src[jl*sz+i]) / span
-			w := noise.SmoothStep(lo, hi, math.Hypot(float64(gx), float64(gz)))
-			if w <= 0 {
+			d, ok := fd.m.terraceDelta(k, src[k], math.Hypot(float64(gx), float64(gz)))
+			if !ok {
 				continue
 			}
-			y := float64(src[k]) + float64(off[k])
-			g.H[k] = src[k] + float32((c.terraceHeight(y)-y)*w)
+			g.H[k] = src[k] + d
 		}
 	})
 }

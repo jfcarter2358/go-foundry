@@ -99,6 +99,11 @@ func init() {
 		Label:    "Poly Haven textures",
 		Category: "Materials",
 		Version:  1,
+		// Per environment region of a level generation doc, so a region's
+		// generated rocks can name its layers; the imports land once per
+		// asset (textures/polyhaven/<id>/) whichever region asks.
+		Regional: procgen.RegionalPerRegion,
+		OnDemand: true,
 		Doc: "Named texture layers — sand, cracked ground, gravel, sandstone, rock wall — each a Poly Haven (CC0) texture, " +
 			"downloaded and converted to engine textures (albedo, normal, ARM, roughness, AO, height) for the terrain and " +
 			"rock materials.",
@@ -168,8 +173,14 @@ func runPolyHavenTextures(rc *procgen.RunContext) error {
 		defer func() { <-sem }()
 		it := items[k]
 		id := strings.TrimSpace(it.Str("id"))
+		// One import of an asset at a time: two layers (or two regions'
+		// stages) naming one texture would otherwise write its files side
+		// by side, and one's rename found the other's temporary gone.
+		lk := sharedAssetLock("textures|" + res + "|" + id)
+		lk.Lock()
 		ts, err := phimport.ImportTextures(rc.Ctx, c, id, phimport.TextureOptions{Resources: res, Resolution: p.Str("resolution"),
 			MaxSize: p.Int("max_size"), Log: func(f string, a ...any) { rc.Logf(f, a...) }})
+		lk.Unlock()
 		if err != nil {
 			return fmt.Errorf("layer %s: %w", it.Str("name"), err)
 		}

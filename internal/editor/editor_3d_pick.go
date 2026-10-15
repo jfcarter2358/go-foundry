@@ -880,6 +880,9 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// of five brushes is indistinguishable from five loose brushes.
 	DrawPrefabOutlines()
 	drawSelectedVolumeOutline()
+	// Every environment region's footprint in its environment's colour, and
+	// the selected one's point handles (editor_volume_region.go).
+	drawRegionVolumeOutlines()
 	drawSelectedSpriteOutline(ws().camPos())
 	drawSelectedDecalOutline()
 	drawSelectedSceneryOutline()

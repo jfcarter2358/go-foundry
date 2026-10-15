@@ -37,6 +37,13 @@ package terrain
 // gullies and swells the coarse lattice cannot hold.
 // Pure function of position, so any sample can be asked for in any order,
 // on any worker: the stage samples tile by tile.
+//
+// A UNION of environment regions (union.go) has a backdrop per region, each
+// its provider's shape continued in its own coordinates with its own
+// canyons carried on, and UnionFar blends them by the region weights at the
+// nearest point of the union's edge — so past a canyon edge the canyon
+// country runs on, past a savannah edge the savannah, and where a
+// transition band meets the edge the backdrops blend as the map does.
 
 import (
 	"math"
@@ -46,6 +53,10 @@ import (
 
 // FarField is the backdrop's height function.
 type FarField struct {
+	// anchor is subtracted from world XZ before the shape, strata and
+	// detail noises: the provider's own coordinates (zero for a classic
+	// terrain).
+	anchor [2]float64
 	shape  *baseShaper
 	strata *compiledStrata
 	stOff  noise.Fractal
@@ -76,12 +87,20 @@ type farPath struct {
 // cell metres, easing over blend metres from the edge and running reach
 // metres past it.
 func NewFarField(s *Settings, res *Result, cell, blend, reach float64) *FarField {
+	return newFarField(s, CentredSquare(s.Size), [2]float64{}, res.Grid, res.Paths, cell, blend, reach)
+}
+
+// newFarField is a backdrop of s's landforms (the mesa field measured over
+// the local rectangle over, at world - anchor) round the map grid g, with
+// the canyon centrelines paths (world) carried on.
+func newFarField(s *Settings, over Rect, anchor [2]float64, g *Grid, paths []CarvedPath, cell, blend, reach float64) *FarField {
 	f := &FarField{
-		shape:  newBaseShaper(s),
+		anchor: anchor,
+		shape:  newBaseShaper(s, over),
 		strata: s.Strata.compile(),
 		stOff:  noise.Fractal{Seed: noise.Hash64(s.Seed, 0x5354_5241), Octaves: 4, Frequency: 1.0 / 260, Gain: 0.5},
 		dip:    s.Strata.Dip, warp: s.Strata.Warp,
-		g: res.Grid, Blend: math.Max(blend, cell), Reach: reach, cell: cell,
+		g: g, Blend: math.Max(blend, cell), Reach: reach, cell: cell,
 		// Terraced only where it is steep (a mesa's rise): on a 16 m lattice
 		// the gentle lowland's partial terraces became rows of stripes.
 		slopeLo: math.Tan(math.Max(s.Strata.SlopeLo, 22) * math.Pi / 180),
@@ -90,14 +109,13 @@ func NewFarField(s *Settings, res *Result, cell, blend, reach float64) *FarField
 		detail:  noise.Fractal{Seed: noise.Hash64(s.Seed, 0x4641_5244), Octaves: 3, Frequency: 1.0 / 160, Gain: 0.5, Shape: noise.ShapeRidged},
 		meander: noise.Fractal{Seed: noise.Hash64(s.Seed, 0x4641_524D), Octaves: 2, Frequency: 1.0 / 420, Gain: 0.5},
 	}
-	g := res.Grid
 	x0, z0 := g.MinX, g.MinZ
 	x1, z1 := g.MinX+g.Size(), g.MinZ+g.Size()
 	near := func(x, z, w float64) bool {
 		d := math.Min(math.Min(x-x0, x1-x), math.Min(z-z0, z1-z))
 		return d < math.Max(w, 4*g.Cell)
 	}
-	for _, p := range res.Paths {
+	for _, p := range paths {
 		if p.Tributary || len(p.Points) < 4 {
 			continue
 		}
@@ -129,6 +147,7 @@ func NewFarField(s *Settings, res *Result, cell, blend, reach float64) *FarField
 // shapeAt is the far landform at (x, z): the base shape, terraced through
 // the strata in proportion to its slope over a cell, as terrace does.
 func (f *FarField) shapeAt(x, z float64, share []float64) float64 {
+	x, z = x-f.anchor[0], z-f.anchor[1]
 	h := f.shape.at(x, z, share)
 	if f.strata.terrace <= 0 {
 		return h
@@ -205,12 +224,61 @@ func (f *FarField) Height(x, z float64) float64 {
 	w := noise.SmoothStep(0, f.Blend, d)
 	// The relief the coarse lattice cannot carry, where the backdrop is its
 	// own: ridged, a few metres, softer on the flat tops.
-	far += 2.5 * (f.detail.At2(x, z) - 0.5) * w
+	far += 2.5 * (f.detail.At2(x-f.anchor[0], z-f.anchor[1]) - 0.5) * w
 	h := edge + (far-edge)*w
 	// Eased down to the lowland at the very edge of the reach.
 	if f.Reach > 0 {
 		o := noise.SmoothStep(f.Reach*0.875, f.Reach, d)
 		h += (math.Min(f.lowland, h) - h) * o
+	}
+	return h
+}
+
+// UnionFar is a union's backdrop: each provider's FarField, blended by the
+// region weights at the nearest sample of the union's edge (file comment).
+type UnionFar struct {
+	fields []*FarField
+	res    *Result
+}
+
+// NewUnionFar is the backdrop of a union res made from u.
+func NewUnionFar(u *Union, res *Result, cell, blend, reach float64) *UnionFar {
+	uf := &UnionFar{res: res, fields: make([]*FarField, len(u.Providers))}
+	for i := range u.Providers {
+		p := &u.Providers[i]
+		var paths []CarvedPath
+		for k, cp := range res.Paths {
+			if k < len(res.PathRegions) && res.PathRegions[k] == i {
+				paths = append(paths, cp)
+			}
+		}
+		over := p.Measure
+		if over.MaxX <= over.MinX || over.MaxZ <= over.MinZ {
+			over = Rect{MinX: res.Grid.MinX, MinZ: res.Grid.MinZ, MaxX: res.Grid.MinX + res.Grid.Size(), MaxZ: res.Grid.MinZ + res.Grid.Size()}
+		}
+		over = Rect{MinX: over.MinX - p.Anchor[0], MinZ: over.MinZ - p.Anchor[1], MaxX: over.MaxX - p.Anchor[0], MaxZ: over.MaxZ - p.Anchor[1]}
+		uf.fields[i] = newFarField(&p.Settings, over, p.Anchor, res.Grid, paths, cell, blend, reach)
+	}
+	return uf
+}
+
+// Height is the backdrop's height at world (x, z).
+func (uf *UnionFar) Height(x, z float64) float64 {
+	g := uf.res.Grid
+	m := uf.res.model
+	if m == nil || len(uf.fields) == 1 {
+		return uf.fields[0].Height(x, z)
+	}
+	s := g.S()
+	i := min(max(int(math.Round((x-g.MinX)/g.Cell)), 0), s-1)
+	j := min(max(int(math.Round((z-g.MinZ)/g.Cell)), 0), s-1)
+	k := j*s + i
+	if r := m.reg[k]; r < mixed {
+		return uf.fields[r].Height(x, z)
+	}
+	h := 0.0
+	for _, e := range m.entries(k) {
+		h += float64(e.w) * uf.fields[e.r].Height(x, z)
 	}
 	return h
 }

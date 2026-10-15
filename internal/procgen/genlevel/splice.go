@@ -46,6 +46,12 @@ type Options struct {
 	// Settings are the level-wide settings the run owns (settings.go):
 	// SpliceResult takes them from the result when this is nil.
 	Settings procgen.LevelSettings
+	// Scope, when not nil, limits the splice to entries whose IDs start
+	// with one of these prefixes (each under the generator's): only those
+	// are removed from the level, and only the run's entries under them
+	// are added. RegionScope makes one for a run of some regions
+	// (region_splice.go). Nil: every entry of the generator.
+	Scope []string
 }
 
 // Stats is what a splice changed.
@@ -84,6 +90,11 @@ func ToRawScenery(p procgen.Placement, opt Options) world.RawScenery {
 		Collision: p.Collision,
 		Chunk:     p.Chunk,
 		Material:  p.Material,
+
+		DrawDistance:     p.DrawDistance,
+		ShadowDistance:   p.ShadowDistance,
+		Impostor:         p.Impostor,
+		ImpostorDistance: p.ImpostorDistance,
 	}
 	if p.Scale != nil {
 		r.Scale = &world.RawVec3{X: p.Scale.X, Y: p.Scale.Y, Z: p.Scale.Z}
@@ -149,6 +160,9 @@ func SpliceRaw(raw *world.RawLevel, generator string, scenery []procgen.Placemen
 		if !strings.HasPrefix(r.ID, prefix) {
 			return st, fmt.Errorf("volume %q does not carry the generator's prefix %q", r.ID, prefix)
 		}
+		if !inScope(r.ID, opt.Scope) {
+			continue
+		}
 		newVols = append(newVols, r)
 	}
 	for _, p := range scenery {
@@ -159,16 +173,19 @@ func SpliceRaw(raw *world.RawLevel, generator string, scenery []procgen.Placemen
 
 	keptSc := raw.Scenery[:0:0]
 	for _, s := range raw.Scenery {
-		if strings.HasPrefix(s.ID, prefix) {
+		if strings.HasPrefix(s.ID, prefix) && inScope(s.ID, opt.Scope) {
 			st.RemovedScenery++
 			continue
 		}
 		keptSc = append(keptSc, s)
 	}
 	for _, p := range scenery {
+		if !inScope(p.ID, opt.Scope) {
+			continue
+		}
 		keptSc = append(keptSc, ToRawScenery(p, opt))
+		st.AddedScenery++
 	}
-	st.AddedScenery = len(scenery)
 	if len(keptSc) == 0 {
 		keptSc = nil
 	}
@@ -176,7 +193,7 @@ func SpliceRaw(raw *world.RawLevel, generator string, scenery []procgen.Placemen
 
 	keptV := raw.Volumes[:0:0]
 	for _, v := range raw.Volumes {
-		if strings.HasPrefix(v.ID, prefix) {
+		if strings.HasPrefix(v.ID, prefix) && inScope(v.ID, opt.Scope) {
 			st.RemovedVolumes++
 			continue
 		}

@@ -29,7 +29,10 @@ layout(local_size_x = 256) in;
 
 struct Instance {
     mat4 model;
-    vec4 lo; // w: 1 when the placement has a box to cull by
+    // lo.w: 1 + the distance it stops casting at (0: none), negated when
+    // the placement has no box to cull by; hi.w the distance it stops being
+    // drawn at (0: none) — render/scenery_gpu_cull.go classicDrawCuts.
+    vec4 lo;
     vec4 hi;
 };
 layout(std430, binding = 0) readonly buffer Instances {
@@ -67,6 +70,15 @@ uniform uint blockCount;
 uniform uint groupCount;
 uniform int skipTransparent;
 uniform vec4 planes[6];
+// The camera, the draw distances are measured from, and whether this is a
+// shadow pass (its cut is the shadow distance's).
+uniform vec3 drawEye;
+uniform int shadowPass;
+
+bool drawCutKeeps(Instance in_) {
+    float cut = shadowPass != 0 ? max(abs(in_.lo.w) - 1.0, 0.0) : in_.hi.w;
+    return cut <= 0.0 || distance(drawEye, in_.model[3].xyz) < cut;
+}
 
 shared uint scan[256];
 
@@ -120,7 +132,7 @@ void main() {
         uvec4 g = groupInfo[memberGroup[i]];
         if (skipTransparent == 0 || g.z == 0u) {
             Instance in_ = instances[i];
-            v = (in_.lo.w == 0.0 || boxInFrustum(in_.lo.xyz, in_.hi.xyz)) ? 1u : 0u;
+            v = ((in_.lo.w <= 0.0 || boxInFrustum(in_.lo.xyz, in_.hi.xyz)) && drawCutKeeps(in_)) ? 1u : 0u;
         }
     }
     uint total = scanShared(lid, v);

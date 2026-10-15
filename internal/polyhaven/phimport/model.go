@@ -39,6 +39,7 @@ import (
 	"foundry/internal/polyhaven"
 	"foundry/internal/procgen/meshout"
 	"foundry/internal/procgen/rocks"
+	"foundry/internal/texcompress"
 )
 
 // ModelOptions are an import's settings.
@@ -58,6 +59,10 @@ type ModelOptions struct {
 	Back string
 	// Plant marks vegetation: no back, no collision, cutouts expected.
 	Plant bool
+	// ThinFoliage decimates by thinning slots made of many small pieces
+	// (needle cards, grass blades) whole-piece rather than collapsing
+	// their edges (decimate_cards.go); its files are named _c<tris>.
+	ThinFoliage bool
 	// Collision: auto (by size), hulls, mesh or none.
 	Collision string
 	// HullSize is auto's largest extent for hulls (metres).
@@ -278,6 +283,12 @@ func ImportModel(ctx context.Context, c *polyhaven.Client, id string, opt ModelO
 			}
 			if t.alpha != "" || mat.AlphaMode == "MASK" {
 				out.Cutout = append(out.Cutout, mat.Name)
+				// Thinned foliage keeps its cutout's coverage down the
+				// mip chain (texcompress/mip_coverage.go), asked for by
+				// the albedo's name.
+				if opt.ThinFoliage {
+					t.albedo += texcompress.CoverageSuffix
+				}
 			}
 		}
 		if mat.PBR != nil && mat.PBR.Base != nil {
@@ -508,7 +519,9 @@ func ImportModel(ctx context.Context, c *polyhaven.Client, id string, opt ModelO
 			opt.Stage("cooking "+id, float32(pi*len(wants)+wi)/float32(len(parts)*len(wants)))
 			vm := pm
 			decimated := w.tris > 0 && w.tris < pm.TriangleCount()
-			if decimated {
+			if decimated && opt.ThinFoliage {
+				vm = DecimateCards(pm, w.tris, out.Cutout)
+			} else if decimated {
 				vm = Decimate(cloneMesh(pm), w.tris)
 			}
 			meta := Measure(vm, fr.HasBack)
@@ -517,7 +530,9 @@ func ImportModel(ctx context.Context, c *polyhaven.Client, id string, opt ModelO
 				meta.Name = pid + "_" + w.suffix
 			}
 			stem := pid
-			if decimated {
+			if decimated && opt.ThinFoliage {
+				stem = fmt.Sprintf("%s_c%d", pid, w.tris)
+			} else if decimated {
 				stem = fmt.Sprintf("%s_t%d", pid, w.tris)
 			}
 			stem += backTag

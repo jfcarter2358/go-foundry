@@ -101,7 +101,8 @@ func logCompressOnce(key, format string, args ...any) {
 // texture then uploads RGBA8, as it always has). Pure CPU: safe on a worker.
 func prepareCompressed(file string, rgba *image.RGBA, enabled bool) *texcompress.Texture {
 	f, ok := compressionFormatFor(file, rgba, enabled)
-	if !ok {
+	if !ok || texcompress.CoverageTexture(file) {
+		// A coverage-preserving chain uploads RGBA8 (uploadRGBA8).
 		return nil
 	}
 	src, err := os.ReadFile(file)
@@ -170,6 +171,16 @@ func uploadRGBA8(name string, rgba *image.RGBA, skip int) {
 		rgba = texcompress.Downsample(rgba)
 	}
 	w, h := rgba.Rect.Dx(), rgba.Rect.Dy()
+	if texcompress.CoverageTexture(name) {
+		// A thin cutout that asked to keep its coverage at distance
+		// (texcompress/mip_coverage.go): the chain is built here.
+		for i, l := range texcompress.CoverageMipChain(rgba) {
+			gl.TexImage2D(gl.TEXTURE_2D, int32(i), gl.RGBA, int32(l.Rect.Dx()), int32(l.Rect.Dy()), 0, gl.RGBA,
+				gl.UNSIGNED_BYTE, gl.Ptr(l.Pix))
+		}
+		noteTextureVRAM(name, rgba8ChainBytes(w, h), TextureRGBA8)
+		return
+	}
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(w), int32(h), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(rgba.Pix))
 	generateWorldMipmaps()
 	noteTextureVRAM(name, rgba8ChainBytes(w, h), TextureRGBA8)

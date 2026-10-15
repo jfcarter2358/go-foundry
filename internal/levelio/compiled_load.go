@@ -57,6 +57,7 @@ func LoadCompiledLevel(path string) (world.Level, error) {
 	}
 	job.waitForRead()
 	for !job.Step() {
+		job.waitForCooked()
 		job.waitForStatic()
 	}
 	if err := job.Err(); err != nil {

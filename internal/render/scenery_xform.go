@@ -18,6 +18,7 @@ package render
 // them before or after it — so the table is the frame's truth.
 
 import (
+	"math"
 	"unsafe"
 
 	"foundry/internal/world"
@@ -30,6 +31,11 @@ var sceneryXforms struct {
 	lvl   *world.Level
 	base  *world.Scenery
 	m     []mgl32.Mat4
+	// keys are what each matrix was made from (position, rotation and
+	// scale): a placement that has not moved since keeps its matrix rather
+	// than three sincos and three products a frame — 2.7 ms of the biome
+	// showcase's 14,800 placements (docs/regions/PRESETS_5.md).
+	keys []sceneryXform
 }
 
 // fillSceneryXforms makes the frame's table. Called by DrawWorld with the
@@ -44,12 +50,19 @@ func fillSceneryXforms(lvl *world.Level) {
 		x.m = x.m[:0]
 		return
 	}
-	if cap(x.m) < len(lvl.Scenery) {
+	if len(x.keys) != len(lvl.Scenery) || len(x.m) != len(lvl.Scenery) {
 		x.m = make([]mgl32.Mat4, len(lvl.Scenery))
+		x.keys = make([]sceneryXform, len(lvl.Scenery))
+		for i := range x.keys {
+			x.keys[i].scale = mgl32.Vec3{float32(math.NaN()), 0, 0} // never matches
+		}
 	}
-	x.m = x.m[:len(lvl.Scenery)]
 	for i := range lvl.Scenery {
-		x.m[i] = lvl.Scenery[i].ModelMatrix()
+		s := &lvl.Scenery[i]
+		k := sceneryXform{s.Position, s.Rotation, s.Scale}
+		if x.keys[i] != k {
+			x.keys[i], x.m[i] = k, s.ModelMatrix()
+		}
 	}
 	x.base = &lvl.Scenery[0]
 }

@@ -32,6 +32,9 @@ func init() {
 		Name:     ScatterKind,
 		Label:    "Scatter",
 		Category: "Placement",
+		// Per environment region of a level generation doc: weighted by the
+		// region, over its band (place_region.go).
+		Regional: procgen.RegionalPerRegion,
 		Version:  1,
 		Doc: "Rocks scattered over a terrain by a list of rules — talus at cliff feet, boulder fields, pebbles in washes. " +
 			"Each rule weighs the ground by the terrain's masks (slope, height, flow, deposition, curvature, cliff, distance " +
@@ -92,24 +95,32 @@ func scatterRuleFields() []procgen.ParamDef {
 			Doc: "Rocks up to this size collide as their hulls; larger ones as their mesh."},
 		procgen.ParamDef{Name: "max_instances", Type: procgen.ParamInt, Label: "Max rocks", Default: procgen.Int(d.MaxInstances), Min: 0, Max: 1000000,
 			Doc: "The most this rule places (0: no cap). The biggest are kept."},
+		// Added: 0 keeps every variant, so existing rules hash and place
+		// as before (docs/regions/PRESETS_2.md).
+		procgen.ParamDef{Name: "min_size", Added: true, Type: procgen.ParamFloat, Label: "Min piece size (m)", Default: f(0), Min: 0, Max: 1000, Step: 0.01,
+			Doc: "Leave out the source's variants smaller than this (their largest side, before the rule's scale): a Poly Haven " +
+				"grass or moss set splits into clumps from a few centimetres to a third of a metre, and a rule placing clumps by " +
+				"the hundred wants only the big ones. 0: every variant. When none is this big, the largest is kept."},
 	)
 	// The rocks' material (materials_out.go): a ground blend and a colour
 	// match toward the stage's ground, desert varnish. Plants take none.
 	fields = append(fields, rockFxParams(0)...)
+	// How far they are drawn, and the trees' impostors (scatter_draw.go).
+	fields = append(fields, drawRuleFields()...)
 	return fields
 }
 
 func scatterParams() []procgen.ParamDef {
 	return []procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{TerrainKind}, Default: procgen.StageRef(""),
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: TerrainSources, Default: procgen.StageRef(""),
 			Doc: "The terrain stage to scatter over: its heights and masks."},
 		{Name: "seed", Type: procgen.ParamSeed, Default: procgen.Seed(0), Doc: "Changes every rule's rocks without changing anything else."},
 		{Name: "rules", Type: procgen.ParamList, MinItems: 1, Fields: scatterRuleFields(), Default: procgen.List(),
 			Doc: "The rules, run in order: each keeps clear of what the earlier ones placed, so list the big rocks first."},
-		{Name: "ground", Added: true, Type: procgen.ParamStage, StageKinds: []string{TerrainMaterialKind}, Default: procgen.StageRef(""),
-			Doc: "A terrain_material stage: the rules' rocks blend into its ground colour at their feet (ground_band) and match toward it (match_ground)."},
-		{Name: "avoid", Type: procgen.ParamStage, StageKinds: []string{CliffWallKind, ScatterKind}, Default: procgen.StageRef(""),
-			Doc: "A cliff_wall (or another scatter) stage whose footprints these rocks keep clear of."},
+		{Name: "ground", Added: true, Type: procgen.ParamStage, StageKinds: GroundSources, Default: procgen.StageRef(""),
+			Doc: "A terrain_material (or region_material) stage: the rules' rocks blend into its ground colour at their feet (ground_band) and match toward it (match_ground)."},
+		{Name: "avoid", Type: procgen.ParamStage, StageKinds: []string{CliffWallKind, ScatterKind, RuinsKind}, Default: procgen.StageRef(""),
+			Doc: "A cliff_wall (or another scatter) stage whose footprints these rocks keep clear of — or a ruins stage, whose terraces, plinths and stairs they keep off."},
 		{Name: "cliff_threshold", Type: procgen.ParamFloat, Label: "Cliff threshold", Default: procgen.Float(0.5), Min: 0.05, Max: 1, Step: 0.01,
 			Doc: "The cliff mask level that counts as a cliff for the cliff-base weight."},
 		{Name: "margin", Type: procgen.ParamFloat, Label: "Edge margin (m)", Default: procgen.Float(2), Min: 0, Max: 1000, Step: 0.1,
@@ -137,7 +148,7 @@ func scatterRules(p procgen.Params, vars func(ref string) ([]place.Variant, erro
 		if err != nil {
 			return nil, nil, fmt.Errorf("rule %d (%s): %w", i+1, r.Name, err)
 		}
-		r.Variants = lightVariants(v, it.Int("max_triangles"))
+		r.Variants = lightVariants(sizedVariants(v, it.Float("min_size")), it.Int("max_triangles"))
 		r.Density, r.Spacing = it.Float("density"), it.Float("spacing")
 		r.Scale, r.ScaleBias = it.Vec2("scale"), it.Float("scale_bias")
 		if r.Scale[1] < r.Scale[0] {

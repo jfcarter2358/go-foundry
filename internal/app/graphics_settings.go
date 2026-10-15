@@ -47,6 +47,11 @@ type rawGraphics struct {
 	// FOUNDRY_TEXTURE_SKIP_MIPS, when set, outrank them for the run.
 	TextureCompression *bool `yaml:"texture_compression,omitempty"`
 	TextureSkipMips    *int  `yaml:"texture_skip_mips,omitempty"`
+	// GrassDensity, GrassDistance and GrassShadowDistance are the Poly Haven
+	// grass instancer's (gfx/grass_settings.go).
+	GrassDensity        *float32 `yaml:"grass_density,omitempty"`
+	GrassDistance       *float32 `yaml:"grass_distance,omitempty"`
+	GrassShadowDistance *float32 `yaml:"grass_shadow_distance,omitempty"`
 }
 
 // loadGraphicsSettings reads the saved graphics settings over the defaults.
@@ -107,6 +112,15 @@ func applyGraphicsSettings(data []byte) error {
 	if raw.TextureSkipMips != nil && !gfx.TextureSkipMipsForced {
 		gfx.TextureSkipMips = gfx.ClampTextureSkipMips(*raw.TextureSkipMips)
 	}
+	if raw.GrassDensity != nil {
+		gfx.GrassDensity = gfx.ClampGrassDensity(*raw.GrassDensity)
+	}
+	if raw.GrassDistance != nil {
+		gfx.GrassDistance = gfx.ClampGrassDistance(*raw.GrassDistance)
+	}
+	if raw.GrassShadowDistance != nil {
+		gfx.GrassShadowDistance = gfx.ClampGrassShadowDistance(*raw.GrassShadowDistance)
+	}
 	return nil
 }
 
@@ -121,6 +135,8 @@ func marshalGraphicsSettings() ([]byte, error) {
 		NaniteStreamPoolMB: &pool, TAASharpen: &sharpen}
 	texCompress, skipMips := gfx.TextureCompression, gfx.TextureSkipMips
 	raw.TextureCompression, raw.TextureSkipMips = &texCompress, &skipMips
+	grassDensity, grassDistance, grassShadow := gfx.GrassDensity, gfx.GrassDistance, gfx.GrassShadowDistance
+	raw.GrassDensity, raw.GrassDistance, raw.GrassShadowDistance = &grassDensity, &grassDistance, &grassShadow
 	// The mode likewise, only once chosen.
 	if gfx.AntiAliasModeChosen {
 		aa := gfx.AntiAliasMode.String()

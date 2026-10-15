@@ -90,6 +90,12 @@ type PlayerSettings struct {
 	// property and the placed entity's property are the same field underneath.
 	GravityScale float32
 	MaxFallSpeed float32
+
+	// Camera and Body are how the player is seen (player_view.go): the
+	// camera mode with its boom, and the third-person body. Zero values are
+	// first person with no body.
+	Camera PlayerCamera
+	Body   PlayerBody
 }
 
 // EffectiveStepHeight is the allowance actually in force: what the level says,
@@ -130,6 +136,8 @@ func PlayerSettingsFromRaw(r *RawPlayer) (PlayerSettings, error) {
 	for _, rm := range r.Models {
 		p.Models = append(p.Models, entityModelFromRaw(rm))
 	}
+	p.Camera = PlayerCameraFromRaw(r.Camera)
+	p.Body = PlayerBodyFromRaw(r.Body)
 	p.Script = r.Script
 	attrs, err := attrsFromRaw(r.Attributes)
 	if err != nil {
@@ -153,7 +161,8 @@ func PlayerSettingsFromRaw(r *RawPlayer) (PlayerSettings, error) {
 func PlayerSettingsToRaw(p PlayerSettings) *RawPlayer {
 	if p.StepHeight == 0 && len(p.Models) == 0 && p.Script == "" &&
 		p.GravityScale == 0 && p.MaxFallSpeed == 0 &&
-		len(p.Attributes) == 0 && len(p.ScriptParams) == 0 {
+		len(p.Attributes) == 0 && len(p.ScriptParams) == 0 &&
+		PlayerCameraToRaw(p.Camera) == nil && PlayerBodyToRaw(p.Body) == nil {
 		return nil
 	}
 	r := &RawPlayer{}
@@ -169,6 +178,8 @@ func PlayerSettingsToRaw(p PlayerSettings) *RawPlayer {
 	r.Script = p.Script
 	r.Attributes = attrsToRaw(p.Attributes)
 	r.Params = attrsToRaw(p.ScriptParams)
+	r.Camera = PlayerCameraToRaw(p.Camera)
+	r.Body = PlayerBodyToRaw(p.Body)
 	return r
 }
 

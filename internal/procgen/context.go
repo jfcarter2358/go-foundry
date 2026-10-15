@@ -43,6 +43,10 @@ type Env struct {
 	Seed uint64
 	// Workers is how many goroutines Parallel may use.
 	Workers int
+	// Region is the environment region an expanded stage (r_<region>_<stage>,
+	// regional.go) works for: its key, environment, weight lookup and
+	// bounds. Nil for every stage a document lists itself.
+	Region *RegionContext
 
 	progress func(float32)
 	logf     func(string)
@@ -167,6 +171,12 @@ type RunContext struct {
 	volumes    []VolumeEntry
 	level      LevelSettings
 	supersedes map[string][]string
+
+	// Previous is an Incremental kind's last manifest entry (files and
+	// per-tile hashes), or nil (incremental.go).
+	Previous *ManifestStage
+	tiles    map[string]string
+	touched  map[string]bool
 }
 
 // Path is the absolute path of a file named rel inside the stage's folder,

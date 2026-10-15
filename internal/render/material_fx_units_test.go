@@ -11,7 +11,7 @@ import (
 // effects' samplers point at them while an effect draws.
 func TestFxUnitsAreFree(t *testing.T) {
 	for _, u := range []int{gfx.FxUnitSplatWeights, gfx.FxUnitSplatAlbedo, gfx.FxUnitSplatNormal, gfx.FxUnitStrata,
-		gfx.FxUnitGroundColor, gfx.FxUnitGroundHeight, gfx.FxUnitDetail} {
+		gfx.FxUnitGroundColor, gfx.FxUnitGroundHeight, gfx.FxUnitDetail, gfx.FxUnitSplatWeights2} {
 		for _, taken := range []int{0, int(CascadeTexUnit), gfx.BlendTexUnit, gfx.BlendMaskUnit, gfx.NormalMapUnit, CloudShadowTexUnit,
 			naniteVisIDUnit, naniteVisBinUnit, GIIrradianceUnit, GIVisibilityUnit, GIProbeDataUnit, GIProbeSurfaceUnit,
 			GIProbePackedUnit, giHalfResIrrUnit, giHalfResGuideUnit, VSMAtlasUnit, VSMTableUnit} {

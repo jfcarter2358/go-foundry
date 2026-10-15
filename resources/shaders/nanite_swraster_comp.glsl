@@ -59,6 +59,7 @@ struct Instance {
     vec4 sphere;
     uvec4 flags;
     vec4 wind;
+    vec4 draw; // draw distance window (render/nanite_draw_distance.go)
 };
 layout(std430, binding = 0) readonly buffer Instances {
     Instance inst[];
@@ -117,6 +118,13 @@ shared mat4 mdl;
 shared vec4 wnd;
 shared vec4 sph;
 shared int boxLoX, boxLoY, boxHiX, boxHiY;
+// The cluster's instance's draw-distance fade (render/nanite_draw_distance.go;
+// drawFadeWindow and drawFadeKeeps are spliced in by the Go side), made by
+// the first thread: each pixel it writes is dithered as the ID pass's are.
+uniform vec3 drawEye;
+uniform int drawFadeOn;
+uniform int coverageDither;
+shared vec3 fade;
 uniform uint recordBase;
 uniform uint binBase;
 uniform uint swCap;
@@ -209,6 +217,9 @@ void rasterise(uint first, int baseVertex, uint ii, uint t, uint id) {
             if (d < 0.0 || d > 1.0) {
                 continue; // the hardware's depth clip
             }
+            if (!drawFadeKeeps(vec2(x, y) + 0.5, coverageDither, fade)) {
+                continue;
+            }
             uint key = 0xffffffffu - floatBitsToUint(d);
             uint pix = uint(y) * uint(viewSize.x) + uint(x);
 #ifdef SW64
@@ -251,6 +262,8 @@ void main() {
             records[rec].a = uvec4(a.x, a.z, a.w, binBase + b.x);
             records[rec].b = uvec4(rec + 1u, a.y, 0u, 0u);
             mvp = projection * camera * inst[a.w].model;
+            vec4 dr = inst[a.w].draw;
+            fade = drawFadeOn != 0 ? vec3(drawFadeWindow(distance(drawEye, inst[a.w].model[3].xyz), dr), dr.z) : vec3(0.0, 1.0, 0.0);
             wnd = inst[a.w].wind;
             windy = windReach(inst[a.w].model, wnd) > 0.0;
             if (windy) {

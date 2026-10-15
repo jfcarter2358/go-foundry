@@ -232,7 +232,8 @@ func TestThermalRelaxesSoftSlopesAndKeepsHardCliffs(t *testing.T) {
 		dep := make([]float32, len(g.H))
 		off := make([]float32, len(g.H))
 		s.Thermal.Iterations = 300
-		if err := thermal(&s, g, s.Strata.compile(), off, dep, NewPool(context.Background(), 0), nil); err != nil {
+		fd := &field{g: g, m: singleModel(compileMaterial(&s, [2]float64{}), off), deposit: dep, k: knobsOf(&s)}
+		if err := thermal(fd, NewPool(context.Background(), 0), nil); err != nil {
 			t.Fatal(err)
 		}
 		maxSlope := 0.0

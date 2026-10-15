@@ -186,6 +186,8 @@ type naniteStreamer struct {
 	// Scratch for flushRecords.
 	cbuf []gpuCluster
 	nbuf []gpuNode
+	// genIndex finds a mesh's streamMesh for meshGen (nanite_stream_gen.go).
+	genIndex map[*nanite.Mesh]*streamMesh
 }
 
 // streamMesh is one mesh's part of the pool.
@@ -205,6 +207,16 @@ type streamMesh struct {
 	// change uploads only what differs (flushRecords).
 	gpuClusters []gpuCluster
 	gpuNodes    []gpuNode
+	// gen counts the times how much of the mesh is resident settled in
+	// another band (noteDrawGen and meshGen, nanite_stream_gen.go); band is
+	// the band it is in. The virtual shadow map's tracker hashes gen per placement.
+	gen  uint64
+	band int
+	// noted is the band gen last counted, bandSince the streamer frame the
+	// band last changed in: a band is counted once it has held for
+	// streamGenSettle frames.
+	noted     int
+	bandSince uint32
 }
 
 // streamPage is one page's state.
@@ -600,6 +612,31 @@ func (s *naniteStreamer) clusterRecords(mi int, out []gpuCluster) []gpuCluster {
 	return out
 }
 
+// staticClusterRecords is mesh m's cluster records in clusterRecords'
+// order with their COOKED errors, whatever is resident: what the draw
+// bound's LOD keys read (nanite_draw_lod_bound.go). The bound is built once
+// from the batch's tiles, not again each time a page streams in, so it must
+// not see the residency's edits. Those only ever set an error to 0 — a
+// non-resident cluster's parent error, so it cannot be in the cut, and its
+// resident ancestor's own error, so the ancestor stands in for it — and the
+// key is a tile's largest PARENT error: the cooked one is never below what
+// any later residency lets the cull draw, so the bound stays an upper bound.
+// Built from the load-time records instead, a page that was not resident at
+// load kept its tiles out of the bound for good, and once it streamed in the
+// commands it drew were cut off past the bound: whole terrain tiles of the
+// biome showcase world went missing on the GTX 1070, and on WSLg
+// (docs/regions/PRESETS_3.md).
+func staticClusterRecords(m *nanite.Mesh, out []gpuCluster) []gpuCluster {
+	for pi := range m.Pages {
+		p := &m.Pages[pi]
+		for k := int32(0); k < p.ClusterCount; k++ {
+			ci := p.ClusterFirst + k
+			out = append(out, toGPULODCluster(&m.Clusters[ci], m.ClusterLeaf[ci], 0, 0))
+		}
+	}
+	return out
+}
+
 // nodeRecords is mesh mi's tree with its errors as the residency allows.
 func (s *naniteStreamer) nodeRecords(mi int, out []gpuNode) []gpuNode {
 	sm := s.meshes[mi]
@@ -748,6 +785,7 @@ func (s *naniteStreamer) flushRecords(clusters, nodes uint32, ringOK bool) {
 		sm.res.Update()
 		s.cbuf = s.clusterRecords(mi, s.cbuf)
 		s.nbuf = s.nodeRecords(mi, s.nbuf)
+		s.noteDrawGen(sm)
 		diffRuns(len(s.cbuf), func(i int) bool { return s.cbuf[i] != sm.gpuClusters[i] }, func(a, b int) {
 			copy(sm.gpuClusters[a:b], s.cbuf[a:b])
 			s.writeRecords(clusters, (int(sm.clusterBase)+a)*cs,
@@ -1260,6 +1298,14 @@ func (r *readbackSlot) copyFrom(src uint32, size int, frame uint32) {
 // ready is whether the copy has landed (never waits).
 func (r *readbackSlot) ready() bool {
 	return r.fence != 0 && fencePassed(r.fence)
+}
+
+// alive is whether the slot's fence is still a sync object of the current
+// context (glIsSync): a fence deleted behind the slot's back — a copied
+// slot whose twin called done — must never be queried, which is
+// GL_INVALID_VALUE (nanite_vis_overflow.go, "Fence lifetime").
+func (r *readbackSlot) alive() bool {
+	return r.fence != 0 && gl.IsSync(r.fence)
 }
 
 // fencePassed asks whether the GPU has passed fence f, without waiting:

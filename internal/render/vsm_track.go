@@ -28,8 +28,11 @@ package render
 //   - each entity: visible, its matrix and its frame's, each attachment's
 //     matrix and mesh — and a posed (skinned) one counts as moved every
 //     frame, rather than have every bone of it hashed to find out;
-//   - each scenery placement: its matrix and meshes — and a cooked one
-//     swaying in the wind counts as changed every frame;
+//   - each scenery placement: its matrix and meshes, and for a streamed
+//     cooked mesh how many times its resident pages changed what it draws
+//     (nanite_stream_gen.go), and whether it (and its impostor) is inside
+//     its shadow distance this frame (nanite_draw_distance.go) — and a
+//     cooked one swaying in the wind counts as changed every frame;
 //   - the shadow-casting sprites and particles, instance by instance.
 //
 // And what it cannot hash it treats as moving every frame, as the point
@@ -88,6 +91,14 @@ type vsmTracker struct {
 	// meshBounds is each entity mesh's own extent, by its vertex array, for
 	// entities with no bounds authored (meshBox).
 	meshBounds map[uintptr]vsmBox
+	// grassBox is the grass instancer's casting box round the camera
+	// (grass_field_shadow.go); anyGrass whether it has one this frame.
+	grassBox vsmBox
+	anyGrass bool
+	// grassLast is the grass box handed in last frame (grassLastOK: there
+	// was one), so the pages it covered are drawn again once it moves on.
+	grassLast   vsmBox
+	grassLastOK bool
 }
 
 // vsmEntityDraw is one entity as the movers' pass draws it: what
@@ -152,6 +163,7 @@ func (t *vsmTracker) collect(level *world.Level, cam mgl32.Vec3, reach float32) 
 	t.boxes = t.boxes[:0]
 	t.draws = t.draws[:0]
 	t.anySprites, t.anyScatter, t.anyFol = false, false, false
+	t.anyGrass = false
 
 	h := newSig()
 	h.u64(world.BrushMeshGeneration())
@@ -191,8 +203,8 @@ func (t *vsmTracker) collect(level *world.Level, cam mgl32.Vec3, reach float32) 
 	}
 	t.gone(t.chunks)
 
-	for ei := range level.Entities {
-		e := &level.Entities[ei]
+	for ei, n := 0, drawnEntityCount(level); ei < n; ei++ {
+		e := drawnEntity(level, ei)
 		// The authored bounds (a collision box) and the box its meshes
 		// span, together: an attachment — a rifle, a turret's barrel — can
 		// reach past the bounds, and a page is small; a part outside the box
@@ -276,8 +288,32 @@ func (t *vsmTracker) collect(level *world.Level, cam mgl32.Vec3, reach float32) 
 		h.mat(model)
 		h.u64(uint64(uintptr(unsafe.Pointer(s.Nanite))))
 		h.u64(uint64(boolToInt32(s.NaniteGPU)))
+		// What its streamed mesh draws: the pages resident change the
+		// clusters it casts with (nanite_stream_gen.go). Without it a page
+		// drawn while the mesh was coarse kept that shadow for good.
+		if s.NaniteGPU {
+			h.u64(naniteMeshDrawGen(s.Nanite))
+			// Whether it casts this frame, past its shadow distance or not
+			// — the mesh, and its impostor's cards — as the scenery cull
+			// decides it (nanite_draw_distance.go): a caster crossing its
+			// shadow distance redraws the pages it was in.
+			if DrawDistances {
+				_, casts := placementDraw(s, false, cam)
+				h.u64(uint64(boolToInt32(casts)))
+				if s.HasImpostor() {
+					_, casts = placementDraw(s, true, cam)
+					h.u64(uint64(boolToInt32(casts)) + 2)
+					h.u64(uint64(uintptr(unsafe.Pointer(s.ImpostorMesh))))
+					h.u64(naniteMeshDrawGen(s.ImpostorMesh))
+				}
+			}
+		}
 		for si := range s.Submeshes {
 			h.geometry(&s.Submeshes[si])
+		}
+		// A classic placement past its shadow distance casts nothing.
+		if DrawDistances && !s.NaniteGPU && (s.DrawDistance > 0 || s.ShadowDistance > 0) {
+			h.u64(uint64(boolToInt32(s.DrawnAt(cam, true))) + 4)
 		}
 		// A cooked mesh swaying in the wind changes every frame, over the
 		// box it can swing through. It is drawn with the static layer
@@ -360,6 +396,22 @@ func (t *vsmTracker) collect(level *world.Level, cam mgl32.Vec3, reach float32) 
 			}
 		}
 	}
+	// The grass instancer's near casters sway: a mover, every frame. Its
+	// box is the shadow reach ROUND THE CAMERA, so where the camera was
+	// last frame is handed in too whenever the box moved or went: the pages
+	// there still hold the clumps cast from that pose, and nothing else
+	// would ever redraw them. (They were the "floating dark blobs" left
+	// over the ground along the camera's path — docs/regions/PRESETS_4.md.)
+	lo, hi, ok := grassShadowBox()
+	if t.grassLastOK && (!ok || t.grassLast != mover(lo, hi)) {
+		t.boxes = append(t.boxes, t.grassLast)
+	}
+	if ok {
+		t.boxes = append(t.boxes, mover(lo, hi))
+		t.grassBox = growBox(t.grassBox, false, lo, hi)
+		t.anyGrass = true
+	}
+	t.grassLast, t.grassLastOK = mover(lo, hi), ok
 	t.lastCam = cam
 	return all, t.boxes
 }

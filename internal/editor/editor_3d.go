@@ -371,6 +371,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	mods := sdl.GetModState()
 	ctrlHeld := mods&sdl.KMOD_CTRL != 0
 
+	// A selected environment region's footprint handles: grab a point, or
+	// Ctrl+click an edge to add one (editor_volume_region.go). Ahead of the
+	// selection below, which would otherwise take the click as a pick.
+	if editorRegionMouseDown(t.X, t.Y, ctrlHeld && mods&sdl.KMOD_SHIFT == 0) {
+		return
+	}
+
 	// Ctrl+Shift is "go into this one", ahead of every selection below: it
 	// names a brush and enters DETAIL mode on it, where clicks address the
 	// mesh drawn over its surface and nothing reaches the solid underneath

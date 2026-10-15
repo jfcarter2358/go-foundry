@@ -212,6 +212,8 @@ type vsmRenderer struct {
 	// frame (empty: lo past hi), which a movers' rectangle must touch for
 	// their walkers to be called.
 	spriteRect, scatterRect, folRect [2][2]float64
+	// grassRect is the grass instancer's (grass_field_shadow.go).
+	grassRect [2][2]float64
 }
 
 var vsm vsmRenderer
@@ -397,6 +399,7 @@ func vsmBegin(lights world.LightSet, level *world.Level, li int, view, projectio
 	v.spriteRect = v.footprint(t.spriteBox, t.anySprites)
 	v.scatterRect = v.footprint(t.scatterBox, t.anyScatter)
 	v.folRect = v.footprint(t.folBox, t.anyFol)
+	v.grassRect = v.footprint(t.grassBox, t.anyGrass)
 
 	// What is asked for: the newest marks read back, and the safety level
 	// over the view.
@@ -733,6 +736,11 @@ func (v *vsmRenderer) drawMovers(level *world.Level, r *vsmRect, lsm mgl32.Mat4,
 		RenderFoliageDirShadow(level, lsm, c, cull)
 		ProfileEnd()
 	}
+	if touches(v.grassRect[0], v.grassRect[1]) {
+		ProfileBegin("grass")
+		RenderGrassFieldsDirShadow(level, lsm, c, cull)
+		ProfileEnd()
+	}
 }
 
 // footprint is box b's footprint across the light, or an empty one (lo past
@@ -802,7 +810,6 @@ func vsmMarkReceivers() {
 	inv := projView.Inv()
 	gl.UniformMatrix4fv(p.U("invProjView"), 1, false, &inv[0])
 	gl.Uniform2i(p.U("size"), scene.w, scene.h)
-	gl.Uniform1i(p.U("sceneDepth"), 0)
 	uploadVSMUniforms(p.prog, &v.frame, func(name string) int32 { return p.U(name) })
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, scene.depth)

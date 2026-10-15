@@ -21,6 +21,11 @@ package editor
 //
 // Middle-drag (or right-drag away from a handle) pans, the wheel zooms about
 // the cursor, and Frame fits the preview.
+//
+// A level generation doc's selected environment region (the Generator's
+// region list) is edited here too, with the same gestures plus Ctrl+click on
+// an edge to insert — written back to the open level's region volume
+// (editor_generator_region_list.go).
 
 import (
 	"fmt"
@@ -304,6 +309,11 @@ func genStageSplines() []genStageSpline {
 		for i := range defs {
 			d := &defs[i]
 			path := append(append(genParamPath(nil), prefix...), genPathStep{Name: d.Name, Item: -1})
+			if d.ReadOnly {
+				// Written by something else (the regions stage's synced
+				// list): not editable here, and its preview draws it.
+				continue
+			}
 			switch d.Type {
 			case procgen.ParamSpline:
 				v, _ := genValueAt(k.Params, s.Params, path)
@@ -361,6 +371,7 @@ func genView2DCanvas() {
 
 	p := genCurrentPreview()
 	tex := genLayerTextures(p)
+	genRegionOverlay(p)
 	if !genV2.framed {
 		genView2DFrame()
 	}
@@ -426,6 +437,12 @@ func genView2DCanvas() {
 			bx, bz := genSplineXZ(sp.def, sp.value.Points[k+1])
 			dl.AddLineV(toScreen(ax, az), toScreen(bx, bz), col, 2)
 		}
+		if n := len(sp.value.Points); sp.def.Closed && n > 2 {
+			// A closed spline (a polygon) joins its last point to its first.
+			ax, az := genSplineXZ(sp.def, sp.value.Points[n-1])
+			bx, bz := genSplineXZ(sp.def, sp.value.Points[0])
+			dl.AddLineV(toScreen(ax, az), toScreen(bx, bz), col, 2)
+		}
 	}
 	near := -1
 	if active != nil {
@@ -442,6 +459,11 @@ func genView2DCanvas() {
 		}
 	}
 
+	// The selected environment region's footprint, edited in the level
+	// (editor_generator_region_list.go): it takes the clicks while it is up.
+	if editing, rnear := genRegionView2D(dl, hovered, mouse, toScreen, toWorld); editing {
+		active, near = nil, rnear
+	}
 	genView2DInput(hovered, active, near, mouse, toScreen, toWorld)
 
 	// The readout.

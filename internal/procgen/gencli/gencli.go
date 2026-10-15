@@ -6,16 +6,26 @@
 //	foundry gen run canyon.fgen -force      rerun every stage
 //	foundry gen run canyon -stage ground    just that stage (and stale upstream)
 //	foundry gen run canyon -no-splice       leave the level alone
+//	foundry gen run seam_world -region east just one region's stages, and
+//	                                        splice just its placements
 //	foundry gen check canyon                validate, and say what a run would run
 //	foundry gen list                        stage kinds, their params, templates
 //	foundry gen list -kind noise_preview    one kind in full
 //	foundry gen new canyon -template noise_demo
+//	foundry gen world level1                make level1's level generation doc
+//	foundry gen env list                    environment presets (built-in and files)
+//	foundry gen env write savannah          write a preset's file, only if absent
+//	foundry gen env adjacency               the effective adjacency table (built-in
+//	                                        + resources/environments/adjacency.yaml)
 //
 // A document is named by its name (resources/generators/<name>.fgen) or by a
 // path. Every command takes -root, the project directory.
 //
 // `run` splices into the target level's FILE, resolving `chunk: auto` against
-// that level's chunks as the editor's splice does (fileSpliceOptions).
+// that level's chunks as the editor's splice does (fileSpliceOptions). Before
+// it runs, a document with a regions stage takes the target level's region
+// volumes (genlevel.SyncRegions) and is written back when they changed, so
+// the file records what was generated (docs/regions/SPEC.md).
 package gencli
 
 import (
@@ -60,16 +70,24 @@ func Main(root string, args []string, out io.Writer) int {
 		return listMain(root, args[1:], out)
 	case "new":
 		return newMain(root, args[1:], out)
+	case "world":
+		return worldMain(root, args[1:], out)
+	case "env":
+		return envMain(root, args[1:], out)
 	}
 	usage(out)
 	return 2
 }
 
 func usage(out io.Writer) {
-	fmt.Fprintf(out, `foundry %[1]s run <name|file.fgen> [-force] [-stage id]... [-no-splice] [-workers N]
+	fmt.Fprintf(out, `foundry %[1]s run <name|file.fgen> [-force] [-stage id]... [-region id]... [-no-splice] [-workers N]
 foundry %[1]s check <name|file.fgen>
 foundry %[1]s list [-kind name]
 foundry %[1]s new <name> [-template name] [-force]
+foundry %[1]s world <level>
+foundry %[1]s env list
+foundry %[1]s env write <name>|-all
+foundry %[1]s env adjacency
 `, Command)
 }
 
@@ -121,6 +139,9 @@ func runMain(root string, args []string, out io.Writer) int {
 	quiet := fs.Bool("q", false, "print only the summary")
 	var only stageList
 	fs.Var(&only, "stage", "run only this stage (and the stale stages it needs); repeatable")
+	var regionsOnly stageList
+	fs.Var(&regionsOnly, "region", "a level generation doc: run only this environment region's stale stages (every one with -force) and the stale shared stages they need, "+
+		"and splice only their placements (and those of the shared stages that ran); a region volume's ID or key, repeatable")
 	rest, code, ok := parse(fs, args)
 	if !ok {
 		return code
@@ -136,9 +157,45 @@ func runMain(root string, args []string, out io.Writer) int {
 		fmt.Fprintln(out, err)
 		return 1
 	}
+	if code := syncRegions(d, path, true, out); code != 0 {
+		return code
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// -region: the region's expanded stages that are stale (all of them
+	// with -force) join -stage's list; Only forces what it lists.
+	var stale map[string]bool
+	if len(regionsOnly) > 0 && !*force {
+		ids, err := procgen.StaleStages(d, procgen.Options{})
+		if err != nil {
+			fmt.Fprintf(out, "%s: %v\n", d.Name, err)
+			return 1
+		}
+		stale = map[string]bool{}
+		for _, id := range ids {
+			stale[id] = true
+		}
+	}
+	for _, r := range regionsOnly {
+		ids, err := procgen.RegionStages(d, r)
+		if err != nil {
+			fmt.Fprintf(out, "%s: %v\n", d.Name, err)
+			return 1
+		}
+		if len(ids) == 0 {
+			fmt.Fprintf(out, "%s: region %s: its preset has no stage that runs per region\n", d.Name, r)
+		}
+		for _, id := range ids {
+			if stale == nil || stale[id] {
+				only = append(only, id)
+			}
+		}
+	}
+	if len(regionsOnly) > 0 && len(only) == 0 {
+		fmt.Fprintf(out, "%s: region %s is up to date\n", d.Name, strings.Join(regionsOnly, ", "))
+		return 0
+	}
 	opts := procgen.Options{Force: *force, Only: only, Workers: *workers}
 	if !*quiet {
 		opts.Log = func(line string) { fmt.Fprintln(out, line) }
@@ -150,12 +207,23 @@ func runMain(root string, args []string, out io.Writer) int {
 	}
 	fmt.Fprintf(out, "%s: ran %d, up to date %d, %d placements, %s -> %s\n", d.Name, len(res.Ran), len(res.Skipped),
 		len(res.Placements())+len(res.Volumes()), res.Elapsed.Round(time.Millisecond), fileutil.RelAssetPath(res.OutDir))
+	// Warnings did not stop the run; repeat them by the summary so they are
+	// not lost in the log (and are seen at all with -q).
+	for _, w := range res.Warnings {
+		fmt.Fprintf(out, "%s: warning: %s\n", d.Name, w)
+	}
 	if d.Level == "" || *noSplice {
 		return 0
 	}
 	lp := levelio.LevelPath(d.Level)
 	sopt := fileSpliceOptions(lp, res.Placements(), out)
 	sopt.Settings = res.LevelSettings()
+	if len(regionsOnly) > 0 {
+		if sopt.Scope, err = genlevel.RegionScope(d, res, regionsOnly); err != nil {
+			fmt.Fprintf(out, "%s: %v\n", d.Name, err)
+			return 1
+		}
+	}
 	st, err := genlevel.SpliceFile(lp, d.Name, res.Placements(), res.Volumes(), sopt)
 	if err != nil {
 		fmt.Fprintf(out, "%s: splice into %s: %v\n", d.Name, d.Level, err)
@@ -187,6 +255,10 @@ func checkMain(root string, args []string, out io.Writer) int {
 		fmt.Fprintln(out, err)
 		return 1
 	}
+	// In memory only: check says what a run would do, and a run syncs first.
+	if code := syncRegions(d, "", false, out); code != 0 {
+		return code
+	}
 	if probs := d.Validate(); len(probs) > 0 {
 		for _, p := range probs {
 			fmt.Fprintf(out, "%s: %s\n", d.Name, p)
@@ -197,6 +269,9 @@ func checkMain(root string, args []string, out io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(out, err)
 		return 1
+	}
+	for _, w := range procgen.Warnings(d) {
+		fmt.Fprintf(out, "%s: warning: %s\n", d.Name, w)
 	}
 	if len(stale) == 0 {
 		fmt.Fprintf(out, "%s: ok, every stage up to date\n", d.Name)
@@ -232,8 +307,19 @@ func listMain(root string, args []string, out io.Writer) int {
 	for _, t := range procgen.Templates() {
 		fmt.Fprintf(out, "  %-16s %s\n", t.Name, firstSentence(t.Doc))
 	}
-	fmt.Fprintf(out, "\n`foundry %s list -kind <name>` for a kind's parameters.\n", Command)
+	// The environment presets a level's regions grow (gencli_regions.go's
+	// `env list` has the project's files too).
+	fmt.Fprintln(out, "\nEnvironments:")
+	for _, e := range procgen.Environments() {
+		fmt.Fprintf(out, "  %-18s %s  %s\n", e.Name, hexColor(e.Color), firstSentence(e.Doc))
+	}
+	fmt.Fprintf(out, "\n`foundry %s list -kind <name>` for a kind's parameters; `foundry %s env list` for the project's environments.\n", Command, Command)
 	return 0
+}
+
+// hexColor is an overlay colour as #rrggbb.
+func hexColor(c [3]float64) string {
+	return fmt.Sprintf("#%02x%02x%02x", int(c[0]*255+0.5), int(c[1]*255+0.5), int(c[2]*255+0.5))
 }
 
 func firstSentence(s string) string {

@@ -328,6 +328,12 @@ func volumeRoleSummary(v *Volume) string {
 	if v.IsContext() {
 		roles = append(roles, "context")
 	}
+	if v.IsRegion() {
+		roles = append(roles, "region "+v.Region.Environment)
+	}
+	if v.IsGrass() {
+		roles = append(roles, "grass "+v.Grass.File)
+	}
 	if v.LoadLevel != "" {
 		roles = append(roles, "level exit to "+v.LoadLevel)
 	}
@@ -339,6 +345,9 @@ func volumeRoleSummary(v *Volume) string {
 	}
 	if v.Cloud != nil {
 		roles = append(roles, "cloud")
+	}
+	if v.Ambient != nil {
+		roles = append(roles, "ambient")
 	}
 	if v.Scatter != nil {
 		roles = append(roles, "scatter")

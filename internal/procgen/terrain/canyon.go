@@ -62,6 +62,8 @@ type cutPath struct {
 	prof func(u float64) float64
 	maxW float64
 	trib bool
+	// hold and margin are the canyon's Hold and HoldMargin (stamps.go).
+	hold, margin float64
 }
 
 // profileFunc is the cross-section p(u) for c.
@@ -248,6 +250,14 @@ func grade(pts []densePoint, g *Grid, join float64, hasJoin bool) {
 	}
 }
 
+// reachHold is how far past its rims a path reaches when holding.
+func (p *cutPath) reachHold(hold []float32) float64 {
+	if hold == nil || p.hold <= 0 {
+		return 0
+	}
+	return p.margin
+}
+
 // tributaries grows c's branches off the main path pts.
 func tributaries(c *Canyon, pts []densePoint, g *Grid, spacing float64) []cutPath {
 	if c.Tributaries <= 0 || len(pts) < 4 {
@@ -303,8 +313,71 @@ func tributaries(c *Canyon, pts []densePoint, g *Grid, spacing float64) []cutPat
 	return out
 }
 
+// canyonExtend carries canyons on past a region's edge (union.go): an
+// authored end within reach of the rectangle's boundary (or outside it) is
+// continued straight along its heading for dist metres, so across a
+// transition band the canyon's floor runs on into the neighbour instead of
+// ending in a wall of the region's own ground that the blend would turn
+// into a dam. Coordinates are the provider's own.
+type canyonExtend struct {
+	rect Rect
+	dist float64
+}
+
+// extendEnds appends (and prepends) straight runs to pts where an end
+// reaches the rectangle's edge, spaced as the path is.
+func (ce *canyonExtend) extendEnds(pts []densePoint, spacing float64) []densePoint {
+	if ce == nil || ce.dist <= 0 || len(pts) < 4 {
+		return pts
+	}
+	r := ce.rect
+	reach := func(p densePoint) bool {
+		d := math.Min(math.Min(p.x-r.MinX, r.MaxX-p.x), math.Min(p.z-r.MinZ, r.MaxZ-p.z))
+		return d < math.Max(p.w, 2*spacing)
+	}
+	run := func(end, from densePoint) []densePoint {
+		dx, dz := end.x-from.x, end.z-from.z
+		l := math.Hypot(dx, dz)
+		if l < 1e-9 {
+			return nil
+		}
+		dx, dz = dx/l, dz/l
+		var out []densePoint
+		for t := spacing; t <= ce.dist+1e-9; t += spacing {
+			out = append(out, densePoint{x: end.x + dx*t, z: end.z + dz*t, w: end.w, d: end.d})
+		}
+		return out
+	}
+	n := len(pts)
+	k := min(max(n/20, 3), n-1)
+	if reach(pts[0]) {
+		pre := run(pts[0], pts[k])
+		for a, b := 0, len(pre)-1; a < b; a, b = a+1, b-1 {
+			pre[a], pre[b] = pre[b], pre[a]
+		}
+		pts = append(pre, pts...)
+	}
+	if n := len(pts); reach(pts[n-1]) {
+		pts = append(pts, run(pts[n-1], pts[n-1-k])...)
+	}
+	arcLengths(pts)
+	return pts
+}
+
 // carveCanyons cuts every canyon into g and returns the paths as carved.
 func carveCanyons(s *Settings, g *Grid, pool Pool) ([]CarvedPath, error) {
+	return carveCanyonsExt(s, g, nil, pool)
+}
+
+// carveCanyonsExt is carveCanyons with the canyons carried on past a
+// region's edge (ext nil: never).
+func carveCanyonsExt(s *Settings, g *Grid, ext *canyonExtend, pool Pool) ([]CarvedPath, error) {
+	return carveCanyonsHold(s, g, ext, pool, nil)
+}
+
+// carveCanyonsHold is carveCanyonsExt that also raises hold (when not nil)
+// to each held canyon's Hold over its width and margin.
+func carveCanyonsHold(s *Settings, g *Grid, ext *canyonExtend, pool Pool, hold []float32) ([]CarvedPath, error) {
 	var paths []cutPath
 	var carved []CarvedPath
 	for ci := range s.Canyons {
@@ -319,9 +392,14 @@ func carveCanyons(s *Settings, g *Grid, pool Pool) ([]CarvedPath, error) {
 		spacing := min(max(minW/4, g.Cell), 4)
 		pts := densify(c.Path, spacing)
 		meander(pts, c.Meander, c.MeanderLength, noise.Hash64(c.Seed, 0x4D45_414E))
+		pts = ext.extendEnds(pts, spacing)
 		grade(pts, g, 0, false)
+		first := len(paths)
 		paths = append(paths, cutPath{pts: pts, prof: profileFunc(c)})
 		paths = append(paths, tributaries(c, pts, g, spacing)...)
+		for k := first; k < len(paths); k++ {
+			paths[k].hold, paths[k].margin = noise.Clamp(c.Hold, 0, 1), math.Max(c.HoldMargin, 0)
+		}
 	}
 	for pi := range paths {
 		p := &paths[pi]
@@ -345,7 +423,7 @@ func carveCanyons(s *Settings, g *Grid, pool Pool) ([]CarvedPath, error) {
 		p := &paths[pi]
 		for k := 0; k+1 < len(p.pts); k++ {
 			a, b := p.pts[k], p.pts[k+1]
-			r := max(a.w, b.w) / 2
+			r := max(a.w, b.w)/2 + p.reachHold(hold)
 			j0 := int(math.Floor((min(a.z, b.z) - r - g.MinZ) / g.Cell))
 			j1 := int(math.Ceil((max(a.z, b.z) + r - g.MinZ) / g.Cell))
 			for j := max(j0, 0); j <= min(j1, s1-1); j++ {
@@ -359,7 +437,7 @@ func carveCanyons(s *Settings, g *Grid, pool Pool) ([]CarvedPath, error) {
 		for _, ref := range binned[j] {
 			p := &paths[ref.path]
 			a, b := p.pts[ref.seg], p.pts[ref.seg+1]
-			r := max(a.w, b.w) / 2
+			r := max(a.w, b.w)/2 + p.reachHold(hold)
 			i0 := int(math.Floor((min(a.x, b.x) - r - g.MinX) / g.Cell))
 			i1 := int(math.Ceil((max(a.x, b.x) + r - g.MinX) / g.Cell))
 			dx, dz := b.x-a.x, b.z-a.z
@@ -373,6 +451,12 @@ func carveCanyons(s *Settings, g *Grid, pool Pool) ([]CarvedPath, error) {
 				px, pz := a.x+dx*t, a.z+dz*t
 				w := a.w + (b.w-a.w)*t
 				d := math.Hypot(x-px, z-pz)
+				if hold != nil && p.hold > 0 {
+					hw := w / 2
+					if hv := float32(p.hold * (1 - noise.SmoothStep(hw, hw+p.margin+1e-6, d))); hv > hold[j*s1+i] {
+						hold[j*s1+i] = hv
+					}
+				}
 				if d >= w/2 || w <= 0 {
 					continue
 				}

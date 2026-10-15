@@ -25,6 +25,15 @@
 //
 // A pixel whose history is off screen, or a frame with no history at all (the
 // first, a cut, a resize), takes the new frame as it is.
+//
+// NOT A NUMBER. A NaN or infinite pixel in the frame is read as black here
+// (finite3), never blended. Unguarded, one NaN poisons the 3x3 statistics of
+// every neighbour that reads it, and the RGBA16F history keeps the result:
+// the NaN grows by a pixel each way every frame into a solid block. That is
+// how a handful of NaN-lit triangles (a normal map on a surface with
+// constant UVs, docs/regions/PRESETS_4.md) became white blocks over the
+// biome showcase's scanned scenery from 600 m up. The source was fixed;
+// this keeps the next one a pixel.
 
 in vec2 vUV;
 
@@ -36,6 +45,11 @@ uniform vec2 size;
 uniform float blendCurrent; // the new frame's share at rest
 
 out vec4 outColor;
+
+// finite3 is c, or black when any channel is NaN or infinite.
+vec3 finite3(vec3 c) {
+    return (any(isnan(c)) || any(isinf(c))) ? vec3(0.0) : c;
+}
 
 vec3 toYCoCg(vec3 c) {
     return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b,
@@ -69,7 +83,7 @@ vec3 sampleHistory(vec2 uv) {
     r += textureLod(history, vec2(t3.x, t12.y), 0.0).rgb * w3.x * w12.y;
     r += textureLod(history, vec2(t12.x, t3.y), 0.0).rgb * w12.x * w3.y;
     float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
-    return max(r / max(wsum, 1e-4), vec3(0.0));
+    return max(finite3(r / max(wsum, 1e-4)), vec3(0.0));
 }
 
 // Clips h toward the centre of the box [lo, hi] (Playdead's clip_aabb): the
@@ -86,12 +100,12 @@ vec3 clipToBox(vec3 lo, vec3 hi, vec3 h) {
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
     ivec2 last = ivec2(size) - 1;
-    vec3 cur = toYCoCg(texelFetch(current, p, 0).rgb);
+    vec3 cur = toYCoCg(finite3(texelFetch(current, p, 0).rgb));
     vec3 m1 = vec3(0.0), m2 = vec3(0.0);
     vec3 lo = cur, hi = cur;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
-            vec3 s = toYCoCg(texelFetch(current, clamp(p + ivec2(dx, dy), ivec2(0), last), 0).rgb);
+            vec3 s = toYCoCg(finite3(texelFetch(current, clamp(p + ivec2(dx, dy), ivec2(0), last), 0).rgb));
             m1 += s;
             m2 += s * s;
             lo = min(lo, s);

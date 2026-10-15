@@ -23,6 +23,10 @@ type SplatLayer struct {
 	AntiTile bool
 	// Relief is the parallax depth (m) of a top-down layer; 0 none.
 	Relief float32
+	// NoStrata keeps the strata ramp and the bedding off this layer (its
+	// `_strata` param off; the default, false, is every triplanar layer
+	// banded as always).
+	NoStrata bool
 }
 
 // SurfaceFx is a surface's terrain and rock effects, resolved.
@@ -33,14 +37,27 @@ type SurfaceFx struct {
 	TriplanarUpright   bool
 
 	// HasSplat is the effect with a weights texture and at least one layer.
-	HasSplat        bool
-	SplatWeights    string
-	SplatMin        mgl32.Vec2
-	SplatMax        mgl32.Vec2
-	SplatBlend      float32
-	SplatNormal     float32
-	SplatAO         float32
-	SplatLayers     [SplatLayers]SplatLayer
+	HasSplat     bool
+	SplatWeights string
+	SplatMin     mgl32.Vec2
+	SplatMax     mgl32.Vec2
+	SplatBlend   float32
+	SplatNormal  float32
+	SplatAO      float32
+	// SplatLayers are the layers; 5–8 (index 4..7) take part only in
+	// eight-layer mode (SplatEight).
+	SplatLayers [SplatLayersMax]SplatLayer
+	// SplatWeights2 is layers 5–8's weights; SplatEight is eight-layer mode:
+	// it named and at least one of layers 5–8 set. Off, the splat is the
+	// four-layer splat exactly (docs/regions/PHASE_3.md).
+	SplatWeights2 string
+	SplatEight    bool
+	// SplatAtlas are the layers whose atlas the splat's layers are packed
+	// into (its `atlas1..8` params; docs/regions/PHASE_6.md "Per-tile
+	// materials"): a region terrain's four-layer tile material names its
+	// eight-layer union's layers, so both sample the same atlas texels.
+	// All empty — every splat but those — is the splat's own layers.
+	SplatAtlas      [SplatAtlasMax]string
 	SplatStrata     string
 	SplatStrataLo   float32
 	SplatStrataHi   float32
@@ -52,6 +69,9 @@ type SurfaceFx struct {
 	SplatBedding        float32
 	SplatBeddingSpacing float32
 	SplatWallNormal     float32
+	// SplatRipple is the sand ripples on one layer: strength (0: none),
+	// wavelength in metres, the wind's bearing in degrees and the layer.
+	SplatRipple, SplatRippleWave, SplatRippleAngle, SplatRippleLayer float32
 
 	// HasGroundBlend is the effect with both of its maps named.
 	HasGroundBlend bool
@@ -111,8 +131,8 @@ func resolveSurfaceFx(d *Doc, s *Surface) {
 		f.SplatWeights = e.Texture("weights")
 		f.SplatMin, f.SplatMax = e.Vec2("bounds_min"), e.Vec2("bounds_max")
 		f.SplatBlend, f.SplatNormal, f.SplatAO = e.Float("blend"), e.Float("normal_strength"), e.Float("ao")
-		layers := 0
-		for i := 0; i < SplatLayers; i++ {
+		layers, upper := 0, 0
+		for i := 0; i < SplatLayersMax; i++ {
 			l := SplatLayer{
 				Texture:   e.Texture(SplatLayerParam(i, "")),
 				Scale:     e.Float(SplatLayerParam(i, "scale")),
@@ -121,11 +141,48 @@ func resolveSurfaceFx(d *Doc, s *Surface) {
 				Tint:      e.Color(SplatLayerParam(i, "tint")),
 				AntiTile:  e.Bool(SplatLayerParam(i, "anti_tile")),
 				Relief:    e.Float(SplatLayerParam(i, "relief")),
+				NoStrata:  !e.Bool(SplatLayerParam(i, "strata")),
 			}
 			if l.Texture != "" {
-				layers++
+				if i < SplatLayers {
+					layers++
+				} else {
+					upper++
+				}
 			}
 			f.SplatLayers[i] = l
+		}
+		f.SplatWeights2 = e.Texture("weights2")
+		f.SplatEight = f.SplatWeights2 != "" && upper > 0
+		if f.SplatEight {
+			layers += upper
+		} else {
+			// Not in eight-layer mode: layers 5–8 are not this splat's, and
+			// leaving them out keeps it the four-layer state to the byte
+			// (the vis pass compares states with !=).
+			for i := SplatLayers; i < SplatLayersMax; i++ {
+				f.SplatLayers[i] = SplatLayer{}
+			}
+			f.SplatWeights2 = ""
+		}
+		// The shared atlas: kept only when every layer this splat draws is
+		// in it (otherwise the splat's own layers, as always).
+		var atlas [SplatAtlasMax]string
+		shared := false
+		for i := range atlas {
+			atlas[i] = e.Texture(SplatAtlasParam(i))
+			shared = shared || atlas[i] != ""
+		}
+		if shared {
+			for i := range f.SplatLayers {
+				if tex := f.SplatLayers[i].Texture; tex != "" && !containsName(atlas[:], tex) {
+					shared = false
+					break
+				}
+			}
+		}
+		if shared {
+			f.SplatAtlas = atlas
 		}
 		f.SplatStrata = e.Texture("strata")
 		r := e.Vec2("strata_range")
@@ -133,6 +190,8 @@ func resolveSurfaceFx(d *Doc, s *Surface) {
 		f.SplatStrataAmt, f.SplatStrataWarp = e.Float("strata_strength"), e.Float("strata_warp")
 		f.SplatBedding, f.SplatBeddingSpacing = e.Float("bedding"), e.Float("bedding_spacing")
 		f.SplatWallNormal = e.Float("wall_normal")
+		f.SplatRipple, f.SplatRippleWave = e.Float("ripple"), e.Float("ripple_wavelength")
+		f.SplatRippleAngle, f.SplatRippleLayer = e.Float("ripple_angle"), e.Float("ripple_layer")
 		// Weights and something to weigh, or nothing: a splat with no
 		// weights would paint the terrain its first layer and nothing else,
 		// which is the plain texture with extra steps.
@@ -168,4 +227,14 @@ func resolveSurfaceFx(d *Doc, s *Surface) {
 		f.GradeHue, f.GradeSaturation = e.Float("hue"), e.Float("saturation")
 		f.GradeTint, f.GradeBrightness = e.Color("tint"), e.Float("brightness")
 	}
+}
+
+// containsName reports whether names holds name.
+func containsName(names []string, name string) bool {
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }

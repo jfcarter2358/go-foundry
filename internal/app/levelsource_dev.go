@@ -26,5 +26,6 @@ const levelSourceExt = levelio.LevelExt
 // script's load_level.
 func levelSourcePath(name string) string { return levelio.LevelPath(name) }
 
-// beginLevelLoad starts a stepped load of one.
-func beginLevelLoad(path string) (*levelio.LoadJob, error) { return levelio.BeginLoad(path) }
+// beginLevelLoad starts a stepped load of one, its YAML parsed off the main
+// thread so the loading screen moves over it.
+func beginLevelLoad(path string) (*levelio.LoadJob, error) { return levelio.BeginLoadAsync(path) }

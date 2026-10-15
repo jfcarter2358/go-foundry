@@ -213,6 +213,25 @@ func checkSceneryCollision(out io.Writer, lvl *world.Level) int {
 				order = append(order, key)
 			}
 		}
+		// Its far impostor (world/scenery_draw.go): a missing file costs the
+		// far tier (the mesh is drawn instead), never the placement.
+		if s.Impostor != "" {
+			text := ""
+			if _, err := os.Stat(fileutil.ResolveAssetPath(s.Impostor)); err != nil {
+				text = fmt.Sprintf("impostor %q is missing: its mesh is drawn instead", s.Impostor)
+			} else if s.DrawDistance > 0 && s.EffectiveImpostorDistance() >= s.DrawDistance {
+				text = fmt.Sprintf("impostor_distance %g is not inside draw_distance %g: the impostor is never drawn",
+					s.EffectiveImpostorDistance(), s.DrawDistance)
+			}
+			if key := "\x00imp\x00" + s.Impostor + "\x00" + text; text != "" {
+				if g := groups[key]; g != nil {
+					g.n++
+				} else {
+					groups[key] = &group{first: s.ID, model: s.Model, mode: "-", n: 1, text: text}
+					order = append(order, key)
+				}
+			}
+		}
 		if s.Unloaded {
 			continue // its chunk is off and unloaded: no bounds to judge
 		}

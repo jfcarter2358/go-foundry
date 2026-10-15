@@ -17,7 +17,9 @@ package terrain
 // ground: steep walls, flat tops.
 //
 // Both the thresholds and the rim width are MEASURED rather than guessed:
-// m is sampled on a coarse grid over the map first, the thresholds are its
+// m is sampled on a coarse grid over the map first (the classic square; a
+// region's footprint bounds, in its own coordinates, for an environment
+// region's provider — provider.go), the thresholds are its
 // quantiles (so Coverage means what it says on any seed) and the width
 // comes from m's mean gradient near the first threshold (so Rim is metres
 // whatever the Scale).
@@ -45,7 +47,7 @@ type mesaField struct {
 	width               float64 // smoothstep half-width in m units
 }
 
-func newMesaField(s *Settings) *mesaField {
+func newMesaField(s *Settings, over Rect) *mesaField {
 	m := s.Mesa
 	scale := max(m.Scale, 1)
 	mf := &mesaField{
@@ -61,14 +63,15 @@ func newMesaField(s *Settings) *mesaField {
 		jointScale: max(m.JointSpacing, 1),
 		jointAmt:   m.Joints,
 	}
-	// Measure m on a coarse grid: its quantiles and its gradient.
+	// Measure m on a coarse grid over the rectangle: its quantiles and its
+	// gradient.
 	const k = 96
-	half := s.Size / 2
+	w, h := over.MaxX-over.MinX, over.MaxZ-over.MinZ
 	vals := make([]float64, 0, k*k)
 	for j := 0; j < k; j++ {
 		for i := 0; i < k; i++ {
-			x := -half + s.Size*(float64(i)+0.5)/k
-			z := -half + s.Size*(float64(j)+0.5)/k
+			x := over.MinX + w*(float64(i)+0.5)/k
+			z := over.MinZ + h*(float64(j)+0.5)/k
 			vals = append(vals, mf.raw(x, z))
 		}
 	}
@@ -86,15 +89,15 @@ func newMesaField(s *Settings) *mesaField {
 	if len(mf.thresholds) > 0 {
 		t0 := mf.thresholds[0]
 		spread := (sorted[len(sorted)*3/4] - sorted[len(sorted)/4]) * 0.5
-		d := s.Size / k / 4
+		d := max(w, h) / k / 4
 		sum, cnt := 0.0, 0
 		for idx, v := range vals {
 			if math.Abs(v-t0) > spread {
 				continue
 			}
 			i, j := idx%k, idx/k
-			x := -half + s.Size*(float64(i)+0.5)/k
-			z := -half + s.Size*(float64(j)+0.5)/k
+			x := over.MinX + w*(float64(i)+0.5)/k
+			z := over.MinZ + h*(float64(j)+0.5)/k
 			gx := (mf.raw(x+d, z) - mf.raw(x-d, z)) / (2 * d)
 			gz := (mf.raw(x, z+d) - mf.raw(x, z-d)) / (2 * d)
 			sum += math.Hypot(gx, gz)
@@ -160,9 +163,10 @@ func (mf *mesaField) at(x, z, roughness float64, share []float64) float64 {
 	return v
 }
 
-// baseShape writes the base heights into g.
-func baseShape(s *Settings, g *Grid, pool Pool) error {
-	bs := newBaseShaper(s)
+// baseShape writes the base heights into g, the mesa field measured over
+// the rectangle over.
+func baseShape(s *Settings, g *Grid, over Rect, pool Pool) error {
+	bs := newBaseShaper(s, over)
 	return rows(pool, g.S(), func(j int) {
 		z := g.Z(j)
 		share := make([]float64, max(s.Mesa.Tiers, 1))
@@ -179,22 +183,36 @@ type baseShaper struct {
 	s         *Settings
 	low, warp noise.Fractal
 	mf        *mesaField
+	// lf is the provider's extra landforms (landform.go); nil, as for
+	// every classic terrain, when none is on.
+	lf *landformShaper
 }
 
-func newBaseShaper(s *Settings) *baseShaper {
+func newBaseShaper(s *Settings, over Rect) *baseShaper {
 	b := s.Base
 	bs := &baseShaper{s: s,
 		low:  noise.Fractal{Seed: noise.Hash64(s.Seed, 0x4241_5345), Octaves: max(b.Octaves, 1), Frequency: b.Frequency, Gain: b.Gain},
 		warp: noise.Fractal{Seed: noise.Hash64(s.Seed, 0x4257_5250), Octaves: 3, Frequency: b.Frequency * 0.6},
 	}
 	if s.Mesa.Height != 0 && s.Mesa.Tiers > 0 {
-		bs.mf = newMesaField(s)
+		bs.mf = newMesaField(s, over)
 	}
+	bs.lf = newLandformShaper(s, over)
 	return bs
 }
 
 // at is the base height at (x, z); share is scratch of Tiers (at least 1).
 func (bs *baseShaper) at(x, z float64, share []float64) float64 {
+	h := bs.classic(x, z, share)
+	if bs.lf != nil {
+		h = bs.lf.at(x, z, h)
+	}
+	return h
+}
+
+// classic is the lowland and the mesa field: the base shape before any
+// landform (landform.go), unchanged since the canyon's goldens.
+func (bs *baseShaper) classic(x, z float64, share []float64) float64 {
 	b, m := bs.s.Base, bs.s.Mesa
 	wx, wz := x, z
 	if b.Warp > 0 {

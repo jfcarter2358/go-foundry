@@ -87,7 +87,7 @@ func TestStitchStripMeetsTheTileRim(t *testing.T) {
 	tp := tilePlan{count: 2, per: 32, step: 1, size: 32, base: -10, quant: 1.0 / 1024}
 	half, cell := 32.0, 8.0
 	l := &farLattice{cell: cell, o: half + cell, r: half + 3*cell}
-	l.minX = -l.r
+	l.minX, l.minZ = -l.r, -l.r
 	l.n = int(math.Round(2*l.r/cell)) + 1
 	l.h = make([]float32, l.n*l.n)
 	for k := range l.h {

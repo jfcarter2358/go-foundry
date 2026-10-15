@@ -90,6 +90,22 @@ type TerrainMaterialArtifact struct {
 	RockMean    [3]float64 `yaml:"rock_mean,flow,omitempty"`
 	FarMaterial string     `yaml:"far_material,omitempty"`
 	FarWeights  string     `yaml:"far_weights,omitempty"`
+	// Weights2 and FarWeights2 are an eight-layer splat's second weights
+	// maps (layers 5–8), and Layers its layers — a region_material's
+	// (docs/regions/PHASE_3.md); a terrain_material writes none of them.
+	Weights2    string                `yaml:"weights2,omitempty"`
+	FarWeights2 string                `yaml:"far_weights2,omitempty"`
+	Layers      []RegionMaterialLayer `yaml:"layers,omitempty"`
+	// Tiles are a region_material's per-tile materials (its per_tile
+	// switch; region_material_tiles.go).
+	Tiles []RegionTileMaterial `yaml:"tiles,omitempty"`
+	// CoverCoverage is a terrain_material's cover layers' shares of the
+	// ground (wet, ash, snow; terrain_material_cover.go), when it has any.
+	CoverCoverage []float64 `yaml:"cover_coverage,flow,omitempty"`
+	// Palette is a region material's ground layers when there are more than
+	// eight (region_material_palette.go): every tile wears a material of at
+	// most eight of them, sharing one atlas.
+	Palette int `yaml:"palette,omitempty"`
 }
 
 func init() {
@@ -97,6 +113,9 @@ func init() {
 		Name:     TerrainMaterialKind,
 		Label:    "Terrain material",
 		Category: "Materials",
+		// Served by the level generation doc's shared stages for every
+		// region; never expanded per region (docs/regions/SPEC.md).
+		Regional: procgen.RegionalShared,
 		Version:  1,
 		Doc: "The material a terrain's tiles wear: sand, cracked ground, gravel and rock layers from a Poly Haven " +
 			"textures stage, splatted by the terrain's masks (rock on slopes and cliffs, triplanar and banded by the " +
@@ -118,8 +137,8 @@ func terrainMaterialParams() []procgen.ParamDef {
 	layer := func(name, def, doc string) procgen.ParamDef {
 		return procgen.ParamDef{Name: name, Type: procgen.ParamString, Default: s(def), Doc: doc}
 	}
-	return []procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{TerrainKind}, Default: procgen.StageRef(""),
+	return append([]procgen.ParamDef{
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: TerrainSources, Default: procgen.StageRef(""),
 			Doc: "The terrain stage whose masks place the layers."},
 		{Name: "textures", Type: procgen.ParamStage, StageKinds: []string{PolyHavenTexturesKind}, Default: procgen.StageRef(""),
 			Doc: "The Poly Haven textures stage the layers come from."},
@@ -166,6 +185,11 @@ func terrainMaterialParams() []procgen.ParamDef {
 		unit("ao", "AO", 0.8, "How much the layers' ambient occlusion darkens the ambient light."),
 		{Name: "rock_tint", Added: true, Type: procgen.ParamColor, Label: "Rock tint", Default: procgen.Color(1, 1, 1), Min: 0, Max: 4,
 			Doc: "Multiplies the rock layer's colour on top of the layer match: warmer and redder makes desert-varnished sandstone of a pale scan."},
+		{Name: "sand_tint", Added: true, Type: procgen.ParamColor, Label: "Sand tint", Default: procgen.Color(1, 1, 1), Min: 0, Max: 4,
+			Doc: "Multiplies the sand layer's colour (the everywhere layer: a savannah's grass): below 1 in blue deepens a " +
+				"bleached scan toward gold, so a plain does not read pale straw at distance."},
+		{Name: "cracked_tint", Added: true, Type: procgen.ParamColor, Label: "Cracked tint", Default: procgen.Color(1, 1, 1), Min: 0, Max: 4,
+			Doc: "Multiplies the cracked layer's colour on top of the layer match: a volcanic preset darkens its bare lava with it, so the lobes read darker than the cinders round them."},
 		{Name: "cap_rock", Added: true, Type: procgen.ParamFloat, Label: "Caprock", Default: f(0), Min: 0, Max: 1, Step: 0.01,
 			Doc: "Bare rock on the high flats — a mesa's caprock, slickrock with sand in its hollows — rather than sand: how much, in patches. 0: the flats are sand and cracked ground at any height."},
 		{Name: "cap_height", Added: true, Type: procgen.ParamVec2, Label: "Caprock height", Default: v2(0.5, 0.7), Min: 0, Max: 1, Step: 0.01,
@@ -186,12 +210,22 @@ func terrainMaterialParams() []procgen.ParamDef {
 			Doc: "Parallax depth of the gravel layer (the splat's relief): its stones stand up off the ground instead of lying painted on it. 0: none."},
 		{Name: "cracked_relief", Added: true, Type: procgen.ParamFloat, Label: "Cracked relief (m)", Default: f(0), Min: 0, Max: 0.5, Step: 0.005,
 			Doc: "Parallax depth of the cracked-ground layer: its plates lift at their edges. 0: none."},
+		{Name: "far_scale", Added: true, Type: procgen.ParamFloat, Label: "Far texture scale", Default: f(1), Min: 0.1, Max: 50, Step: 0.1,
+			Doc: "Multiplies the layers' metres-a-repeat in the far backdrop's material: a 10 m rock repeat up a far peak a kilometre off " +
+				"tiles into a regular stipple; 4–8 reads as strata instead."},
+		{Name: "sand_ripple", Added: true, Type: procgen.ParamFloat, Label: "Sand ripples", Default: f(0), Min: 0, Max: 2, Step: 0.01,
+			Doc: "Wind ripples on the sand layer (the splat's ripple): sinuous crests a hand's breadth apart in the normals, " +
+				"a steep lee and a gentle windward face, patchy, on level ground, faded with distance. The ripples' slope; 0: none."},
+		{Name: "sand_ripple_wavelength", Added: true, Type: procgen.ParamFloat, Label: "Ripple wavelength (m)", Default: f(0.14), Min: 0.02, Max: 5, Step: 0.01,
+			Doc: "Crest to crest."},
+		{Name: "sand_ripple_wind", Added: true, Type: procgen.ParamFloat, Label: "Ripple wind (°)", Default: f(60), Min: -360, Max: 360, Step: 1,
+			Doc: "The way the wind blows across the ripples, degrees clockwise from +Z seen from above (as drift's wind)."},
 		{Name: "wash_bars", Added: true, Type: procgen.ParamFloat, Label: "Wash bars", Default: f(0), Min: 0, Max: 1, Step: 0.01,
 			Doc: "Sand bars in the washes: streaks of sand drawn out along the flow between gravel channels, so a wash is not one " +
 				"gravel carpet. How much of the gravel they take; 0: none."},
 		{Name: "wash_bar_size", Added: true, Type: procgen.ParamVec2, Label: "Wash bar size (m)", Default: v2(28, 5), Min: 0.5, Max: 500, Step: 0.5,
 			Doc: "A bar's typical length along the flow and width across it."},
-	}
+	}, coverParams()...)
 }
 
 func validateTerrainMaterial(_ *procgen.Doc, _ *procgen.Stage, p procgen.Params) []string {
@@ -514,21 +548,56 @@ func splatLayers(p procgen.Params, set *TextureSetManifest) ([4]*TextureLayer, e
 	return out, nil
 }
 
+// coverLayers resolves the cover keys (wet, ash, snow) against the texture
+// set: nil where a key is empty.
+func coverLayers(p procgen.Params, set *TextureSetManifest) ([3]*TextureLayer, error) {
+	var out [3]*TextureLayer
+	for r := 0; r < 3; r++ {
+		key := groundRoleKeys[roleWet+r]
+		name := p.Str(key)
+		if name == "" {
+			continue
+		}
+		l := set.Layer(name)
+		if l == nil {
+			return out, fmt.Errorf("the textures stage has no layer %q (for %s)", name, key)
+		}
+		out[r] = l
+	}
+	return out, nil
+}
+
 // terrainMaterialMaps is everything the run writes, worked out.
 type terrainMaterialMaps struct {
 	weights, ground, height, strata []uint8
 	coverage                        [4]float64
-	tints                           [4][3]float64
-	groundMean                      [3]float64
-	rockMean                        [3]float64
+	// weights2 and coverCoverage are the cover layers' (wet, ash, snow in
+	// RGB of weights2), nil without covers.
+	weights2      []uint8
+	coverCoverage []float64
+	tints         [4][3]float64
+	groundMean    [3]float64
+	rockMean      [3]float64
 }
 
-func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*TextureLayer, seed uint64, pool terrain.Pool) (*terrainMaterialMaps, error) {
+func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*TextureLayer, covers [3]*TextureLayer, seed uint64,
+	pool terrain.Pool) (*terrainMaterialMaps, error) {
 	g := t.Grid
 	sz := g.S()
-	w, err := groundWeights(t, p, seed, pool)
+	// The four rules, and the covers laid over them when p names any
+	// (terrain_material_cover.go): nc weights a sample, 4 or 7.
+	w, nc, err := coverGroundWeights(t, p, seed, pool)
 	if err != nil {
 		return nil, err
+	}
+	var coverMeans [3][3]float64
+	for r, l := range covers {
+		coverMeans[r] = [3]float64{0.5, 0.5, 0.5}
+		if l != nil {
+			if m, ok := layerMean(l.Albedo); ok {
+				coverMeans[r] = m
+			}
+		}
 	}
 	var means [4][3]float64
 	for i, l := range layers {
@@ -543,9 +612,11 @@ func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*T
 	// cracked-mud scan sits in red sand country; the ground map uses the
 	// tinted colours, as the shader will draw them.
 	tints := layerTints(means, layers, p.Float("layer_match"))
-	rt := p.Vec3("rock_tint")
+	rt, st, ct := p.Vec3("rock_tint"), p.Vec3("sand_tint"), p.Vec3("cracked_tint")
 	for ch := 0; ch < 3; ch++ {
 		tints[3][ch] *= rt[ch]
+		tints[0][ch] *= st[ch]
+		tints[1][ch] *= ct[ch]
 	}
 	for i := range means {
 		for ch := 0; ch < 3; ch++ {
@@ -554,6 +625,10 @@ func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*T
 	}
 	out := &terrainMaterialMaps{weights: make([]uint8, 4*sz*sz), ground: make([]uint8, 4*sz*sz), height: make([]uint8, 4*sz*sz),
 		tints: tints, rockMean: means[3]}
+	if nc > 4 {
+		out.weights2 = make([]uint8, 4*sz*sz)
+		out.coverCoverage = make([]float64, 3)
+	}
 	lo, hi := g.Range()
 	span := float64(hi - lo)
 	if span == 0 {
@@ -562,11 +637,19 @@ func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*T
 	for k := 0; k < sz*sz; k++ {
 		var col [3]float64
 		for c := 0; c < 4; c++ {
-			wc := float64(w[4*k+c])
+			wc := float64(w[nc*k+c])
 			out.weights[4*k+c] = uint8(noise.Clamp(wc, 0, 1)*255 + 0.5)
 			out.coverage[c] += wc
 			for ch := 0; ch < 3; ch++ {
 				col[ch] += wc * means[c][ch]
+			}
+		}
+		for c := 4; c < nc; c++ {
+			wc := float64(w[nc*k+c])
+			out.weights2[4*k+c-4] = uint8(noise.Clamp(wc, 0, 1)*255 + 0.5)
+			out.coverCoverage[c-4] += wc
+			for ch := 0; ch < 3; ch++ {
+				col[ch] += wc * coverMeans[c-4][ch]
 			}
 		}
 		for ch := 0; ch < 3; ch++ {
@@ -580,6 +663,9 @@ func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*T
 	n := float64(sz * sz)
 	for c := range out.coverage {
 		out.coverage[c] /= n
+	}
+	for c := range out.coverCoverage {
+		out.coverCoverage[c] /= n
 	}
 	for ch := range out.groundMean {
 		out.groundMean[ch] /= n
@@ -611,8 +697,12 @@ func runTerrainMaterial(rc *procgen.RunContext) error {
 	if err != nil {
 		return err
 	}
+	covers, err := coverLayers(p, set)
+	if err != nil {
+		return err
+	}
 	rc.Progress(0.05)
-	maps, err := buildTerrainMaterialMaps(t, p, layers, rc.Seed, &rc.Env)
+	maps, err := buildTerrainMaterialMaps(t, p, layers, covers, rc.Seed, &rc.Env)
 	if err != nil {
 		return err
 	}
@@ -625,6 +715,13 @@ func runTerrainMaterial(rc *procgen.RunContext) error {
 		pix  []uint8
 	}{{"weights.png", sz, sz, maps.weights}, {"ground.png", sz, sz, maps.ground}, {"height.png", sz, sz, maps.height},
 		{"strata.png", len(maps.strata) / 4, 1, maps.strata}}
+	if maps.weights2 != nil {
+		files = append(files, struct {
+			name string
+			w, h int
+			pix  []uint8
+		}{"weights2.png", sz, sz, maps.weights2})
+	}
 	if err := rc.Parallel(len(files), func(i int) error {
 		data, err := terrain.EncodeRGBA(files[i].w, files[i].h, files[i].pix)
 		if err != nil {
@@ -651,12 +748,18 @@ func runTerrainMaterial(rc *procgen.RunContext) error {
 	for c := range a.Coverage {
 		a.Coverage[c] = round3(a.Coverage[c])
 	}
-	d := terrainMaterialDoc(a, p, layers, maps.tints)
+	if maps.weights2 != nil {
+		a.Weights2 = mapRef(rc, "weights2.png")
+		for _, c := range maps.coverCoverage {
+			a.CoverCoverage = append(a.CoverCoverage, round3(c))
+		}
+	}
+	d := terrainMaterialDoc(a, p, layers, covers, maps.tints)
 	if err := writeMaterial(rc, d); err != nil {
 		return err
 	}
 	if t.Meta.Far != nil {
-		if err := writeFarMaterial(rc, t, p, layers, maps.tints, a); err != nil {
+		if err := writeFarMaterial(rc, t, p, layers, covers, maps.tints, a); err != nil {
 			return err
 		}
 	}
@@ -675,7 +778,7 @@ func runTerrainMaterial(rc *procgen.RunContext) error {
 }
 
 // terrainMaterialDoc is the splat material over the maps in a.
-func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]*TextureLayer, tints [4][3]float64) *material.Doc {
+func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]*TextureLayer, covers [3]*TextureLayer, tints [4][3]float64) *material.Doc {
 	d := &material.Doc{Name: a.Material, Domain: material.DomainSurface,
 		Doc: "Generated terrain: sand, cracked ground, gravel and rock splatted by the terrain's masks"}
 	e := d.AddEffect(material.KindSplat)
@@ -711,6 +814,36 @@ func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]
 			e.Set(material.SplatLayerParam(i, "tint"), material.ColorValue(mgl32.Vec3{float32(round3(t[0])), float32(round3(t[1])), float32(round3(t[2]))}))
 		}
 	}
+	// The covers (terrain_material_cover.go): layers 5–7 over weights2's
+	// red, green and blue — an eight-layer splat — when there are any.
+	if a.Weights2 != "" {
+		e.Set("weights2", material.TextureValue(a.Weights2))
+		for r, l := range covers {
+			if l == nil {
+				continue
+			}
+			i := material.SplatLayers + r
+			e.Set(material.SplatLayerParam(i, ""), material.TextureValue(l.Albedo))
+			scale := l.Scale
+			if scale <= 0 {
+				scale = 3
+			}
+			e.Set(material.SplatLayerParam(i, "scale"), material.FloatValue(float32(round3(scale))))
+			if p.Bool("anti_tile") {
+				e.Set(material.SplatLayerParam(i, "anti_tile"), material.BoolValue(true))
+			}
+		}
+	}
+	terrainMaterialExtras(d, e, a, p)
+	return d
+}
+
+// terrainMaterialExtras sets a ground splat's material-level knobs from a
+// terrain_material's params p — the strata ramp over a's height range, the
+// bedding, the walls' normal strength — on its splat effect e, and adds
+// the macro variation, varnish and detail effects to d. Shared with
+// region_material (the lead environment's params).
+func terrainMaterialExtras(d *material.Doc, e *material.Effect, a *TerrainMaterialArtifact, p procgen.Params) {
 	if st := p.Float("strata"); st > 0 && a.Strata != "" {
 		e.Set("strata", material.TextureValue(a.Strata))
 		e.Set("strata_range", material.Vec2Value(mgl32.Vec2{a.HeightLo, a.HeightHi}))
@@ -723,6 +856,11 @@ func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]
 	}
 	if wn := p.Float("wall_normal"); wn != 1 {
 		e.Set("wall_normal", material.FloatValue(float32(wn)))
+	}
+	if r := p.Float("sand_ripple"); r > 0 {
+		e.Set("ripple", material.FloatValue(float32(r)))
+		e.Set("ripple_wavelength", material.FloatValue(float32(p.Float("sand_ripple_wavelength"))))
+		e.Set("ripple_angle", material.FloatValue(float32(p.Float("sand_ripple_wind"))))
 	}
 	if m := p.Float("macro"); m > 0 {
 		e := d.AddEffect(material.KindMacroVariation)
@@ -741,7 +879,6 @@ func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]
 		e.Set("map", material.TextureValue(det))
 		e.Set("scale", material.FloatValue(float32(p.Float("detail_scale"))))
 	}
-	return d
 }
 
 func previewTerrainMaterial(pc *procgen.PreviewContext) (*procgen.PreviewData, error) {
@@ -765,7 +902,7 @@ func previewTerrainMaterial(pc *procgen.PreviewContext) (*procgen.PreviewData, e
 		// manifest; read the set's manifest from its last run if there is one.
 		layers = previewLayersFromDisk(pc, p)
 	}
-	maps, err := buildTerrainMaterialMaps(t, p, layers, pc.Seed, &pc.Env)
+	maps, err := buildTerrainMaterialMaps(t, p, layers, [3]*TextureLayer{}, pc.Seed, &pc.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -782,6 +919,13 @@ func previewTerrainMaterial(pc *procgen.PreviewContext) (*procgen.PreviewData, e
 			wl := float64(maps.weights[4*k+l]) / 255
 			for ch := 0; ch < 3; ch++ {
 				c[ch] += wl * falseCol[l][ch]
+			}
+		}
+		// The covers: wet teal, ash charcoal, snow white.
+		for l := 0; maps.weights2 != nil && l < 3; l++ {
+			wl := float64(maps.weights2[4*k+l]) / 255
+			for ch := 0; ch < 3; ch++ {
+				c[ch] += wl * [3][3]float64{{0.2, 0.7, 0.65}, {0.2, 0.2, 0.22}, {1, 1, 1}}[l][ch]
 			}
 		}
 		for ch := 0; ch < 3; ch++ {

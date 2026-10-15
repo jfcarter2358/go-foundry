@@ -517,6 +517,18 @@ func (m *Mesh) Write(path string) error {
 	return fileutil.WriteFileAtomic(path, buf.Bytes())
 }
 
+// WriteNoBackup saves the mesh to path atomically, like Write, but keeps no
+// .bak of the file it replaces: a generator's cooked meshes are rebuilt on
+// demand, and a backup of every recooked tile would double its output
+// folder on each rerun (docs/regions/PRESETS_3.md).
+func (m *Mesh) WriteNoBackup(path string) error {
+	var buf bytes.Buffer
+	if err := m.Encode(&buf); err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomicNoBackup(path, buf.Bytes())
+}
+
 // readPrefix reads and checks a file's header and metadata.
 func readPrefix(r io.Reader) (*Mesh, int64, error) {
 	var hdr [prefixSize]byte

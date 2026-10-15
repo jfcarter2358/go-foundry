@@ -557,6 +557,16 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 			}
 			ProfileEnd()
 
+			// --- Grass fields (grass_field.go) ---
+			// The Poly Haven grass instancer: the same opaque, depth-written,
+			// alpha-to-coverage cutout as the foliage above, on either frame
+			// path (the visibility buffer is resolved by now).
+			ProfileBegin("grass")
+			if !o.skip("grass") {
+				RenderGrassFields(lvl, projView, &frustum, shadowFrame)
+			}
+			ProfileEnd()
+
 			// --- Scatter volumes (GPU grass / flowers / rock) ---
 			// After opaque geometry but before the transparent pass:
 			// blades and rocks are solid and depth-written, so anything
@@ -663,7 +673,7 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		if !editorWire {
 			ProfileBegin("volumetrics")
 			if !o.skip("volumetrics") {
-				RenderVolumetrics(lvl, projView, gfx.Cam.Position, &frustum, MainVolumeTargets)
+				RenderVolumetricsLit(lvl, projView, gfx.Cam.Position, &frustum, MainVolumeTargets, shadowFrame)
 			}
 			ProfileEnd()
 		}

@@ -17,23 +17,18 @@ package terrain
 // numbers its neighbour does, so the update is conservative, symmetric and
 // independent of scheduling. Rows run in parallel.
 
-import (
-	"math"
-
-	"foundry/internal/procgen/noise"
-)
-
-// thermal relaxes g.
-func thermal(s *Settings, g *Grid, c *compiledStrata, off, deposit []float32, pool Pool, progress func(float32)) error {
-	t := s.Thermal
+// thermal relaxes the field. The iterations and rate are the knobs'; the
+// angle at each sample is the material model's (each region's own talus and
+// cliff angles, at its own strata).
+func thermal(fd *field, pool Pool, progress func(float32)) error {
+	g, deposit := fd.g, fd.deposit
+	t := fd.k.thermal
 	if t.Iterations <= 0 || t.Rate <= 0 {
 		return nil
 	}
 	sz := g.S()
 	start := append([]float32(nil), g.H...)
 	src, dst := g.H, make([]float32, len(g.H))
-	tanLo := math.Tan(t.TalusAngle * math.Pi / 180)
-	tanHi := math.Tan(min(t.CliffAngle, 89.5) * math.Pi / 180)
 	limit := make([]float32, len(g.H)) // allowed drop per cell of distance
 	// A quarter of Rate per pair: a sample with all eight neighbours below
 	// it sheds at most 2·Rate of its largest excess, which stays stable for
@@ -44,9 +39,7 @@ func thermal(s *Settings, g *Grid, c *compiledStrata, off, deposit []float32, po
 		if err := rows(pool, sz, func(j int) {
 			for i := 0; i < sz; i++ {
 				k := j*sz + i
-				hd := float64(c.hardness(float64(src[k] + off[k])))
-				f := noise.SmoothStep(0.35, 0.8, hd)
-				limit[k] = float32(tanLo+(tanHi-tanLo)*f) * cell
+				limit[k] = fd.m.talus(k, src[k]) * cell
 			}
 		}); err != nil {
 			return err

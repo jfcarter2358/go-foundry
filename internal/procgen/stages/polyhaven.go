@@ -79,6 +79,10 @@ func init() {
 		Category: "Rocks",
 		// 2: scans cook with phimport.ScanAttrRadiusCap (docs/canyon/PERF.md).
 		Version: 2,
+		// Per environment region of a level generation doc; the imports are
+		// shared (polyhaven_region.go).
+		Regional: procgen.RegionalPerRegion,
+		OnDemand: true,
 		Doc: "Rock and cliff scans downloaded from Poly Haven (CC0) — namaqualand cliffs and boulders, rock faces, stones — " +
 			"imported (textures converted, normal maps, the placement frame with a back estimated for cliff pieces), cooked " +
 			"to Nanite meshes, and described in the rocks manifest scatter and cliff_wall place from.",
@@ -95,7 +99,9 @@ func init() {
 		Label:    "Poly Haven plants",
 		Category: "Rocks",
 		// 2: scans cook with phimport.ScanAttrRadiusCap (docs/canyon/PERF.md).
-		Version: 2,
+		Version:  2,
+		Regional: procgen.RegionalPerRegion,
+		OnDemand: true,
 		Doc: "Plant scans downloaded from Poly Haven (CC0) — quiver trees, shrubs, dead wood, succulents — imported with " +
 			"their alpha-cutout, double-sided leaves, cooked to Nanite meshes without collision, and described in a rocks " +
 			"manifest so scatter rules place them as scenery.",
@@ -148,6 +154,14 @@ func polyHavenModelParams(plant bool) []procgen.ParamDef {
 			Doc: "Decimate each scan to this budget before the cook (0: as scanned). Nanite draws dense meshes cheaply, but every placement costs the cull its leaves, and the disk holds every one."},
 		{Name: "lite_triangles", Type: procgen.ParamInt, Label: "Lite triangles", Default: i(0), Min: 0, Max: 10000000,
 			Doc: "Also make a light copy of each scan at this budget (named <id>_lite) — what a scatter rule's Max triangles picks for pieces placed by the thousand."},
+	}
+	if plant {
+		// Added: off keeps every existing plants stage's hash and meshes.
+		out = append(out, procgen.ParamDef{Name: "thin_foliage", Added: true, Type: procgen.ParamBool, Label: "Thin foliage",
+			Default: procgen.Bool(false),
+			Doc: "Decimate leaves and blades by keeping whole cards (fewer, enlarged) instead of collapsing their edges: a " +
+				"needle tree or a grass clump of many tiny pieces keeps its foliage at a tenth of its triangles instead of " +
+				"going bare (phimport/decimate_cards.go). Its files are named _c<triangles>."})
 	}
 	if !plant {
 		out = append(out,
@@ -319,6 +333,9 @@ func runPolyHavenModels(rc *procgen.RunContext, plant bool) error {
 		opt := phimport.ModelOptions{Resources: res, Resolution: p.Str("resolution"), MaxSize: p.Int("max_size"),
 			MaxTriangles: p.Int("max_triangles"), LiteTriangles: p.Int("lite_triangles"), Plant: plant,
 			Cook: p.Bool("cook"), Log: func(f string, a ...any) { rc.Logf(f, a...) }}
+		if plant {
+			opt.ThinFoliage = p.Bool("thin_foliage")
+		}
 		if !plant {
 			opt.Back, opt.Collision, opt.HullSize = p.Str("back"), p.Str("collision"), p.Float("hull_size")
 		}
@@ -330,7 +347,16 @@ func runPolyHavenModels(rc *procgen.RunContext, plant bool) error {
 				opt.MaxTriangles = t
 			}
 		}
-		imp, err := phimport.ImportModel(rc.Ctx, c, id, opt)
+		var imp *phimport.ModelImport
+		var err error
+		if rc.Region != nil {
+			var reused bool
+			if imp, reused, err = importModelShared(rc.Ctx, c, id, opt); reused {
+				rc.Logf("%s: the import another region's stage made this run", id)
+			}
+		} else {
+			imp, err = phimport.ImportModel(rc.Ctx, c, id, opt)
+		}
 		if err != nil {
 			return err
 		}
@@ -381,7 +407,11 @@ func runPolyHavenModels(rc *procgen.RunContext, plant bool) error {
 	art := &RocksArtifact{Dir: rc.Dir, RelDir: rc.RelDir, Manifest: man}
 	rc.Artifact = art
 	if p.Bool("gallery") {
-		placeGallery(rc, art, p.Vec3("gallery_origin"))
+		if rc.Region != nil {
+			rc.Logf("gallery: not placed for a region (every region would place it)")
+		} else {
+			placeGallery(rc, art, p.Vec3("gallery_origin"))
+		}
 	}
 	rc.Logf("%d variants of %d assets in %s (%.1f MB downloaded)", len(man.Variants), len(ids),
 		time.Since(t0).Round(time.Millisecond), float64(bytes)/(1<<20))

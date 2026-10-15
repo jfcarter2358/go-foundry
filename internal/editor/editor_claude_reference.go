@@ -284,6 +284,7 @@ func claudeAssetKinds() []struct {
 		{"sounds", func() string { return fileutil.ResolveAssetPath(audio.SoundsDirName) }, ".wav"},
 		{"levels", levelio.LevelsDir, ".yaml"},
 		{"generators", procgen.GeneratorsDir, procgen.Ext},
+		{"environments", procgen.EnvironmentsDir, procgen.Ext},
 	}
 }
 

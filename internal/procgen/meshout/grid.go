@@ -8,7 +8,11 @@ package meshout
 // is watertight: a cooked mesh with `collision: mesh` is then one parity solid
 // to nav, rather than one solid per triangle (see the spec's engine facts).
 // The top's rim stays exactly on the rectangle, so a cook with LockRect set to
-// the rectangle pins the seam between neighbouring tiles.
+// the rectangle pins the seam between neighbouring tiles. Its normals are
+// the whole field's when Normal is set (every terrain stage sets it): a
+// normal from the tile's own triangles alone differs from its neighbour's
+// at the shared rim, which drew a straight shading line along every tile
+// edge (docs/regions/PHASE_4.md).
 
 import (
 	"github.com/go-gl/mathgl/mgl32"
@@ -31,6 +35,37 @@ type HeightGrid struct {
 	// Closed adds skirts and a bottom at Base.
 	Closed bool
 	Base   float32
+	// Normal, when set, is the top's normal at sample (i, j) — from the
+	// whole field the tile is cut from, so a tile's rim shades exactly as
+	// its neighbour's rim does (FieldNormal). Nil: the area-weighted normal
+	// of the tile's own triangles, which at the rim sees only one side of
+	// the seam and shades every tile edge as a line.
+	Normal func(i, j int) mgl32.Vec3
+	// Skip, when set, leaves the top's quad (i, j) — between samples (i, j)
+	// and (i+1, j+1) — out: a hole, where a cave passes through the ground
+	// (stages/cave.go). A tile with holes is open: set Closed only when no
+	// quad is skipped.
+	Skip func(i, j int) bool
+}
+
+// FieldNormal is the unit normal of a heightfield at sample (i, j) by
+// central differences over step samples each way (one-sided where the
+// field ends): at(i, j) is the height, clamped by the caller's field to
+// 0..ni and 0..nj; cell the sample spacing. Two tiles cut from one field
+// compute the same normal for a shared rim sample, whatever side of the
+// seam they are on.
+func FieldNormal(at func(i, j int) float32, i, j, ni, nj, step int, cell float64) mgl32.Vec3 {
+	step = max(step, 1)
+	il, ir := max(i-step, 0), min(i+step, ni)
+	jl, jr := max(j-step, 0), min(j+step, nj)
+	var hx, hz float64
+	if ir > il {
+		hx = float64(at(ir, j)-at(il, j)) / (float64(ir-il) * cell)
+	}
+	if jr > jl {
+		hz = float64(at(i, jr)-at(i, jl)) / (float64(jr-jl) * cell)
+	}
+	return mgl32.Vec3{float32(-hx), 1, float32(-hz)}.Normalize()
 }
 
 // Rect is the tile's XZ rectangle as nanitecook.Options.LockRect wants it.
@@ -54,11 +89,18 @@ func (g HeightGrid) Build(b *Builder) {
 	for j := 0; j <= g.NZ; j++ {
 		for i := 0; i <= g.NX; i++ {
 			p := at(i, j)
-			b.Vertex(p, mgl32.Vec3{}, mgl32.Vec2{p[0]*uvs + g.UVOffset[0], p[2]*uvs + g.UVOffset[1]})
+			var n mgl32.Vec3
+			if g.Normal != nil {
+				n = g.Normal(i, j)
+			}
+			b.Vertex(p, n, mgl32.Vec2{p[0]*uvs + g.UVOffset[0], p[2]*uvs + g.UVOffset[1]})
 		}
 	}
 	for j := 0; j < g.NZ; j++ {
 		for i := 0; i < g.NX; i++ {
+			if g.Skip != nil && g.Skip(i, j) {
+				continue
+			}
 			a := base + uint32(j)*row + uint32(i)
 			// (i,j) -> (i,j+1) -> (i+1,j+1) -> (i+1,j) is counter-clockwise
 			// seen from above (+Y) with +Z toward the viewer's bottom.

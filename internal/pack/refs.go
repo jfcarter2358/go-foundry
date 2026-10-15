@@ -247,6 +247,20 @@ func reachable(src string, idx assetIndex, roots []string) map[string]bool {
 			continue
 		}
 
+		// The grass instancer's files are binary too (internal/grassfield): a
+		// field names its kit, a kit its clumps' textures.
+		if names := grassRefs(filepath.Join(src, filepath.FromSlash(path))); names != nil {
+			for _, n := range names {
+				for hit := range idx[n] {
+					if !keep[hit] {
+						keep[hit] = true
+						frontier = append(frontier, hit)
+					}
+				}
+			}
+			continue
+		}
+
 		if !textExts[strings.ToLower(filepath.Ext(path))] {
 			continue
 		}

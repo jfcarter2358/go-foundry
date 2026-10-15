@@ -19,6 +19,7 @@ package procgen
 //	    kind: terrain
 //	    hash: 3f2a...
 //	    files: [ground/heightmap.png, ground/placements.yaml, ground/tile_0_0.fnm]
+//	    tiles: {tile_0_0: 9c1e...}   # an Incremental stage only (incremental.go)
 
 import (
 	"os"
@@ -46,6 +47,10 @@ type ManifestStage struct {
 	Kind  string   `yaml:"kind"`
 	Hash  string   `yaml:"hash"`
 	Files []string `yaml:"files,flow"`
+	// Tiles is an Incremental stage's per-tile hashes, by tile name
+	// (incremental.go): what each of its tiles was made from, so the next
+	// run reuses a tile whose inputs did not change.
+	Tiles map[string]string `yaml:"tiles,omitempty"`
 }
 
 // ReadManifest reads dir's manifest. A missing, unreadable or other-version

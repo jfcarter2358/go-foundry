@@ -45,6 +45,9 @@ func init() {
 		Name:     EnvironmentKind,
 		Label:    "Environment",
 		Category: "Level",
+		// Served by the level generation doc's shared stages for every
+		// region; never expanded per region (docs/regions/SPEC.md).
+		Regional: procgen.RegionalShared,
 		Version:  1,
 		Doc: "The target level's air and light: height fog in the low ground, aerial perspective (haze that " +
 			"thickens with range and turns bluish), the sun's glow through the haze, the sky (the canyon skybox) " +
@@ -60,7 +63,7 @@ func init() {
 func environmentParams() []procgen.ParamDef {
 	f, b, c, e := procgen.Float, procgen.Bool, procgen.Color, procgen.Enum
 	return []procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{TerrainKind}, Default: procgen.StageRef(""),
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: TerrainSources, Default: procgen.StageRef(""),
 			Doc: "A terrain stage: heights below are measured from its lowest point, and the dust haze covers it. Empty: heights are world heights."},
 
 		{Name: "fog_mode", Type: procgen.ParamEnum, Label: "Distance fog", Default: e("none"),
@@ -136,6 +139,25 @@ func environmentParams() []procgen.ParamDef {
 			Doc: "Which way the player starts facing, degrees about +Y from +X (the sun's yaw convention)."},
 		{Name: "ambient_color", Added: true, Type: procgen.ParamColor, Label: "Ambient colour", Default: c(0.62, 0.7, 0.85), Min: 0, Max: 1,
 			Doc: "The ambient light's colour, set with Ambient brightness: the blue sky's light in the shadows."},
+		{Name: "shafts", Added: true, Type: procgen.ParamBool, Label: "Light shafts", Default: b(false),
+			Doc: "Shadowed sunlight in dusty air near the eye: beams through a slot canyon's gaps and a cave mouth (the level fog's shafts block). " +
+				"Marched at the volumetrics' resolution, a shadow-map tap a step."},
+		{Name: "shafts_density", Added: true, Type: procgen.ParamFloat, Label: "Shaft dust density", Default: f(0.01), Min: 0, Max: 1, Step: 0.0005,
+			Doc: "The dust's extinction per metre at its base: 0.01 takes away 63% over 100 m."},
+		{Name: "shafts_distance", Added: true, Type: procgen.ParamFloat, Label: "Shaft distance (m)", Default: f(150), Min: 1, Max: 2000, Step: 5,
+			Doc: "How far from the eye the march reaches."},
+		{Name: "shafts_steps", Added: true, Type: procgen.ParamInt, Label: "Shaft steps", Default: procgen.Int(24), Min: 4, Max: 64, Step: 1,
+			Doc: "Samples a ray takes (half below the High quality tier under TAA)."},
+		{Name: "shafts_color", Added: true, Type: procgen.ParamColor, Label: "Shaft tint", Default: c(1, 1, 1), Min: 0, Max: 4,
+			Doc: "Tints the light the dust scatters."},
+		{Name: "shafts_falloff", Added: true, Type: procgen.ParamFloat, Label: "Shaft dust falloff", Default: f(0), Min: 0, Max: 10, Step: 0.005,
+			Doc: "Per metre above the terrain's lowest point: the dust thins by e every 1/falloff metres up. 0 is uniform."},
+		{Name: "shafts_anisotropy", Added: true, Type: procgen.ParamFloat, Label: "Shaft anisotropy", Default: f(0.5), Min: -0.95, Max: 0.95, Step: 0.01,
+			Doc: "Henyey-Greenstein g: toward 1 the beams glow looking toward the sun and fade looking away."},
+		{Name: "shafts_ambient", Added: true, Type: procgen.ParamFloat, Label: "Shaft ambient", Default: f(0.5), Min: 0, Max: 4, Step: 0.01,
+			Doc: "How much of the level's ambient light the dust scatters (the shafts block's ambient): low keeps shade clear so only the sunbeams glow."},
+		{Name: "shafts_strength", Added: true, Type: procgen.ParamFloat, Label: "Shaft strength", Default: f(1), Min: 0, Max: 10, Step: 0.01,
+			Doc: "Scales the sunlight the dust scatters (the shafts block's strength)."},
 
 		{Name: "dust", Type: procgen.ParamBool, Label: "Dust haze", Default: b(false),
 			Doc: "A drifting dust haze over the terrain: one box volume of the dust_haze cloud preset, marched by the volumetrics. Costs a march over much of the screen."},
@@ -203,6 +225,23 @@ func environmentFog(p procgen.Params, fr environmentFrame) map[string]interface{
 		fog["sun"] = map[string]interface{}{
 			"strength":   p.Float("sun_glow_strength"),
 			"anisotropy": p.Float("sun_glow_anisotropy"),
+		}
+	}
+	if p.Bool("shafts") {
+		fog["shafts"] = map[string]interface{}{
+			"density":    p.Float("shafts_density"),
+			"distance":   p.Float("shafts_distance"),
+			"steps":      p.Int("shafts_steps"),
+			"color":      rgbMap(p.Vec3("shafts_color")),
+			"base":       round4(fr.floor),
+			"falloff":    p.Float("shafts_falloff"),
+			"anisotropy": p.Float("shafts_anisotropy"),
+		}
+		if a := p.Float("shafts_ambient"); a != 0.5 {
+			fog["shafts"].(map[string]interface{})["ambient"] = a
+		}
+		if st := p.Float("shafts_strength"); st != 1 {
+			fog["shafts"].(map[string]interface{})["strength"] = st
 		}
 	}
 	return fog

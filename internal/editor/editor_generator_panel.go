@@ -108,6 +108,7 @@ func generatorMenus() {
 		if imgui.MenuItemV("Open...", "Ctrl+O", false, true) {
 			genShowOpen, genFileList = true, nil
 		}
+		genGenerateWorldMenuItem()
 		imgui.Separator()
 		if imgui.MenuItemV("Save", "Ctrl+S", false, true) {
 			genSaveCurrent()
@@ -145,6 +146,16 @@ func generatorMenus() {
 		}
 		if st := genSelectedStage(); imgui.MenuItemV("Run Stage", "", false, !running && st != nil) {
 			genBeginRun(false, []string{st.ID})
+		}
+		// A level generation doc: run one environment region's stages, and
+		// splice only its placements (docs/regions/PHASE_4.md).
+		if rs := genRegionIDs(); len(rs) > 0 && imgui.BeginMenu("Run Region") {
+			for _, id := range rs {
+				if imgui.MenuItemV(id, "", false, !running) {
+					genBeginRegionRun(id)
+				}
+			}
+			imgui.EndMenu()
 		}
 		if imgui.MenuItemV("Force Run All", "Ctrl+F5", false, !running) {
 			genConfirmForce = true
@@ -378,6 +389,8 @@ func generatorPanel() {
 	imgui.BeginV("Stage##genpanel", nil, genPanelFlags)
 	generatorDocSection()
 	imgui.Separator()
+	// A level generation doc's regions (editor_generator_region_list.go).
+	generatorRegionsSection()
 	generatorStageSection()
 	imgui.End()
 }

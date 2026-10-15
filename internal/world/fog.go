@@ -119,6 +119,10 @@ type Fog struct {
 	Sun         FogSun
 	SkyHaze     float32
 	SkyDistance float32
+
+	// Shafts is the marched, shadowed in-scattering near the eye
+	// (fog_shafts.go): light shafts. Off unless the block asks.
+	Shafts FogShafts
 }
 
 // Fog defaults, and the range each field is clamped to. FogDefaultEnd is well
@@ -154,10 +158,12 @@ func DefaultFog() Fog {
 		Sun:         DefaultFogSun(),
 		SkyHaze:     FogDefaultSkyHaze,
 		SkyDistance: FogDefaultSkyDistance,
+		Shafts:      DefaultFogShafts(),
 	}
 	// The atmosphere is there to switch on, not on: a new fog is the
 	// distance fog it always was.
 	f.Height.Enabled, f.Aerial.Enabled, f.Sun.Enabled = false, false, false
+	f.Shafts.Enabled = false
 	return f
 }
 
@@ -186,6 +192,7 @@ func (f *Fog) Clamp() {
 		f.Color[i] = clampF(f.Color[i], 0, 1)
 	}
 	f.clampAtmosphere()
+	f.Shafts.Clamp()
 }
 
 // EffectiveMode is the mode actually uploaded — the off value while the fog is
@@ -240,6 +247,7 @@ func FogFromRaw(r *RawFog) *Fog {
 		f.SkyFalloff = *r.SkyFalloff
 	}
 	f.atmosphereFromRaw(r)
+	f.shaftsFromRaw(r)
 	f.Clamp()
 	return &f
 }
@@ -268,6 +276,7 @@ func FogToRaw(f *Fog) *RawFog {
 		SkyFalloff: &skyFalloff,
 	}
 	c.atmosphereToRaw(r)
+	c.shaftsToRaw(r)
 	return r
 }
 
@@ -316,6 +325,7 @@ func UploadFogTo(prog uint32, f *Fog, vols []Volume, lvl *Level) {
 // full of fog banks.
 func PackFog(b *gfx.SceneBlock, f *Fog, vols []Volume, lvl *Level, camPos mgl32.Vec3) {
 	PackFogVolumes(b, vols, lvl)
+	PackAmbientVolumes(b, vols, lvl, camPos)
 
 	b.FogMode = int32(f.EffectiveMode())
 	b.FogCamPos = camPos

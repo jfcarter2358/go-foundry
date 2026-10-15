@@ -36,6 +36,9 @@ type RawVolume struct {
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
 	// Cloud fills the region with volumetric cloud. See Volume.Cloud.
 	Cloud *RawVolumeCloud `yaml:"cloud,omitempty"`
+	// Ambient cuts the sky's ambient light inside the region — a cave, a
+	// slot canyon — for frames without live GI. See Volume.Ambient.
+	Ambient *RawVolumeAmbient `yaml:"ambient,omitempty"`
 	// Gravity replaces the level's ambient pull inside the region, in units per
 	// second squared: 0 for a zero-g chamber, a negative number to throw things
 	// at the ceiling. Absent leaves gravity alone, which is every volume
@@ -54,6 +57,13 @@ type RawVolume struct {
 	// Context marks the region as a named place to describe to an assistant,
 	// and changes nothing about what the volume does. See Volume.Context.
 	Context *RawVolumeContext `yaml:"context,omitempty"`
+	// Region makes the volume an environment region a level generation doc
+	// grows (volume_region.go). Authoring data only: nothing renders or
+	// collides with it at play time. See Volume.Region.
+	Region *RawVolumeRegion `yaml:"region,omitempty"`
+	// Grass makes the volume a grass field: one terrain tile's instanced
+	// Poly Haven grass (volume_grass.go). See Volume.Grass.
+	Grass *RawVolumeGrass `yaml:"grass,omitempty"`
 }
 
 // RawVolumeContext is the context block (volume_context.go).
@@ -324,6 +334,14 @@ type RawScenery struct {
 	// Chunk is the chunk this placement streams with: switched off (and
 	// unloaded, for an unload_when_disabled chunk) along with it. Absent: always in.
 	Chunk string `yaml:"chunk,omitempty"`
+	// DrawDistance is how far from the camera it is drawn, in metres, fading out over the last tenth. Absent: no limit.
+	DrawDistance float32 `yaml:"draw_distance,omitempty"`
+	// ShadowDistance is how far from the camera it casts a shadow, in metres. Absent: as far as it is drawn.
+	ShadowDistance float32 `yaml:"shadow_distance,omitempty"`
+	// Impostor is a cooked .fnm of cards baked from the mesh (a generator writes it), drawn instead of the mesh beyond impostor_distance. Absent: none.
+	Impostor string `yaml:"impostor,omitempty"`
+	// ImpostorDistance is where the mesh hands over to its impostor, cross-faded over the last tenth before it.
+	ImpostorDistance float32 `yaml:"impostor_distance,omitempty"`
 }
 
 // RawSceneryWind is a placement's wind (world.SceneryWind).
@@ -1006,6 +1024,14 @@ type RawPlayer struct {
 	// MaxFallSpeed is the terminal speed the player falls at, in units per
 	// second. Absent (or 0) is the engine's 30.
 	MaxFallSpeed *float32 `yaml:"max_fall_speed,omitempty"`
+	// Camera is how the player sees: first_person (the default, the eye) or
+	// third_person (a boom behind and over the shoulder, pulled in by walls).
+	// See world/player_view.go. Absent is first person, as every level was.
+	Camera *RawPlayerCamera `yaml:"camera,omitempty"`
+	// Body is what a third-person camera sees of the player: model
+	// attachments like an entity type's `models:`, origin at the feet, plus
+	// the locomotion clips its motion picks between. Absent is no body.
+	Body *RawPlayerBody `yaml:"body,omitempty"`
 }
 
 // RawSky is the level's sky (sky.go).
@@ -1060,6 +1086,10 @@ type RawFog struct {
 	Sun         *RawFogSun    `yaml:"sun,omitempty"`          // the sun's forward-scattering glow through the haze
 	SkyHaze     *float32      `yaml:"sky_haze,omitempty"`     // share of the atmosphere the sky takes, 0 to 1; default 1
 	SkyDistance *float32      `yaml:"sky_distance,omitempty"` // metres a sky ray's atmosphere is integrated over; default 20000
+	// Shafts is the shadowed sunlight in dusty air near the camera: light
+	// shafts through a canyon's slot or a cave mouth (world/fog_shafts.go).
+	// Off when absent.
+	Shafts *RawFogShafts `yaml:"shafts,omitempty"`
 }
 
 // RawFogHeight is a fog block's height fog.
