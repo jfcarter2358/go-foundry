@@ -7,8 +7,9 @@ package midi
 //
 //  1. Parts: every track and channel that has notes is a part (a format-0
 //     file is split by channel), named from its track name or program, its
-//     instrument guessed from the name and then the General MIDI program
-//     (internal/score/io/gm), channel 10 the drum kit.
+//     instrument the library instrument its instrument-name event names
+//     (what export.go writes) or else guessed from the name and then the
+//     General MIDI program (internal/score/io/gm), channel 10 the drum kit.
 //  2. The maps: time signatures make the bars (a 1/4 bar before 4/4 is a
 //     pickup), key signatures the keys, tempo changes tempo marks (a run of
 //     small steps is a ramp), markers at bar lines the rehearsal marks.
@@ -31,6 +32,7 @@ import (
 	"foundry/internal/score"
 	"foundry/internal/score/io/gm"
 	"foundry/internal/score/io/notate"
+	"foundry/internal/tracker"
 )
 
 // Part is one track-and-channel of a file with notes: a line of the score
@@ -51,9 +53,12 @@ type Part struct {
 	// Volume and Pan are from the part's first volume and pan controllers.
 	Volume, Pan float32
 
-	notes  []rawNote
-	expr   []ccPoint // expression (CC 11), the volume lane
-	hasVol bool
+	notes []rawNote
+	// library is the instrument a track's instrument-name meta event
+	// names when the library has it (what this package's export writes).
+	library string
+	expr    []ccPoint // expression (CC 11), the volume lane
+	hasVol  bool
 }
 
 type rawNote struct {
@@ -161,7 +166,7 @@ func Analyze(f *File) *Analysis {
 	parts := map[key]*Part{}
 	var order []key
 	for ti, t := range f.Tracks {
-		trackName := ""
+		trackName, trackInst := "", ""
 		open := map[[2]int][]rawNote{} // (channel, pitch) → sounding, oldest first
 		var trackEnd int64
 		get := func(ch int) *Part {
@@ -182,6 +187,10 @@ func Analyze(f *File) *Analysis {
 				case MetaTrackName:
 					if trackName == "" {
 						trackName = strings.TrimSpace(e.Text())
+					}
+				case MetaInstrument:
+					if trackInst == "" {
+						trackInst = strings.TrimSpace(e.Text())
 					}
 				case MetaTempo:
 					if q, ok := e.Tempo(); ok {
@@ -248,6 +257,9 @@ func Analyze(f *File) *Analysis {
 		for _, k := range order {
 			if k.track == ti && parts[k].Name == "" {
 				parts[k].Name = trackName
+			}
+			if k.track == ti && trackInst != "" && tracker.InstrumentPath(trackInst) != "" {
+				parts[k].library = trackInst
 			}
 		}
 		a.lastTick = max(a.lastTick, trackEnd)
@@ -332,6 +344,18 @@ func Analyze(f *File) *Analysis {
 // guessInstrument picks a part's instrument (its name first, then its
 // program) and its clef (the instrument's own, else by range).
 func guessInstrument(p *Part) (string, string) {
+	if p.library != "" {
+		// A file this package wrote names the library instrument itself.
+		clef := ""
+		if pb, ok := gm.Playback(p.library); ok {
+			clef = pb.Clef
+		}
+		if clef != "" {
+			return p.library, clef
+		}
+		_, c := guessInstrument(&Part{Name: p.Name, Program: p.Program, Percussion: p.Percussion, notes: p.notes})
+		return p.library, c
+	}
 	if p.Percussion {
 		return gm.Pick(gm.DrumKit), "percussion"
 	}

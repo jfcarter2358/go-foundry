@@ -96,6 +96,63 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// pageGoldenCases are pages of the page layout (engrave.Paginate): a
+// fixture's full score or one line's part, and the page.
+var pageGoldenCases = []struct {
+	name    string
+	fixture string
+	part    int // -1 for the full score
+	page    int
+}{
+	{"page_demo_1", "../../../../resources/sounds/score_demo", -1, 1},
+	{"page_demo_3", "../../../../resources/sounds/score_demo", -1, 3},
+	{"page_demo_flute", "../../../../resources/sounds/score_demo", 0, 1},
+	{"page_layout_1", "pages", -1, 1},
+	{"page_layout_2", "pages", -1, 2},
+	{"page_layout_clarinet", "pages", 0, 1},
+}
+
+// pageGoldenScale is the pages' snapshot resolution (a letter page is
+// about 500x640 pixels).
+const pageGoldenScale = 4
+
+func TestPageGolden(t *testing.T) {
+	update := os.Getenv("SCORE_ENGRAVE_GOLDEN") == "update"
+	for _, c := range pageGoldenCases {
+		t.Run(c.name, func(t *testing.T) {
+			s, err := score.LoadFile(filepath.Join("..", "testdata", c.fixture+score.FileExt))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := engrave.ScoreBook(s, false)
+			if c.part >= 0 {
+				b = engrave.PartBook(s, c.part, false)
+			}
+			if c.page > len(b.Pages) {
+				t.Fatalf("%d pages, want page %d", len(b.Pages), c.page)
+			}
+			got := Render(b.List(b.Pages[c.page-1]), Options{Scale: pageGoldenScale})
+			ref := filepath.Join("testdata", "golden", c.name+".png")
+			if update {
+				if err := writePNG(ref, got); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			want, err := readPNG(ref)
+			if err != nil {
+				t.Fatalf("%v (capture with SCORE_ENGRAVE_GOLDEN=update)", err)
+			}
+			if msg := compare(want, got); msg != "" {
+				dir := os.TempDir()
+				_ = writePNG(filepath.Join(dir, c.name+".got.png"), got)
+				_ = writePNG(filepath.Join(dir, c.name+".diff.png"), diffImage(want, got))
+				t.Errorf("%s: %s (got and diff written to %s)", c.name, msg, dir)
+			}
+		})
+	}
+}
+
 // compare reports how two renders differ beyond antialiasing: a size that
 // differs by more than a pixel, or more than 0.02% of the pixels (and more
 // than 8) changed by more than a quarter of the grey range. The same build

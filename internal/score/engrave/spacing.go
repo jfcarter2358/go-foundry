@@ -15,8 +15,9 @@ package engrave
 // Bars has it, and the same value is as wide in every bar of the galley.
 // The ink rod is the left column's right ink, the right column's left ink
 // and noteGap between: accidentals and dots never collide, however tight.
-// A page layout (phase 5) will stretch each system's springs to its
-// measure on top of this.
+// Each gap keeps both: its spring (the time's room) and its rod (the
+// ink's). A page layout stretches every spring of a system by one factor
+// to fill its measure, never below the rods (stretch, justify).
 
 import (
 	"math"
@@ -86,6 +87,7 @@ func (bc *barCtx) colFrom(t score.Frac) *column {
 
 // measure arranges every column's ink and spaces every bar.
 func (e *engraver) measure() {
+	e.tailW = e.tailPositions().w
 	for bi, bc := range e.bars {
 		for _, c := range bc.cols {
 			for _, sc := range e.staves {
@@ -112,14 +114,16 @@ func (e *engraver) measure() {
 				c.left, c.right = math.Max(c.left, l), math.Max(c.right, r)
 			}
 		}
-		bc.widths = make([]float64, len(bc.cols)-1)
+		n := len(bc.cols) - 1
+		bc.widths, bc.rods, bc.springs = make([]float64, n), make([]float64, n), make([]float64, n)
 		for k := 0; k+1 < len(bc.cols); k++ {
 			a, b := bc.cols[k], bc.cols[k+1]
 			gap := noteGap
 			if b.end {
 				gap = lastGap
 			}
-			bc.widths[k] = math.Max(e.ideal(b.offF-a.offF), a.right+b.left+gap)
+			bc.springs[k] = e.ideal(b.offF - a.offF)
+			bc.rods[k] = a.right + b.left + gap
 		}
 		e.dynamicRods(bi, bc)
 		if bi > 0 {
@@ -140,10 +144,24 @@ func (e *engraver) measure() {
 		}
 		// A bar rest wants a bar wide enough to sit in the middle of.
 		if len(bc.cols) == 2 {
-			bc.widths[0] = math.Max(bc.widths[0], 5.5-bc.lead)
+			bc.rods[0] = math.Max(bc.rods[0], 5.5-bc.lead)
 		}
+		e.multiRestWidths(bc)
 	}
 	e.crossBarRods()
+	e.stretch(1)
+}
+
+// stretch sets every gap's width for a stretch factor: each gap is its
+// spring (the room its time asks for) times k, but never less than its
+// rod (what the ink needs). k = 1 is the galley's natural spacing; a page
+// layout finds the k that fills its measure (justify).
+func (e *engraver) stretch(k float64) {
+	for _, bc := range e.bars {
+		for i := range bc.widths {
+			bc.widths[i] = math.Max(bc.rods[i], k*bc.springs[i])
+		}
+	}
 }
 
 // ideal is the room a time between onsets (whole notes) asks for: an
@@ -170,18 +188,18 @@ func (e *engraver) crossBarRods() {
 		if len(a.widths) == 0 {
 			continue
 		}
-		// From a's last note to b's first: its last gap, the barline, b's
-		// head and its lead.
-		between := a.widths[len(a.widths)-1] + e.barlineWidth(e.barlineBefore(i+1)) + b.prefixW + b.lead
+		// From a's last note to b's first: its last gap, then the barline,
+		// b's head and its lead (fixed).
+		fixed := e.barlineWidth(e.barlineBefore(i+1)) + b.prefixW + b.lead
 		need := 0.0
 		for sc, tail := range a.dynTail {
 			if head, ok := b.dynHead[sc]; ok {
 				need = math.Max(need, tail-head+0.5)
 			}
 		}
-		if need > between {
-			a.widths[len(a.widths)-1] += need - between
-		}
+		// Only the last gap stretches: it takes up what the rest lacks.
+		last := len(a.rods) - 1
+		a.rods[last] = math.Max(a.rods[last], need-fixed)
 	}
 }
 
@@ -248,7 +266,7 @@ func (e *engraver) dynamicRods(bi int, bc *barCtx) {
 				need += 2.2
 			}
 			if a.has || a.hairpin {
-				bc.widths[k] = math.Max(bc.widths[k], need)
+				bc.rods[k] = math.Max(bc.rods[k], need)
 			}
 		}
 	}

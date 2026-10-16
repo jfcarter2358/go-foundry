@@ -6,24 +6,28 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"foundry/internal/score"
+	"foundry/internal/score/io/ftrk"
 	"foundry/internal/score/io/gm"
 	"foundry/internal/score/io/midi"
 	"foundry/internal/score/io/musicxml"
 	"foundry/internal/score/io/notate"
 	"foundry/internal/score/play"
+	"foundry/internal/tracker"
 )
 
 const importUsage = `foundry score import <file> [flags]
 
-Reads a Standard MIDI File (.mid, .midi, .rmi) or a MusicXML score
+Reads a Standard MIDI File (.mid, .midi, .rmi), a MusicXML score
 (.musicxml, .xml, .mxl — what Sibelius, Finale, Dorico and MuseScore
-export) and writes it as sounds/<name>.fscore.
+export) or a Tracker song (.ftrk, a file or a song's library name with
+the extension) and writes it as sounds/<name>.fscore.
 
   -o name          the score's library name (default: the file's name)
   -title text      its title (default: the file's)
@@ -32,7 +36,10 @@ export) and writes it as sounds/<name>.fscore.
   -instrument 3=strings/viola_section   use an instrument for a part (repeatable)
   -force           replace a score that is already there
 
-MIDI only (a MusicXML file is already notation):
+MusicXML only:
+  -no-layout       leave the file's page layout (paper, staff size, breaks) out
+
+MIDI and Tracker songs (a MusicXML file is already notation):
   -grid 16,3       quantise to 16ths, letting a beat be triplets instead
                    (8, 16, 32, 64; tuplets 3, 5, 7; "16" alone: no tuplets;
                    with any, a beat whose notes would merge may take 5 or 7)
@@ -62,6 +69,7 @@ func importCmd(rest []string, out io.Writer) int {
 	split := fs.String("split", "C4", "")
 	key := fs.String("key", "", "")
 	meter := fs.String("meter", "", "")
+	noLayout := fs.Bool("no-layout", false, "")
 	insts := map[int]string{}
 	fs.Func("instrument", "", func(v string) error {
 		n, inst, ok := strings.Cut(v, "=")
@@ -105,18 +113,46 @@ func importCmd(rest []string, out io.Writer) int {
 	var s *score.Score
 	var warns []string
 	switch ext := strings.ToLower(filepath.Ext(file)); ext {
-	case ".mid", ".midi", ".rmi", ".smf":
-		f, err := midi.ReadFile(file)
-		if err != nil {
-			fmt.Fprintf(out, "score import: %v\n", err)
-			return 1
+	case ".mid", ".midi", ".rmi", ".smf", tracker.FileExt:
+		var a *midi.Analysis
+		var f *midi.File
+		var song *tracker.Song
+		var guesses []midi.Choice
+		if strings.EqualFold(filepath.Ext(file), tracker.FileExt) {
+			path := file
+			if _, err := os.Stat(path); err != nil {
+				path = tracker.SongPath(strings.TrimSuffix(file, tracker.FileExt))
+			}
+			var err error
+			if song, err = tracker.LoadFile(path); err != nil {
+				fmt.Fprintf(out, "score import: %v\n", err)
+				return 1
+			}
+			var ws []string
+			if a, f, guesses, ws, err = ftrk.Analyze(song); err != nil {
+				fmt.Fprintf(out, "score import: %v\n", err)
+				return 1
+			}
+			warns = append(warns, ws...)
+		} else {
+			var err error
+			if f, err = midi.ReadFile(file); err != nil {
+				fmt.Fprintf(out, "score import: %v\n", err)
+				return 1
+			}
+			a = midi.Analyze(f)
 		}
-		a := midi.Analyze(f)
 		if *list {
+			for i := range a.Parts {
+				if i < len(guesses) && guesses[i].Instrument != "" {
+					a.Parts[i].Instrument = guesses[i].Instrument
+				}
+			}
 			listMIDI(a, out)
 			return 0
 		}
 		o := midi.Options{Name: *name, Title: *title, Voices: *voices, NoDynamics: *noDyn, NoLegato: *noLegato, NoGraces: *noGraces}
+		var err error
 		if o.Grid, err = notate.ParseGrid(*grid); err != nil {
 			fmt.Fprintf(out, "score import: %v\n", err)
 			return 2
@@ -145,7 +181,17 @@ func importCmd(rest []string, out io.Writer) int {
 		for i := range o.Choices {
 			o.Choices[i] = midi.Choice{Skip: skipped[i+1], Instrument: insts[i+1]}
 		}
-		if s, warns, err = midi.Import(f, o); err != nil {
+		var iw []string
+		if song != nil {
+			// Import reads the song again: its warnings are Analyze's
+			// above, so only the importer's own are new.
+			warns = nil
+			s, iw, err = ftrk.Import(song, o)
+		} else {
+			s, iw, err = midi.Import(f, o)
+		}
+		warns = append(warns, iw...)
+		if err != nil {
 			fmt.Fprintf(out, "score import: %v\n", err)
 			return 1
 		}
@@ -160,7 +206,7 @@ func importCmd(rest []string, out io.Writer) int {
 			listMusicXML(d, parts, out)
 			return 0
 		}
-		o := musicxml.Options{Name: *name, Title: *title, Choices: make([]musicxml.Choice, len(parts))}
+		o := musicxml.Options{Name: *name, Title: *title, Choices: make([]musicxml.Choice, len(parts)), NoLayout: *noLayout}
 		for i := range o.Choices {
 			o.Choices[i] = musicxml.Choice{Skip: skipped[i+1], Instrument: insts[i+1]}
 		}
@@ -169,7 +215,7 @@ func importCmd(rest []string, out io.Writer) int {
 			return 1
 		}
 	default:
-		fmt.Fprintf(out, "score import: %q is not a MIDI or MusicXML file (.mid, .musicxml, .xml, .mxl)\n", file)
+		fmt.Fprintf(out, "score import: %q is not a MIDI, MusicXML or Tracker file (.mid, .musicxml, .xml, .mxl, .ftrk)\n", file)
 		return 2
 	}
 

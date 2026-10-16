@@ -75,6 +75,7 @@ type rawScore struct {
 	Name     string       `yaml:"name,omitempty"`
 	Title    string       `yaml:"title,omitempty"`
 	Composer string       `yaml:"composer,omitempty"`
+	Subtitle string       `yaml:"subtitle,omitempty"`
 	Bars     int          `yaml:"bars"`
 	Pickup   string       `yaml:"pickup,omitempty"`
 	Loop     bool         `yaml:"loop,omitempty"`
@@ -96,6 +97,8 @@ type rawScore struct {
 	Master   []FX         `yaml:"master,flow,omitempty"`
 	// MasterLanes are the master's automation (volume, its effects').
 	MasterLanes map[string][]rawLanePoint `yaml:"master_lanes,omitempty"`
+	// Layout is the page layout (layout.go).
+	Layout *rawLayout `yaml:"layout,omitempty"`
 }
 
 type rawTempo struct {
@@ -195,6 +198,7 @@ type rawBinding struct {
 
 type rawLine struct {
 	Name       string                    `yaml:"name"`
+	Short      string                    `yaml:"short,omitempty"`
 	Instrument string                    `yaml:"instrument"`
 	Volume     *float32                  `yaml:"volume,omitempty"`
 	Pan        float32                   `yaml:"pan,omitempty"`
@@ -337,7 +341,10 @@ func Parse(b []byte) (s *Score, err error) {
 	if r.Version > FormatVersion {
 		return nil, fmt.Errorf("score is format version %d; this build reads up to %d", r.Version, FormatVersion)
 	}
-	s = &Score{Name: r.Name, Title: r.Title, Composer: r.Composer, Bars: r.Bars, Loop: r.Loop, Gain: 1}
+	s = &Score{Name: r.Name, Title: r.Title, Composer: r.Composer, Subtitle: r.Subtitle, Bars: r.Bars, Loop: r.Loop, Gain: 1}
+	if s.Layout, err = layoutFromRaw(r.Layout); err != nil {
+		return nil, err
+	}
 	if r.Gain != nil {
 		s.Gain = *r.Gain
 	}
@@ -612,7 +619,7 @@ func humanizeToRaw(h Humanize) *rawHumanize {
 }
 
 func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
-	l := &Line{Name: rl.Name, Instrument: rl.Instrument, Volume: 1, Pan: rl.Pan, Mute: rl.Mute, Solo: rl.Solo, Inserts: rl.Inserts, Gliss: rl.Gliss}
+	l := &Line{Name: rl.Name, Short: rl.Short, Instrument: rl.Instrument, Volume: 1, Pan: rl.Pan, Mute: rl.Mute, Solo: rl.Solo, Inserts: rl.Inserts, Gliss: rl.Gliss}
 	if rl.Gliss != "" && !validGliss(rl.Gliss) {
 		return nil, fmt.Errorf("gliss %q (want %s)", rl.Gliss, strings.Join(GlissStyles, ", "))
 	}
@@ -743,7 +750,7 @@ func parseDuration(s string) (Duration, error) {
 
 // Marshal encodes a score as a .fscore.
 func Marshal(s *Score) ([]byte, error) {
-	r := rawScore{Version: FormatVersion, Title: s.Title, Composer: s.Composer, Bars: s.Measures(), Loop: s.Loop}
+	r := rawScore{Version: FormatVersion, Title: s.Title, Composer: s.Composer, Subtitle: s.Subtitle, Bars: s.Measures(), Loop: s.Loop}
 	if s.Gain != 1 {
 		g := s.Gain
 		r.Gain = &g
@@ -814,7 +821,7 @@ func Marshal(s *Score) ([]byte, error) {
 		r.Bindings = append(r.Bindings, rawBinding{Param: b.Param, Line: b.Line, Target: string(b.Target), From: b.From, To: b.To})
 	}
 	for _, l := range s.Lines {
-		rl := rawLine{Name: l.Name, Instrument: l.Instrument, Pan: l.Pan, Mute: l.Mute, Solo: l.Solo, Inserts: l.Inserts, Gliss: l.Gliss}
+		rl := rawLine{Name: l.Name, Short: l.Short, Instrument: l.Instrument, Pan: l.Pan, Mute: l.Mute, Solo: l.Solo, Inserts: l.Inserts, Gliss: l.Gliss}
 		for _, o := range l.Overrides {
 			rl.Overrides = append(rl.Overrides, rawOverride{At: s.FormatPos(o.From), To: s.FormatPos(o.To), Level: o.Level})
 		}
@@ -853,6 +860,7 @@ func Marshal(s *Score) ([]byte, error) {
 	r.Buses = &rawBuses{A: busToRaw(s, s.Buses.A), B: busToRaw(s, s.Buses.B)}
 	r.Master = s.Master
 	r.MasterLanes = lanesToRaw(s, s.MasterLanes)
+	r.Layout = layoutToRaw(s.Layout)
 	return yaml.Marshal(r)
 }
 

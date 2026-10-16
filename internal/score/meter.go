@@ -76,6 +76,45 @@ func (m Meter) Beats() []Frac {
 	return out
 }
 
+// BeamUnits are the lengths a bar of the meter beams in, in order: its
+// beats, except a simple meter of eighths or shorter, whose notes beam in
+// twos and threes (5/8 as 3+2, 7/8 as 2+2+3, 8/8 as 3+3+2). The engraver
+// beams by them and the MusicXML writer writes the same beams.
+func (m Meter) BeamUnits() []Frac {
+	if m.Den <= 0 || len(m.Groups) == 0 {
+		return []Frac{F(1, 4), F(1, 4), F(1, 4), F(1, 4)}
+	}
+	unit := F(1, int64(m.Den))
+	if len(m.Groups) > 1 || m.Compound() || m.Den <= 4 {
+		return m.Beats()
+	}
+	n := m.Groups[0]
+	var counts []int
+	switch {
+	case n <= 3:
+		counts = []int{n}
+	case n == 5:
+		counts = []int{3, 2}
+	case n == 7:
+		counts = []int{2, 2, 3}
+	case n == 8:
+		counts = []int{3, 3, 2}
+	default:
+		for r := n; r > 0; {
+			if r == 3 {
+				counts, r = append(counts, 3), 0
+				continue
+			}
+			counts, r = append(counts, 2), r-2
+		}
+	}
+	out := make([]Frac, len(counts))
+	for i, c := range counts {
+		out[i] = unit.MulInt(int64(c))
+	}
+	return out
+}
+
 // Eq reports the same meter, symbol included.
 func (m Meter) Eq(o Meter) bool {
 	if m.Den != o.Den || m.Symbol != o.Symbol || len(m.Groups) != len(o.Groups) {

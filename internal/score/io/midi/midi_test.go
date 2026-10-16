@@ -547,3 +547,31 @@ lines:
 		t.Errorf("cutoff lane: %+v", bright)
 	}
 }
+
+// A file this package wrote names each line's library instrument (the
+// track's instrument-name event), and the import takes it over the guess
+// from the track's name and program.
+func TestImportTakesTheInstrumentAnExportNames(t *testing.T) {
+	useRepoResources(t)
+	src := score.New("x")
+	l := score.NewLine("Lead", "strings/viola_section", "alto")
+	l.Staves[0].Voices[0], _ = score.ParseVoice("| qC4 qD4 qE4 qF4 |")
+	src.Lines = append(src.Lines, l)
+	f, err := Export(src, ExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := Analyze(f)
+	if len(a.Parts) != 1 || a.Parts[0].Instrument != "strings/viola_section" {
+		t.Fatalf("parts %+v", a.Parts)
+	}
+	back, _, err := Import(f, Options{Name: "x"})
+	if err != nil || back.Lines[0].Instrument != "strings/viola_section" {
+		t.Errorf("imported %v %+v", err, back.Lines)
+	}
+	// A name the library does not have is only a name.
+	f.Tracks[1].Events[1] = TextMeta(0, MetaInstrument, "no/such")
+	if a := Analyze(f); a.Parts[0].Instrument == "no/such" {
+		t.Error("an instrument the library lacks was taken")
+	}
+}

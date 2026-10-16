@@ -122,8 +122,12 @@ func TestMoveRemoveRenameLines(t *testing.T) {
 		t.Errorf("move past the end: %v %v", lineNames(s), err)
 	}
 	s.Bindings = []score.Binding{{Param: "p", Line: "b"}, {Param: "p", Line: "C"}}
+	s.Layout.Parts = []score.PartLayout{{Line: "b", Staff: 8}, {Line: "C", Staff: 6}}
 	if err := RenameLine(s, 0, "  Bass  "); err != nil || s.Lines[0].Name != "Bass" || s.Bindings[0].Line != "Bass" {
 		t.Errorf("rename: %v %v %+v", lineNames(s), err, s.Bindings)
+	}
+	if p := s.Layout.Part("Bass"); p == nil || p.Staff != 8 {
+		t.Errorf("the part's layout did not follow the rename: %+v", s.Layout.Parts)
 	}
 	if err := RenameLine(s, 0, "c"); err == nil {
 		t.Error("renamed onto another line's name")
@@ -134,6 +138,9 @@ func TestMoveRemoveRenameLines(t *testing.T) {
 	if err := RemoveLine(s, 1); err != nil || !eqStrings(lineNames(s), []string{"Bass", "A", "D"}) ||
 		len(s.Bindings) != 1 || s.Bindings[0].Line != "Bass" {
 		t.Errorf("remove: %v %v %+v", lineNames(s), err, s.Bindings)
+	}
+	if len(s.Layout.Parts) != 1 || s.Layout.Parts[0].Line != "Bass" {
+		t.Errorf("the removed line's part layout stayed: %+v", s.Layout.Parts)
 	}
 	for len(s.Lines) > 1 {
 		if err := RemoveLine(s, 0); err != nil {

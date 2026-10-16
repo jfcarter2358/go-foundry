@@ -6,8 +6,8 @@ package engrave
 // in the Go fonts x/image carries (a humanist sans and its italic, bold and
 // bold italic), so the layout can measure text exactly as it will be
 // drawn: the raster backend draws with these faces, the editor's imgui
-// backend rasterises its text runs with them, and the PDF writer (phase 5)
-// maps the four styles onto its base fonts.
+// backend rasterises its text runs with them, and the PDF and SVG writers
+// draw their outlines (TextGlyphs): no font is embedded anywhere.
 
 import (
 	"math"
@@ -20,6 +20,9 @@ import (
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/font/sfnt"
+	"golang.org/x/image/math/fixed"
+
+	"foundry/internal/score/glyph"
 )
 
 var (
@@ -100,4 +103,101 @@ func estimateWidth(s string, size float64) float64 {
 		}
 	}
 	return w * size
+}
+
+// TextGlyph is one letter of a run of text as outlines: its outline in
+// ems (a 1-em size), y down from the baseline, and its pen position from
+// the run's start, also in ems. Backends that draw text as paths (the PDF
+// and SVG writers: no fonts are embedded) scale both by the item's size.
+type TextGlyph struct {
+	Font TextFont
+	Rune rune
+	X    float64
+	Path []glyph.Segment
+}
+
+var (
+	outlineMu sync.Mutex
+	outlines  = map[outlineKey][]glyph.Segment{}
+)
+
+type outlineKey struct {
+	f TextFont
+	r rune
+}
+
+// TextGlyphs sets a run in a style as outlines, advanced and kerned as
+// TextWidthFont measures it. Letters the font does not have are left out
+// (their advance kept).
+func TextGlyphs(s string, f TextFont) []TextGlyph {
+	TextFace(f, measurePx) // loads the fonts
+	src := textFonts[int(f)%len(textFonts)]
+	if src == nil {
+		return nil
+	}
+	outlineMu.Lock()
+	defer outlineMu.Unlock()
+	var buf sfnt.Buffer
+	ppem := fixed.I(measurePx)
+	var out []TextGlyph
+	pen := 0.0
+	prev := sfnt.GlyphIndex(0)
+	for i, r := range s {
+		gi, err := src.GlyphIndex(&buf, r)
+		if err != nil {
+			continue
+		}
+		if i > 0 && prev != 0 && gi != 0 {
+			if k, err := src.Kern(&buf, prev, gi, ppem, font.HintingNone); err == nil {
+				pen += float64(k) / 64 / measurePx
+			}
+		}
+		k := outlineKey{f, r}
+		path, ok := outlines[k]
+		if !ok && gi != 0 {
+			segs, err := src.LoadGlyph(&buf, gi, ppem, nil)
+			if err == nil {
+				path = make([]glyph.Segment, 0, len(segs))
+				for _, sg := range segs {
+					var g glyph.Segment
+					switch sg.Op {
+					case sfnt.SegmentOpMoveTo:
+						g.Op = glyph.MoveTo
+					case sfnt.SegmentOpLineTo:
+						g.Op = glyph.LineTo
+					case sfnt.SegmentOpQuadTo:
+						g.Op = glyph.QuadTo
+					case sfnt.SegmentOpCubeTo:
+						g.Op = glyph.CubeTo
+					}
+					for j := range sg.Args {
+						g.P[j] = glyph.Point{X: float64(sg.Args[j].X) / 64 / measurePx, Y: float64(sg.Args[j].Y) / 64 / measurePx}
+					}
+					path = append(path, g)
+				}
+			}
+			outlines[k] = path
+		}
+		if len(path) > 0 {
+			out = append(out, TextGlyph{Font: f, Rune: r, X: pen, Path: path})
+		}
+		if adv, err := src.GlyphAdvance(&buf, gi, ppem, font.HintingNone); err == nil {
+			pen += float64(adv) / 64 / measurePx
+		}
+		prev = gi
+	}
+	return out
+}
+
+// TextStart is where a text item's run starts on its baseline, after its
+// alignment.
+func TextStart(it *Item) float64 {
+	x := it.P.X
+	switch it.Align {
+	case AlignCenter:
+		x -= TextWidthFont(it.Text, it.Font, it.Size) / 2
+	case AlignRight:
+		x -= TextWidthFont(it.Text, it.Font, it.Size)
+	}
+	return x
 }

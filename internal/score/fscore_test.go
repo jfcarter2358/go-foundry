@@ -190,8 +190,21 @@ func randomScore(r *rand.Rand) *Score {
 	s.Markers = []Marker{{Name: "m", At: Pos{Bar: 2, Offset: F(1, 4)}}}
 	s.Gain = []float32{1, 0.5, 0}[r.Intn(3)]
 	s.Loop = r.Intn(2) == 0
+	if r.Intn(2) == 0 {
+		s.Subtitle = "for the hangar"
+		s.Layout = Layout{Paper: Paper{Name: PaperNames[r.Intn(len(PaperNames)-1)], Landscape: r.Intn(2) == 0},
+			Staff: 6.5, SystemGap: 11, Spacing: []float64{0, 0.75, 1.4}[r.Intn(3)], Breaks: []Break{{Bar: 2}, {Bar: 3, Page: true}}, TitlePage: r.Intn(2) == 0,
+			NoPageNumbers: r.Intn(2) == 0, Names: NameMode(r.Intn(len(NameModes))), NoCautionary: r.Intn(2) == 0, Courtesy: r.Intn(2) == 0}
+		if r.Intn(2) == 0 {
+			s.Layout.Paper = Paper{Name: "custom", Width: 230, Height: 305, Margins: Margins{10, 12, 14, 16}}
+		}
+		s.Layout.Parts = []PartLayout{{Line: "Line", Staff: 7.5, Breaks: []Break{{Bar: 3}}, NoMultiRests: r.Intn(2) == 0, Paper: Paper{Name: "a4"}}}
+	}
 	for l := 0; l < 1+r.Intn(3); l++ {
 		ln := NewLine("Line", "keys/grand_piano", "treble")
+		if r.Intn(2) == 0 {
+			ln.Short = "Ln."
+		}
 		ln.Volume = []float32{1, 0.7, 0}[r.Intn(3)]
 		ln.SendB = 0.25
 		ln.Inserts = []FX{{Kind: "eq", Params: []FXParam{{"low", -2}}}}

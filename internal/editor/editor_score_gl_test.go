@@ -420,6 +420,66 @@ func TestScoreGLWindowDraws(t *testing.T) {
 	imgui.CloseCurrentPopup()
 	scoreLibrary.open = false
 	frame()
+
+	// The page view: the demo on paper, a note selected; then the violins'
+	// part with its page setup open.
+	prevPage, prevPart, prevZoom := scorePageView, scorePagePart, scorePageZoom
+	defer func() { scorePageView, scorePagePart, scorePageZoom = prevPage, prevPart, prevZoom }()
+	scoreView, scorePageView, scorePagePart, scorePageZoom = scoreViewScore, true, -1, 5.5
+	scEd.Input = false
+	scEd.selectEvent(edit.Loc{Line: 0, Bar: 2, Event: 0}, -1)
+	frame()
+	frame()
+	img = readFrame(W, H)
+	shot(t, "pages", img)
+	// Paper on the desk: the page's middle is paper, beside it the desk.
+	if c := img.RGBAAt(W/2, int(scoreViewTop+scorePageStripH)+60); c.R < 240 || c.G < 240 {
+		t.Errorf("no paper in the page view's middle: %v", c)
+	}
+	scorePagePart = 2
+	scoreShowPageSetup = true
+	frame()
+	frame()
+	shot(t, "page_setup", readFrame(W, H))
+	scoreShowPageSetup = false
+	imgui.CloseCurrentPopup()
+	frame()
+	scorePageView = false
+	// The Export dialog as the mockup has it: PDF, MusicXML and OGG, a mix
+	// and a stem per line.
+	scoreExp = defaultExportDlg()
+	scoreOpenExport()
+	scoreExp.Stems = true
+	for i := 0; i < 4; i++ {
+		frame()
+	}
+	shot(t, "export", readFrame(W, H))
+	scoreShowExport = false
+	imgui.CloseCurrentPopup()
+	frame()
+	// The Import dialog: its browser, then a MIDI file's tracks and a
+	// MusicXML file's parts.
+	repo := testenv.RepoRoot(t)
+	scoreImp = scoreImportDlg{browseDir: filepath.Join(repo, "internal", "score", "io", "midi", "testdata")}
+	scoreOpenImport()
+	frame()
+	frame()
+	shot(t, "import_browse", readFrame(W, H))
+	for _, f := range []struct{ name, path string }{
+		{"import_midi", filepath.Join(repo, "internal", "score", "io", "midi", "testdata", "format1_orchestra.mid")},
+		{"import_musicxml", filepath.Join(repo, "internal", "score", "io", "musicxml", "testdata", "sibelius_piano.musicxml")},
+	} {
+		if err := scoreImportChoose(f.path); err != nil {
+			t.Fatal(err)
+		}
+		scoreShowImport = true
+		frame()
+		frame()
+		shot(t, f.name, readFrame(W, H))
+	}
+	scoreShowImport = false
+	imgui.CloseCurrentPopup()
+	frame()
 }
 
 // readFrame reads the framebuffer back as an opaque image, top row first.

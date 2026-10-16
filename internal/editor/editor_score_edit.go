@@ -127,6 +127,10 @@ type scoreState struct {
 	// mixKey is the mixer control the newest undo step is a drag of: one
 	// drag of one fader is one step (editor_score_lines.go).
 	mixKey string
+	// LayoutRev counts page layout changes (paper, breaks, titles, names):
+	// the page view lays out again, the player hears nothing new
+	// (editor_score_layout.go).
+	LayoutRev uint64
 
 	// Transport is the play head, the loop, the tempo slider and follow.
 	Transport scoreTransport

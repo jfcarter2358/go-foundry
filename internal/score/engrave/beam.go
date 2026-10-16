@@ -56,41 +56,9 @@ func flagGlyph(b score.DurBase, up bool) string {
 	return names[i] + "Down"
 }
 
-// beamUnits are the lengths a meter's bar beams in, in order.
-func beamUnits(m score.Meter) []score.Frac {
-	if m.Den <= 0 || len(m.Groups) == 0 {
-		return []score.Frac{score.F(1, 4), score.F(1, 4), score.F(1, 4), score.F(1, 4)}
-	}
-	unit := score.F(1, int64(m.Den))
-	if len(m.Groups) > 1 || m.Compound() || m.Den <= 4 {
-		return m.Beats()
-	}
-	n := m.Groups[0]
-	var counts []int
-	switch {
-	case n <= 3:
-		counts = []int{n}
-	case n == 5:
-		counts = []int{3, 2}
-	case n == 7:
-		counts = []int{2, 2, 3}
-	case n == 8:
-		counts = []int{3, 3, 2}
-	default:
-		for r := n; r > 0; {
-			if r == 3 {
-				counts, r = append(counts, 3), 0
-				continue
-			}
-			counts, r = append(counts, 2), r-2
-		}
-	}
-	out := make([]score.Frac, len(counts))
-	for i, c := range counts {
-		out[i] = unit.MulInt(int64(c))
-	}
-	return out
-}
+// beamUnits are the lengths a meter's bar beams in, in order
+// (score.Meter.BeamUnits).
+func beamUnits(m score.Meter) []score.Frac { return m.BeamUnits() }
 
 // beamable is a note that takes a beam.
 func beamable(x *ev) bool { return len(x.notes) > 0 && x.base >= score.Eighth }

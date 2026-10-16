@@ -70,9 +70,10 @@ jobs:
         run: |
           sudo apt-get update
           # libsdl2-dev + libgl-dev: the Linux editor and release runtime (cgo,
-          # pkg-config sdl2 / gl). mingw-w64: the Windows cross builds.
+          # pkg-config sdl2 / gl). mingw-w64: the Windows cross builds. zstd:
+          # unpacking the MSYS2 codec packages (task codecs-windows).
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libsdl2-dev libgl-dev mingw-w64
+            build-essential pkg-config libsdl2-dev libgl-dev mingw-w64 zstd
 
       - name: Install SDL2 for mingw
         run: |

@@ -28,9 +28,18 @@ package musicxml
 //     sit between notes in MusicXML and on events in a score: each goes on
 //     the event at (or, for an ending, before) its place on its staff.
 //
-// What a score cannot hold yet is reported as a warning, never silently
-// dropped: voltas, D.S./coda jumps, clef changes inside a staff, lyrics,
-// chord symbols.
+//   - Form. Repeat bar lines are repeats, <ending>s their voltas, segno
+//     and coda signs, To Coda, Fine, D.C. and D.S. (from <sound> and from
+//     their words) the score's jumps.
+//   - Layout. The page in <defaults> (paper, margins, staff size) and
+//     <print new-system/new-page> become the score's layout and breaks,
+//     unless Options.NoLayout.
+//
+// A file this package wrote (export.go, Software) is read with what only
+// it writes: stem directions, velocities (a note's dynamics attribute),
+// grace timing, and the library instrument a part names. What a score
+// cannot hold yet is reported as a warning, never silently dropped:
+// lyrics, chord symbols.
 
 import (
 	"fmt"
@@ -43,6 +52,7 @@ import (
 	"foundry/internal/score"
 	"foundry/internal/score/io/gm"
 	"foundry/internal/score/io/notate"
+	"foundry/internal/tracker"
 )
 
 // PartInfo describes a part for an import dialog.
@@ -70,6 +80,9 @@ type Options struct {
 	// Name is the score's library name; Title replaces the file's title.
 	Name, Title string
 	Choices     []Choice
+	// NoLayout leaves the file's page layout out (paper, margins, staff
+	// size, system and page breaks): the score is laid out its own way.
+	NoLayout bool
 }
 
 // partHead is a <score-part>.
@@ -79,19 +92,28 @@ type partHead struct {
 	program, channel int
 	pan              float32
 	unpitched        map[string]int // score-instrument id → MIDI key
+	// volume is the part's MIDI volume, 0..1 (-1 unsaid); virtual the
+	// library instrument a Foundry export named.
+	volume  float32
+	virtual string
 }
 
 func (d *Document) heads() map[string]*partHead {
 	out := map[string]*partHead{}
 	for _, sp := range d.root.child("part-list").children("score-part") {
 		h := &partHead{id: sp.attr("id"), name: cleanText(sp.str("part-name")), abbrev: cleanText(sp.str("part-abbreviation")),
-			program: -1, channel: -1, unpitched: map[string]int{}}
+			program: -1, channel: -1, unpitched: map[string]int{}, volume: -1}
 		if dn := sp.child("part-name-display"); dn != nil && h.name == "" {
 			h.name = cleanText(dn.str("display-text"))
 		}
 		if si := sp.child("score-instrument"); si != nil {
 			h.instName = cleanText(si.str("instrument-name"))
 			h.sound = si.str("instrument-sound")
+		}
+		for _, si := range sp.children("score-instrument") {
+			if vi := si.child("virtual-instrument"); vi != nil && vi.str("virtual-library") == "Foundry" && h.virtual == "" {
+				h.virtual = vi.str("virtual-name")
+			}
 		}
 		for _, mi := range sp.children("midi-instrument") {
 			if p := mi.integer("midi-program", 0); p > 0 && h.program < 0 {
@@ -105,6 +127,9 @@ func (d *Document) heads() map[string]*partHead {
 			}
 			if mi.has("pan") && h.pan == 0 {
 				h.pan = float32(math.Max(-1, math.Min(1, mi.num("pan", 0)/90)))
+			}
+			if mi.has("volume") && h.volume < 0 {
+				h.volume = float32(math.Max(0, math.Min(2, mi.num("volume", 100)/100)))
 			}
 		}
 		out[h.id] = h
@@ -190,9 +215,17 @@ func partName(h *partHead) string {
 	return h.id
 }
 
-// guessInstrument: the instrument-sound, then the names, then the program.
+// guessInstrument: the library instrument a Foundry export named (when
+// this library has it), the instrument-sound, then the names, then the
+// program.
 func guessInstrument(h *partHead, perc bool) string {
-	for _, n := range []string{h.sound, h.name, h.instName, h.abbrev} {
+	if h.virtual != "" && tracker.InstrumentPath(h.virtual) != "" {
+		return h.virtual
+	}
+	// The names a person typed come before the sound id: a sound id's
+	// family ("strings.baryton" from MuseScore's cello) would otherwise
+	// match the family's generic instrument.
+	for _, n := range []string{h.name, h.instName, h.sound, h.abbrev} {
 		if m := gm.Match(n); m != "" && (!perc || gm.Percussive(m) || strings.HasPrefix(m, "percussion/")) {
 			return gm.Pick(m)
 		}
@@ -302,6 +335,11 @@ type xnote struct {
 	accWritten bool
 	tie        bool
 	marks      []score.Mark
+	// From a Foundry export: the stem it asked for ("up", "down"), its
+	// velocity (1..127, 0 none), its grace timing mark.
+	stem  string
+	vel   int
+	timed string
 }
 
 type xtuplet struct {
@@ -319,6 +357,24 @@ type xdir struct {
 	stops     []score.Mark
 	tempo     *score.TempoMark
 	rehearsal string
+	// tempoTo ends the dashes of the last gradual tempo change (its To).
+	tempoTo bool
+	// jumps are the form marks it holds (dacapo, dalsegno, tocoda, fine,
+	// segno, coda) and the words that came with them.
+	jumps []xjump
+}
+
+// xjump is a form mark read from a direction or a barline.
+type xjump struct {
+	kind  string // dacapo, dalsegno, tocoda, fine, segno, coda
+	words string
+}
+
+// xclef is a clef change inside a measure.
+type xclef struct {
+	at    score.Frac
+	staff int
+	clef  string
 }
 
 // xmeasure is a part's measure, read.
@@ -336,14 +392,27 @@ type xmeasure struct {
 	// From <barline>.
 	repeatStart, repeatEnd bool
 	repeatTimes            int
-	ending                 bool
-	jumps                  []string
-	lyrics, harmony        int
+	// endingStart is the passes of an ending starting here ("1, 2"),
+	// endingStop whether one ends here.
+	endingStart     string
+	hasEnding       bool
+	endingStop      bool
+	jumps           []xjump
+	clefMid         []xclef
+	newSystem       bool
+	newPage         bool
+	lyrics, harmony int
 }
 
 type partReader struct {
 	divisions int
 	warn      func(string, ...any)
+	// ours is a file this package wrote; first the score's first part
+	// (where tempo text is).
+	ours, first bool
+	// dashes are the open dashes by number: "tempo" (a rit.'s) or
+	// "hairpin" (a text crescendo's).
+	dashes map[string]string
 }
 
 func (r *partReader) frac(divs float64) score.Frac {
@@ -355,6 +424,7 @@ func (r *partReader) frac(divs float64) score.Frac {
 
 var dynamicNames = map[string]string{
 	"ppppp": "pppp", "pppppp": "pppp", "fffff": "ffff", "ffffff": "ffff", "sfzp": "sfp", "pf": "fp",
+	"n": "niente",
 }
 
 // dynamicMarks reads a <dynamics> element.
@@ -428,7 +498,10 @@ func (r *partReader) readMeasure(m *node) xmeasure {
 	for _, k := range m.kids {
 		switch k.name {
 		case "attributes":
-			r.readAttributes(k, &xm)
+			r.readAttributes(k, &xm, cur)
+		case "print":
+			xm.newSystem = xm.newSystem || k.attr("new-system") == "yes"
+			xm.newPage = xm.newPage || k.attr("new-page") == "yes"
 		case "backup":
 			cur = cur.Sub(r.frac(k.num("duration", 0)))
 			if cur.Sign() < 0 {
@@ -459,7 +532,7 @@ func (r *partReader) readMeasure(m *node) xmeasure {
 					xm.dirs = append(xm.dirs, xdir{at: cur, staff: 1, tempo: &score.TempoMark{BPM: bpm, Unit: score.Duration{Base: score.Quarter}}})
 				}
 			}
-			r.readJumps(k, &xm)
+			xm.jumps = append(xm.jumps, soundJumps(k, "")...)
 		case "barline":
 			if rp := k.child("repeat"); rp != nil {
 				switch rp.attr("direction") {
@@ -470,14 +543,23 @@ func (r *partReader) readMeasure(m *node) xmeasure {
 					xm.repeatTimes = atoiDef(rp.attr("times"), 0)
 				}
 			}
-			if k.has("ending") {
-				xm.ending = true
+			for _, en := range k.children("ending") {
+				switch en.attr("type") {
+				case "start":
+					xm.endingStart, xm.hasEnding = en.attr("number"), true
+				case "stop", "discontinue":
+					xm.endingStop = true
+					if !xm.hasEnding && xm.endingStart == "" {
+						// Remember the passes in case no start was written.
+						xm.endingStart = en.attr("number")
+					}
+				}
 			}
 			if k.has("segno") {
-				xm.jumps = append(xm.jumps, "segno")
+				xm.jumps = append(xm.jumps, xjump{kind: "segno"})
 			}
 			if k.has("coda") {
-				xm.jumps = append(xm.jumps, "coda")
+				xm.jumps = append(xm.jumps, xjump{kind: "coda"})
 			}
 		case "harmony":
 			xm.harmony++
@@ -486,15 +568,36 @@ func (r *partReader) readMeasure(m *node) xmeasure {
 	return xm
 }
 
-func (r *partReader) readJumps(s *node, xm *xmeasure) {
+// soundJumps are the form marks a <sound> plays: D.C., D.S., To Coda,
+// Fine, and the segno and coda it names.
+func soundJumps(s *node, words string) []xjump {
+	var out []xjump
 	for _, a := range []string{"dacapo", "dalsegno", "tocoda", "fine", "segno", "coda"} {
-		if s.attr(a) != "" {
-			xm.jumps = append(xm.jumps, a)
+		if v := s.attr(a); v != "" && v != "no" {
+			out = append(out, xjump{kind: a, words: words})
 		}
 	}
+	return out
 }
 
-func (r *partReader) readAttributes(a *node, xm *xmeasure) {
+// wordJump is the form mark a text names on its own ("D.S. al Coda",
+// "To Coda", "Fine"), for files that write the words without a <sound>.
+func wordJump(t string) string {
+	l := strings.ToLower(strings.TrimSpace(t))
+	switch {
+	case strings.HasPrefix(l, "d.c.") || strings.HasPrefix(l, "da capo"):
+		return "dacapo"
+	case strings.HasPrefix(l, "d.s.") || strings.HasPrefix(l, "dal segno"):
+		return "dalsegno"
+	case l == "to coda" || l == "to coda ø" || l == "al coda":
+		return "tocoda"
+	case l == "fine":
+		return "fine"
+	}
+	return ""
+}
+
+func (r *partReader) readAttributes(a *node, xm *xmeasure, cur score.Frac) {
 	if d := a.integer("divisions", 0); d > 0 {
 		r.divisions = d
 	}
@@ -513,6 +616,10 @@ func (r *partReader) readAttributes(a *node, xm *xmeasure) {
 		}
 	}
 	for _, c := range a.children("clef") {
+		if cur.Sign() > 0 {
+			xm.clefMid = append(xm.clefMid, xclef{at: cur, staff: atoiDef(c.attr("number"), 1), clef: clefName(c)})
+			continue
+		}
 		if xm.clefs == nil {
 			xm.clefs = map[int]string{}
 		}
@@ -574,6 +681,23 @@ func (r *partReader) readNote(k *node) xnote {
 		if g.attr("slash") == "yes" {
 			n.grace = score.Acciaccatura
 		}
+		switch {
+		case g.attr("steal-time-previous") != "":
+			n.timed = "before_beat"
+		case g.attr("steal-time-following") != "":
+			n.timed = "on_beat"
+		}
+	}
+	if r.ours {
+		switch k.str("stem") {
+		case "up", "down":
+			n.stem = k.str("stem")
+		}
+		if d := k.attr("dynamics"); d != "" {
+			if v, err := strconv.ParseFloat(d, 64); err == nil && v > 0 {
+				n.vel = max(1, min(127, int(math.Round(v*90/100))))
+			}
+		}
 	}
 	n.dur = r.frac(k.num("duration", 0))
 	if rest := k.child("rest"); rest != nil {
@@ -627,6 +751,15 @@ func (r *partReader) readNote(k *node) xnote {
 	for _, nt := range k.children("notations") {
 		r.readNotations(nt, &n)
 	}
+	if n.stem != "" {
+		n.marks = append(n.marks, score.Mark{Name: n.stem})
+	}
+	if n.timed != "" && n.grace != score.NotGrace {
+		n.marks = append(n.marks, score.Mark{Name: n.timed})
+	}
+	if n.vel > 0 && !n.rest {
+		n.marks = append(n.marks, score.Mark{Name: "vel", Value: strconv.Itoa(n.vel)})
+	}
 	return n
 }
 
@@ -646,6 +779,93 @@ var articulationMarks = map[string]string{
 var ornamentMarks = map[string]string{
 	"trill-mark": "tr", "mordent": "mord", "inverted-mordent": "imord", "turn": "turn",
 	"inverted-turn": "iturn", "delayed-turn": "turn", "shake": "tr",
+}
+
+// fermataValues are a fermata's shapes as the lengths a score gives them.
+var fermataValues = map[string]string{
+	"": "", "normal": "", "angled": "short", "double-angled": "short", "half-curve": "short",
+	"square": "long", "double-square": "verylong", "curlew": "verylong", "double-dot": "long",
+}
+
+// accAlter is an accidental-mark's (or accidental's) name as semitones.
+var accAlter = map[string]int{
+	"sharp": 1, "double-sharp": 2, "sharp-sharp": 2, "flat": -1, "flat-flat": -2, "natural": 0,
+}
+
+func accValue(a int) string {
+	switch a {
+	case 1:
+		return "#"
+	case 2:
+		return "x"
+	case -1:
+		return "b"
+	case -2:
+		return "bb"
+	}
+	return "n"
+}
+
+// readOrnaments reads <ornaments>: the ornaments with the accidentals
+// marked on their auxiliary notes (a trill's "tr=#", a turn's "turn=b/#"),
+// tremolos (single, and the start of a two-note one). Three strokes are
+// the plain mark: an unmeasured tremolo either way.
+func (r *partReader) readOrnaments(k *node, add func(name, value string)) {
+	var last string // the ornament the accidental marks follow
+	var above, below string
+	flush := func() {
+		if last == "" {
+			return
+		}
+		v := ""
+		switch {
+		case last == "mord" && below != "":
+			v = below
+		case last == "turn" || last == "iturn":
+			if above != "" || below != "" {
+				v = above
+				if below != "" {
+					v += "/" + below
+				}
+			}
+		default:
+			v = above
+		}
+		add(last, v)
+		last, above, below = "", "", ""
+	}
+	for _, o := range k.kids {
+		if m, ok := ornamentMarks[o.name]; ok {
+			flush()
+			last = m
+			continue
+		}
+		switch o.name {
+		case "accidental-mark":
+			a, ok := accAlter[strings.TrimSpace(o.text)]
+			if !ok || last == "" {
+				continue
+			}
+			if o.attr("placement") == "below" {
+				below = accValue(a)
+			} else {
+				above = accValue(a)
+			}
+		case "tremolo":
+			strokes := strings.TrimSpace(o.text)
+			if strokes == "3" {
+				strokes = ""
+			}
+			switch o.attr("type") {
+			case "start":
+				add("trem2", strokes)
+			case "stop":
+			default:
+				add("trem", strokes)
+			}
+		}
+	}
+	flush()
 }
 
 func (r *partReader) readNotations(nt *node, n *xnote) {
@@ -682,20 +902,25 @@ func (r *partReader) readNotations(nt *node, n *xnote) {
 				if m, ok := articulationMarks[a.name]; ok {
 					add(m, "")
 				}
+				if a.name == "other-articulation" && strings.EqualFold(strings.TrimSpace(a.text), "legato") {
+					add("legato", "")
+				}
 			}
 		case "ornaments":
-			for _, o := range k.kids {
-				if m, ok := ornamentMarks[o.name]; ok {
-					add(m, "")
-				}
-				if o.name == "tremolo" && o.attr("type") != "start" && o.attr("type") != "stop" {
-					add("trem", strings.TrimSpace(o.text))
+			r.readOrnaments(k, add)
+		case "fermata":
+			add("ferm", fermataValues[strings.TrimSpace(k.text)])
+		case "arpeggiate":
+			v := ""
+			switch k.attr("direction") {
+			case "down":
+				v = "down"
+			case "up":
+				if r.ours {
+					v = "up"
 				}
 			}
-		case "fermata":
-			add("ferm", "")
-		case "arpeggiate":
-			add("arp", "")
+			add("arp", v)
 		case "slur":
 			switch k.attr("type") {
 			case "start":
@@ -705,7 +930,11 @@ func (r *partReader) readNotations(nt *node, n *xnote) {
 			}
 		case "glissando", "slide":
 			if k.attr("type") == "start" {
-				add("gliss", "")
+				v := ""
+				if k.attr("line-type") == "wavy" {
+					v = "wavy"
+				}
+				add("gliss", v)
 			}
 		case "dynamics":
 			for _, m := range dynamicMarks(k) {
@@ -727,16 +956,21 @@ func (r *partReader) readDirection(d *node, cur score.Frac) xdir {
 		x.at = score.Frac{}
 	}
 	var words []string
+	italic, bold, others := false, false, false
 	var metro *score.TempoMark
+	var dashStart, dashStop []string // dashes' numbers
 	for _, dt := range d.children("direction-type") {
 		for _, k := range dt.kids {
 			switch k.name {
 			case "words":
 				if t := cleanText(k.text); t != "" {
 					words = append(words, t)
+					italic = italic || k.attr("font-style") == "italic"
+					bold = bold || k.attr("font-weight") == "bold"
 				}
 			case "dynamics":
 				x.marks = append(x.marks, dynamicMarks(k)...)
+				others = true
 			case "metronome":
 				units := k.children("beat-unit")
 				pm := k.str("per-minute")
@@ -750,7 +984,19 @@ func (r *partReader) readDirection(d *node, cur score.Frac) xdir {
 				}
 			case "rehearsal":
 				x.rehearsal = cleanText(k.text)
+			case "segno":
+				x.jumps = append(x.jumps, xjump{kind: "segno"})
+			case "coda":
+				x.jumps = append(x.jumps, xjump{kind: "coda"})
+			case "dashes":
+				switch k.attr("type") {
+				case "start":
+					dashStart = append(dashStart, k.attr("number"))
+				case "stop":
+					dashStop = append(dashStop, k.attr("number"))
+				}
 			case "wedge":
+				others = true
 				switch k.attr("type") {
 				case "crescendo":
 					x.marks = append(x.marks, score.Mark{Name: "cresc"})
@@ -760,6 +1006,7 @@ func (r *partReader) readDirection(d *node, cur score.Frac) xdir {
 					x.stops = append(x.stops, score.Mark{Name: "hairpin_end"})
 				}
 			case "octave-shift":
+				others = true
 				size := atoiDef(k.attr("size"), 8)
 				switch k.attr("type") {
 				case "down": // the notes are shown lower: 8va
@@ -770,35 +1017,116 @@ func (r *partReader) readDirection(d *node, cur score.Frac) xdir {
 					x.stops = append(x.stops, score.Mark{Name: "ottava_end"})
 				}
 			case "pedal":
+				others = true
 				switch k.attr("type") {
-				case "start":
+				case "start", "change", "resume":
+					// A change is a re-pedal: the line goes up and down
+					// again there, which a pedal mark on a held pedal is.
 					x.marks = append(x.marks, score.Mark{Name: "ped"})
-				case "stop":
+				case "stop", "discontinue":
 					x.stops = append(x.stops, score.Mark{Name: "ped_end"})
-				case "change":
-					x.stops = append(x.stops, score.Mark{Name: "ped_end"})
-					x.marks = append(x.marks, score.Mark{Name: "ped"})
 				}
 			}
 		}
 	}
+	text := strings.Join(words, " ")
 	snd := d.child("sound")
+	if snd != nil {
+		x.jumps = append(x.jumps, soundJumps(snd, text)...)
+	}
+	if len(x.jumps) == 0 && text != "" {
+		if k := wordJump(text); k != "" {
+			x.jumps = append(x.jumps, xjump{kind: k, words: text})
+		}
+	}
 	if metro == nil && snd != nil && snd.attr("tempo") != "" {
 		if bpm, err := strconv.ParseFloat(snd.attr("tempo"), 64); err == nil && bpm > 0 {
 			metro = &score.TempoMark{BPM: bpm, Unit: score.Duration{Base: score.Quarter}}
 		}
 	}
-	if metro != nil {
-		// Words with a tempo are the tempo's text ("Allegro").
-		metro.Text = strings.Join(words, " ")
-		metro.BPM = math.Round(metro.BPM*1000) / 1000
-		x.tempo = metro
-	} else {
-		for _, w := range words {
-			x.marks = append(x.marks, wordMark(w))
+	if r.dashes == nil {
+		r.dashes = map[string]string{}
+	}
+	// Tempo text with no number: a change (rit., a tempo) wherever it is,
+	// or bold words above the first part, as notation programs write
+	// tempo text.
+	if metro == nil && text != "" && len(x.jumps) == 0 && !others {
+		if (score.TempoMark{Text: text}).Change() != score.TempoSet ||
+			r.first && bold && !italic && d.attr("placement") != "below" {
+			metro = &score.TempoMark{}
 		}
 	}
+	// A Foundry export says which of its three kinds of text a direction
+	// is in its id.
+	kind := ""
+	if r.ours {
+		id := d.attr("id")
+		for _, k := range []string{"text", "tech", "expr"} {
+			if strings.HasSuffix(id, "-"+k) {
+				kind = k
+			}
+		}
+	}
+	switch {
+	case kind != "" && metro == nil && len(dashStart) == 0:
+		for _, w := range words {
+			x.marks = append(x.marks, score.Mark{Name: kind, Value: w})
+		}
+	case metro != nil:
+		// Words with a tempo are the tempo's text ("Allegro").
+		metro.Text = text
+		metro.BPM = math.Round(metro.BPM*1000) / 1000
+		if len(dashStart) > 0 && metro.Change().Gradual() {
+			metro.HasTo = true
+			r.dashes[dashStart[0]] = "tempo"
+		}
+		x.tempo = metro
+	case len(x.jumps) > 0:
+		// The words are the jump's.
+	case len(dashStart) > 0:
+		// Words with dashes: a crescendo or diminuendo written out.
+		x.marks = append(x.marks, textHairpin(text))
+		r.dashes[dashStart[0]] = "hairpin"
+	default:
+		for _, w := range words {
+			switch {
+			case italic && d.attr("placement") == "below":
+				x.marks = append(x.marks, score.Mark{Name: "expr", Value: w})
+			default:
+				x.marks = append(x.marks, wordMark(w))
+			}
+		}
+	}
+	for _, n := range dashStop {
+		switch r.dashes[n] {
+		case "tempo":
+			x.tempoTo = true
+		default:
+			x.stops = append(x.stops, score.Mark{Name: "hairpin_end"})
+		}
+		delete(r.dashes, n)
+	}
 	return x
+}
+
+// textHairpin is a crescendo or diminuendo written as words with dashes:
+// "cresc." and "dim." are the plain text marks, other words the mark's
+// text ("poco a poco cresc.").
+func textHairpin(text string) score.Mark {
+	l := strings.ToLower(strings.TrimSpace(text))
+	switch l {
+	case "cresc.", "cresc", "crescendo":
+		return score.Mark{Name: "cresc", Value: "text"}
+	case "dim.", "dim", "diminuendo", "decresc.", "decresc", "decrescendo":
+		return score.Mark{Name: "dim", Value: "text"}
+	}
+	if strings.Contains(l, "dim") || strings.Contains(l, "decresc") {
+		return score.Mark{Name: "dim", Value: text}
+	}
+	if text == "" {
+		text = "text"
+	}
+	return score.Mark{Name: "cresc", Value: text}
 }
 
 var numberRE = regexp.MustCompile(`[0-9]+(\.[0-9]+)?`)
@@ -830,8 +1158,9 @@ func Import(d *Document, o Options) (s *score.Score, warnings []string, err erro
 	infos := d.Parts()
 	read := make([][]xmeasure, len(parts))
 	nbars := 0
+	ours := strings.HasPrefix(d.Software, Software)
 	for i, p := range parts {
-		pr := &partReader{warn: warn}
+		pr := &partReader{warn: warn, ours: ours, first: i == 0}
 		read[i] = pr.readPart(p)
 		nbars = max(nbars, len(read[i]))
 	}
@@ -869,10 +1198,41 @@ func Import(d *Document, o Options) (s *score.Score, warnings []string, err erro
 			s.Composer = cleanText(c.text)
 		}
 	}
+	for _, cr := range d.root.children("credit") {
+		text := cleanText(cr.str("credit-words"))
+		switch cr.str("credit-type") {
+		case "subtitle":
+			s.Subtitle = text
+		case "composer":
+			if s.Composer == "" {
+				s.Composer = text
+			}
+		case "title":
+			if s.Title == "" || s.Title == name {
+				s.Title = text
+			}
+		}
+	}
+	if s.Subtitle == "" && d.root.child("work").str("work-title") != "" {
+		// A movement title beside a work title is the subtitle.
+		if mt := cleanText(d.root.str("movement-title")); mt != s.Title {
+			s.Subtitle = mt
+		}
+	}
 	s.Bars = nbars
+	if !o.NoLayout {
+		readLayout(d.root.child("defaults"), &s.Layout)
+	}
 
 	ref := referencePart(read, infos)
 	buildMaps(s, read, ref, infos, warn)
+	if !o.NoLayout {
+		for b, xm := range read[ref] {
+			if b > 0 && b < s.Bars && (xm.newSystem || xm.newPage) {
+				s.Layout.Breaks = append(s.Layout.Breaks, score.Break{Bar: b + 1, Page: xm.newPage})
+			}
+		}
+	}
 	lay := notate.LayoutOf(s)
 
 	for pi, p := range parts {
@@ -1017,6 +1377,7 @@ func buildMaps(s *score.Score, read [][]xmeasure, ref int, infos []PartInfo, war
 	sections := map[int]bool{}
 	names := map[string]int{}
 	for _, m := range read {
+		gradual := -1 // this part's open rit. or accel., into s.Tempo
 		for b := 0; b < len(m) && b < n; b++ {
 			for _, dr := range m[b].dirs {
 				pos := score.Pos{Bar: b + 1, Offset: dr.at}
@@ -1026,11 +1387,21 @@ func buildMaps(s *score.Score, read [][]xmeasure, ref int, infos []PartInfo, war
 						pos.Bar++
 					}
 				}
+				if dr.tempoTo && gradual >= 0 {
+					s.Tempo[gradual].To = score.Pos{Bar: b + 1, Offset: dr.at}
+					if bl := lay.BarLen(b); !dr.at.Less(bl) {
+						s.Tempo[gradual].To = score.Pos{Bar: b + 2}
+					}
+					gradual = -1
+				}
 				if key := s.FormatPos(pos); dr.tempo != nil && !tempoAt[key] {
 					tempoAt[key] = true
 					t := *dr.tempo
 					t.At = pos
 					s.Tempo = append(s.Tempo, t)
+					if t.HasTo {
+						gradual = len(s.Tempo) - 1
+					}
 				}
 				if dr.rehearsal != "" && !sections[pos.Bar] {
 					sections[pos.Bar] = true
@@ -1044,6 +1415,12 @@ func buildMaps(s *score.Score, read [][]xmeasure, ref int, infos []PartInfo, war
 			}
 		}
 	}
+	for i := range s.Tempo {
+		// Dashes that never stopped: the change runs to the next mark.
+		if t := &s.Tempo[i]; t.HasTo && t.To == (score.Pos{}) {
+			t.HasTo = false
+		}
+	}
 	sort.SliceStable(s.Tempo, func(i, j int) bool { return score.PosLess(s.Tempo[i].At, s.Tempo[j].At) })
 	if len(s.Tempo) == 0 || s.Tempo[0].At.Bar != 1 || !s.Tempo[0].At.Offset.IsZero() {
 		// A score starts at a tempo: the first mark's, or 120.
@@ -1053,8 +1430,10 @@ func buildMaps(s *score.Score, read [][]xmeasure, ref int, infos []PartInfo, war
 		}
 		s.Tempo = append([]score.TempoMark{first}, s.Tempo...)
 	}
-	// Repeats from the reference part's bar lines.
+	// Repeats, endings and jumps from the reference part's bar lines and
+	// directions (and the first part's, where the jumps usually are).
 	open := 0
+	openEnding := -1
 	for b, xm := range read[ref] {
 		if b >= n {
 			break
@@ -1062,11 +1441,19 @@ func buildMaps(s *score.Score, read [][]xmeasure, ref int, infos []PartInfo, war
 		if xm.repeatStart {
 			open = b + 1
 		}
-		if xm.ending {
-			warn("voltas (1st/2nd endings) are not played yet (phase 3): the repeat plays without them")
+		if xm.hasEnding {
+			s.Voltas = append(s.Voltas, score.Volta{Start: b + 1, End: b + 1, Passes: passesOf(xm.endingStart, len(s.Voltas)+1)})
+			openEnding = len(s.Voltas) - 1
 		}
-		for _, j := range xm.jumps {
-			warn("%s is not played yet (phase 3)", map[string]string{"dacapo": "D.C.", "dalsegno": "D.S.", "tocoda": "a jump to the coda", "fine": "Fine", "segno": "a segno", "coda": "a coda"}[j])
+		if xm.endingStop {
+			if openEnding >= 0 {
+				s.Voltas[openEnding].End = b + 1
+			} else {
+				s.Voltas = append(s.Voltas, score.Volta{Start: b + 1, End: b + 1, Passes: passesOf(xm.endingStart, len(s.Voltas)+1)})
+			}
+			openEnding = -1
+		} else if openEnding >= 0 {
+			s.Voltas[openEnding].End = b + 1
 		}
 		if xm.repeatEnd {
 			start := open
@@ -1081,7 +1468,140 @@ func buildMaps(s *score.Score, read [][]xmeasure, ref int, infos []PartInfo, war
 			open = 0
 		}
 	}
+	jumpParts := []int{ref}
+	if ref != 0 {
+		jumpParts = append(jumpParts, 0)
+	}
+	seenJump := map[[2]int]bool{}
+	for _, pi := range jumpParts {
+		for b, xm := range read[pi] {
+			if b >= n {
+				break
+			}
+			js := append([]xjump(nil), xm.jumps...)
+			for _, dr := range xm.dirs {
+				js = append(js, dr.jumps...)
+			}
+			for _, j := range js {
+				jm := jumpOf(j, b+1)
+				if jm.Kind == 0 || seenJump[[2]int{int(jm.Kind), jm.Bar}] {
+					continue
+				}
+				seenJump[[2]int{int(jm.Kind), jm.Bar}] = true
+				s.Jumps = append(s.Jumps, jm)
+			}
+		}
+	}
 	s.SortMaps()
+}
+
+// passesOf reads an ending's numbers ("1", "1, 2", "1-3", "1. 2."); with
+// none it is the k'th ending.
+func passesOf(t string, k int) []int {
+	var out []int
+	for _, f := range strings.FieldsFunc(t, func(r rune) bool { return r == ',' || r == ' ' || r == '.' }) {
+		if a, b, ok := strings.Cut(f, "-"); ok {
+			x, y := atoiDef(a, 0), atoiDef(b, 0)
+			for p := x; p >= 1 && p <= y && p <= 16; p++ {
+				out = append(out, p)
+			}
+			continue
+		}
+		if p := atoiDef(f, 0); p >= 1 && p <= 16 {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		out = []int{max(1, min(k, 16))}
+	}
+	return out
+}
+
+// jumpOf is a form mark as a score's jump at a bar.
+func jumpOf(j xjump, bar int) score.Jump {
+	jm := score.Jump{Bar: bar}
+	switch j.kind {
+	case "segno":
+		jm.Kind = score.JumpSegno
+	case "coda":
+		jm.Kind = score.JumpCoda
+	case "tocoda":
+		jm.Kind = score.JumpToCoda
+	case "fine":
+		jm.Kind = score.JumpFine
+	case "dacapo":
+		jm.Kind = score.JumpDC
+	case "dalsegno":
+		jm.Kind = score.JumpDS
+	}
+	if jm.Kind == score.JumpDC || jm.Kind == score.JumpDS {
+		l := strings.ToLower(j.words)
+		switch {
+		case strings.Contains(l, "al fine"):
+			jm.Al = score.JumpFine
+		case strings.Contains(l, "al coda"):
+			jm.Al = score.JumpCoda
+		}
+		jm.Repeats = strings.Contains(l, "con rip")
+	}
+	return jm
+}
+
+// readLayout reads <defaults>: the staff size from the scaling, the paper
+// and its margins. Values that are the score's defaults are left at zero,
+// as a score with no layout has them.
+func readLayout(df *node, lay *score.Layout) {
+	sc := df.child("scaling")
+	if sc == nil {
+		return
+	}
+	mm, tenths := sc.num("millimeters", 0), sc.num("tenths", 0)
+	if mm <= 0 || tenths <= 0 {
+		return
+	}
+	staff := math.Round(mm*40/tenths*100) / 100
+	if staff >= score.MinStaff && staff <= score.MaxStaff && math.Abs(staff-score.DefaultStaff) > 0.005 {
+		lay.Staff = staff
+	}
+	toMM := func(t float64) float64 { return math.Round(t*mm/tenths*100) / 100 }
+	pl := df.child("page-layout")
+	if pl == nil {
+		return
+	}
+	w, h := toMM(pl.num("page-width", 0)), toMM(pl.num("page-height", 0))
+	if w > 50 && h > 50 && w < 2000 && h < 2000 {
+		lay.Paper = score.Paper{Landscape: w > h}
+		pw, ph := w, h
+		if pw > ph {
+			pw, ph = ph, pw
+		}
+		for _, name := range score.PaperNames {
+			if sz, ok := score.PaperSizes[name]; ok && math.Abs(sz[0]-pw) < 0.6 && math.Abs(sz[1]-ph) < 0.6 {
+				lay.Paper.Name = name
+			}
+		}
+		if lay.Paper.Name == "" {
+			lay.Paper = score.Paper{Name: "custom", Width: pw, Height: ph, Landscape: w > h}
+		}
+		if lay.Paper.Name == score.DefaultPaper && !lay.Paper.Landscape {
+			lay.Paper.Name = ""
+		}
+	}
+	for _, pm := range pl.children("page-margins") {
+		if t := pm.attr("type"); t != "" && t != "both" && t != "odd" {
+			continue
+		}
+		m := score.Margins{Top: toMM(pm.num("top-margin", 0)), Bottom: toMM(pm.num("bottom-margin", 0)),
+			Left: toMM(pm.num("left-margin", 0)), Right: toMM(pm.num("right-margin", 0))}
+		def := score.DefaultMargin
+		if math.Abs(m.Top-def) < 0.02 && math.Abs(m.Bottom-def) < 0.02 && math.Abs(m.Left-def) < 0.02 && math.Abs(m.Right-def) < 0.02 {
+			m = score.Margins{}
+		}
+		if m.Top >= 0 && m.Bottom >= 0 && m.Left >= 0 && m.Right >= 0 && m.Left+m.Right < w && m.Top+m.Bottom < h {
+			lay.Paper.Margins = m
+		}
+		break
+	}
 }
 
 // meterForLength is a meter that is a bar of a length, in the denominator
@@ -1222,6 +1742,12 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 	}
 	l := score.NewLine(name, inst, "treble")
 	l.Pan = h.pan
+	if h.volume >= 0 {
+		l.Volume = h.volume
+	}
+	if h.abbrev != "" && h.abbrev != score.AbbreviateName(name) && ch.Name == "" {
+		l.Short = h.abbrev
+	}
 	staves := max(1, info.Staves)
 	l.Staves = make([]*score.Staff, staves)
 	for i := range l.Staves {
@@ -1238,7 +1764,10 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 			st.Voices[v] = &score.Voice{Measures: make([]score.Measure, s.Bars)}
 		}
 	}
-	clefSeen := map[int]string{}
+	clefNow := map[int]string{}
+	for i, st := range l.Staves {
+		clefNow[i+1] = st.Clef
+	}
 	transpose := info.Transpose
 	var pending map[int][]score.Mark // marks carried to the next bar, by staff
 	for b := 0; b < s.Bars; b++ {
@@ -1246,13 +1775,29 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 		if b < len(ms) {
 			xm = ms[b]
 		}
-		for st, c := range xm.clefs {
-			if prev, ok := clefSeen[st]; ok && prev != c {
-				warn("%s: a clef change inside a staff is not kept yet (phase 3); the staff stays in %s", name, prev)
+		// Clef changes: at the bar's start, then inside it in order.
+		for st := 1; st <= staves; st++ {
+			if c, ok := xm.clefs[st]; ok && b > 0 && c != clefNow[st] {
+				l.Staves[st-1].Clefs = append(l.Staves[st-1].Clefs, score.ClefChange{At: score.Pos{Bar: b + 1}, Clef: c})
+				clefNow[st] = c
 			}
-			if _, ok := clefSeen[st]; !ok {
-				clefSeen[st] = c
+		}
+		mids := append([]xclef(nil), xm.clefMid...)
+		sort.SliceStable(mids, func(i, j int) bool { return mids[i].at.Less(mids[j].at) })
+		for _, c := range mids {
+			st := min(max(c.staff, 1), staves)
+			if c.clef == clefNow[st] {
+				continue
 			}
+			at := score.Pos{Bar: b + 1, Offset: c.at}
+			if !c.at.Less(lay.BarLen(b)) {
+				if b+1 >= s.Bars {
+					continue
+				}
+				at = score.Pos{Bar: b + 2}
+			}
+			l.Staves[st-1].Clefs = append(l.Staves[st-1].Clefs, score.ClefChange{At: at, Clef: c.clef})
+			clefNow[st] = c.clef
 		}
 		if xm.transpose != nil && *xm.transpose != transpose {
 			if b > 0 {
@@ -1308,6 +1853,12 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 				ev.Kind = score.EventSpace
 			case xn.rest:
 				ev.Kind = score.EventRest
+				// A rest keeps what notation marks it carries: a fermata.
+				for _, mk := range xn.marks {
+					if mk.Name == "ferm" {
+						ev.Marks = append(ev.Marks, mk)
+					}
+				}
 			default:
 				ev.Notes = []score.Note{note}
 				ev.Marks = mergeMarks(nil, xn.marks)

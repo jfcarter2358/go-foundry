@@ -37,12 +37,22 @@ const usage = `foundry score — work on notated scores (sounds/*.fscore).
   foundry score check [score …]              does it parse, validate, find its instruments (all scores with no names)
   foundry score render <score> [flags]       render to a WAV (-o, -section, -from, -seconds, -tempo, -param k=v)
   foundry score render <score> -png out.png  engrave it to an image (-bars 5-8, -scale px/space, -lines 1,3,
-                                             -concert, -spacing k, -bar-numbers n)
+                                             -concert, -spacing k, -bar-numbers n; -svg out.svg for a vector
+                                             image; -page n [-part line] for a page of the page layout)
   foundry score play <score> [flags]         play on the audio device (-section, -from, -tempo, -seconds)
   foundry score fmt [-check] [score …]       rewrite scores in canonical form (all of them with no names)
-  foundry score import <file> [-o name]      a MIDI (.mid) or MusicXML (.musicxml, .xml, .mxl) file as a score;
+  foundry score import <file> [-o name]      a MIDI (.mid), MusicXML (.musicxml, .xml, .mxl) or Tracker (.ftrk) file as a score;
                                              -list shows its parts and writes nothing (see score import -h)
   foundry score export-midi <score> [-o f]   the score as a Standard MIDI File (-no-repeats: as written)
+  foundry score export-pdf <score> [flags]   the full score and its parts as PDFs (-o, -parts=false, -part 1,3,
+                                             -concert, -paper a4, -staff mm, -png dir; see export-pdf -h)
+  foundry score export-musicxml <score>      the score as MusicXML 4.0, for Sibelius and the rest (-o f.mxl, -no-layout)
+  foundry score export-audio <score>         WAV, FLAC, OGG or MP3 (-format, -o, -stems, -bars 5-8, -fold, -verify;
+                                             see export-audio -h)
+  foundry score export-ftrk <score>          the score as a Tracker song, quantised (-o, -rows n)
+  foundry score export <score> [flags]       every format at once, as the Export dialog writes them
+                                             (-formats pdf,musicxml,ogg|all, -o dir; see export -h)
+  foundry score codecs                       where the OGG and MP3 encoders are found (or why not)
 
 A score is a name under sounds/ without the extension, or a path to a file.
 Every verb takes -root <project> before its arguments.
@@ -89,6 +99,18 @@ func Main(root string, args []string, out io.Writer) int {
 		return importCmd(rest, out)
 	case "export-midi":
 		return exportMIDI(rest, out)
+	case "export-pdf":
+		return exportPDF(rest, out)
+	case "export-musicxml":
+		return exportMusicXML(rest, out)
+	case "export-audio":
+		return exportAudio(rest, out)
+	case "export-ftrk":
+		return exportFTRK(rest, out)
+	case "export":
+		return exportAll(rest, out)
+	case "codecs":
+		return codecs(out)
 	}
 	fmt.Fprintf(out, "score: unknown verb %q\n\n", sub)
 	fs.Usage()
@@ -338,6 +360,7 @@ func inspect(rest []string, out io.Writer) int {
 	if h := s.Playback.Humanize; h.On() {
 		fmt.Fprintf(out, "  humanise ±%.0f ms, ±%.0f%% velocity (seed %d)\n", h.Timing, h.Velocity*100, h.Seed)
 	}
+	inspectLayout(s, out)
 	issues := append(s.Validate(instrumentExists), rangeIssues...)
 	for _, is := range issues {
 		fmt.Fprintf(out, "  %s\n", is)
@@ -465,7 +488,8 @@ func needsValue(flag string) bool {
 		return false
 	}
 	switch strings.TrimLeft(flag, "-") {
-	case "check", "list", "force", "no-dynamics", "no-legato", "no-graces", "no-repeats", "concert":
+	case "check", "list", "force", "no-dynamics", "no-legato", "no-graces", "no-repeats", "concert", "score", "parts", "score=false", "parts=false",
+		"stems", "fold", "mxl", "no-layout", "verify":
 		return false
 	}
 	return true
@@ -494,8 +518,15 @@ func render(rest []string, out io.Writer) int {
 		fmt.Fprintf(out, "score render: %v\n", err)
 		return 1
 	}
+	if ef.png != "" && ef.svg != "" {
+		fmt.Fprintln(out, "score render: -png or -svg, not both")
+		return 2
+	}
 	if ef.png != "" {
 		return renderPNG(s, ef, out)
+	}
+	if ef.svg != "" {
+		return renderSVG(s, ef, out)
 	}
 	prog, errs, err := play.Prepare(s)
 	if err != nil {

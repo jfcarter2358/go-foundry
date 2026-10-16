@@ -11,9 +11,11 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"foundry/internal/score"
+	"foundry/internal/score/io/exportset"
 	"foundry/internal/score/play"
 	"foundry/internal/tracker"
 )
@@ -391,30 +393,39 @@ func TestScoreExportAudio(t *testing.T) {
 	if from, to, name, err := e.exportSpan(scoreExportSelection); err != nil || from != 2*bar || to != 4*bar || name != "bars3-4" {
 		t.Errorf("selection: %d %d %q %v", from, to, name, err)
 	}
-	// Bars 3-4 at 120 (4 s) at the slider's 50% (8 s) plus a second's tail.
+	// Bars 3-4 at 120 (4 s) at the slider's 50% (8 s) plus half a bar of
+	// tail (a 4/4 bar at 120 is 2 s; at 50%, 4).
 	e.setTempoScale(0.5)
 	if got := e.exportSeconds(scoreExportSelection, true); math.Abs(got-8) > 1e-9 {
 		t.Errorf("seconds %v", got)
 	}
-	o, err := e.exportOptions(scoreExportSelection, true, 1)
+	scEd = e
+	d := defaultExportDlg()
+	d.Formats = map[exportset.Format]bool{exportset.WAV: true}
+	d.What, d.Scaled, d.TailBars = scoreExportSelection, true, 0.25
+	d.Dir = filepath.Join(t.TempDir(), "out")
+	p, err := e.exportPlan(d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "out", "x.wav")
-	msg, err := scoreRenderWAV(e.Score.Clone(), o, path)
+	if p.Audio.RangeName != "bars3-4" || p.Audio.TempoScale != 0.5 {
+		t.Errorf("plan %+v", p.Audio)
+	}
+	msg, err := scoreRunExport(e, p, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	path := filepath.Join(d.Dir, "t_bars3-4.wav")
 	fi, err := os.Stat(path)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(err, msg)
 	}
 	// 9 s of 48 kHz 24-bit stereo, after a 44-byte header.
 	if want := int64(44 + 9*48000*2*3); fi.Size() != want {
 		t.Errorf("file %d bytes, want %d (%s)", fi.Size(), want, msg)
 	}
-	if msg == "" {
-		t.Error("no message")
+	if !strings.Contains(msg, "Exported 1 file") {
+		t.Errorf("message %q", msg)
 	}
 }
 
@@ -424,14 +435,25 @@ func TestScoreExportAudio(t *testing.T) {
 func TestScoreExportOfALoopingScoreStopsAtTheEnd(t *testing.T) {
 	scoreUseTestInstruments(t)
 	e := scoreLinesState(t)
+	scEd = e
 	e.Score.Loop = true
-	o, err := e.exportOptions(scoreExportWhole, false, 2)
+	d := defaultExportDlg()
+	d.Formats = map[exportset.Format]bool{exportset.WAV: true}
+	d.Bits, d.TailBars, d.Dir = 16, 1, t.TempDir()
+	p, err := e.exportPlan(d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, errs, err := play.RenderScore(e.Score.Clone(), o)
-	if err != nil || len(errs) > 0 {
-		t.Fatal(err, errs)
+	if _, err := scoreRunExport(e, p, nil); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(d.Dir, "t.wav"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := make([]float32, (len(b)-44)/2)
+	for i := range data {
+		data[i] = float32(int16(uint16(b[44+2*i])|uint16(b[45+2*i])<<8)) / 32767
 	}
 	// Eight bars at 120 are 16 s; the music sounds up to there.
 	end := 16 * 48000

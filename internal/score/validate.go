@@ -227,6 +227,7 @@ func (s *Score) Validate(instrumentExists func(string) bool) (out []Issue) {
 	validateChain("bus a effect", s.Buses.A.FX, warn)
 	validateChain("bus b effect", s.Buses.B.FX, warn)
 	validateChain("master effect", s.Master, warn)
+	s.validateLayout(warn)
 	return out
 }
 

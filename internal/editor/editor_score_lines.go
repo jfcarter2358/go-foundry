@@ -191,6 +191,11 @@ func (e *scoreState) setInstrument(i int, name string, playing bool) {
 // new one, -1 for a line that went), clearing a selection that lost one.
 func (e *scoreState) remapLines(f func(int) int) {
 	e.LaneSel = scoreLaneSel{Index: -1}
+	// The page view's part follows its line (a removed one is the full
+	// score again).
+	if scorePagePart >= 0 {
+		scorePagePart = f(scorePagePart)
+	}
 	q := &e.Sel
 	switch q.Kind {
 	case scoreSelEvent, scoreSelCaret:

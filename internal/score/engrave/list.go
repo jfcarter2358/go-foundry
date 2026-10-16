@@ -8,8 +8,8 @@ package engrave
 // font and style. Every coordinate is in staff spaces, y down, from the top
 // left of the layout. A backend scales by its pixels (or points) per space
 // and draws the items in order: internal/score/engrave/raster to an image,
-// the editor through imgui (internal/score/scoredraw), the PDF writer in
-// phase 5.
+// the editor through imgui (internal/score/scoredraw), the PDF and SVG
+// writers (internal/score/io/pdf, internal/score/io/svg).
 //
 // Items carry a Ref saying what in the score they draw, so the editor can
 // colour a selection and hit-test a click without engraving twice, and a
@@ -84,6 +84,12 @@ const (
 	RoleRehearsal
 	RoleEnding
 	RoleJump
+	// RoleName, RoleTitle and RolePageNumber are a page's own (page.go):
+	// instrument names at the left of the systems, the title block and
+	// running header, the page numbers.
+	RoleName
+	RoleTitle
+	RolePageNumber
 )
 
 // Ref says which part of the score an item draws. Indices are 0-based
@@ -305,6 +311,12 @@ type List struct {
 	// Width and Height are the layout's size: everything is inside
 	// (0,0)-(Width,Height).
 	Width, Height float64
+	// Origin is where the system starts: the opening barline's x and the
+	// top staff's top line. End is the x the system ends at, after its
+	// last barline and any cautionary signatures. A page layout lines
+	// systems up by them.
+	Origin Point
+	End    float64
 
 	Staves []StaffBox
 	Bars   []BarBox
@@ -324,6 +336,7 @@ func (l *List) Bounds() Rect {
 
 // Translate moves every item and box by d.
 func (l *List) Translate(d Point) {
+	l.Origin, l.End = l.Origin.Add(d), l.End+d.X
 	for i := range l.Items {
 		it := &l.Items[i]
 		it.P, it.Q = it.P.Add(d), it.Q.Add(d)

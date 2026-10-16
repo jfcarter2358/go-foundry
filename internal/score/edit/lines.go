@@ -141,6 +141,14 @@ func RemoveLine(s *score.Score, i int) error {
 		}
 	}
 	s.Bindings = kept
+	// Its part's own layout goes with it.
+	parts := s.Layout.Parts[:0]
+	for _, p := range s.Layout.Parts {
+		if !strings.EqualFold(p.Line, name) {
+			parts = append(parts, p)
+		}
+	}
+	s.Layout.Parts = parts
 	return nil
 }
 
@@ -184,6 +192,12 @@ func RenameLine(s *score.Score, i int, name string) error {
 	for k := range s.Bindings {
 		if strings.EqualFold(s.Bindings[k].Line, old) {
 			s.Bindings[k].Line = name
+		}
+	}
+	// The part's own layout follows, as the bindings do.
+	for k := range s.Layout.Parts {
+		if strings.EqualFold(s.Layout.Parts[k].Line, old) {
+			s.Layout.Parts[k].Line = name
 		}
 	}
 	s.Lines[i].Name = name

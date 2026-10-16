@@ -253,14 +253,23 @@ type startLayout struct {
 	clefX, keyX, timeX, end float64
 }
 
-func (e *engraver) startPositions() startLayout {
+func (e *engraver) startPositions() startLayout { return e.startPositionsAt(0) }
+
+// startPositionsAt lays out the signatures a system starting at layout bar
+// bi would open with (a page layout measuring where to break).
+func (e *engraver) startPositionsAt(bi int) startLayout {
 	var sl startLayout
 	sl.clefX = 0.7
 	clefW, keyW := 0.0, 0.0
+	bc := e.bars[bi]
 	for _, sc := range e.staves {
-		g, _ := clefGlyph(sc.clef)
+		clef := sc.clefAtBar(bc.bar)
+		if bi == 0 {
+			clef = sc.clef
+		}
+		g, _ := clefGlyph(clef)
 		clefW = max(clefW, e.f.Width(g))
-		keyW = max(keyW, e.keyWidth(keyAccs(sc.clef, writtenFifths(e.bars[0].fifths, sc.iv))))
+		keyW = max(keyW, e.keyWidth(keyAccs(clef, sc.key(bc.fifths))))
 	}
 	sl.keyX = sl.clefX + clefW + 0.6
 	sl.end = sl.clefX + clefW
@@ -271,8 +280,8 @@ func (e *engraver) startPositions() startLayout {
 	if keyW == 0 {
 		sl.timeX = sl.end + 0.9
 	}
-	if e.bars[0].showTime {
-		sl.end = sl.timeX + e.timeWidth(e.bars[0].meter)
+	if bi == 0 && bc.showTime || bi > 0 && (bc.bar == 1 || meterMarkAt(e.s, bc.bar)) {
+		sl.end = sl.timeX + e.timeWidth(bc.meter)
 	}
 	return sl
 }
@@ -364,6 +373,8 @@ func (e *engraver) barlineItems(k barlineKind, x, y0, y1 float64, ref Ref, dots 
 		return out
 	}
 	switch k {
+	case barNone:
+		return nil
 	case barDouble:
 		return []Item{line(x+thin/2, thin), line(x+thin+d.BarlineSeparation+thin/2, thin)}
 	case barFinal:
@@ -444,6 +455,16 @@ func (e *engraver) collectClefChanges() {
 			at := ch.At
 			if l := e.s.BarLength(at.Bar); at.Bar >= 1 && !at.Offset.Less(l) {
 				at = score.Pos{Bar: at.Bar + 1, Offset: at.Offset.Sub(l)}
+			}
+			if e.o.Cautionary && at.Bar == e.to+1 && at.Offset.IsZero() && e.to < e.s.Measures() {
+				// A clef the next system opens with, before the last
+				// barline here.
+				if ch.Clef != cur {
+					pb := e.bars[len(e.bars)-1]
+					sc.clefMarks = append(sc.clefMarks, &clefMark{clef: ch.Clef, col: pb.cols[len(pb.cols)-1], bar: pb.bar, atEnd: true})
+				}
+				cur = ch.Clef
+				continue
 			}
 			if at.Bar < e.from || at.Bar > e.to || (at.Bar == e.from && at.Offset.IsZero()) {
 				if !score.PosLess(score.Pos{Bar: e.from}, at) {

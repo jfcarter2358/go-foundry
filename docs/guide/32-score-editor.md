@@ -30,6 +30,7 @@ the mix:
 ```yaml
 version: 1
 title: Hangar Theme
+subtitle: from the Hangar suite  # optional: printed under the title
 composer: ""
 bars: 16
 pickup: 1/4                    # optional: an incomplete first bar, in whole notes
@@ -47,6 +48,7 @@ params: [{name: intensity, default: 0}]
 bindings: [{param: intensity, line: Horn, target: volume, from: 0, to: 1}]
 lines:
   - name: Violin I
+    short: Vln. I                # optional: the name on systems after the first
     instrument: strings/violin_section
     volume: 0.8
     pan: -0.3
@@ -76,6 +78,21 @@ buses:
 master: [{fx: compressor, threshold: -12, ratio: 3}, {fx: limiter, ceiling: -0.3}]
 master_lanes:                    # optional: the master's volume and its effects' settings
   volume: [{at: "14", value: 1}, {at: "16", value: 0, curve: -0.5}]
+layout:                          # optional: how the score and its parts print
+  paper: a4                      # letter (default), a4, tabloid, a3, legal, or custom with size: [w, h] mm
+  landscape: false
+  margins: {top: 15, bottom: 15, left: 14, right: 14}   # mm; 12.7 each by default
+  staff: 6.5                     # staff height in mm (3-12; 7 by default)
+  system_gap: 10                 # least room between systems, staff spaces (9 by default)
+  spacing: 0.9                   # note spacing, 0.5-2 (1 by default): lower fits more bars a system
+  breaks: [{bar: 9}, {bar: 13, page: true}]             # a new system (or page) at these bars
+  title_page: false
+  page_numbers: true
+  names: full_then_short         # full_then_short, full, short or none
+  cautionary: true               # clef, key and time at a system's end for the next one's change
+  courtesy: false                # courtesy accidentals in the bar after an altered note
+  parts:                         # a part's own settings, by line name
+    - {line: Violin I, staff: 7.5, breaks: [{bar: 5}], multi_rests: true}
 ```
 
 | Key | |
@@ -99,6 +116,9 @@ master_lanes:                    # optional: the master's volume and its effects
 | `lanes` | Automation, followed sample by sample. `volume` multiplies the fader (and the dynamics: the two multiply), `pan` replaces the pan, `cutoff` is a low-pass over the line in Hz, `send_a`/`send_b` replace the sends, and `<fx>.<setting>` moves one of the line's inserts: `eq.low` the first EQ's low shelf, `delay#2.feedback` the second delay's feedback. Each point is a position and a value; `to:` holds the value flat to a second position. From a point to the next the value moves in a straight line, `step: true` holds it and jumps at the next point, `curve: -1..1` bends the line (above 0 it starts slowly). |
 | `buses` | Send buses `a` and `b`: their effect chain (`fx:`, wet only unless a `mix` says otherwise; an empty chain returns what it is sent), `return` level, `pan` and `mute`, and `lanes:` — `return` (replaces the return level), `pan` (replaces the pan) and `<fx>.<setting>` for the bus's own effects (`reverb.size`). |
 | `master` | The chain over the whole mix, before the master `gain`. |
+| `subtitle` | Printed under the title on the first page (or the title page). |
+| `short` | A line's name on every system after the first ("Vln. I"). Left out, one is made from the name: the usual orchestral abbreviations (Violin → Vln., Clarinet in B♭ → Cl. in B♭, Double Bass → D.B.), numbers kept, other words cut to three letters. |
+| `layout` | How the score prints (see *Pages, parts and printing*): the paper and its margins (margins that would leave the music less than 25 mm either way are made smaller, with a warning), the staff size, the room between systems, the note spacing, the system and page breaks (`bar:` is the bar that starts the new system or page), a title page, page numbers, instrument names, cautionary signatures and courtesy accidentals. `parts:` gives a line's part its own staff size, system gap, paper and breaks (the score's breaks are not the part's), and `multi_rests: false` to print every rest bar on its own. Nothing here changes how the score plays. |
 | `master_lanes` | The master's automation: `volume` (multiplies `gain`: a fade-out of the whole score) and `<fx>.<setting>` for the master chain's effects (`limiter.ceiling`). Points are written as a line's. |
 
 Positions are written `bar` or `bar:beat`, with beats counted the way the
@@ -381,15 +401,154 @@ them); double-click it to give the note back to the dynamics. It is written
 as a `vel=` mark on the note's event, which plays at that MIDI velocity
 whatever the marks say and prints nothing.
 
-### Exporting audio
+### Exporting
 
-**File > Export Audio (WAV)** renders the whole score, the loop region or
-the selected bars — through the same scheduler the game uses, with the
-mixer's mutes and solos, at the written tempo or the slider's — plus a tail
-for the reverb to ring out, as a 48 kHz 24-bit stereo WAV. A score that
-loops (`loop: true`) exports one pass: the music stops at the end and the
-tail is its ring-out, not the top again. It goes to
-`exports/<name>.wav` beside `resources/` unless you type another path.
+**File > Export** (`Ctrl+Shift+X`) writes the score in any of its formats
+at once, into `exports/<name>/` beside `resources/` (or a folder you type):
+tick the formats on the left, and a block of options shows on the right for
+each kind ticked. The footer counts the files it will write.
+
+| Format | What it writes |
+| --- | --- |
+| **PDF** (score + parts) | `<name>.pdf` and `<name>_<part>.pdf`: the full score and the parts ticked, the layout's paper or Letter, A4 or Tabloid for this export, a staff size, the score transposed or at concert pitch (parts are always transposed) |
+| **MusicXML** (for Sibelius) | `<name>.musicxml` (or compressed `.mxl`): MusicXML 4.0, which Sibelius, MuseScore, Dorico and Finale open; with the page layout and the breaks, or without them so the program lays it out itself |
+| **MIDI** | `<name>.mid`, format 1, repeats played out or the score as written |
+| **OGG** (game audio), **WAV**, **MP3**, **FLAC** | the audio: see below |
+| **Tracker song (.ftrk)** | `<name>.ftrk`: the score quantised onto the Tracker's grid, for the Tracker editor |
+
+**Audio** renders through the same scheduler the game uses, with the
+mixer's mutes and solos, at the written tempo or the slider's:
+
+- **Range**: the whole score, the loop region, or the selected bars (named
+  in the file: `<name>_loop.ogg`, `<name>_bars5-8.wav`).
+- **Files**: one mix, or the mix and a **stem** per line —
+  `<name>_<line>.ogg`, the line alone through its own effects, the buses and
+  the master (the lines the mix plays; a muted line has none).
+- **Format**: 44.1 or 48 kHz; WAV and FLAC at 16 or 24 bits; OGG Vorbis at a
+  quality from -1 to 10 (6 is about 192 kb/s); MP3 VBR at V0 (best) to V9,
+  or a constant 128 to 320 kb/s.
+- **Tail**: bars rendered after the end for releases and reverb, at the
+  end's tempo. **Fold into the start** makes a file that loops seamlessly,
+  for game music: the tail is mixed back over the beginning and the file is
+  cut exactly at the end, so played on a loop the last bars ring over the
+  first. (OGG loops sample-exactly; MP3 adds the coder's own silence at both
+  ends, so loop with OGG.)
+
+A score that loops (`loop: true`) exports one pass: the music stops at the
+end and the tail is its ring-out, not the top again. WAV and FLAC are
+written by the editor itself (FLAC losslessly compressed, about half a
+WAV's size). OGG and MP3 use the reference encoders, libvorbis and LAME,
+which the editor loads when it needs them: the Windows editor carries them
+in its `codecs/` folder, and on Linux they are the system's (the
+`libvorbisenc2` and `libmp3lame0` packages, on almost every desktop
+already). Without one, the dialog says which is missing and how to get it,
+and the other formats still export. `foundry score codecs` says where each
+was found. (docs/score/CODECS.md has the details and the licences.)
+
+**Export PDF** (`Ctrl+Shift+E`) and **Export Audio** open the same dialog
+with only that format ticked. Exports run in the background; the status
+line follows them, and names any format that could not be written.
+
+### Importing
+
+**File > Import** (`Ctrl+Shift+I`) opens a MusicXML file (what Sibelius
+writes with **File > Export > MusicXML**), a MIDI file or a Tracker song as
+a new score. Pick the file in the browser; its tracks come up in a table
+with what the importer would do with each: **Import** (or, under **Line**,
+**Skip**), the line's name, its **Instrument** from the library (the guess
+from its name and program; type to filter) and, for MIDI and songs, its
+**Clef** (a piano is a grand staff split at middle C). Below the table:
+
+- For **MIDI and Tracker songs**, how the notes are read: **Quantise to**
+  8ths, 16ths, 32nds or 64ths, **allow triplets**; **one voice per staff**
+  or **split overlapping notes into voices**; the **key** and **time
+  signature** from the file (or guessed, which it says) or chosen; the
+  tempo it found; and whether **velocity becomes dynamic marks**.
+- For **MusicXML**, whether the file's **page layout** comes too (its paper,
+  staff size and breaks; Sibelius writes a break for every system it laid
+  out, so leave it off to lay the score out afresh).
+
+**Import** makes the score and opens it, not yet saved: **Save** writes it
+under the file's name (or asks for one, if a score already has it). The
+master gain is lowered if the mix would clip.
+
+### Pages, parts and printing
+
+The Score tab shows the music one of two ways: as one continuous system
+(the default, for writing) or on pages, as it prints. **Pages** on the
+transport row, **View > Page View** or `Ctrl+Alt+V` switches. The page view
+is the same editor — clicks select and write, note input's ghost follows
+the pointer, the selection, the caret and the play head are drawn, follow
+playback turns the pages — with the pages one under another on a grey desk;
+`Ctrl`+wheel zooms. The strip over the pages picks **Full score** or one
+line's **Part**, says how many pages there are, and has **Page Setup** and
+**Export PDF**.
+
+How the pages are made:
+
+- **Systems.** The bars are broken into systems the way a paragraph is set:
+  all the breaks are chosen together so each system's natural spacing is as
+  close as it can be to the width of the page, a little stretch preferred to
+  any squeeze, no system squeezed tighter than its notes allow. Each system
+  is then stretched to the margins (justified); the last one stays at its
+  natural width when it is less than three quarters full. Every system
+  starts with its clef and key, and its first bar's number; the time
+  signature only where it changes.
+- **Breaks.** Select a bar and press `Alt+Return` (or `Return` with bars
+  selected, as in Sibelius; `Return` in MuseScore's keymap) for a new system
+  after it, `Ctrl+Return` for a new page; again takes it away, and one kind
+  where the other is changes it (**Layout > System Break / Page Break**).
+  While a part is shown, breaks are the part's own.
+- **Pages.** Systems go down the page at least the system gap apart (more
+  where dynamics, slurs or ledger lines need it); one that does not fit
+  starts the next page, as does a page break. A page more than two thirds
+  full spreads what is left between its systems; the last page does not.
+- **Titles and numbers.** The first page has the title, the subtitle and the
+  composer (a part's name at the top left); **Title page** puts them on a
+  page of their own. Pages after the first are numbered at the outer top
+  corner (odd pages right, even left) beside a running header: the title,
+  and the part's name.
+- **Names.** Full instrument names on the first system, short names after
+  (or full, or short, everywhere, or none — **Instrument names** in the
+  setup), each centred on its line's staves; the first system is indented
+  by them. Parts print no names on their systems.
+- **Cautionary signatures.** When the next system starts with a key, time or
+  clef change, this one ends with it: the clef just before the last barline,
+  a double barline before a key change, then the new key and time after it.
+  **Cautionary** in the setup turns them off.
+- **Courtesy accidentals** (off by default): a note at a position the bar
+  before altered shows its accidental again, in parentheses, the first time
+  in the bar.
+- **Parts** are a line each, laid out with the score's settings and the
+  part's own over them (staff size, system gap, paper, breaks). At written
+  pitch always. Runs of two or more bars in which the part only rests become
+  one **multi-bar rest** — an H-bar with the count over it — broken wherever
+  the player has something to read between the bars: a rehearsal mark, a
+  tempo mark, a key, time or clef change, a repeat or an ending, a jump, a
+  break.
+
+**Layout > Page Setup** (`Ctrl+D`) has all of it: the title, subtitle and
+composer; title page and page numbers; the paper (Letter, A4, Tabloid, A3,
+Legal or a custom size), landscape, the four margins; the staff size (the
+staff's height in mm, 7 by default), the system gap, the note spacing
+(lower fits more bars on a system), the instrument names,
+cautionary signatures and courtesy accidentals; each line's short name; and
+while a part is shown, the part's staff size, system gap, paper and
+multi-bar rests. A system taller than the page (many staves at a large
+staff size) is not cut off: the pages are set at a smaller staff until it
+fits, and the strip over the pages says so. Every change is one undo step (one per drag of a slider) and is
+saved in the file's `layout:` block; none of it changes the sound.
+
+**File > Export PDF** (`Ctrl+Shift+E`) is the Export dialog with PDF ticked
+(see *Exporting*): the full score and any of the parts (all of them by
+default), `<name>.pdf` and `<name>_<part>.pdf` in `exports/<name>/`. The
+PDFs are drawn with the music font's and the text font's outlines — no font
+is embedded, so they look the same everywhere — and carry the title,
+composer and part in their properties.
+
+**File > Export Selection as Image** writes the selected bars (of the
+selected lines) as a PNG or as an SVG, at a chosen number of pixels per
+staff space, as the continuous view engraves them.
 
 ### The keypad, the keymap and F1
 
@@ -728,8 +887,14 @@ foundry score render <score> [flags]       render to a WAV
 foundry score render <score> -png out.png  engrave the notation to an image
 foundry score play <score> [flags]         play on the audio device, printing the bar and beat
 foundry score fmt [-check] [score …]       rewrite scores in canonical form
-foundry score import <file> [-o name]      a MIDI or MusicXML file as a score (-list shows the parts first)
+foundry score import <file> [-o name]      a MIDI, MusicXML or Tracker (.ftrk) file as a score (-list shows the parts first)
 foundry score export-midi <score> [-o f]   the score as a Standard MIDI File
+foundry score export-pdf <score> [flags]   the full score and its parts as PDFs
+foundry score export-musicxml <score>      the score as MusicXML 4.0 (-o f.musicxml or f.mxl, -no-layout)
+foundry score export-audio <score> [flags] WAV, FLAC, OGG or MP3, a mix or a mix and stems
+foundry score export-ftrk <score> [-o f]   the score as a Tracker song (-rows 4: the grid)
+foundry score export <score> [flags]       every format at once, as the Export dialog writes them
+foundry score codecs                       where the OGG and MP3 encoders were found, or why not
 ```
 
 A score is named by its name under `sounds/` without the extension, or by a
@@ -746,7 +911,30 @@ staff space; a staff is four spaces tall), `-concert` (transposing staves at
 sounding pitch rather than written), `-spacing 1.2` (wider or tighter) and
 `-bar-numbers 5` (number every fifth bar; `0`, the default, numbers only the
 first bar shown when it is not bar 1, `-1` none). It prints the image's size
-and a hash of its pixels.
+and a hash of its pixels. `-svg out.svg` writes the same as a vector image
+(the glyphs and text as outlines). `-page 2` draws a page of the page
+layout instead (with the score's `layout:`), and `-part Violin` (a name or
+a number) a page of that line's part.
+
+`export-audio` takes `-format wav|flac|ogg|mp3` (or the extension of
+`-o file`), `-bars 5-8` or `-section name` (the first time they play),
+`-stems` (a file per line beside the mix), `-rate 44100|48000`,
+`-bits 16|24` (WAV, FLAC), `-quality 6` (OGG), `-mp3-quality 2` or
+`-bitrate 192` (MP3), `-tail 2` (bars), `-fold` (the tail folded into the
+start: a seamless loop), `-tempo 0.75`, and `-verify`, which decodes every
+file written with a decoder that is not the encoder (and checks a FLAC's
+MD5). `export` takes `-formats pdf,musicxml,ogg` (or `all`), `-o dir`
+(default `exports/<score>/`), the audio flags, and the PDF, MusicXML and
+Tracker ones (`-parts=false`, `-concert`, `-paper`, `-staff`, `-mxl`,
+`-no-layout`, `-no-repeats`, `-rows`).
+
+`export-pdf` writes `<name>.pdf` and `<name>_<line>.pdf` for every line
+into the working directory, or `-o dir` (or `-o file.pdf`: the score there,
+the parts beside it). `-parts=false` or `-score=false` leave either out,
+`-part 1,Viola` picks parts, `-concert` sets the full score at concert
+pitch, `-paper a4` and `-staff 6.5` replace the layout's paper and staff
+size for this export, and `-png dir` reads every PDF written back and draws
+its pages as PNGs (`-dpi 100`) — a quick look without a PDF viewer.
 
 The engraving follows the usual rules, so what a score says is what a
 player expects to read. Accidentals last to the barline and are shared by a
@@ -761,11 +949,13 @@ its rest in the middle; an empty bar shows a faint one. Copyright: the
 Bravura font is © Steinberg Media Technologies, under the SIL Open Font
 License (an editor install carries it in `licenses/`).
 
-## Importing MIDI and MusicXML
+## Importing and exporting MIDI, MusicXML and Tracker songs
 
 **From Sibelius, Finale, Dorico or MuseScore**, export MusicXML (in Sibelius:
 **File > Export > MusicXML**) and import that. Sibelius's own `.sib` format
-was never published, so it can't be read directly.
+was never published, so it can't be read directly. **To Sibelius**, export
+MusicXML (`foundry score export-musicxml`, or **MusicXML** in the Export
+dialog) and open it there.
 
 ```
 foundry score import nocturne.musicxml -o nocturne
@@ -783,12 +973,47 @@ would clip.
 rests, dots, ties, tuplets, grace notes, up to four voices per staff, any
 number of staves, clefs, keys, time signatures, tempo marks, part names and
 instruments (which choose the library instrument), and transposing parts,
-which are stored at concert pitch with the staff's transposition. Dynamics,
-articulations, ornaments, slurs, hairpins, ottava lines, pedal marks,
-technique text, rehearsal marks and simple repeats are kept too. Anything the
-score can't hold yet is reported as a warning, never dropped silently:
-lyrics, chord symbols, voltas, D.S./coda, and a clef change partway through
-a staff.
+which are stored at concert pitch with the staff's transposition. Dynamics
+(and `cresc.`/`dim.` written as words with dashes), articulations,
+ornaments with the accidentals on their auxiliary notes, tremolos (one
+note and two), fermatas by shape, arpeggios, glissandi (wavy or straight),
+slurs, hairpins, ottava lines, pedal marks, technique and expression text,
+rehearsal marks, tempo text (`rit.` and `accel.` with their dashes, `a
+tempo`), repeats, 1st and 2nd endings, segno, coda, To Coda, Fine, D.C.
+and D.S., clef changes anywhere in a staff, the part's short name, volume
+and pan, and the page layout (paper, margins, staff size, system and page
+breaks; `-no-layout` leaves it out) are kept too. Anything the score can't
+hold yet is reported as a warning, never dropped silently: lyrics and chord
+symbols (which come with phase 6).
+
+`export-musicxml` writes MusicXML 4.0 that Sibelius and MuseScore open as
+the score shows: parts and staves (a piano's two braced), voices 1–4 and
+5–8 as Sibelius numbers them, transposing parts at written pitch with their
+transposition, the accidentals each bar needs, beams by the meter, nested
+tuplet brackets, ties, and every mark above; tempo marks with their
+metronome marks and the tempo they play; the layout as hints. The part's
+library instrument goes in its `<virtual-instrument>`, so a score exported
+and imported again plays what it played, and a note's `vel=` its velocity.
+What MusicXML has no place for — the mixer and its effects, lanes, params,
+bindings, markers, a section's loop and next — stays in the `.fscore`. A
+score exported and imported again is the same in everything MusicXML holds
+(the round-trip tests check every fixture and shipped score). MuseScore
+draws a nested tuplet (a triplet inside a triplet) as one flat tuplet; that
+is MuseScore's reading of the file, which is to the standard.
+
+**Tracker songs** come in through the MIDI importer, with the same options:
+the song is played through once (pattern breaks taken, a jump back read as
+the end) into notes, each instrument a line playing the `.finst` its slot
+names (or the guess from its name). The sections keep their loops and next
+sections; params, bindings, the reverb, delay and compressor come along as
+the score's params, bindings, buses and master. `export-ftrk` goes the
+other way: the score is played (repeats out) and quantised to the Tracker's
+grid — the fewest rows a beat that hold its rhythms exactly (16ths are 4,
+16th triplets 6, both 12), or `-rows n`, saying how many notes moved —
+with a channel for each note a line sounds at once, each line's `.finst` as
+the song's instrument, velocities in the volume column, articulations as
+`@` commands, tempo changes as `M`, markers as `E`, sections on whole
+order positions and identical patterns shared.
 
 **MIDI** is timing, so it is notated on the way in:
 
@@ -802,6 +1027,9 @@ a staff.
   (`-voices 1` writes overlaps as chords).
 - **Legato.** Small gaps a player leaves between notes are closed
   (`-no-legato` keeps them as rests).
+- **Instruments.** A track's instrument comes from its name and program; a
+  file Foundry exported names each line's library instrument, and comes
+  back with it.
 - **Piano.** A piano part becomes a grand staff split at middle C (`-split`).
 - **Dynamics.** Velocities are read as dynamics (`-no-dynamics` keeps them
   out).

@@ -7,8 +7,8 @@
 // golang.org/x/image/vector, each into its own coverage mask so that one
 // item's winding never cancels another's where they overlap (a stem over
 // a notehead). Text is set in the Go fonts, which x/image carries (the
-// display list asks for a serif; the PNG is a proof, the PDF in phase 5
-// uses the PDF base fonts).
+// display list asks for a style, not a file; the PDF and SVG writers draw
+// the same fonts' outlines).
 package raster
 
 import (

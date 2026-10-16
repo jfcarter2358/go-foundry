@@ -174,6 +174,15 @@ const (
 	scTimeline
 	scScoreView
 	scRollDraw
+	// Pages and output (editor_score_page.go, editor_score_layout.go).
+	scPageView
+	scPageSetup
+	scSystemBreak
+	scPageBreak
+	scExportPDF
+	scExportImage
+	scExport
+	scImport
 	scCmdCount
 )
 
@@ -186,7 +195,7 @@ type scoreCmdInfo struct {
 var scoreCmdInfos = buildScoreCmdInfos()
 
 // The keymap's groups, in the order the overlay and the settings list them.
-var scoreCmdGroups = []string{"Entry", "Pitch", "Durations", "Rhythm", "Voices & tuplets", "Expression", "Form", "Selection", "File & view", "Playback"}
+var scoreCmdGroups = []string{"Entry", "Pitch", "Durations", "Rhythm", "Voices & tuplets", "Expression", "Form", "Selection", "File & view", "Layout", "Playback"}
 
 func buildScoreCmdInfos() []scoreCmdInfo {
 	in := make([]scoreCmdInfo, scCmdCount)
@@ -260,7 +269,7 @@ func buildScoreCmdInfos() []scoreCmdInfo {
 	set(scToStart, "to_start", "Play head to the start", "Playback")
 	set(scFollow, "follow", "Follow playback on / off", "Playback")
 	set(scMixer, "mixer", "Score / Mixer view", "File & view")
-	set(scExportAudio, "export_audio", "Export audio (WAV)...", "File & view")
+	set(scExportAudio, "export_audio", "Export audio (WAV, OGG, MP3, FLAC; mix or stems)...", "File & view")
 	set(scAddLine, "add_line", "Add a line...", "Entry")
 	set(scSlur, "slur", "Slur to the next note (again: one note further); over selected bars", "Expression")
 	set(scCresc, "crescendo", "Crescendo hairpin to the next note (again: further)", "Expression")
@@ -289,6 +298,14 @@ func buildScoreCmdInfos() []scoreCmdInfo {
 	set(scTimeline, "timeline", "Score / Timeline view (tracks, lanes, piano roll)", "File & view")
 	set(scScoreView, "score_view", "The Score view", "File & view")
 	set(scRollDraw, "roll_draw_tool", "Timeline: Draw tool on / off", "File & view")
+	set(scPageView, "page_view", "Continuous / Page view", "Layout")
+	set(scPageSetup, "page_setup", "Page setup... (paper, staff size, titles, names, parts)", "Layout")
+	set(scSystemBreak, "system_break", "System break after the selected bar on / off", "Layout")
+	set(scPageBreak, "page_break", "Page break after the selected bar on / off", "Layout")
+	set(scExportPDF, "export_pdf", "Export PDF (score and parts)...", "Layout")
+	set(scExportImage, "export_image", "Export the selected bars as PNG / SVG...", "Layout")
+	set(scExport, "export", "Export... (PDF, MusicXML, MIDI, audio, Tracker song)", "File & view")
+	set(scImport, "import", "Import MusicXML, MIDI or a Tracker song...", "File & view")
 	return in
 }
 
@@ -620,6 +637,14 @@ func scoreCommonBinds(k *scoreKeymap) {
 	k.bind(scConcert, ctrlShift(sdl.SCANCODE_D))
 	k.bind(scLane, ctrlShift(sdl.SCANCODE_L))
 	k.bind(scRehearsal, ctrlKey(sdl.SCANCODE_R))
+	// Pages: Ctrl+Return a page break (both programs), Ctrl+D the setup
+	// (Sibelius's Document Setup).
+	k.bind(scPageView, ctrlAlt(sdl.SCANCODE_V))
+	k.bind(scPageSetup, ctrlKey(sdl.SCANCODE_D))
+	k.bind(scPageBreak, ctrlKey(sdl.SCANCODE_RETURN))
+	k.bind(scExportPDF, ctrlShift(sdl.SCANCODE_E))
+	k.bind(scExport, ctrlShift(sdl.SCANCODE_X))
+	k.bind(scImport, ctrlShift(sdl.SCANCODE_I))
 }
 
 // scoreSibeliusKeymap is the default: Sibelius's keys, as SPEC.md's input
@@ -652,6 +677,9 @@ func scoreSibeliusKeymap() *scoreKeymap {
 	k.bind(scStepUp, altKey(sdl.SCANCODE_UP))
 	k.bind(scStepDown, altKey(sdl.SCANCODE_DOWN))
 	k.bind(scRespell, key(sdl.SCANCODE_RETURN))
+	// Return on selected bars is a system break, as Sibelius has it (the
+	// respell command passes it on); Alt+Return whatever is selected.
+	k.bind(scSystemBreak, altKey(sdl.SCANCODE_RETURN))
 	for i := 0; i < 6; i++ {
 		k.bind(scKeypad1+scoreCmd(i), key(scorePadKeys[i+1]), altKey(scoreDigitKeys[i+1]))
 	}
@@ -695,6 +723,7 @@ func scoreMuseScoreKeymap() *scoreKeymap {
 	k.bind(scStepUp, altShift(sdl.SCANCODE_UP))
 	k.bind(scStepDown, altShift(sdl.SCANCODE_DOWN))
 	k.bind(scRespell, key(sdl.SCANCODE_J))
+	k.bind(scSystemBreak, key(sdl.SCANCODE_RETURN))
 	k.bind(scDot, key(sdl.SCANCODE_PERIOD), key(sdl.SCANCODE_KP_PERIOD))
 	k.bind(scRest, key(sdl.SCANCODE_0), key(sdl.SCANCODE_KP_0))
 	k.bind(scTie, key(sdl.SCANCODE_T), key(sdl.SCANCODE_KP_PLUS))

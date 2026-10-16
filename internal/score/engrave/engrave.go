@@ -1,7 +1,8 @@
 // Package engrave lays a score out as music notation: a display list
 // (list.go) of glyphs, lines, filled paths and text in staff spaces, which
 // any backend draws — a PNG (engrave/raster), the editor's imgui view
-// (internal/score/scoredraw), a PDF page in phase 5.
+// (internal/score/scoredraw), a PDF (internal/score/io/pdf) or an SVG
+// (internal/score/io/svg).
 //
 // The engraver follows the conventions of Elaine Gould's Behind Bars and
 // the metrics of the SMuFL font it draws with (internal/score/glyph):
@@ -32,15 +33,18 @@
 // system the tempo marks, rehearsal marks, repeat barlines, endings and the
 // segno, coda, D.C., D.S. and Fine.
 //
-// Layout is in two passes, the way a page layout needs it (phase 5): each
+// Layout is in two passes, the way a page layout needs it (page.go): each
 // bar is measured first — its columns (onsets shared by every staff),
 // what each column needs left and right of its noteheads (accidentals,
 // grace notes, displaced heads, dots, flags) and how much room its
 // durations ask for — and then placed on a system, which fixes x for
 // every column; only then are glyphs drawn, because beams and ties need
 // final positions. Engrave places every bar on one continuous system, the
-// editor's galley view. The page layout will break bars into systems and
-// stretch each to the measure, reusing measureBar and drawSystem.
+// editor's galley view, at its natural spacing — or, given Options.Width,
+// justified to a measure: the page layout (page.go) breaks the bars into
+// systems from the measured widths and engraves each system so, with the
+// cautionary signatures, courtesy accidentals and multi-bar rests
+// (multirest.go) a page wants.
 package engrave
 
 import (
@@ -69,6 +73,32 @@ type Options struct {
 	// Below leaves room under a line's last staff, in staff spaces, by line
 	// index: the editor's dynamics lane. List.Lanes says where it is.
 	Below map[int]float64
+
+	// Width, when more than 0, justifies the layout to that width (a
+	// system on a page): from the opening barline to the end of the last
+	// barline and any cautionary signatures after it, in staff spaces.
+	// Every gap stretches by the same factor over its natural room, never
+	// below what its ink needs (stretch); a layout that cannot be that
+	// narrow comes out at its least width.
+	Width float64
+	// Cautionary shows, at the layout's end, the clef, key and time
+	// signature the bar after it changes to: a clef before the last
+	// barline, the key and time after it, the barline double before a key
+	// change.
+	Cautionary bool
+	// Courtesy prints a courtesy accidental, in parentheses, on the first
+	// note at a staff position in the bar after one that altered it.
+	Courtesy bool
+	// MultiRests gathers runs of two or more bars in which every staff
+	// rests into one multi-bar rest: an H-bar with the count over it
+	// (multirest.go). A run breaks wherever something is printed between
+	// its bars — a rehearsal mark, a tempo mark, a key, time or clef
+	// change, a repeat or ending, a double barline.
+	MultiRests bool
+
+	// runBreaks are bars a multi-bar rest may not run into: a page
+	// layout's manual breaks, when it measures a whole score at once.
+	runBreaks map[int]bool
 }
 
 // Engraving constants not in the font's defaults, in staff spaces.
@@ -100,9 +130,45 @@ func Engrave(s *score.Score, o Options) *List {
 	}
 	e.collect()
 	e.measure()
+	if o.Width > 0 {
+		e.justify(o.Width)
+	}
 	e.placeGalley()
 	e.draw()
 	return e.finish()
+}
+
+// justify finds the stretch that makes the layout w wide and spaces the
+// bars with it: the natural width at a stretch only grows with it, so
+// bisection finds it. A layout too wide even at its rods stays at them.
+func (e *engraver) justify(w float64) {
+	width := func(k float64) float64 {
+		e.stretch(k)
+		e.placeGalley()
+		return e.layoutEndX()
+	}
+	if width(0) >= w {
+		return
+	}
+	lo, hi := 0.0, 1.0
+	for width(hi) < w && hi < 256 {
+		lo, hi = hi, hi*2
+	}
+	for i := 0; i < 48; i++ {
+		mid := (lo + hi) / 2
+		if width(mid) < w {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	e.stretch(hi)
+}
+
+// layoutEndX is where the layout ends: the last barline's right edge and the
+// cautionary signatures after it.
+func (e *engraver) layoutEndX() float64 {
+	return e.bars[len(e.bars)-1].x1 + e.barlineWidth(e.barlineBefore(len(e.bars))) + e.tailW
 }
 
 // engraver is one layout in progress.
@@ -120,6 +186,14 @@ type engraver struct {
 
 	staves []*staffCtx
 	bars   []*barCtx // from..to
+
+	// The bar after the layout changes key (nextKey, to nextFifths) or
+	// meter (nextMeter): the cautionary signatures (Options.Cautionary),
+	// tailW wide after the last barline.
+	nextKey, nextMeter bool
+	nextFifths         int
+	nextMeterSig       score.Meter
+	tailW              float64
 
 	items []Item // system-wide items (bar numbers, braces), absolute y
 	list  *List
@@ -164,6 +238,11 @@ type staffBar struct {
 	meas    []score.Measure // per voice: the measure as written (its tuplets)
 	beams   []*beamGroup
 	tuplets []*tupletSpan
+	// prev is the staff's bar before (nil for the layout's first, which
+	// reads the score's), and alters what each staff position was left
+	// at by the bar's notes — for courtesy accidentals in the next.
+	prev   *staffBar
+	alters map[int]int
 }
 
 // barCtx is one bar of the layout.
@@ -177,6 +256,11 @@ type barCtx struct {
 	prevFifths        int  // concert key before a change
 	cols              []*column
 
+	// multi is the bars a multi-bar rest starting here stands for (0 for
+	// none); folded marks a later bar of one, drawn as nothing at all.
+	multi  int
+	folded bool
+
 	// x on the system: the opening barline, where music starts after the
 	// head's signatures, and the closing barline.
 	x0, content, x1 float64
@@ -184,7 +268,11 @@ type barCtx struct {
 	prefixW float64
 	// minW and ideal are the bar's content width as measured.
 	widths []float64 // per column gap: x[i+1]-x[i]
-	lead   float64   // content start to the first column
+	// rods are the least each gap can be (the ink's needs) and springs
+	// what its time asks for; widths are max(rod, k·spring) for the
+	// layout's stretch k (stretch).
+	rods, springs []float64
+	lead          float64 // content start to the first column
 	// dynHead and dynTail are, per staff, how far the first column's
 	// dynamics reach left and the last note column's right (dynamicRods).
 	dynHead, dynTail map[*staffCtx]float64
@@ -327,6 +415,9 @@ func newEngraver(s *score.Score, o Options) *engraver {
 	if e.from > 1 {
 		prevMeter, prevKey = s.MeterAt(e.from-1), s.KeyAt(e.from-1).Fifths
 	}
+	if o.Cautionary {
+		e.nextKey, e.nextFifths, e.nextMeter, e.nextMeterSig = nextChanges(s, e.to)
+	}
 	for b := e.from; b <= e.to; b++ {
 		bc := &barCtx{bar: b, length: s.BarLength(b), meter: s.MeterAt(b), fifths: s.KeyAt(b).Fifths, prevFifths: prevKey}
 		switch {
@@ -341,6 +432,22 @@ func newEngraver(s *score.Score, o Options) *engraver {
 		e.bars = append(e.bars, bc)
 	}
 	return e
+}
+
+// nextChanges is what the bar after one changes: its key (to fifths) and
+// its meter (to m) — what cautionary signatures show at a system's end.
+func nextChanges(s *score.Score, bar int) (key bool, fifths int, meter bool, m score.Meter) {
+	next := bar + 1
+	if next > s.Measures() {
+		return
+	}
+	if f := s.KeyAt(next).Fifths; f != s.KeyAt(bar).Fifths {
+		key, fifths = true, f
+	}
+	if mm := s.MeterAt(next); meterMarkAt(s, next) && !mm.Eq(s.MeterAt(bar)) {
+		meter, m = true, mm
+	}
+	return
 }
 
 func meterMarkAt(s *score.Score, bar int) bool {
@@ -368,11 +475,17 @@ func (e *engraver) collect() {
 		for vi, v := range sc.st.Voices {
 			e.collectVoice(sc, vi, v)
 		}
-		for _, sb := range sc.bars {
+		for bi, sb := range sc.bars {
+			if bi > 0 {
+				sb.prev = sc.bars[bi-1]
+			}
 			e.prepareBar(sb)
 		}
 	}
 	e.columns()
+	if e.o.MultiRests {
+		e.foldRests()
+	}
 	e.collectClefChanges()
 }
 
@@ -675,6 +788,11 @@ func (e *engraver) accidentals(sb *staffBar) {
 		}
 		return a.ref.Event < b.ref.Event
 	})
+	// The bar before's alterations, for courtesy accidentals.
+	var before map[int]int
+	if e.o.Courtesy && !sb.st.percussion {
+		before = e.altersBefore(sb)
+	}
 	state := map[int]int{} // diatonic → alteration in force
 	for _, x := range all {
 		for _, n := range x.notes {
@@ -690,6 +808,11 @@ func (e *engraver) accidentals(sb *staffBar) {
 			if int(n.p.Alter) != cur {
 				n.acc = true
 			}
+			// The first note at a position the bar before altered, back at
+			// the key's own: a courtesy accidental.
+			if a, was := before[d]; was && !ok && !n.acc && a != int(n.p.Alter) {
+				n.acc, n.parens = true, true
+			}
 			state[d] = int(n.p.Alter)
 		}
 		// An altered unison (C and C# together) shows both.
@@ -700,6 +823,48 @@ func (e *engraver) accidentals(sb *staffBar) {
 			}
 		}
 	}
+	// What the bar leaves altered against its key.
+	sb.alters = map[int]int{}
+	for d, a := range state {
+		if a != score.KeyAlter(sb.fifths, int(score.FromDiatonic(d).Step)) {
+			sb.alters[d] = a
+		}
+	}
+}
+
+// altersBefore is what the staff's bar before left altered: the layout's
+// own bar before, or for its first bar the score's.
+func (e *engraver) altersBefore(sb *staffBar) map[int]int {
+	if sb.prev != nil {
+		return sb.prev.alters
+	}
+	bar := sb.bar.bar - 1
+	if bar < 1 {
+		return nil
+	}
+	sc := sb.st
+	pb := &staffBar{st: sc, bar: &barCtx{bar: bar, length: e.s.BarLength(bar)}, fifths: sc.key(e.s.KeyAt(bar).Fifths)}
+	pb.voices = make([][]*ev, len(sc.st.Voices))
+	for vi, v := range sc.st.Voices {
+		m := v.Measure(bar)
+		offs, _ := m.Offsets(pb.bar.length)
+		var prev *ev
+		for ei := range m.Events {
+			x := e.newEv(pb, vi, bar, ei, &m.Events[ei], offs[ei], m)
+			if !x.grace {
+				if prev != nil {
+					linkTies(prev, x)
+				}
+				prev = x
+			}
+			pb.voices[vi] = append(pb.voices[vi], x)
+		}
+	}
+	courtesy := e.o.Courtesy
+	e.o.Courtesy = false // the bar before needs no bar before it
+	e.accidentals(pb)
+	e.o.Courtesy = courtesy
+	return pb.alters
 }
 
 // ---------- the system ----------
@@ -752,12 +917,18 @@ const (
 	barRepeatEnd
 	barRepeatStart
 	barRepeatBoth
+	// barNone is no barline: between the bars a multi-bar rest folds
+	// into one.
+	barNone
 )
 
 // barlineBefore is the barline between layout bars i-1 and i: a repeat's
 // where one ends or starts, a final barline at the score's end or after a
 // Fine, a double barline before a key change.
 func (e *engraver) barlineBefore(i int) barlineKind {
+	if i < len(e.bars) && e.bars[i].folded {
+		return barNone
+	}
 	endRep := i > 0 && e.repeatEnds(e.bars[i-1].bar)
 	if i >= len(e.bars) {
 		switch {
@@ -765,6 +936,10 @@ func (e *engraver) barlineBefore(i int) barlineKind {
 			return barRepeatEnd
 		case e.last || e.s.JumpAt(e.bars[i-1].bar, score.JumpFine) != nil:
 			return barFinal
+		case e.nextKey:
+			// The system ends before a key change: the double barline
+			// stands here, with the cautionary key after it.
+			return barDouble
 		}
 		return barSingle
 	}
@@ -817,6 +992,8 @@ func (e *engraver) barlineWidth(k barlineKind) float64 {
 		return dots + d.ThinBarlineThickness + d.ThinThickBarlineSeparation + d.ThickBarlineThickness
 	case barRepeatBoth:
 		return 2*dots + 2*d.ThinBarlineThickness + 2*d.ThinThickBarlineSeparation + d.ThickBarlineThickness
+	case barNone:
+		return 0
 	}
 	return d.ThinBarlineThickness
 }
@@ -911,6 +1088,7 @@ func (e *engraver) finish() *List {
 	for _, ln := range l.Lanes {
 		b = b.Union(Rect{Min: Point{X: 0, Y: ln.Top}, Max: Point{X: e.bars[len(e.bars)-1].x1, Y: ln.Top + ln.Height + lanePad}})
 	}
+	l.End = e.layoutEndX()
 	l.Translate(Point{X: margin - b.Min.X, Y: margin - b.Min.Y})
 	l.Width, l.Height = b.W()+2*margin, b.H()+2*margin
 	return l

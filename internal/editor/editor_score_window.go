@@ -52,6 +52,7 @@ import (
 	"foundry/internal/score"
 	"foundry/internal/score/edit"
 	"foundry/internal/score/engrave"
+	"foundry/internal/score/io/exportset"
 	"foundry/internal/score/play"
 	"foundry/internal/score/scoredraw"
 	"foundry/internal/uiwin"
@@ -403,7 +404,7 @@ func scoreFingerprint(s *score.Score) uint64 {
 	return h.Sum64()
 }
 
-func scoreKey() any { return docKey{scEd.Score, scEd.Rev + scEd.MixRev} }
+func scoreKey() any { return docKey{scEd.Score, scEd.Rev + scEd.MixRev + scEd.LayoutRev} }
 
 func scoreMarkSaved() {
 	if scEd != nil {
@@ -573,7 +574,32 @@ func scoreRunCmd(c scoreCmd) {
 	case scOctDown:
 		e.octave(-1)
 	case scRespell:
-		e.respell()
+		// Return on selected bars breaks the system after them, as in
+		// Sibelius; on a note it respells.
+		if e.Sel.Kind == scoreSelBars {
+			e.toggleBreak(false)
+		} else {
+			e.respell()
+		}
+	case scSystemBreak:
+		e.toggleBreak(false)
+	case scPageBreak:
+		e.toggleBreak(true)
+	case scPageView:
+		scorePageView = !scorePageView
+		scoreView = scoreViewScore
+		e.Reveal = true
+		if scorePageView {
+			e.Status = "Page view: the score as it prints (Layout > Page Setup for paper and staff size)"
+		} else {
+			e.Status = "Continuous view"
+		}
+	case scPageSetup:
+		scoreShowPageSetup = true
+	case scExportPDF:
+		scoreOpenPDF()
+	case scExportImage:
+		scoreOpenImage()
 	case scLayout:
 		e.Layout2 = !e.Layout2
 		if e.Layout2 {
@@ -692,7 +718,11 @@ func scoreRunCmd(c scoreCmd) {
 			e.Status = "Timeline: Draw tool (drag out notes, draw lanes freehand)"
 		}
 	case scExportAudio:
+		scoreOpenExportOnly(exportset.WAV)
+	case scExport:
 		scoreOpenExport()
+	case scImport:
+		scoreOpenImport()
 	case scAddLine:
 		scoreOpenAddLine(len(e.Score.Lines))
 	// Expression (editor_score_marks.go, editor_score_palette.go).
@@ -766,6 +796,7 @@ func drawScoreEditorWindow() {
 	scorePlayAuditions()
 	scoreWatchTransport()
 	scorePollExport()
+	scorePollImport()
 }
 
 // scoreViewTop is where the main area (the score or the mixer) starts.
@@ -784,7 +815,11 @@ func scoreDrawFrame(W, H float32) {
 	case scoreViewTimeline:
 		scoreTimelinePane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
 	default:
-		scoreViewPane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
+		if scorePageView {
+			scorePagePane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
+		} else {
+			scoreViewPane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
+		}
 	}
 	scoreStatusBar(imgui.Vec2{X: 0, Y: H - scoreStatusH}, W)
 	if scoreShowKeypad && scoreView == scoreViewScore {
@@ -1009,10 +1044,24 @@ func scoreMenus() {
 		item("Save As...", scSaveAs, true)
 		editorSaveAllMenuItem()
 		imgui.Separator()
-		if imgui.MenuItemV("Export Audio (WAV)...", km.label(scExportAudio), false, scoreExportResult == nil) {
+		if imgui.MenuItemV("Import...", km.label(scImport), false, !scoreImportBusy()) {
+			scoreRunCmd(scImport)
+		}
+		editorMenuTooltip("A MusicXML file (what Sibelius exports), a MIDI file or a Tracker song, as a new score.")
+		if imgui.MenuItemV("Export...", km.label(scExport), false, !scoreExportBusy()) {
+			scoreRunCmd(scExport)
+		}
+		editorMenuTooltip("PDF, MusicXML (for Sibelius), MIDI, OGG, WAV, MP3, FLAC and a Tracker song, in one pass.")
+		if imgui.MenuItemV("Export Audio...", km.label(scExportAudio), false, !scoreExportBusy()) {
 			scoreRunCmd(scExportAudio)
 		}
-		editorMenuTooltip("Render the whole score, the loop region or the selection to a WAV file.")
+		editorMenuTooltip("Render the whole score, the loop region or the selection; one mix or a stem per line.")
+		if imgui.MenuItemV("Export PDF...", km.label(scExportPDF), false, !scoreExportBusy()) {
+			scoreRunCmd(scExportPDF)
+		}
+		editorMenuTooltip("The full score and its parts as PDFs, laid out as the page view shows them.")
+		item("Export Selection as Image...", scExportImage, e.Sel.Kind != scoreSelNone)
+		editorMenuTooltip("The selected bars as a PNG or an SVG.")
 		editorCloseWindowItem(CloseScoreEditorWindow)
 		imgui.EndMenu()
 	}
@@ -1056,6 +1105,10 @@ func scoreMenus() {
 		if imgui.MenuItemV("Mixer", km.label(scMixer), scoreView == scoreViewMixer, true) {
 			scoreRunCmd(scMixer)
 		}
+		if imgui.MenuItemV("Page View", km.label(scPageView), scorePageView, true) {
+			scoreRunCmd(scPageView)
+		}
+		editorMenuTooltip("The score on pages, as it prints; off, one continuous system.")
 		if imgui.MenuItemV("Keymap Overlay", "F1", uiwin.KeybindHelpVisible, true) {
 			uiwin.KeybindHelpToggle()
 		}
@@ -1112,6 +1165,39 @@ func scoreMenus() {
 		} else if imgui.BeginMenu(e.lineName(li) + "##sclinesub") {
 			scoreLineMenuItems(li)
 			imgui.EndMenu()
+		}
+		imgui.EndMenu()
+	}
+	if imgui.BeginMenu("Layout") {
+		if imgui.MenuItemV("Page View", km.label(scPageView), scorePageView, true) {
+			scoreRunCmd(scPageView)
+		}
+		if imgui.BeginMenuV("Show", scorePageView) {
+			if imgui.MenuItemV("Full Score##scshowfull", "", e.pagePart() < 0, true) {
+				scorePagePart = -1
+			}
+			for i := range e.Score.Lines {
+				if imgui.MenuItemV(fmt.Sprintf("Part: %s##scshow%d", e.lineName(i), i), "", e.pagePart() == i, true) {
+					scorePagePart = i
+				}
+			}
+			imgui.EndMenu()
+		}
+		item("Page Setup...", scPageSetup, true)
+		imgui.Separator()
+		_, z, has := e.selBars()
+		bk, hasBreak := score.BreakIn(e.breaksOf(e.pagePart()), z+1)
+		if imgui.MenuItemV("System Break", km.label(scSystemBreak), hasBreak && !bk.Page, has) {
+			scoreRunCmd(scSystemBreak)
+		}
+		editorMenuTooltip("A new system after the selected bar (again: none)")
+		if imgui.MenuItemV("Page Break", km.label(scPageBreak), hasBreak && bk.Page, has) {
+			scoreRunCmd(scPageBreak)
+		}
+		editorMenuTooltip("A new page after the selected bar (again: none)")
+		imgui.Separator()
+		if imgui.MenuItemV("Export PDF...##sclayoutpdf", km.label(scExportPDF), false, !scoreExportBusy()) {
+			scoreRunCmd(scExportPDF)
 		}
 		imgui.EndMenu()
 	}
@@ -1347,6 +1433,9 @@ func scoreDialogs() {
 	scoreMarkDialogs()
 	scoreKeysDialog()
 	scoreExportDialog()
+	scoreImportDialog()
+	scorePageSetupDialog()
+	scoreImageDialog()
 	scoreLinePopups()
 	scoreFXPopups()
 	scoreFeelPopup()

@@ -169,6 +169,15 @@ func scoreTransportBar(pos imgui.Vec2, w float32) {
 	tab("Score##sctabscore", scoreViewScore, scScoreView)
 	editorMenuTooltip("The score: notation, staff headers, the ruler" + scoreKeysSuffix(scScoreView))
 	imgui.SameLine()
+	if editorActiveToggleButtonColor("Pages##sctabpages", scorePageView && scoreView == scoreViewScore, scoreColActive) {
+		if scoreView != scoreViewScore && scorePageView {
+			scoreRunCmd(scScoreView)
+		} else {
+			scoreRunCmd(scPageView)
+		}
+	}
+	editorMenuTooltip("The score on pages, as it prints (off: one continuous system)" + scoreKeysSuffix(scPageView))
+	imgui.SameLine()
 	tab("Mixer##sctabmixer", scoreViewMixer, scMixer)
 	editorMenuTooltip("A strip per line: fader, pan, sends, mute, solo, meters; the buses and the master" + scoreKeysSuffix(scMixer))
 	editorToolbarGroupSep()

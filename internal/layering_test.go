@@ -198,7 +198,10 @@ func TestPackagesDoNotDependUpward(t *testing.T) {
 // The release game runtime plays scores (the model, the interpreter and
 // the scheduler: a level's music) and links none of the Score editor's own
 // code — the engraver and its font, the editing commands, the importers and
-// exporters, the CLI. The release build is `-tags release` over cmd/foundry.
+// exporters, the CLI, and the loader of the OGG and MP3 encoders
+// (score/io/audioenc, which opens libvorbisenc and LAME at run time: the
+// game must never carry them). The release build is `-tags release` over
+// cmd/foundry.
 func TestTheReleaseLinksOnlyScorePlayback(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", "-tags", "release", "foundry/cmd/foundry").Output()
 	if err != nil {
@@ -217,6 +220,9 @@ func TestTheReleaseLinksOnlyScorePlayback(t *testing.T) {
 		if name == "score" || strings.HasPrefix(name, "score/") {
 			if !allowed[name] {
 				t.Errorf("the release build links internal/%s: only score playback belongs in the runtime", name)
+			}
+			if name == "score/io/audioenc" {
+				t.Error("the release build links the codec loader: libvorbisenc and LAME are the editor's alone")
 			}
 			plays = plays || name == "score/play"
 		}

@@ -45,6 +45,8 @@ type Score struct {
 	Name     string
 	Title    string
 	Composer string
+	// Subtitle prints under the title.
+	Subtitle string
 
 	// Bars is the measure count. Voices may be shorter — a voice that
 	// stops early is silent after — and the count never drops below the
@@ -90,6 +92,9 @@ type Score struct {
 	// MasterLanes automate the master: its level (times Gain) and its
 	// effects' settings (mix.go, ScopeMaster).
 	MasterLanes []Lane
+
+	// Layout is how the score and its parts sit on paper (layout.go).
+	Layout Layout
 }
 
 // Pos is a point in the written score: a bar (1-based) and an offset into
@@ -236,6 +241,9 @@ type Buses struct {
 // Line is one instrument's music.
 type Line struct {
 	Name string
+	// Short is the name systems after the first print ("Vln. I"); empty
+	// makes one from Name (ShortName).
+	Short string
 	// Instrument names a library .finst: "strings/violin_section".
 	Instrument string
 
@@ -514,6 +522,7 @@ func (s *Score) Clone() *Score {
 	c.Buses.A.Lanes, c.Buses.B.Lanes = cloneLanes(s.Buses.A.Lanes), cloneLanes(s.Buses.B.Lanes)
 	c.Master = cloneFX(s.Master)
 	c.MasterLanes = cloneLanes(s.MasterLanes)
+	c.Layout = s.Layout.Clone()
 	c.Lines = make([]*Line, len(s.Lines))
 	for i, l := range s.Lines {
 		c.Lines[i] = l.Clone()

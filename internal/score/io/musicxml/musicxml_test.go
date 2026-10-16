@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -250,7 +249,8 @@ func TestPartsForTheDialog(t *testing.T) {
 	}
 }
 
-// What a score cannot hold yet is said, not dropped silently.
+// What a score cannot hold yet is said, not dropped silently; endings,
+// jumps and clef changes, which it can, are kept.
 func TestImportWarnsAboutWhatItCannotKeep(t *testing.T) {
 	useRepoResources(t)
 	doc := `<?xml version="1.0"?>
@@ -273,13 +273,27 @@ func TestImportWarnsAboutWhatItCannotKeep(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := strings.Join(warns, "\n")
-	for _, want := range []string{"voltas", "D.C.", "clef change", "lyrics", "chord symbols"} {
+	for _, want := range []string{"lyrics", "chord symbols"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("no warning about %s:\n%s", want, all)
 		}
 	}
+	for _, kept := range []string{"voltas", "D.C.", "clef change"} {
+		if strings.Contains(all, kept) {
+			t.Errorf("a warning about %s, which is kept now:\n%s", kept, all)
+		}
+	}
 	if s.Lines[0].Instrument != "choir/choir" || len(s.Repeats) != 1 {
 		t.Errorf("voice part %s, repeats %+v", s.Lines[0].Instrument, s.Repeats)
+	}
+	if len(s.Voltas) != 1 || s.Voltas[0].Start != 1 || s.Voltas[0].End != 1 || len(s.Voltas[0].Passes) != 1 || s.Voltas[0].Passes[0] != 1 {
+		t.Errorf("voltas %+v", s.Voltas)
+	}
+	if len(s.Jumps) != 1 || s.Jumps[0] != (score.Jump{Kind: score.JumpDC, Bar: 2}) {
+		t.Errorf("jumps %+v", s.Jumps)
+	}
+	if cl := s.Lines[0].Staves[0].Clefs; len(cl) != 1 || cl[0] != (score.ClefChange{At: score.Pos{Bar: 2}, Clef: "bass"}) {
+		t.Errorf("clef changes %+v", cl)
 	}
 }
 
@@ -315,8 +329,6 @@ func TestImportTupletsWithoutBrackets(t *testing.T) {
 	}
 }
 
-func itoa(n int) string { return strconv.Itoa(n) }
-
 // A measure longer than any cadenza is refused at once, not written out as
 // a million breves.
 func TestImportRefusesRunawayMeasures(t *testing.T) {
@@ -335,5 +347,33 @@ func TestImportRefusesRunawayMeasures(t *testing.T) {
 		if el := time.Since(start); el > 2*time.Second {
 			t.Errorf("refusing took %v", el)
 		}
+	}
+}
+
+// A part's name says more than its sound id: MuseScore writes a cello as
+// "strings.baryton", which as a family alone would be violins.
+func TestImportNamesBeatSoundIDs(t *testing.T) {
+	useRepoResources(t)
+	part := func(id, name, sound string) string {
+		return `<score-part id="` + id + `"><part-name>` + name + `</part-name><score-instrument id="` + id + `-I1"><instrument-name>` + name +
+			`</instrument-name><instrument-sound>` + sound + `</instrument-sound></score-instrument></score-part>`
+	}
+	bar := `<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>` +
+		`<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure>`
+	doc := `<score-partwise version="4.0"><part-list>` + part("P1", "Cello", "strings.baryton") + part("P2", "Melody", "wind.flutes.flute") +
+		`</part-list><part id="P1">` + bar + `</part><part id="P2">` + bar + `</part></score-partwise>`
+	d, err := Read([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := Import(d, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Lines[0].Instrument; got != "strings/cello_section" {
+		t.Errorf("Cello with a baryton sound: %s", got)
+	}
+	if got := s.Lines[1].Instrument; got != "woodwinds/flute" {
+		t.Errorf("a melody with a flute sound: %s", got)
 	}
 }

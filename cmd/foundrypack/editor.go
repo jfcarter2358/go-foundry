@@ -32,6 +32,7 @@ func editorMain(args []string) {
 		stage    = fs.String("stage", "", "install tree to write (required; created, and emptied if it exists)")
 		outDir   = fs.String("out", "dist", "where the archive and installer go")
 		stub     = fs.String("setup-stub", "", "the Windows installer program (cmd/foundrysetup); required for windows")
+		codecs   = fs.String("codecs", "", "a folder of the OGG and MP3 encoder libraries and their licences, for the install's codecs/")
 		libs     multiFlag
 		runtimes multiFlag
 	)
@@ -49,7 +50,7 @@ func editorMain(args []string) {
 	}
 	res, err := pack.StageEditor(pack.EditorOptions{
 		Out: *stage, Exe: *exe, ExeName: exeName, GOOS: *goos, Version: *version,
-		Shaders: *shaders, Guide: *guide, Libs: libs, Runtimes: runtimes,
+		Shaders: *shaders, Guide: *guide, Libs: libs, Runtimes: runtimes, Codecs: *codecs,
 	})
 	if err != nil {
 		log.Fatalf("%v", err)

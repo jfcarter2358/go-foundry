@@ -17,7 +17,7 @@ import (
 
 // draw draws every staff.
 func (e *engraver) draw() {
-	endX := e.bars[len(e.bars)-1].x1 + e.barlineWidth(e.barlineBefore(len(e.bars)))
+	endX := e.layoutEndX()
 	t := e.d.StaffLineThickness
 	for _, sc := range e.staves {
 		ref := Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: 0, Event: -1, Note: -1}
@@ -42,6 +42,12 @@ func (e *engraver) draw() {
 			for _, it := range e.barlineItems(e.barlineBefore(bi+1), bc.x1, -t/2, 4+t/2, bref, true) {
 				e.addStaff(sc, it)
 			}
+			if bc.multi > 0 || bc.folded {
+				if bc.multi > 0 {
+					e.drawMultiRest(sc, bc)
+				}
+				continue
+			}
 			for _, v := range sb.voices {
 				for _, x := range v {
 					e.drawEvent(sc, x)
@@ -54,11 +60,79 @@ func (e *engraver) draw() {
 				e.drawImpliedRest(sc, sb)
 			}
 		}
+		e.drawTail(sc)
 		e.drawTies(sc)
 		for _, sb := range sc.bars {
-			e.drawTuplets(sc, sb)
+			if sb.bar.multi == 0 && !sb.bar.folded {
+				e.drawTuplets(sc, sb)
+			}
 		}
 		e.drawExpression(sc)
+	}
+}
+
+// tailLayout is where the cautionary key and time go after the last
+// barline (Options.Cautionary).
+type tailLayout struct{ keyX, timeX, w float64 }
+
+func (e *engraver) tailPositions() tailLayout {
+	return e.tailAfter(e.to, e.nextKey, e.nextFifths, e.nextMeter, e.nextMeterSig)
+}
+
+// tailAfter lays out the cautionary signatures after a bar for the
+// changes the next one makes.
+func (e *engraver) tailAfter(bar int, key bool, fifths int, meter bool, m score.Meter) tailLayout {
+	var tl tailLayout
+	if !key && !meter {
+		return tl
+	}
+	x := 0.0
+	if key {
+		kw := 0.0
+		for _, sc := range e.staves {
+			kw = max(kw, e.keyWidth(e.tailKeyAccs(sc, bar, fifths)))
+		}
+		if kw > 0 {
+			tl.keyX = 0.6
+			x = tl.keyX + kw
+		}
+	}
+	if meter {
+		tl.timeX = x + 0.6
+		if x > 0 {
+			tl.timeX = x + 0.7
+		}
+		x = tl.timeX + e.timeWidth(m)
+	}
+	if x > 0 {
+		tl.w = x + 0.5
+	}
+	return tl
+}
+
+// tailKeyAccs are the cautionary key change a staff shows after a bar:
+// naturals for what goes, then the new key, in the next bar's clef.
+func (e *engraver) tailKeyAccs(sc *staffCtx, bar, fifths int) []keyAcc {
+	if sc.percussion {
+		return nil
+	}
+	return keyChangeAccs(sc.clefAtBar(bar+1), writtenFifths(e.s.KeyAt(bar).Fifths, sc.iv), writtenFifths(fifths, sc.iv))
+}
+
+// drawTail draws a staff's cautionary key and time after the last
+// barline.
+func (e *engraver) drawTail(sc *staffCtx) {
+	if e.tailW == 0 {
+		return
+	}
+	tl := e.tailPositions()
+	x0 := e.bars[len(e.bars)-1].x1 + e.barlineWidth(e.barlineBefore(len(e.bars)))
+	ref := Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: e.to + 1, Event: -1, Note: -1}
+	if e.nextKey {
+		e.drawKey(sc, ref, x0+tl.keyX, e.tailKeyAccs(sc, e.to, e.nextFifths))
+	}
+	if e.nextMeter {
+		e.drawTime(sc, ref, x0+tl.timeX, e.nextMeterSig)
 	}
 }
 
@@ -281,7 +355,7 @@ func (e *engraver) drawBarNumbers() {
 	top := e.staves[0]
 	y := top.top - math.Max(1.4, -top.ext.Min.Y+0.5)
 	for i, bc := range e.bars {
-		show := i == 0 && bc.bar > 1 || i > 0 && e.o.BarNumbers > 0 && bc.bar%e.o.BarNumbers == 0
+		show := i == 0 && bc.bar > 1 || i > 0 && e.o.BarNumbers > 0 && bc.bar%e.o.BarNumbers == 0 && !bc.folded
 		if !show {
 			continue
 		}
