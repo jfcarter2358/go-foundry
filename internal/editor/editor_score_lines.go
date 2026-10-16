@@ -159,13 +159,30 @@ func (e *scoreState) setInstrument(i int, name string, playing bool) {
 		e.Status = e.lineName(i) + " already plays " + scoreInstrumentLabel(name)
 		return
 	}
-	e.mixChange("", func() { l.Instrument = name })
+	// The staff takes the new instrument's transposition (a clarinet's
+	// line is written a tone up): the sound is the same, the page follows.
+	// (The swap loads it anyway, and the loader caches.)
+	in, err := play.LoadInstrument(name)
+	retransposed := false
+	e.mixChange("", func() {
+		l.Instrument = name
+		if err == nil && in != nil {
+			retransposed = edit.Retranspose(l, in.Playback)
+		}
+	})
+	if retransposed {
+		e.laneRev++ // engrave again; the notes and the program are unchanged
+	}
 	e.op(scorePlayerOp{Kind: scoreOpSwap, Line: i, Name: name})
 	e.Status = fmt.Sprintf("%s now plays %s", e.lineName(i), scoreInstrumentLabel(name))
 	if playing {
 		e.Status += ", from the next note"
 	}
-	e.Status += ". The notes did not change."
+	e.Status += ". The notes did not change"
+	if retransposed {
+		e.Status += " (written at the new instrument's transposition)"
+	}
+	e.Status += "."
 }
 
 // ---------- whole lines ----------
@@ -173,6 +190,7 @@ func (e *scoreState) setInstrument(i int, name string, playing bool) {
 // remapLines moves the selection's lines through f (an old index to its
 // new one, -1 for a line that went), clearing a selection that lost one.
 func (e *scoreState) remapLines(f func(int) int) {
+	e.LaneSel = scoreLaneSel{Index: -1}
 	q := &e.Sel
 	switch q.Kind {
 	case scoreSelEvent, scoreSelCaret:
@@ -316,9 +334,19 @@ func (e *scoreState) moveLine(i, dir int) bool {
 
 // renameLine renames line i (bindings that name it follow).
 func (e *scoreState) renameLine(i int, name string) bool {
+	if e.line(i) == nil {
+		return false
+	}
 	old := e.lineName(i)
+	raw := e.Score.Lines[i].Name
 	if !e.change(func() error { return edit.RenameLine(e.Score, i, name) }) {
 		return false
+	}
+	// An open dynamics lane goes with the line (lanes are kept by name).
+	if e.Lanes[raw] {
+		delete(e.Lanes, raw)
+		e.Lanes[e.Score.Lines[i].Name] = true
+		e.laneRev++
 	}
 	e.Status = fmt.Sprintf("Renamed %s to %s", old, e.lineName(i))
 	return true

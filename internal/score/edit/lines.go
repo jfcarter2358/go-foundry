@@ -63,6 +63,27 @@ func NewLineFor(name, instrument string, pb tracker.Playback) *score.Line {
 	return l
 }
 
+// Retranspose writes a line's staves the way another instrument reads
+// them: each staff (not a percussion one) takes the instrument's
+// transposition, as Sibelius does on a change of instrument. The notes are
+// sounding pitches, so they sound the same; only the page moves. It
+// reports whether any staff changed.
+func Retranspose(l *score.Line, pb tracker.Playback) bool {
+	var iv score.Interval
+	if pb.Transposition != 0 && pb.Clef != "grand" {
+		d, c := gm.Transposition(pb.Transposition)
+		iv = score.Interval{Diatonic: d, Chromatic: c}
+	}
+	changed := false
+	for _, st := range l.Staves {
+		if st.Clef == "percussion" || st.Transpose == iv {
+			continue
+		}
+		st.Transpose, changed = iv, true
+	}
+	return changed
+}
+
 // AddLine puts a line at index at (clamped; len(s.Lines) appends) under a
 // name no other line has, and returns where it went.
 func AddLine(s *score.Score, at int, l *score.Line) int {

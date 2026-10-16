@@ -172,3 +172,24 @@ func TestNewLineFor(t *testing.T) {
 		t.Errorf("default line %+v", l.Staves[0])
 	}
 }
+
+func TestRetranspose(t *testing.T) {
+	l := NewLineFor("Cl", "woodwinds/clarinet", tracker.Playback{Clef: "treble"})
+	if !Retranspose(l, tracker.Playback{Transposition: -2}) || l.Staves[0].Transpose != (score.Interval{Diatonic: -1, Chromatic: -2}) {
+		t.Fatalf("to B flat: %+v", l.Staves[0].Transpose)
+	}
+	if Retranspose(l, tracker.Playback{Transposition: -2}) {
+		t.Error("the same transposition again is no change")
+	}
+	if !Retranspose(l, tracker.Playback{}) || l.Staves[0].Transpose != (score.Interval{}) {
+		t.Errorf("back to C: %+v", l.Staves[0].Transpose)
+	}
+	kit := NewLineFor("Kit", "drums/kit", tracker.Playback{Clef: "percussion"})
+	if Retranspose(kit, tracker.Playback{Transposition: 12}) {
+		t.Error("a percussion staff does not transpose")
+	}
+	grand := NewLineFor("Pno", "keys/piano", tracker.Playback{Clef: "grand"})
+	if Retranspose(grand, tracker.Playback{Clef: "grand", Transposition: 12}) {
+		t.Error("a grand staff instrument is written as it sounds")
+	}
+}

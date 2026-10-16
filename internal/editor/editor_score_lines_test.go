@@ -449,3 +449,38 @@ func TestScoreExportOfALoopingScoreStopsAtTheEnd(t *testing.T) {
 		}
 	}
 }
+
+// A swap to a transposing instrument writes the staff at its
+// transposition (as Sibelius does): the notes, the sound and the program
+// are unchanged, the page is engraved again, and undo takes it back.
+func TestScoreSwapTakesTheInstrumentsTransposition(t *testing.T) {
+	scoreUseTestInstruments(t)
+	e := scoreLinesState(t)
+	scEd = e
+	notes := score.FormatVoice(e.Score.Lines[0].Staves[0].Voices[0])
+	rev, lanes := e.Rev, e.laneRev
+	before := scoreLayout()
+	e.setInstrument(0, "horn/x", false)
+	st := e.Score.Lines[0].Staves[0]
+	if st.Transpose != (score.Interval{Diatonic: -4, Chromatic: -7}) {
+		t.Fatalf("the horn's staff: %+v (%s)", st.Transpose, e.Status)
+	}
+	if score.FormatVoice(st.Voices[0]) != notes || e.Rev != rev || e.laneRev == lanes {
+		t.Errorf("notes %q, rev %d→%d, layout rev %d→%d", score.FormatVoice(st.Voices[0]), rev, e.Rev, lanes, e.laneRev)
+	}
+	if scoreLayout() == before {
+		t.Error("the page was not engraved again")
+	}
+	if e.Score.Lines[1].Staves[0].Transpose != (score.Interval{}) {
+		t.Error("the other line moved")
+	}
+	// Back to an instrument in C: written at sounding pitch again.
+	e.setInstrument(0, "dc/1", false)
+	if e.Score.Lines[0].Staves[0].Transpose != (score.Interval{}) {
+		t.Errorf("back in C: %+v", e.Score.Lines[0].Staves[0].Transpose)
+	}
+	e.undoStep()
+	if e.Score.Lines[0].Instrument != "horn/x" || e.Score.Lines[0].Staves[0].Transpose.Chromatic != -7 {
+		t.Errorf("undo: %s %+v", e.Score.Lines[0].Instrument, e.Score.Lines[0].Staves[0].Transpose)
+	}
+}

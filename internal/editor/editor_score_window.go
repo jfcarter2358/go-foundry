@@ -598,6 +598,11 @@ func scoreRunCmd(c scoreCmd) {
 	case scVoiceCycle:
 		e.setVoice((e.Voice + 1) % score.MaxVoices)
 	case scDelete:
+		// A lane's override, clicked with nothing else selected.
+		if e.Sel.Kind == scoreSelNone && e.laneSelected() != nil {
+			e.laneDelete()
+			break
+		}
 		e.deleteSel()
 	case scPrev:
 		e.moveSel(-1)
@@ -660,6 +665,53 @@ func scoreRunCmd(c scoreCmd) {
 		scoreOpenExport()
 	case scAddLine:
 		scoreOpenAddLine(len(e.Score.Lines))
+	// Expression (editor_score_marks.go, editor_score_palette.go).
+	case scSlur:
+		e.slur()
+	case scCresc:
+		e.hairpin("cresc")
+	case scDim:
+		e.hairpin("dim")
+	case scGliss:
+		e.gliss("")
+	case scExpression:
+		scoreOpenExpression()
+	case scTempoText:
+		scoreOpenTempo()
+	case scStaccato:
+		e.toggleMark("stacc", "")
+	case scStaccatissimo:
+		e.toggleMark("staccmo", "")
+	case scAccent:
+		e.toggleMark("acc", "")
+	case scTenuto:
+		e.toggleMark("ten", "")
+	case scMarcato:
+		e.toggleMark("marc", "")
+	case scKeypad7, scKeypad8, scKeypad9, scKeypadPlus:
+		e.keypadMark(7 + int(c-scKeypad7))
+	case scGraceAcc:
+		e.toggleGrace(score.Acciaccatura)
+	case scGraceApp:
+		e.toggleGrace(score.Appoggiatura)
+	case scMarksPanel:
+		scoreShowMarks = !scoreShowMarks
+	case scConcert:
+		e.toggleConcert()
+	case scLane:
+		if e.Sel.Kind == scoreSelNone && len(e.Score.Lines) > 1 {
+			e.Status = "Select a line for its dynamics lane"
+			break
+		}
+		e.toggleLane(e.selLine())
+	case scRehearsal:
+		scoreOpenRehearsal()
+	case scRepeatBars:
+		scoreOpenRepeat()
+	case scEnding:
+		scoreOpenEnding()
+	case scClefChange:
+		scoreOpenClefChange()
 	}
 }
 
@@ -704,6 +756,9 @@ func scoreDrawFrame(W, H float32) {
 	scoreStatusBar(imgui.Vec2{X: 0, Y: H - scoreStatusH}, W)
 	if scoreShowKeypad && scoreView == scoreViewScore {
 		scoreKeypadPanel(W, H)
+	}
+	if scoreShowMarks && scoreView == scoreViewScore {
+		scorePalettePanel(W, H)
 	}
 	scoreDialogs()
 }
@@ -815,6 +870,11 @@ func scoreToolRow() {
 		scoreRunCmd(scKeypadPanel)
 	}
 	editorMenuTooltip("The on-screen keypad" + scoreKeysSuffix(scKeypadPanel))
+	imgui.SameLine()
+	if editorActiveToggleButtonColor("Marks##scmk", scoreShowMarks, scoreColActive) {
+		scoreRunCmd(scMarksPanel)
+	}
+	editorMenuTooltip("The marks palette: dynamics, lines, articulations, ornaments, form" + scoreKeysSuffix(scMarksPanel))
 	editorStatusText(e.Status)
 }
 
@@ -1001,6 +1061,7 @@ func scoreMenus() {
 		}
 		imgui.EndMenu()
 	}
+	scoreMarksMenu()
 	if imgui.BeginMenu("Lines") {
 		item("Add Line...", scAddLine, true)
 		editorMenuTooltip("A line for any instrument of the library, written on the staff it asks for\n(a grand staff for a piano, a percussion staff for a kit).")
@@ -1245,6 +1306,7 @@ func scoreDialogs() {
 		}
 	})
 
+	scoreMarkDialogs()
 	scoreKeysDialog()
 	scoreExportDialog()
 	scoreLinePopups()

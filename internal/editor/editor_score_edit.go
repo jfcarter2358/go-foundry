@@ -102,8 +102,9 @@ type scoreState struct {
 	Lanes    map[string]bool
 	LaneSel  scoreLaneSel
 	laneDrag scoreLaneDrag
-	// laneRev counts lanes opening and closing (the layout leaves room for
-	// them); laneLive counts a drag's live changes (the window paces the
+	// laneRev counts what the layout must see that is not a note edit:
+	// lanes opening and closing (it leaves room for them), a swap's new
+	// transposition; laneLive counts a drag's live changes (the window paces the
 	// player's updates by it).
 	laneRev, laneLive uint64
 	// laneCurveCache is every line's dynamics as written, for the lanes.
@@ -202,6 +203,14 @@ func scoreErrText(err error) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// restore puts a snapshot back. Concert pitch is a view switch, not an
+// edit (toggleConcert pushes no step), so it stays as it is.
+func (e *scoreState) restore(snap scoreSnapshot) {
+	concert := e.Score.Concert
+	e.Score, e.Sel = snap.Score, snap.Sel
+	e.Score.Concert = concert
+}
+
 func (e *scoreState) canUndo() bool { return e.undo.len() > 0 }
 func (e *scoreState) canRedo() bool { return e.redo.len() > 0 }
 
@@ -212,7 +221,7 @@ func (e *scoreState) undoStep() bool {
 		return false
 	}
 	e.redo.push(scoreSnapshot{Score: e.Score.Clone(), Sel: e.Sel})
-	e.Score, e.Sel = snap.Score, snap.Sel
+	e.restore(snap)
 	e.touch()
 	e.mixKey = ""
 	e.Transport.Loop = scoreFitLoop(e.Score, e.Transport.Loop)
@@ -227,7 +236,7 @@ func (e *scoreState) redoStep() bool {
 		return false
 	}
 	e.undo.push(scoreSnapshot{Score: e.Score.Clone(), Sel: e.Sel})
-	e.Score, e.Sel = snap.Score, snap.Sel
+	e.restore(snap)
 	e.touch()
 	e.mixKey = ""
 	e.Transport.Loop = scoreFitLoop(e.Score, e.Transport.Loop)
@@ -308,12 +317,12 @@ func (e *scoreState) toConcert(line, staff int, p score.Pitch) score.Pitch {
 	return p.Transpose(score.Interval{Diatonic: -iv.Diatonic, Chromatic: -iv.Chromatic})
 }
 
-// staffMiddle is the written pitch of a staff's middle line: where a letter
-// with no note before it lands.
-func (e *scoreState) staffMiddle(line, staff int) score.Pitch {
+// staffMiddle is the written pitch of a staff's middle line at a point (in
+// the clef in force there): where a letter with no note before it lands.
+func (e *scoreState) staffMiddle(line, staff int, at score.Pos) score.Pitch {
 	clef := "treble"
 	if st := edit.Staff(e.Score, line, staff); st != nil {
-		clef = st.Clef
+		clef = st.ClefAt(at)
 	}
 	return score.FromDiatonic(scoreClefBottom(clef) + 4)
 }
@@ -443,7 +452,7 @@ func (e *scoreState) prevPitch(l edit.Loc, at score.Frac) score.Pitch {
 			}
 		}
 	}
-	return e.staffMiddle(l.Line, l.Staff)
+	return e.staffMiddle(l.Line, l.Staff, score.Pos{Bar: l.Bar, Offset: at})
 }
 
 // onPage is a stored pitch where the page shows it at a point: written for
@@ -472,6 +481,7 @@ func (e *scoreState) toggleInput() {
 
 // escape leaves note input, then clears the selection.
 func (e *scoreState) escape() {
+	e.LaneSel = scoreLaneSel{Index: -1}
 	switch {
 	case e.Input:
 		e.Input, e.Armed = false, false
@@ -885,6 +895,11 @@ func (e *scoreState) keypadDur(slot int) (score.DurBase, bool) {
 
 // keypad is a keypad slot pressed.
 func (e *scoreState) keypad(slot int) {
+	// The second layout's 5 and 6 are the grace notes.
+	if e.Layout2 && (slot == 5 || slot == 6) {
+		e.toggleGrace([]score.Grace{score.Acciaccatura, score.Appoggiatura}[slot-5])
+		return
+	}
 	b, ok := e.keypadDur(slot)
 	if !ok {
 		e.Status = fmt.Sprintf("Keypad %d has nothing on the second layout (F8 goes back)", slot)
@@ -1003,6 +1018,13 @@ func (e *scoreState) setVoice(v int) {
 		}
 		status := e.Status
 		defer func() { e.Status = status }()
+	}
+	// So do the notes of selected bars.
+	if !e.Input && e.Sel.Kind == scoreSelBars {
+		if !e.moveBarsToVoice(v) {
+			e.Voice = v
+		}
+		return
 	}
 	e.Voice = v
 	switch e.Sel.Kind {

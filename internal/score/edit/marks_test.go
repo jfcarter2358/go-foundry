@@ -91,6 +91,8 @@ func TestClassifyExpression(t *testing.T) {
 		"cresc.": {ExprCresc, "cresc."}, "decresc.": {ExprDim, "dim."}, "dim": {ExprDim, "dim."},
 		"rit.": {ExprTempo, "rit."}, "a tempo": {ExprTempo, "a tempo"}, "poco accel.": {ExprTempo, "poco accel."},
 		"dolce": {ExprText, "dolce"}, "espress.": {ExprText, "espress."},
+		"poco cresc.": {ExprCresc, "poco cresc."}, "Dim. molto": {ExprDim, "Dim. molto"},
+		"cresc. poco a poco": {ExprCresc, "cresc. poco a poco"},
 	} {
 		k, txt := ClassifyExpression(in)
 		if k != want.k || txt != want.t {
@@ -357,5 +359,35 @@ func TestClefChanges(t *testing.T) {
 	}
 	if !RemoveClefChange(s, 0, 0, at) || len(st.Clefs) != 0 {
 		t.Error("RemoveClefChange")
+	}
+}
+
+// A position's zero offset can be spelled two ways (the zero Frac, or 0/1
+// from arithmetic); tempo marks and clef changes are found either way.
+func TestFormMarksFindTheirPlaceHoweverZeroIsSpelled(t *testing.T) {
+	s := one(t, "4/4", 0, "wC5 | wC5 | wC5")
+	s.Bars = 3
+	if err := SetTempoMark(s, score.TempoMark{At: score.Pos{Bar: 2}, Text: "rit."}); err != nil {
+		t.Fatal(err)
+	}
+	zero := score.F(1, 4).Sub(score.F(1, 4))
+	at := score.Pos{Bar: 2, Offset: zero}
+	if TempoMarkAt(s, at) == nil {
+		t.Errorf("the mark at %+v not found", at)
+	}
+	if err := SetTempoMark(s, score.TempoMark{At: at, Text: "a tempo"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Tempo) != 2 || TempoMarkAt(s, score.Pos{Bar: 2}).Text != "a tempo" {
+		t.Errorf("replaced: %+v", s.Tempo)
+	}
+	if !RemoveTempoMark(s, at) || len(s.Tempo) != 1 {
+		t.Errorf("removed: %+v", s.Tempo)
+	}
+	if err := SetClefChange(s, 0, 0, score.Pos{Bar: 3}, "bass"); err != nil {
+		t.Fatal(err)
+	}
+	if !RemoveClefChange(s, 0, 0, score.Pos{Bar: 3, Offset: zero}) {
+		t.Error("the clef change was not found")
 	}
 }

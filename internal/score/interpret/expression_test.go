@@ -283,3 +283,23 @@ func TestWritingChangesNoPitch(t *testing.T) {
 		t.Errorf("played %s", got)
 	}
 }
+
+// A slide into a note that re-strikes (a tremolo, a trill) bends up to it
+// and lets it strike as itself, rather than swallowing it.
+func TestASlideIntoATremoloKeepsIt(t *testing.T) {
+	s := one(t, "bars: 2", "| hC4(gliss) hG4(trem=2) | hC4 hr |")
+	s.Lines[0].Gliss = "slide"
+	p := perform(t, s)
+	if p.Notes[0].MIDI != 60 || p.Notes[0].BendAt(1920) != 7 || p.Notes[0].Tick+p.Notes[0].Ticks != 1920 {
+		t.Errorf("the slide: %+v", p.Notes[0])
+	}
+	g := 0
+	for _, n := range p.Notes[1:] {
+		if n.MIDI == 67 && n.Tick >= 1920 && n.Tick < 3840 {
+			g++
+		}
+	}
+	if g != 8 {
+		t.Errorf("the tremolo's strikes: %d (%s)", g, heard(p))
+	}
+}

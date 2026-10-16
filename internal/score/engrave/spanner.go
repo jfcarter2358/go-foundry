@@ -501,6 +501,10 @@ var dynamicGlyphs = map[string][]string{
 	"niente": {"dynamicNiente"},
 }
 
+// DynamicGlyphs are the glyphs a dynamic is drawn with, nil for a name
+// that is not a dynamic (for an editor's buttons).
+func DynamicGlyphs(name string) []string { return dynamicGlyphs[name] }
+
 // dynamicBox is a dynamic's ink from its first glyph's origin on the
 // baseline.
 func (e *engraver) dynamicBox(name string) Rect {

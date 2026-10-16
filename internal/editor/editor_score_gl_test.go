@@ -234,6 +234,51 @@ func TestScoreGLWindowDraws(t *testing.T) {
 	if green < 20 {
 		t.Errorf("the piano's meter while it plays: %d green pixels", green)
 	}
+
+	// Expression: the first line's dynamics lane open with an override
+	// over bars 2-3, the marks palette up.
+	p.StopTransport()
+	scEd.toggleLane(0)
+	scEd.lanePress(0, score.Pos{Bar: 2}, 0.3, -1)
+	scEd.laneMove(score.Pos{Bar: 4}, 0.3)
+	scEd.laneRelease()
+	// And the violins', whose marks move (pp, then p at bar 5), held loud
+	// over bar 4.
+	scEd.toggleLane(2)
+	scEd.lanePress(2, score.Pos{Bar: 4}, 0.85, -1)
+	scEd.laneMove(score.Pos{Bar: 5}, 0.85)
+	scEd.laneRelease()
+	scoreShowKeypad, scoreShowMarks = false, true
+	defer func() { scoreShowMarks = false }()
+	scoreZoom = 10
+	scoreList = nil
+	frame()
+	frame()
+	img = readFrame(W, H)
+	shot(t, "expression", img)
+	el := scoreLayout()
+	if len(el.Lanes) != 2 {
+		t.Fatalf("lanes %+v", el.Lanes)
+	}
+	// The lane's pale blue, and the override's shading, under the flute
+	// (left of the palette).
+	ln := el.Lanes[0]
+	lane, held := 0, 0
+	ly := int(scoreViewTop + scoreRulerH + scorePad + float32(ln.Top)*scoreZoom)
+	for y := ly; y < ly+int(float32(ln.Height)*scoreZoom); y++ {
+		for x := int(scoreHeaderW) + 20; x < 740; x++ {
+			c := img.RGBAAt(x, y)
+			switch {
+			case c.R > 230 && c.G > 238 && c.B > 245 && c.B > c.R:
+				lane++
+			case c.B > 200 && c.R < 215 && c.B-c.R > 15:
+				held++
+			}
+		}
+	}
+	if lane < 1500 || held < 300 {
+		t.Errorf("the dynamics lane: %d lane pixels, %d override pixels", lane, held)
+	}
 }
 
 // readFrame reads the framebuffer back as an opaque image, top row first.

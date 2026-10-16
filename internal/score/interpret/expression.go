@@ -16,7 +16,8 @@ package interpret
 //     to chord note from the top. The line's Gliss style (else the
 //     instrument's, else a slide) says how: a slide bends the first note
 //     to the second's pitch over the last three quarters of its event and
-//     carries on as the second note, unbroken; a chromatic or diatonic run
+//     carries on as the second note, unbroken (unless the second is an
+//     ornament or a tremolo, which strikes as itself); a chromatic or diatonic run
 //     plays every semitone, or every note of the key, between them in that
 //     time.
 //   - ornaments, on a chord's top note: a trill (`tr`) alternates with the
@@ -236,6 +237,11 @@ func (in *interp) glissandi(ve *voiceEvents) {
 			if style == tracker.GlissSlide {
 				s, t := &in.notes[si], &in.notes[ti]
 				s.bends = append(s.bends, bendAt{start, from - float32(s.midi)}, bendAt{y.mainAt, float32(to - s.midi)})
+				if restrikes(y.e) {
+					// The target re-strikes (a trill, a tremolo): it
+					// keeps its own attack, the slide arriving at it.
+					continue
+				}
 				s.dur = t.at.Add(t.dur).Sub(s.at)
 				s.segAt, s.segDur, s.segMarks = t.segAt, t.segDur, t.segMarks
 				t.drop, t.into = true, si+1
@@ -263,6 +269,18 @@ func (in *interp) glissandi(ve *voiceEvents) {
 			}
 		}
 	}
+}
+
+// restrikes reports an event whose marks make it a run of notes (an
+// ornament or a tremolo): a slide into it cannot carry on as it.
+func restrikes(e *score.Event) bool {
+	for _, m := range e.Marks {
+		switch m.Name {
+		case "tr", "mord", "imord", "turn", "iturn", "trem", "trem2":
+			return true
+		}
+	}
+	return false
 }
 
 // glissSteps are the pitches strictly between two notes a run passes

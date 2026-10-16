@@ -314,10 +314,17 @@ func (e *scoreState) expression(text string) bool {
 	switch k {
 	case edit.ExprDynamic:
 		return e.dynamic(t)
-	case edit.ExprCresc:
-		return e.hairpin("cresc.")
-	case edit.ExprDim:
-		return e.hairpin("dim.")
+	case edit.ExprCresc, edit.ExprDim:
+		// "cresc." / "dim." print as themselves; other words ("poco
+		// cresc.") are the line's printed text.
+		name, plain := "cresc", "cresc."
+		if k == edit.ExprDim {
+			name, plain = "dim", "dim."
+		}
+		if t == plain {
+			return e.hairpin(plain)
+		}
+		return e.hairpin(name + "=" + t)
 	case edit.ExprTempo:
 		at := score.Pos{Bar: e.selBar(), Offset: e.selOnset()}
 		return e.setTempo(score.TempoMark{At: at, Text: t})
@@ -379,6 +386,12 @@ func spanLabel(k edit.SpanKind, value string) string {
 		return "cresc."
 	case "dim.":
 		return "dim."
+	}
+	if w, ok := strings.CutPrefix(value, "cresc="); ok {
+		return w
+	}
+	if w, ok := strings.CutPrefix(value, "dim="); ok {
+		return w
 	}
 	return "Crescendo"
 }
@@ -579,6 +592,67 @@ func (e *scoreState) moveToVoice(v int) bool {
 	return false
 }
 
+// moveBarsToVoice is Ctrl+Alt+1-4 on selected bars (Sibelius): every note
+// in them from the other voices goes into voice v at its onset, with its
+// marks and grace notes; what it leaves is a rest in voice 1 and nothing in
+// voices 2-4. A tuplet's notes stay where they are (a tuplet moves whole,
+// not note by note). One undo step.
+func (e *scoreState) moveBarsToVoice(v int) bool {
+	type place struct {
+		line, staff, voice, bar int
+		on                      score.Frac
+	}
+	var todo []place
+	kept := 0
+	e.eachSelVoice(func(line, staff, voice int, evs []edit.Loc) {
+		if voice == v {
+			return
+		}
+		for _, l := range evs {
+			ev := edit.Event(e.Score, l)
+			if ev == nil || ev.Kind != score.EventChord || ev.Grace != score.NotGrace {
+				continue
+			}
+			if ev.Tuplet != 0 {
+				kept++
+				continue
+			}
+			on, _ := edit.Onset(e.Score, l)
+			todo = append(todo, place{line, staff, voice, l.Bar, on})
+		}
+	})
+	if len(todo) == 0 {
+		e.Status = fmt.Sprintf("Nothing in the selection moves into voice %d", v+1)
+		if kept > 0 {
+			e.Status += " (a tuplet's notes move with their whole tuplet)"
+		}
+		return false
+	}
+	ok := e.change(func() error {
+		for _, t := range todo {
+			l := edit.Loc{Line: t.line, Staff: t.staff, Voice: t.voice, Bar: t.bar}
+			k, found := scoreEventAt(e.Score, l, t.on)
+			if !found {
+				continue
+			}
+			l.Event = k
+			if _, err := edit.MoveToVoice(e.Score, l, v); err != nil {
+				return fmt.Errorf("bar %d: %v", t.bar, err)
+			}
+		}
+		return nil
+	})
+	if !ok {
+		return false
+	}
+	e.Voice = v
+	e.Status = fmt.Sprintf("Moved %d note(s) to voice %d", len(todo), v+1)
+	if kept > 0 {
+		e.Status += fmt.Sprintf("; %d in tuplets stayed", kept)
+	}
+	return true
+}
+
 // ---------- tempo, rehearsal marks, repeats, endings, jumps, clefs ----------
 
 // setTempo puts a tempo mark (or tempo text) at its place.
@@ -592,7 +666,7 @@ func (e *scoreState) setTempo(t score.TempoMark) bool {
 
 // removeTempo takes the tempo mark at a place out.
 func (e *scoreState) removeTempo(at score.Pos) bool {
-	if at == (score.Pos{Bar: 1}) {
+	if at.Bar == 1 && at.Offset.IsZero() {
 		e.Status = "The opening tempo mark is the piece's tempo: change it instead"
 		return false
 	}
@@ -936,7 +1010,7 @@ func (e *scoreState) laneMove(at score.Pos, level float32) {
 	l := e.Score.Lines[d.Line]
 	switch {
 	case d.Create:
-		if at == d.At && level == d.Level && d.moved {
+		if at.Bar == d.At.Bar && at.Offset.Eq(d.At.Offset) && level == d.Level && d.moved {
 			return
 		}
 		d.At, d.Level = at, level
@@ -1017,6 +1091,24 @@ func (e *scoreState) laneDelete() bool {
 	}) {
 		e.LaneSel = scoreLaneSel{Index: -1}
 		e.Status = fmt.Sprintf("%s: bars %s to %s follow the marks again", e.lineName(li), e.Score.FormatPos(from), e.Score.FormatPos(to))
+		return true
+	}
+	return false
+}
+
+// laneClearLine clears every override of a line.
+func (e *scoreState) laneClearLine(li int) bool {
+	l := e.line(li)
+	if l == nil || len(l.Overrides) == 0 {
+		e.Status = "No overrides on the line"
+		return false
+	}
+	if e.change(func() error {
+		e.Score.Lines[li].Overrides = nil
+		return nil
+	}) {
+		e.LaneSel = scoreLaneSel{Index: -1}
+		e.Status = e.lineName(li) + " follows its marks again"
 		return true
 	}
 	return false

@@ -8,10 +8,13 @@ package editor
 // Each cell runs the same command its key does (scoreRunCmd), so the panel
 // cannot drift from the keyboard: the duration cells are keypad slots, whose
 // meaning is the keypad layout (the "More" tab is F8's second layout: 64th,
-// 128th, 256th and breve on 1–4).
+// 128th, 256th and breve on 1–4, the grace notes on 5 and 6, and the
+// articulations on 7, 8, 9 and +).
 
 import (
 	"fmt"
+
+	"foundry/internal/score"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -45,6 +48,43 @@ func scoreKeypadCells() []scoreKpCell {
 		}
 		return c
 	}
+	// markCell is one of keypad 7, 8, 9 and +: an accidental or the accent
+	// on the first layout, an articulation on the second; lit when the
+	// selected note has it.
+	ev := e.event()
+	has := func(name string) bool { return ev != nil && ev.Has(name) }
+	markCell := func(slot, col, row, h int) scoreKpCell {
+		c := scoreKpCell{col: col, row: row, w: 1, h: h, key: fmt.Sprint(slot), cmd: scKeypad7 + scoreCmd(slot-7)}
+		if slot == 10 {
+			c.key = "+"
+		}
+		if e.Layout2 {
+			name := []string{"stacc", "ten", "staccmo", "marc"}[slot-7]
+			c.glyph = []string{"articStaccatoAbove", "articTenutoAbove", "articStaccatissimoAbove", "articMarcatoAbove"}[slot-7]
+			c.lit = has(name)
+			return c
+		}
+		switch slot {
+		case 7:
+			c.glyph, c.lit = "accidentalNatural", acc == 2
+		case 8:
+			c.glyph, c.lit = "accidentalSharp", acc == 0
+		case 9:
+			c.glyph, c.lit = "accidentalFlat", acc == 1
+		default:
+			c.glyph, c.lit = "articAccentAbove", has("acc")
+		}
+		return c
+	}
+	// The second layout's 5 and 6 are the grace notes.
+	graceCell := func(slot, col int) scoreKpCell {
+		if !e.Layout2 {
+			return durCell(slot, col, 2)
+		}
+		k := []score.Grace{score.Acciaccatura, score.Appoggiatura}[slot-5]
+		return scoreKpCell{col: col, row: 2, w: 1, h: 1, key: fmt.Sprint(slot), cmd: scKeypad1 + scoreCmd(slot-1),
+			glyph: []string{"graceNoteAcciaccaturaStemUp", "graceNoteAppoggiaturaStemUp"}[slot-5], lit: e.Grace == k}
+	}
 	layout := "Layout 1"
 	if e.Layout2 {
 		layout = "Layout 2"
@@ -54,11 +94,8 @@ func scoreKeypadCells() []scoreKpCell {
 		{col: 1, row: 0, w: 1, h: 1, key: "/", text: layout, cmd: scLayout, lit: e.Layout2},
 		{col: 2, row: 0, w: 1, h: 1, key: "*", text: fmt.Sprintf("Voice %d", e.Voice+1), cmd: scVoiceCycle},
 		{col: 3, row: 0, w: 1, h: 1, key: "-", text: "Flip", cmd: scFlip},
-		{col: 0, row: 1, w: 1, h: 1, key: "7", glyph: "accidentalNatural", cmd: scNatural, lit: acc == 2},
-		{col: 1, row: 1, w: 1, h: 1, key: "8", glyph: "accidentalSharp", cmd: scSharp, lit: acc == 0},
-		{col: 2, row: 1, w: 1, h: 1, key: "9", glyph: "accidentalFlat", cmd: scFlat, lit: acc == 1},
-		{col: 3, row: 1, w: 1, h: 2, key: "+", text: "-"},
-		durCell(4, 0, 2), durCell(5, 1, 2), durCell(6, 2, 2),
+		markCell(7, 0, 1, 1), markCell(8, 1, 1, 1), markCell(9, 2, 1, 1), markCell(10, 3, 1, 2),
+		durCell(4, 0, 2), graceCell(5, 1), graceCell(6, 2),
 		durCell(1, 0, 3), durCell(2, 1, 3), durCell(3, 2, 3),
 		{col: 3, row: 3, w: 1, h: 2, key: "Enter", text: "Tie", cmd: scTie, lit: tied},
 		{col: 0, row: 4, w: 2, h: 1, key: "0", glyph: "restQuarter", cmd: scRest, lit: isRest},
@@ -88,7 +125,7 @@ func scoreKeypadPanel(winW, winH float32) {
 			scoreRunCmd(scLayout)
 		}
 	}
-	editorMenuTooltip("More is the second layout (F8): 64th, 128th, 256th and breve on 1-4.")
+	editorMenuTooltip("More is the second layout (F8): 64th, 128th, 256th and breve on 1-4,\ngrace notes on 5 and 6, staccato, tenuto, staccatissimo and marcato on 7, 8, 9 and +.")
 	origin := imgui.CursorPos()
 	dl := imgui.WindowDrawList()
 	style := imgui.CurrentStyle()
@@ -115,7 +152,13 @@ func scoreKeypadPanel(winW, winH float32) {
 		inner := imgui.Vec2{X: a.X + 4, Y: a.Y + 12}
 		switch {
 		case c.glyph != "":
-			scoreDrawGlyph(dl, c.glyph, inner, imgui.Vec2{X: b.X - 4, Y: b.Y - 2}, scoreColText)
+			// A tall cell's glyph is a one-cell glyph, centred.
+			top, bot := inner.Y, b.Y-2
+			if c.h > 1 {
+				mid := (a.Y + b.Y) / 2
+				top, bot = mid-scoreKpCellH/2+12, mid+scoreKpCellH/2-2
+			}
+			scoreDrawGlyph(dl, c.glyph, imgui.Vec2{X: inner.X, Y: top}, imgui.Vec2{X: b.X - 4, Y: bot}, scoreColText)
 		case c.text != "":
 			ts := imgui.CalcTextSize(c.text, false, 0)
 			dl.AddText(imgui.Vec2{X: (a.X + b.X - ts.X) / 2, Y: (a.Y+b.Y-ts.Y)/2 + 5}, scoreColText, c.text)

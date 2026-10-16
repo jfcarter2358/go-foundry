@@ -202,6 +202,18 @@ An on-screen keypad panel mirrors the keypad (mockup screen 7).
 
 ## Engineering rules
 
+- **Never discard anything in git:** no `git checkout`/`restore`/`stash`/`reset`
+  of files, ever. Undo your own edits by editing back. The tree can hold other
+  sessions' uncommitted work.
+- **Resource limits (WSL2, 32 GB shared):** one heavy job at a time (a full
+  `go test ./...`, the GL suite, a big build or render); prefer targeted
+  `go test ./internal/<pkg>/...`; run with `GOFLAGS=-p=6 GOMEMLIMIT=6GiB`
+  (export them if missing); put a `timeout` on long commands
+  (`timeout 1800 go test ...`); check `free -g` first and wait if under 8 GB
+  available. A `memguard` service SIGKILLs the largest go/test process when
+  memory runs out (log `~/.cache/memguard.log`) — if a run dies with SIGKILL,
+  reduce parallelism and retry.
+
 - **Another session is editing Nanite/render code in this same working tree at
   the same time.** Never `git add -A`, `git add .` or `git commit -a`: stage
   only the files this project created or changed, by explicit path (check

@@ -36,6 +36,7 @@ var (
 	scoreColFrameHi = scoreRGB(0x35, 0x3a, 0x45, 1)
 	scoreColMute    = scoreRGB(0xa3, 0x50, 0x3a, 1)
 	scoreColSolo    = scoreRGB(0x9a, 0x84, 0x20, 1)
+	scoreColLaneOn  = scoreRGB(0x2c, 0x5f, 0xae, 1)
 	scoreColChip    = scoreRGB(0xcf, 0xd5, 0xde, 1)
 	scoreColTrack   = scoreRGB(0x0f, 0x11, 0x14, 1)
 	scoreColAccent  = scoreRGB(0x42, 0x96, 0xfa, 1)
@@ -213,7 +214,11 @@ func scoreHeaderColumn(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, wp, 
 				scoreDupOpen, scoreMenuLine = true, li
 			}
 			editorMenuTooltip("Duplicate the line: with its notes, or empty with the same instrument and mixer")
-			sx := bx + 74
+			if scoreSmallButton("D##sclane", imgui.Vec2{X: bx + 72, Y: by}, e.laneShown(li), scoreColLaneOn) {
+				e.toggleLane(li)
+			}
+			editorMenuTooltip("The dynamics lane under " + e.lineName(li) + ": the level its marks give, and\nsegments dragged to another level without changing a printed mark")
+			sx := bx + 97
 			if v, changed, released := scoreHSlider("##scvol", imgui.Vec2{X: sx, Y: by}, imgui.Vec2{X: x + w - sx, Y: 16},
 				line.Volume, 0, scoreFaderMax, 1); changed {
 				e.setVolume(li, v)
@@ -228,6 +233,7 @@ func scoreHeaderColumn(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, wp, 
 			scoreLineOpen, scoreMenuLine = true, li
 		}
 	}
+	scoreLaneHeaderLabels(dl, l, g, wp)
 }
 
 // scoreLineSelected reports a line the selection is on.
@@ -455,7 +461,7 @@ func scoreLinePopups() {
 // scorePickAudition is a fifth in the middle of a line's staff, to hear an
 // instrument by.
 func scorePickAudition(li int) []int {
-	mid := scEd.staffMiddle(li, 0)
+	mid := scEd.staffMiddle(li, 0, score.Pos{Bar: 1})
 	if l := scEd.line(li); l != nil && len(l.Staves) > 0 && l.Staves[0].Clef == "percussion" {
 		return []int{38, 42} // snare and hi-hat
 	}
@@ -558,6 +564,27 @@ func scoreLineMenuItems(li int) {
 	if imgui.MenuItemV("Solo", "", l.Solo, true) {
 		e.toggleSolo(li)
 	}
+	imgui.Separator()
+	if imgui.MenuItemV("Dynamics Lane", scoreKeymapActive().label(scLane), e.laneShown(li), true) {
+		e.toggleLane(li)
+	}
+	editorMenuTooltip("The level the line's marks give (dashed) and what plays (solid);\ndrag across the lane to hold a level, drag a held segment up or down.")
+	if imgui.MenuItemV("Clear Dynamics Overrides", "", false, len(l.Overrides) > 0) {
+		e.laneClearLine(li)
+	}
+	if imgui.BeginMenu("Glissandi Play") {
+		for _, st := range append([]string{""}, score.GlissStyles...) {
+			label := st
+			if st == "" {
+				label = "As the Instrument Says"
+			}
+			if imgui.MenuItemV(scoreTitle(label)+"##scgl"+st, "", l.Gliss == st, true) {
+				e.setLineGliss(li, st)
+			}
+		}
+		imgui.EndMenu()
+	}
+	editorMenuTooltip("A slide bends from note to note; a chromatic or diatonic run plays the notes between.")
 	imgui.Separator()
 	if imgui.MenuItemV("Remove Line", "", false, len(e.Score.Lines) > 1) {
 		e.removeLine(li)

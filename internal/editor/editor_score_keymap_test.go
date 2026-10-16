@@ -57,9 +57,27 @@ func TestScoreSibeliusKeymap(t *testing.T) {
 		{shiftKey(sdl.SCANCODE_EQUALS), scSharp},
 		{key(sdl.SCANCODE_MINUS), scFlat},
 		{key(sdl.SCANCODE_0), scNatural},
-		{key(sdl.SCANCODE_KP_8), scSharp},
-		{key(sdl.SCANCODE_KP_9), scFlat},
-		{key(sdl.SCANCODE_KP_7), scNatural},
+		// Keypad 7, 8, 9 and + follow the keypad layout: the accidentals
+		// and the accent, or articulations on the second.
+		{key(sdl.SCANCODE_KP_8), scKeypad8},
+		{key(sdl.SCANCODE_KP_9), scKeypad9},
+		{key(sdl.SCANCODE_KP_7), scKeypad7},
+		{key(sdl.SCANCODE_KP_PLUS), scKeypadPlus},
+		{key(sdl.SCANCODE_S), scSlur},
+		{key(sdl.SCANCODE_H), scCresc},
+		{shiftKey(sdl.SCANCODE_H), scDim},
+		{altKey(sdl.SCANCODE_G), scGliss},
+		{key(sdl.SCANCODE_G), scLetterC + 4}, // G is still the note
+		{ctrlKey(sdl.SCANCODE_E), scExpression},
+		{key(sdl.SCANCODE_PERIOD), scStaccato},
+		{key(sdl.SCANCODE_APOSTROPHE), scStaccatissimo},
+		{shiftKey(sdl.SCANCODE_PERIOD), scAccent},
+		{shiftKey(sdl.SCANCODE_MINUS), scTenuto},
+		{shiftKey(sdl.SCANCODE_APOSTROPHE), scMarcato},
+		{ctrlAlt(sdl.SCANCODE_T), scTempoText},
+		{ctrlKey(sdl.SCANCODE_R), scRehearsal},
+		{ctrlShift(sdl.SCANCODE_L), scLane},
+		{ctrlAlt(sdl.SCANCODE_P), scMarksPanel},
 		{key(sdl.SCANCODE_UP), scSemiUp},
 		{altKey(sdl.SCANCODE_DOWN), scStepDown},
 		{ctrlKey(sdl.SCANCODE_UP), scOctUp},
@@ -158,9 +176,9 @@ func TestScoreRebinding(t *testing.T) {
 	if ov := k.overrides(scoreSibeliusKeymap()); len(ov) != 0 {
 		t.Errorf("a fresh preset has overrides %v", ov)
 	}
-	// Bind H (unbound) to tie, beside its others.
-	msg := scoreBindChord(k, scTie, key(sdl.SCANCODE_H), true)
-	if k.command(key(sdl.SCANCODE_H)) != scTie || k.command(key(sdl.SCANCODE_T)) != scTie {
+	// Bind U (unbound) to tie, beside its others.
+	msg := scoreBindChord(k, scTie, key(sdl.SCANCODE_U), true)
+	if k.command(key(sdl.SCANCODE_U)) != scTie || k.command(key(sdl.SCANCODE_T)) != scTie {
 		t.Errorf("add: %s", msg)
 	}
 	// Bind R (repeat's) to the rest, replacing its keys: R is taken.

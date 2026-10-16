@@ -155,6 +155,53 @@ repeats the selection right after itself, growing the score when it has to,
 and selects the copy, so `R` again carries on. A paste into bars of another
 meter is fitted to them. `Ctrl+Z` / `Ctrl+Y` undo and redo every edit.
 
+### Expression
+
+Marks go on the selection, as in Sibelius: on the selected note, or — with
+bars selected — an articulation or ornament on every note in them, a
+dynamic or a word on each line's first note there, a fermata on each
+voice's last, a slur over each voice's notes, a hairpin over each line's
+first voice, a pedal line under each line's last staff, an ottava line over
+each staff. The same key again takes an articulation off; a mark takes the
+place of its neighbour (staccatissimo replaces staccato, marcato the accent).
+
+| To | Press |
+| --- | --- |
+| Slur | `S`: from the selected note to the next; `S` again on its first note carries it one note further |
+| Crescendo / diminuendo hairpin | `H` / `Shift+H`, the same way. **Marks > cresc. (Text)** and **dim. (Text)** write the words with dashes |
+| Glissando | `Alt+G` (`G` is the note G): a straight line to the next note; **Marks > Wavy Glissando** for the wavy one. How it plays is the line's (right-click the header: **Glissandi Play**) or the instrument's |
+| Dynamic or words | `Ctrl+E` opens the expression box: type `mf`, `sfz`, `pizz.`, `con sord.`, `dolce`, `cresc.` or `rit.` and press `Enter`, or click one of its buttons. It files what you type by what it is: a dynamic, a technique word (which switches the instrument's articulation), cresc./dim. with dashes (words around them, such as `poco cresc.` or `dim. molto`, are printed as typed), tempo text (at the selection, played as a tempo change) or expression text |
+| Articulations | `.` staccato, `'` staccatissimo, `Shift+.` (`>`) accent, `Shift+-` (`_`) tenuto, `Shift+'` marcato; or the keypad's second layout (`F8`): `7` staccato, `8` tenuto, `9` staccatissimo, `+` marcato. On the first layout keypad `+` is the accent |
+| Grace notes | the second layout's keypad `5` (acciaccatura) or `6` (appoggiatura) in note input: the next notes typed are grace notes; press it again and type the note they lean on |
+| Move notes to another voice | `Ctrl+Alt+1`–`4` out of note input, with a note selected or with bars selected (every note in them from the other voices moves, its marks and grace notes with it; a tuplet's notes stay, since a tuplet moves whole) |
+| Tempo mark or tempo text | `Ctrl+Alt+T`: words, a tempo and the beat it counts (0 for text only: rit., accel., a tempo) |
+| Rehearsal mark | `Ctrl+R`: a section name at the selected bar, printed as a boxed letter with the name |
+
+The **Marks** palette (toolbar **Marks**, `Ctrl+Alt+P`) has the rest as
+buttons, lit when the selected note has them: dynamics, slurs, hairpins,
+glissandi, pedal and ottava lines, articulations, ornaments (trill,
+mordents, turns), arpeggios, tremolos (one to three strokes, two-note),
+fermatas (short, normal, long, very long), grace notes, and the form —
+**Repeat** (the selected bars, with how many times), **Ending** (the passes
+it plays on: the dialog offers the next one after an ending), **Rehearsal**,
+**Tempo**, **Clef** (a clef change from the selection, mid-bar too), segno,
+coda, To Coda, Fine, D.C. and D.S. (al Fine, al Coda). A D.S. needs its
+segno and an "al Fine" its Fine first. The **Marks** menu has all of it,
+and **Marks > Remove** takes dynamics, text, lines, navigation marks or
+dynamics overrides off the selection. **View > Concert Pitch**
+(`Ctrl+Shift+D`) shows transposing staves at sounding pitch.
+
+**The dynamics lane.** The **D** button on a line's header (or
+`Ctrl+Shift+L` with the line selected) opens a lane under its staves. The
+dashed grey curve is the level the printed marks and hairpins give; the
+solid blue one is what plays. Drag across the lane to hold the line at the
+pointer's level over the beats you cross — an *override*, shaded blue with
+its level written on it; drag an override's line up or down to change its
+level; click it and press `Delete` to give that span back to its marks. The
+printed dynamics never change, each drag is one undo step, and while the
+score plays the change is heard as you drag (a held string or wind note
+follows it). Overrides are saved in the file as `dynamic_overrides`.
+
 ### Lines
 
 Every line is a staff (a piano's is a grand staff with a brace, a drum kit's
@@ -163,7 +210,7 @@ a percussion staff) with a header beside it:
 | Part of the header | Does |
 | --- | --- |
 | Name | click selects every bar of the line; double-click renames it (scripts and bindings find lines by name, so names stay unique and bindings follow a rename) |
-| Instrument | click for the picker: type to search the whole `.finst` library, click (or `Enter` for the first match) to play the line on it. It works while the score plays — the notes do not change; what is sounding finishes on the old instrument and the next note is the new one's |
+| Instrument | click for the picker: type to search the whole `.finst` library, click (or `Enter` for the first match) to play the line on it. It works while the score plays — the notes do not change; what is sounding finishes on the old instrument and the next note is the new one's. The staff takes the new instrument's transposition (a line moved to a B♭ clarinet is written a tone up), so the page changes and the sound does not |
 | `M` / `S` | mute, solo (several lines can be soloed) |
 | Two squares | duplicate the line: **with notes**, or **empty** with the same instrument, clefs, transposition and mixer settings |
 | Slider | the line's volume (the mixer's fader); double-click for 0 dB |
@@ -226,8 +273,8 @@ tail is its ring-out, not the top again. It goes to
 
 The keypad panel (toolbar **Keypad**, `Ctrl+Alt+K`) mirrors the numeric
 keypad in Sibelius's layout and is clickable; the selected note's value,
-dot, accidental, tie and rest are lit, and its **More** tab is the second
-layout. **F1** in the Score window shows the active keymap over the score.
+dot, accidental, accent, tie and rest are lit, and its **More** tab is the
+second layout (64th to breve, grace notes, articulations). **F1** in the Score window shows the active keymap over the score.
 
 **Edit > Keyboard Shortcuts** picks the keymap — **Sibelius** (the default) or
 **MuseScore** (digits `1`–`8` are 64th … breve, `Alt+2`–`9` intervals, `J`

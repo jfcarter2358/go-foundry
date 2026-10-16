@@ -251,6 +251,16 @@ func ClassifyExpression(text string) (Expression, string) {
 	case "dim", "dim.", "diminuendo", "decresc", "decresc.", "decrescendo", ">":
 		return ExprDim, "dim."
 	}
+	// Words around one ("poco cresc.", "dim. molto", "cresc. poco a
+	// poco") are the same line with those words printed.
+	for _, w := range strings.FieldsFunc(low, func(r rune) bool { return r == ' ' || r == ',' }) {
+		switch strings.TrimSuffix(w, ".") {
+		case "cresc", "crescendo":
+			return ExprCresc, t
+		case "dim", "diminuendo", "decresc", "decrescendo":
+			return ExprDim, t
+		}
+	}
 	if (score.TempoMark{Text: t}).Change() != score.TempoSet {
 		return ExprTempo, t
 	}
@@ -370,6 +380,12 @@ func startName(k SpanKind, value string) (name, val string, err error) {
 			return "cresc", "text", nil
 		case "dim.", "dim=text":
 			return "dim", "text", nil
+		}
+		// cresc=<words> / dim=<words>: a text line with those words.
+		for _, n := range []string{"cresc", "dim"} {
+			if w, ok := strings.CutPrefix(value, n+"="); ok && strings.TrimSpace(w) != "" {
+				return n, strings.TrimSpace(w), nil
+			}
 		}
 		return "", "", fmt.Errorf("a hairpin is cresc or dim (or cresc. / dim. as text), not %q", value)
 	case SpanPedal:

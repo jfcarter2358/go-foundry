@@ -157,12 +157,16 @@ func scoreViewPane(pos, size imgui.Vec2) {
 	scoreDrawLoopShade(dl, l, g)
 	scoreDrawSelection(dl, l, g)
 	scoreRend.Draw(dl, l, scoredraw.View{Origin: g.origin, Scale: z, Clip: g.clip(), Ink: scoreColInk, Colour: scoreItemColour, Faint: 0.3})
+	scoreDrawLanes(dl, l, g)
 	scoreDrawCaret(dl, l, g)
 	scoreDrawPlayhead(dl, l, g)
 	mouse := imgui.MousePos()
+	// A lane takes the pointer over it (and a drag begun in it wherever the
+	// pointer goes): no ghost there, and its click is the lane's.
+	inLane := scoreLanePointer(l, g, hovered, clicked)
 	var target scoreTarget
 	targetOK := false
-	if hovered {
+	if hovered && !inLane {
 		target, targetOK = scorePointerTarget(l, e.Score, e.Voice, e.Dur, g.toLayout(mouse))
 		if e.Input && targetOK {
 			scoreDrawGhost(dl, l, g, target)
@@ -171,7 +175,7 @@ func scoreViewPane(pos, size imgui.Vec2) {
 	dl.PopClipRect()
 	scoreRuler(dl, l, g, wp, size)
 	scoreHeaderColumn(dl, l, g, wp, size)
-	if hovered && e.Input && targetOK {
+	if hovered && !inLane && e.Input && targetOK {
 		scoreDrawGhostTip(dl, g, target)
 	}
 	scoreFollow(l, g)
@@ -183,7 +187,7 @@ func scoreViewPane(pos, size imgui.Vec2) {
 		imgui.SetScrollX(float32(at.X)*scoreZoom + scoreHeaderW + scorePad - (mouse.X - wp.X))
 		imgui.SetScrollY(float32(at.Y)*scoreZoom + scoreRulerH + scorePad - (mouse.Y - wp.Y))
 	}
-	if clicked {
+	if clicked && !inLane {
 		scoreClick(l, g.toLayout(mouse), target, targetOK, io)
 	}
 	if e.Reveal {
@@ -196,6 +200,8 @@ func scoreViewPane(pos, size imgui.Vec2) {
 // scoreClick is a left click on the music.
 func scoreClick(l *engrave.List, p engrave.Point, t scoreTarget, tOK bool, io imgui.IO) {
 	e := scEd
+	// A click on the music lets go of a lane's override.
+	e.LaneSel = scoreLaneSel{Index: -1}
 	switch {
 	case io.KeyAltPressed():
 		if tOK {

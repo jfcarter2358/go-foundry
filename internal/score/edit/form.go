@@ -50,6 +50,10 @@ func guarded(s *score.Score, f func() error) error {
 	return nil
 }
 
+// samePos reports two positions the same point (however their offsets'
+// zero is spelled).
+func samePos(a, b score.Pos) bool { return a.Bar == b.Bar && a.Offset.Eq(b.Offset) }
+
 // barsIn checks a run of bars is inside the score.
 func barsIn(s *score.Score, a, z int) error {
 	if a < 1 || z < a || z > s.Measures() {
@@ -79,13 +83,14 @@ func SetTempoMark(s *score.Score, t score.TempoMark) error {
 	})
 }
 
-// RemoveTempoMark takes the tempo mark at a place out; the first one (the
-// piece's tempo) stays.
+// RemoveTempoMark takes the tempo mark at a place out. It does not guard
+// the opening mark (SetTempoMark replaces through it); the editor refuses
+// to remove the piece's tempo.
 func RemoveTempoMark(s *score.Score, at score.Pos) bool {
 	out := s.Tempo[:0:0]
 	found := false
 	for _, t := range s.Tempo {
-		if t.At == at {
+		if samePos(t.At, at) {
 			found = true
 			continue
 		}
@@ -98,7 +103,7 @@ func RemoveTempoMark(s *score.Score, at score.Pos) bool {
 // TempoMarkAt is the tempo mark at a place, or nil.
 func TempoMarkAt(s *score.Score, at score.Pos) *score.TempoMark {
 	for i := range s.Tempo {
-		if s.Tempo[i].At == at {
+		if samePos(s.Tempo[i].At, at) {
 			return &s.Tempo[i]
 		}
 	}
@@ -340,7 +345,7 @@ func RemoveClefChange(s *score.Score, line, staff int, at score.Pos) bool {
 	out := st.Clefs[:0:0]
 	found := false
 	for _, c := range st.Clefs {
-		if c.At == at {
+		if samePos(c.At, at) {
 			found = true
 			continue
 		}

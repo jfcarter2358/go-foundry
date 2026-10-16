@@ -213,11 +213,17 @@ func TestScoreDurationsAndRhythm(t *testing.T) {
 			t.Errorf("layout 2 keypad %d = %v", slot, e.Dur)
 		}
 	}
+	// Its 5 and 6 are the grace notes, a value no more.
 	e.Dur = score.Duration{Base: score.Breve}
 	e.keypad(5)
-	if e.Dur.Base != score.Breve || !strings.Contains(e.Status, "nothing") {
-		t.Errorf("layout 2 keypad 5: %v %q", e.Dur, e.Status)
+	if e.Dur.Base != score.Breve || e.Grace != score.Acciaccatura {
+		t.Errorf("layout 2 keypad 5: %v grace %v %q", e.Dur, e.Grace, e.Status)
 	}
+	e.keypad(6)
+	if e.Grace != score.Appoggiatura {
+		t.Errorf("layout 2 keypad 6: grace %v", e.Grace)
+	}
+	e.Grace = score.NotGrace
 	e.Layout2 = false
 
 	// In note input a value is the next note's: the note just written keeps
