@@ -9,6 +9,8 @@ package score
 // engraving understand. Inside a voice's "( )" a few marks have the
 // one-character spellings musicians already use for them (Aliases).
 
+import "strconv"
+
 // MarkKind groups marks by what they do.
 type MarkKind uint8
 
@@ -31,6 +33,9 @@ const (
 	// MarkNotation changes how the note is drawn only: fermata, arpeggio,
 	// a stem direction.
 	MarkNotation
+	// MarkPlayback changes only how the note plays and prints nothing: a
+	// velocity set in the piano roll (vel=).
+	MarkPlayback
 )
 
 // Dynamic is what a dynamic mark plays as. Level is MIDI velocity / 127;
@@ -98,6 +103,9 @@ const DefaultDynamic = "mf"
 //	cresc="poco a poco"       a hairpin; a value prints as text with dashes
 //	                          instead ("text" prints "cresc."/"dim.")
 //	on_beat, before_beat      a grace group's timing, over Playback.Graces
+//	vel=96                    the event's notes play at this MIDI velocity
+//	                          (1..127) whatever the dynamics say — the
+//	                          piano roll's velocity lane; nothing prints
 var markKinds = map[string]MarkKind{
 	// articulations
 	"stacc": MarkArticulation, "staccmo": MarkArticulation, "acc": MarkArticulation,
@@ -109,6 +117,8 @@ var markKinds = map[string]MarkKind{
 	// notation only
 	"ferm": MarkNotation, "arp": MarkNotation, "up": MarkNotation, "down": MarkNotation,
 	"on_beat": MarkNotation, "before_beat": MarkNotation,
+	// playback only
+	"vel": MarkPlayback,
 	// text
 	"text": MarkText, "expr": MarkText, "tech": MarkTechnique,
 	// spanners: starts and ends
@@ -212,4 +222,45 @@ func TremoloStrokes(value string) (int, bool) {
 		return int(value[0] - '0'), true
 	}
 	return 0, false
+}
+
+// VelocityMark is an event's vel= velocity (1..127), 0 when it has none.
+func (e *Event) VelocityMark() int {
+	for _, m := range e.Marks {
+		if m.Name == "vel" {
+			if v, ok := ParseVelocity(m.Value); ok {
+				return v
+			}
+		}
+	}
+	return 0
+}
+
+// ParseVelocity reads a vel= value: a whole MIDI velocity 1..127.
+func ParseVelocity(v string) (int, bool) {
+	n := 0
+	if v == "" || len(v) > 3 {
+		return 0, false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return 0, false
+		}
+		n = n*10 + int(v[i]-'0')
+	}
+	return n, n >= 1 && n <= 127
+}
+
+// SetVelocityMark sets an event's vel= velocity, or (v <= 0) takes it off.
+func (e *Event) SetVelocityMark(v int) {
+	var out []Mark
+	for _, m := range e.Marks {
+		if m.Name != "vel" {
+			out = append(out, m)
+		}
+	}
+	if v > 0 {
+		out = append(out, Mark{Name: "vel", Value: strconv.Itoa(min(v, 127))})
+	}
+	e.Marks = out
 }

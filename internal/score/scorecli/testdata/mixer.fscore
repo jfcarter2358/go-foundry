@@ -1,0 +1,94 @@
+version: 1
+title: Mixer
+composer: Foundry
+bars: 8
+tempo: [{bar: 1, bpm: 104}, {bar: 7, text: rit., to: "8"}]
+meter: [{bar: 1, sig: 4/4}]
+key: [{bar: 1, fifths: -1, mode: major}]
+playback: {swing: {amount: 0.62, unit: 8}, humanize: {timing: 6, velocity: 0.05, seed: 3}}
+lines:
+- name: Keys
+  instrument: keys/grand_piano
+  volume: 0.8
+  pan: -0.2
+  sends: {a: 0.3, b: 0.15}
+  inserts: [{fx: eq, low: -3, b2: 2, b2_freq: 2200, b2_q: 1.2}, {fx: chorus, mix: 0.35},
+    {fx: compressor, threshold: -20, ratio: 3, bypass: true}]
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | eF4(mf) eA4 eC5 eA4 eF4 eA4 eC5 eA4
+      | eG4 eBb4 eD5 eBb4 eG4 eBb4 eD5 eBb4
+      | eA4 eC5 eE5 eC5 eA4 eC5 eE5 eC5
+      | eBb4 eD5 eF5 eD5 eBb4 eD5 eF5 eD5
+      | eF4 eA4 eC5 eA4 eF4 eA4 eC5 eA4
+      | eG4 eBb4 eD5 eBb4 eG4 eBb4 eD5 eBb4
+      | eA4 eC5 eE5 eC5 eA4 eC5 eE5 eC5
+      | wF4+A4+C5
+  lanes:
+    eq.low: [{at: "1", value: -3, curve: 0.6}, {at: "5", value: -12}, {at: "7", value: -3}]
+    pan: [{at: "1", value: -0.6}, {at: "8", value: 0.6}]
+- name: Bass
+  instrument: bass/bass_finger
+  volume: 0.9
+  sends: {b: 0.4, pre_b: true}
+  inserts: [{fx: drive, drive: 0.4, tone: 0.5}, {fx: filter, cutoff: 900, resonance: 0.3}]
+  swing: {amount: 0.5}
+  staves:
+  - clef: bass
+    voices:
+    - |
+      | qF2(mf) qF2 qC3 qF2
+      | qG2 qG2 qD3 qG2
+      | qA2 qA2 qE3 qA2
+      | qBb2 qBb2 qF3 qBb2
+      | qF2 qF2 qC3 qF2
+      | qG2 qG2 qD3 qG2
+      | qA2 qA2 qE3 qA2
+      | wF2
+  lanes:
+    filter.cutoff: [{at: "1", value: 400}, {at: "4", value: 3000, step: true}, {at: "5", value: 600}]
+    volume: [{at: "1", value: 1}, {at: "8", value: 0.6}]
+    send_b: [{at: "1", value: 0.1}, {at: "5", value: 0.6}]
+- name: Lead
+  instrument: synth/square_lead
+  volume: 0.5
+  pan: 0.3
+  sends: {a: 0.5}
+  inserts: [{fx: phaser, rate: 0.3, mix: 0.4}, {fx: crusher, bits: 10, downsample: 2, mix: 0.3},
+    {fx: delay, beats: 0.5, feedback: 0.3, mix: 0.25}]
+  humanize: {timing: 12, velocity: 0.1}
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | hr qr eC5(p) eD5
+      | hF5 qE5 qD5
+      | hC5 qA4 qC5
+      | wD5(cresc)
+      | hF5(mf,hairpin_end) qE5 qD5
+      | hC5 qBb4 qA4
+      | hG4 qA4 qBb4
+      | wA4
+  lanes:
+    cutoff: [{at: "1", value: 2500}, {at: "8", value: 9000}]
+    send_a: [{at: "1", value: 0.2}, {at: "8", value: 0.7}]
+buses:
+  a:
+    fx: [{fx: reverb, size: 0.75, damping: 0.35}, {fx: eq, high: -4}]
+    return: 0.5
+    lanes:
+      reverb.size: [{at: "1", value: 0.5}, {at: "7", value: 0.9, curve: -0.4}, {at: "8", value: 0.95}]
+  b:
+    fx: [{fx: delay, beats: 0.75, feedback: 0.4, tone: 0.5}, {fx: filter, mode: 1, cutoff: 300}]
+    return: 0.35
+    pan: -0.2
+    lanes:
+      return: [{at: "1", value: 0.2}, {at: "5", value: 0.45, step: true}, {at: "8", value: 0.3}]
+      pan: [{at: "1", value: -0.2}, {at: "8", value: 0.4}]
+master: [{fx: eq, low: 1.5, high: 1}, {fx: compressor, threshold: -14, ratio: 2.5, attack: 0.01,
+    release: 0.2}, {fx: limiter, ceiling: -1}]
+master_lanes:
+  volume: [{at: "1", value: 0.9}, {at: "7", value: 1}, {at: "8:3", value: 0.6}]
+  eq.high: [{at: "1", value: 1}, {at: "5", value: 3}]

@@ -22,6 +22,19 @@ type Chord struct {
 	// Graces are grace notes leading to the chord, each one event's
 	// pitches, in the order they play (AttachGraces).
 	Graces [][]int
+
+	// What an editor rewriting music already written keeps (the piano
+	// roll, internal/score/edit/roll.go):
+	//
+	// Pitches, when there is one per distinct MIDI pitch (lowest first),
+	// are the chord's spelling instead of one chosen in the key.
+	Pitches []score.Pitch
+	// TieNext are the pitches (MIDI) that carry on into the next chord:
+	// a note held across a change of the notes around it.
+	TieNext []int
+	// GraceEvents, when set, are written before the chord as they are
+	// (their kind, spelling and marks), in place of Graces.
+	GraceEvents []score.Event
 }
 
 // RestKind is what a voice's silences are written as.
@@ -73,6 +86,10 @@ func Write(chords []Chord, l Layout, o WriteOptions) (v *score.Voice, err error)
 				first: !c.Start.Less(br.start), tieOut: end.Less(c.End), marks: c.Marks}
 			if sp.first {
 				sp.graces = spellGraces(c, spelled[i], l.Fifths[b])
+				sp.graceEvents = c.GraceEvents
+			}
+			if !sp.tieOut && len(c.TieNext) > 0 {
+				sp.tieNext = c.TieNext
 			}
 			spans = append(spans, sp)
 			at = z
@@ -105,8 +122,13 @@ type span struct {
 	// chord that carries on into the next bar.
 	first, tieOut bool
 	marks         []score.Mark
-	// graces are the chord's grace notes, spelled, written before it.
-	graces [][]score.Pitch
+	// graces are the chord's grace notes, spelled, written before it;
+	// graceEvents the ones to write as they are instead.
+	graces      [][]score.Pitch
+	graceEvents []score.Event
+	// tieNext are the pitches (MIDI) the span's last piece ties on into
+	// the next chord.
+	tieNext []int
 }
 
 // region is a stretch of a bar written one way: plainly, or as one tuplet
@@ -166,7 +188,7 @@ func writeBar(spans []span, br bar, gaps RestKind) (score.Measure, error) {
 					tie := !lastPiece || sp.tieOut
 					e.Notes = make([]score.Note, len(sp.pitches))
 					for i, p := range sp.pitches {
-						e.Notes[i] = score.Note{Pitch: p, Tie: tie}
+						e.Notes[i] = score.Note{Pitch: p, Tie: tie || lastPiece && hasInt(sp.tieNext, p.MIDI())}
 					}
 					if sp.first && at.Eq(sp.a) && k == 0 {
 						if len(sp.marks) > 0 {
@@ -177,7 +199,15 @@ func writeBar(spans []span, br bar, gaps RestKind) (score.Measure, error) {
 						if len(sp.graces) > 1 {
 							gd.Base = score.D16
 						}
+						for _, ge := range sp.graceEvents {
+							ge = ge.Clone()
+							ge.Tuplet = tup
+							m.Events = append(m.Events, ge)
+						}
 						for _, gp := range sp.graces {
+							if len(sp.graceEvents) > 0 {
+								break
+							}
 							ge := score.Event{Kind: score.EventChord, Dur: gd, Grace: score.Acciaccatura, Tuplet: tup}
 							for _, p := range gp {
 								ge.Notes = append(ge.Notes, score.Note{Pitch: p})
@@ -378,6 +408,11 @@ func spell(chords []Chord, l Layout) [][]score.Pitch {
 				continue
 			}
 			ps = append(ps, score.SpellMIDI(m, fifths, dir))
+		}
+		if len(c.Pitches) == len(ps) {
+			// The caller's own spelling, lowest first.
+			ps = append(ps[:0:0], c.Pitches...)
+			sort.SliceStable(ps, func(a, b int) bool { return ps[a].MIDI() < ps[b].MIDI() })
 		}
 		out[i] = ps
 		if len(ms) > 0 {

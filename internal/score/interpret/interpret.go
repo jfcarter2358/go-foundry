@@ -18,7 +18,8 @@
 //   - shape (expression.go): articulation lengths, slurs played legato,
 //     glissandi as slides or runs, trills, mordents and turns, tremolos,
 //     arpeggios, the sustain pedal, technique text;
-//   - automation lanes as curves.
+//   - automation lanes as curves (straight, stepped or bent segments);
+//   - feel (feel.go): swing and humanise.
 //
 // Everything is computed in exact score time (score.Frac) and only turned
 // into ticks (score.TicksPerQuarter) and seconds at the end, so a note
@@ -154,16 +155,21 @@ type MarkerAt struct {
 	Start float64
 }
 
-// CurvePoint is one breakpoint of a control curve.
+// CurvePoint is one breakpoint of a control curve. Step holds its value
+// to the next point instead of moving there in a straight line.
 type CurvePoint struct {
 	Tick  float64
 	Value float32
+	Step  bool
 }
 
-// Curve is a control curve over a line: linear between points, holding
-// the ends. Target is the lane it came from ("volume", "pan", …), or
-// "dynamics".
+// Curve is a control curve over a line: linear between points (or held,
+// at a Step point), holding the ends. A lane's curved segments arrive as
+// many short straight ones. Target is the lane it came from ("volume",
+// "pan", "eq.low", …), or "dynamics".
 type Curve struct {
+	// Line is the line's index, or for a bus's or the master's lane
+	// score.OwnerBusA, OwnerBusB or OwnerMaster.
 	Line   int
 	Target string
 	Points []CurvePoint
@@ -184,10 +190,43 @@ func (c *Curve) At(tick float64) float32 {
 		return p[len(p)-1].Value
 	}
 	a, b := p[i-1], p[i]
-	if b.Tick <= a.Tick {
+	if b.Tick <= a.Tick || a.Step {
 		return a.Value
 	}
 	return a.Value + (b.Value-a.Value)*float32((tick-a.Tick)/(b.Tick-a.Tick))
+}
+
+// Before reads the curve just before a tick: where it arrives at tick from
+// the left. It differs from At only where the curve jumps at tick (a step,
+// a repeat): there it is the value before the jump.
+func (c *Curve) Before(tick float64) float32 {
+	p := c.Points
+	if len(p) == 0 {
+		return 1
+	}
+	i := sort.Search(len(p), func(i int) bool { return p[i].Tick >= tick })
+	switch {
+	case i == 0:
+		return p[0].Value
+	case i == len(p):
+		return p[len(p)-1].Value
+	}
+	a, b := p[i-1], p[i]
+	if b.Tick <= a.Tick || a.Step {
+		return a.Value
+	}
+	return a.Value + (b.Value-a.Value)*float32((tick-a.Tick)/(b.Tick-a.Tick))
+}
+
+// Constant reports whether the curve never moves (no points, or all one
+// value).
+func (c *Curve) Constant() bool {
+	for i := 1; i < len(c.Points); i++ {
+		if c.Points[i].Value != c.Points[0].Value {
+			return false
+		}
+	}
+	return true
 }
 
 // Varies reports whether the curve moves anywhere strictly between two
@@ -252,6 +291,8 @@ type rawNote struct {
 	grace   score.Grace
 	art     string
 	accent  float32 // from its first event's marks
+	// vel is its first event's vel= velocity (1..127), 0 for none.
+	vel int
 	// segAt and segDur are its last tied event, whose marks (segMarks)
 	// decide how long it really sounds.
 	segAt, segDur score.Frac
@@ -305,6 +346,7 @@ func Interpret(s *score.Score, o Options) (perf *Performance, err error) {
 	in.walk()
 	in.dynamics()
 	in.express()
+	in.swing()
 	return in.finish(), nil
 }
 
@@ -374,7 +416,7 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) voiceEvents {
 		for _, g := range graces {
 			for _, nt := range g.ev.Notes {
 				in.notes = append(in.notes, rawNote{at: at, dur: g.dur, velAt: at, pitch: nt.Pitch, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
-					bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev),
+					bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev), vel: g.ev.VelocityMark(),
 					segAt: at, segDur: g.dur, segMarks: g.ev.Marks})
 			}
 			at = at.Add(g.dur)
@@ -425,7 +467,7 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) voiceEvents {
 					n.segAt, n.segDur, n.segMarks = mainAt, mainDur, e.Marks
 				} else {
 					in.notes = append(in.notes, rawNote{at: mainAt, dur: mainDur, velAt: at, pitch: nt.Pitch, midi: midi, line: li, staff: si, voice: vi,
-						bar: pb.bar, pass: pb.pass, art: art, accent: accentOf(e), segAt: mainAt, segDur: mainDur, segMarks: e.Marks})
+						bar: pb.bar, pass: pb.pass, art: art, accent: accentOf(e), vel: e.VelocityMark(), segAt: mainAt, segDur: mainDur, segMarks: e.Marks})
 					idx = len(in.notes) - 1
 				}
 				if nt.Tie {
@@ -517,7 +559,7 @@ func (in *interp) placeGraces(gs []graceNote, at, dur score.Frac, li, si, vi int
 	for i, g := range gs {
 		for _, nt := range g.ev.Notes {
 			in.notes = append(in.notes, rawNote{at: t, dur: lens[i], velAt: at, pitch: nt.Pitch, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
-				bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev),
+				bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev), vel: g.ev.VelocityMark(),
 				segAt: t, segDur: lens[i], segMarks: g.ev.Marks})
 		}
 		t = t.Add(lens[i])
@@ -680,6 +722,7 @@ func (in *interp) finish() *Performance {
 				n.Bend[k] = BendPoint{Tick: b.at.TicksFloat(), Semis: b.semis}
 			}
 		}
+		in.humanize(&n)
 		p.Notes = append(p.Notes, n)
 	}
 	sort.SliceStable(p.Notes, func(i, j int) bool {
@@ -786,51 +829,106 @@ func (in *interp) sections(p *Performance) {
 	}
 }
 
+// curveSteps is how many straight pieces a curved lane segment becomes.
+const curveSteps = 24
+
 // curves turns each line's lanes into curves over the playing order.
 func (in *interp) curves(p *Performance) {
-	for li, l := range in.s.Lines {
-		for _, ln := range l.Lanes {
-			type bp struct {
-				at score.Frac
-				v  float32
-			}
-			var pts []bp
-			for _, lp := range ln.Points {
-				pts = append(pts, bp{in.s.PosFrac(lp.At, in.starts), lp.Value})
-				if lp.HasTo {
-					pts = append(pts, bp{in.s.PosFrac(lp.To, in.starts), lp.Value})
-				}
-			}
-			if len(pts) == 0 {
+	type bp struct {
+		at   score.Frac
+		v    float32
+		step bool
+	}
+	// The lines' lanes, then the buses' and the master's (Line is then
+	// score.OwnerBusA, OwnerBusB or OwnerMaster).
+	var owners []int
+	for li := range in.s.Lines {
+		owners = append(owners, li)
+	}
+	owners = append(owners, score.OwnerBusA, score.OwnerBusB, score.OwnerMaster)
+	for _, li := range owners {
+		for _, ln := range *in.s.LanesOf(li) {
+			var raw []score.LanePoint
+			raw = append(raw, ln.Points...)
+			if len(raw) == 0 {
 				continue
 			}
+			sort.SliceStable(raw, func(i, j int) bool {
+				return in.s.PosFrac(raw[i].At, in.starts).Less(in.s.PosFrac(raw[j].At, in.starts))
+			})
+			// The written curve: each point (and where it holds to), its
+			// segment's shape, a bent segment as curveSteps straight ones.
+			var pts []bp
+			for i, lp := range raw {
+				at := in.s.PosFrac(lp.At, in.starts)
+				from := at
+				if lp.HasTo {
+					pts = append(pts, bp{at, lp.Value, false})
+					from = in.s.PosFrac(lp.To, in.starts)
+				}
+				pts = append(pts, bp{from, lp.Value, lp.Shape == score.LaneStep})
+				if lp.Shape == score.LaneCurve && lp.Curve != 0 && i+1 < len(raw) {
+					next := raw[i+1]
+					to := in.s.PosFrac(next.At, in.starts)
+					if from.Less(to) {
+						span := to.Sub(from)
+						for k := int64(1); k < curveSteps; k++ {
+							t := float64(k) / curveSteps
+							pts = append(pts, bp{from.Add(span.Mul(score.F(k, curveSteps))), score.ShapeValue(lp.Shape, lp.Curve, lp.Value, next.Value, t), false})
+						}
+					}
+				}
+			}
 			sort.SliceStable(pts, func(i, j int) bool { return pts[i].at.Less(pts[j].at) })
-			eval := func(x score.Frac) float32 {
+			eval := func(x score.Frac) (float32, bool) {
 				if x.Less(pts[0].at) {
-					return pts[0].v
+					return pts[0].v, false
 				}
 				for i := 1; i < len(pts); i++ {
 					if x.Less(pts[i].at) {
 						a, b := pts[i-1], pts[i]
+						if a.step {
+							return a.v, true
+						}
 						t := x.Sub(a.at).Div(b.at.Sub(a.at)).Float()
-						return a.v + (b.v-a.v)*float32(t)
+						return a.v + (b.v-a.v)*float32(t), false
 					}
 				}
-				return pts[len(pts)-1].v
+				return pts[len(pts)-1].v, false
+			}
+			// left is the written curve arriving at x: a step that ends at x
+			// still holds its value there.
+			left := func(x score.Frac) float32 {
+				i := sort.Search(len(pts), func(i int) bool { return !pts[i].at.Less(x) })
+				switch {
+				case i == 0:
+					return pts[0].v
+				case i == len(pts):
+					return pts[len(pts)-1].v
+				}
+				a, b := pts[i-1], pts[i]
+				if a.step || !a.at.Less(b.at) {
+					return a.v
+				}
+				t := x.Sub(a.at).Div(b.at.Sub(a.at)).Float()
+				return a.v + (b.v-a.v)*float32(t)
 			}
 			c := Curve{Line: li, Target: ln.Name}
 			for i, pb := range in.order {
 				ws := in.starts[pb.bar-1]
 				we := ws.Add(pb.length)
-				c.Points = append(c.Points, CurvePoint{Tick: pb.start.TicksFloat(), Value: eval(ws)})
+				v, step := eval(ws)
+				c.Points = append(c.Points, CurvePoint{Tick: pb.start.TicksFloat(), Value: v, Step: step})
 				for _, q := range pts {
 					if ws.Less(q.at) && q.at.Less(we) {
-						c.Points = append(c.Points, CurvePoint{Tick: pb.start.Add(q.at.Sub(ws)).TicksFloat(), Value: q.v})
+						c.Points = append(c.Points, CurvePoint{Tick: pb.start.Add(q.at.Sub(ws)).TicksFloat(), Value: q.v, Step: q.step})
 					}
 				}
-				// Before a jump, hold the written value to the bar's end.
-				if i+1 < len(in.order) && in.order[i+1].bar != pb.bar+1 {
-					c.Points = append(c.Points, CurvePoint{Tick: pb.start.Add(pb.length).TicksFloat(), Value: eval(we)})
+				// Before a jump, and at the very end, the curve reaches the
+				// written value at the bar's end (a lane running on past the
+				// last bar still moves through it).
+				if i+1 == len(in.order) || in.order[i+1].bar != pb.bar+1 {
+					c.Points = append(c.Points, CurvePoint{Tick: pb.start.Add(pb.length).TicksFloat(), Value: left(we)})
 				}
 			}
 			p.Curves = append(p.Curves, c)

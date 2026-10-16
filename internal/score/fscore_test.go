@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"foundry/internal/tracker"
+	"foundry/internal/tracker/fx"
 )
 
 const sampleFile = `version: 1
@@ -171,6 +172,20 @@ func randomScore(r *rand.Rand) *Score {
 	}
 	s.Concert = r.Intn(2) == 0
 	s.Playback = PlaybackOptions{IgnoreRepeats: r.Intn(2) == 0, Graces: GraceTiming(r.Intn(3))}
+	if r.Intn(2) == 0 {
+		s.Playback.Swing = Swing{Amount: 0.625, Unit: []int{0, 8, 16}[r.Intn(3)]}
+		s.Playback.Humanize = Humanize{Timing: 7.5, Velocity: 0.125, Seed: int64(r.Intn(50))}
+	}
+	if r.Intn(2) == 0 {
+		s.Buses.A.Pan, s.Buses.B.Mute = -0.5, true
+		s.Buses.B.FX = append(s.Buses.B.FX, FX{Kind: "filter", Params: []FXParam{{"cutoff", 800}}, Bypass: true})
+		s.Master = append(s.Master, NewFX(fx.KindLimiter, fx.Insert))
+		s.Buses.A.Lanes = []Lane{{Name: "return", Points: []LanePoint{{At: Pos{Bar: 1}, Value: 0.5}, {At: Pos{Bar: 2}, Value: 0.25, Shape: LaneStep}}}}
+		s.Buses.B.Lanes = []Lane{{Name: "filter.cutoff", Points: []LanePoint{{At: Pos{Bar: 1}, Value: 800, Shape: LaneCurve, Curve: 0.5}, {At: Pos{Bar: 2}, Value: 2000}}},
+			{Name: "pan", Points: []LanePoint{{At: Pos{Bar: 1}, Value: -1}}}}
+		s.MasterLanes = []Lane{{Name: "limiter.ceiling", Points: []LanePoint{{At: Pos{Bar: 1}, Value: -3}}},
+			{Name: "volume", Points: []LanePoint{{At: Pos{Bar: 1}, Value: 1}, {At: Pos{Bar: 2, Offset: F(1, 4)}, Value: 0}}}}
+	}
 	s.Sections = []Section{{Name: "a", Bar: 1}, {Name: "b", Bar: 2, Loop: true, Next: "a"}}
 	s.Markers = []Marker{{Name: "m", At: Pos{Bar: 2, Offset: F(1, 4)}}}
 	s.Gain = []float32{1, 0.5, 0}[r.Intn(3)]
@@ -180,6 +195,12 @@ func randomScore(r *rand.Rand) *Score {
 		ln.Volume = []float32{1, 0.7, 0}[r.Intn(3)]
 		ln.SendB = 0.25
 		ln.Inserts = []FX{{Kind: "eq", Params: []FXParam{{"low", -2}}}}
+		if r.Intn(2) == 0 {
+			ln.Inserts = append(ln.Inserts, FX{Kind: "delay", Params: []FXParam{{"beats", 0.5}, {"mix", 0.25}}, Bypass: r.Intn(2) == 0})
+			ln.PreA, ln.PreB = r.Intn(2) == 0, true
+			ln.Swing = &Swing{Amount: 0.5}
+			ln.Humanize = &Humanize{Timing: 3}
+		}
 		ln.Staves = nil
 		for st := 0; st < 1+r.Intn(2); st++ {
 			staff := &Staff{Clef: StaffClefs()[r.Intn(len(StaffClefs()))]}
@@ -199,7 +220,8 @@ func randomScore(r *rand.Rand) *Score {
 			ln.Overrides = []DynOverride{{From: Pos{Bar: 1, Offset: F(1, 4)}, To: Pos{Bar: 2}, Level: 0.25}}
 		}
 		if r.Intn(2) == 0 {
-			ln.Lanes = []Lane{{Name: "volume", Points: []LanePoint{{At: Pos{Bar: 1}, Value: 0.5}, {At: Pos{Bar: 2, Offset: F(1, 4)}, To: Pos{Bar: 3}, HasTo: true, Value: 1}}}}
+			ln.Lanes = []Lane{{Name: "eq.low", Points: []LanePoint{{At: Pos{Bar: 1}, Value: -3}}},
+				{Name: "volume", Points: []LanePoint{{At: Pos{Bar: 1}, Value: 0.5, Shape: LaneStep}, {At: Pos{Bar: 2, Offset: F(1, 4)}, To: Pos{Bar: 3}, HasTo: true, Value: 1, Shape: LaneCurve, Curve: -0.5}}}}
 		}
 		s.Lines = append(s.Lines, ln)
 	}
@@ -302,4 +324,90 @@ lines:
 	if !HasErrors(issues) {
 		t.Error("HasErrors")
 	}
+}
+
+// The buses' and the master's lanes: read, written, and checked for the
+// names their scope takes, the effects their chains have, their values.
+func TestMixLanes(t *testing.T) {
+	src := `bars: 2
+lines: []
+buses:
+  a:
+    fx: [{fx: reverb, size: 0.6}]
+    return: 0.5
+    lanes:
+      return: [{at: "1", value: 0.5}, {at: "2", value: 0.1}]
+      reverb.size: [{at: "1", value: 0.3, curve: 0.5}, {at: "2", value: 0.9}]
+      volume: [{at: "1", value: 1}]
+      eq.low: [{at: "1", value: 0}]
+  b:
+    return: 0.2
+    lanes:
+      pan: [{at: "1", value: -3}]
+master: [{fx: limiter, ceiling: -1}]
+master_lanes:
+  volume: [{at: "1", value: 1}, {at: "2:3", value: 0, step: true}]
+  limiter.ceiling: [{at: "1", value: -1}]
+  return: [{at: "1", value: 1}]
+  send_a: [{at: "9", value: 0}]
+`
+	s, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ln := s.LaneOf(OwnerBusA, "reverb.size"); ln == nil || len(ln.Points) != 2 || ln.Points[0].Shape != LaneCurve {
+		t.Fatalf("bus a's reverb lane: %+v", ln)
+	}
+	if ln := s.LaneOf(OwnerMaster, "volume"); ln == nil || ln.Points[1].Shape != LaneStep {
+		t.Fatalf("master volume lane: %+v", ln)
+	}
+	b, err := Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(b)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, b)
+	}
+	if !reflect.DeepEqual(normScore(back).Buses, normScore(s).Buses) || !reflect.DeepEqual(back.MasterLanes, s.MasterLanes) {
+		t.Errorf("round trip:\n%s", b)
+	}
+	var text []string
+	for _, i := range s.Validate(nil) {
+		text = append(text, i.String())
+	}
+	all := strings.Join(text, "\n")
+	for _, want := range []string{
+		`error: bus a: lane "volume": want return, pan or <effect>.<parameter>`,
+		"warning: bus a: lane eq.low: the bus has no such effect",
+		"warning: bar 1: bus b: lane pan: value -3 outside -1..1",
+		`error: master: lane "return": want volume or <effect>.<parameter>`,
+		`error: master: lane "send_a"`,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("no issue %q in:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "reverb.size") || strings.Contains(all, "limiter.ceiling") {
+		t.Errorf("a good lane reported:\n%s", all)
+	}
+	// Every owner by one path.
+	if s.OwnerName(OwnerBusB) != "Bus B" || OwnerScope(OwnerMaster) != ScopeMaster || s.LanesOf(5) != nil || s.HasOwner(-4) {
+		t.Error("owners")
+	}
+	if v := s.LaneDefaultOf(OwnerBusA, LaneTarget{Kind: LaneReturn}); v != 0.5 {
+		t.Errorf("bus a's return lane starts at %g", v)
+	}
+	if v := s.LaneDefaultOf(OwnerMaster, mustTarget(t, ScopeMaster, "limiter.ceiling")); v != -1 {
+		t.Errorf("master limiter ceiling lane starts at %g", v)
+	}
+}
+
+func mustTarget(t *testing.T, sc LaneScope, name string) LaneTarget {
+	t.Helper()
+	tg, err := ParseLaneTargetIn(sc, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tg
 }

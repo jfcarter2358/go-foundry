@@ -506,3 +506,44 @@ func FuzzImport(f *testing.F) {
 		}
 	})
 }
+
+// The pan lane goes out as pan and the cutoff lane as brightness (CC 74),
+// moving where the lanes move.
+func TestExportPanAndCutoffLanes(t *testing.T) {
+	src, err := score.Parse([]byte(`version: 1
+bars: 2
+tempo: [{bar: 1, bpm: 120}]
+lines:
+- name: A
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices: ["| wC4 | wD4 |"]
+  lanes:
+    pan: [{at: "1", value: -1}, {at: "3", value: 1}]
+    cutoff: [{at: "1", value: 16, step: true}, {at: "2", value: 20000}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := Export(src, ExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pans, bright []Event
+	for _, e := range f.Tracks[1].Events {
+		if e.Kind == Controller && e.A == CCPan {
+			pans = append(pans, e)
+		}
+		if e.Kind == Controller && e.A == CCBrightness {
+			bright = append(bright, e)
+		}
+	}
+	if len(pans) < 10 || pans[1].B != 1 || pans[len(pans)-1].B != 127 {
+		t.Errorf("pan lane: %d events, %+v … %+v", len(pans), pans[1], pans[len(pans)-1])
+	}
+	// The step holds dark through bar 1 and opens fully at bar 2.
+	if len(bright) != 2 || bright[0].B != 0 || bright[1].B != 127 || bright[1].Tick != 4*score.TicksPerQuarter {
+		t.Errorf("cutoff lane: %+v", bright)
+	}
+}

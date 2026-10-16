@@ -30,12 +30,16 @@ type Program struct {
 	// hairpin, an accent falling back), followBend its pitch (a slide).
 	follow []uint8
 
-	volCurve, panCurve []int // per line: index into Perf.Curves, -1 none
-	dynCurve           []int // per line: index into Perf.Dynamics, -1 none
+	dynCurve []int // per line: index into Perf.Dynamics, -1 none
 
-	reverb tracker.ReverbSpec
-	delay  tracker.DelaySpec
-	comp   tracker.CompressorSpec
+	// The mixer as plans (mixer.go): each line's inserts, the buses'
+	// chains and returns, the master chain; each line's lanes, and the
+	// buses' and the master's (mixA, mixB, mixMaster).
+	inserts            [][]fxSlot
+	busA, busB, master []fxSlot
+	buses              [2]busMix
+	lanes              [][]laneAuto
+	mixLanes           [3][]laneAuto
 }
 
 // LoadInstrument resolves a line's instrument. It is a variable so tests
@@ -65,7 +69,7 @@ func Prepare(s *score.Score) (prog *Program, errs []error, err error) {
 	if err := prog.perform(); err != nil {
 		return nil, errs, err
 	}
-	prog.reverb, prog.delay, prog.comp = Buses(s)
+	errs = append(errs, prog.planMix()...)
 	return prog, errs, nil
 }
 
@@ -87,20 +91,11 @@ func (p *Program) perform() error {
 	for i := range perf.Notes {
 		p.arts[i] = articulation(p.insts, &perf.Notes[i])
 	}
-	p.volCurve = make([]int, len(s.Lines))
-	p.panCurve = make([]int, len(s.Lines))
 	p.dynCurve = make([]int, len(s.Lines))
 	for i := range s.Lines {
-		p.volCurve[i], p.panCurve[i], p.dynCurve[i] = -1, -1, -1
+		p.dynCurve[i] = -1
 	}
-	for k, c := range perf.Curves {
-		switch c.Target {
-		case "volume":
-			p.volCurve[c.Line] = k
-		case "pan":
-			p.panCurve[c.Line] = k
-		}
-	}
+	p.planLanes()
 	for k, d := range perf.Dynamics {
 		p.dynCurve[d.Line] = k
 	}
@@ -202,62 +197,4 @@ func (p *Program) Instrument(line int) *tracker.Instrument {
 		return nil
 	}
 	return p.insts[line]
-}
-
-// Buses turns a score's send buses and master chain into the engine's:
-// bus A's reverb, bus B's delay and the master compressor. Other effects
-// are kept in the file but not played yet (the effects rack is phase 4);
-// Unplayed lists them.
-func Buses(s *score.Score) (tracker.ReverbSpec, tracker.DelaySpec, tracker.CompressorSpec) {
-	var rev tracker.ReverbSpec
-	for _, f := range s.Buses.A.FX {
-		if f.Kind == "reverb" {
-			rev = tracker.ReverbSpec{Size: float32(f.Param("size", 0.6)), Damping: float32(f.Param("damping", 0.4)),
-				Width: float32(f.Param("width", 1)), Return: s.Buses.A.Return}
-		}
-	}
-	var dly tracker.DelaySpec
-	for _, f := range s.Buses.B.FX {
-		if f.Kind == "delay" {
-			dly = tracker.DelaySpec{Beats: float32(f.Param("beats", 0.75)), Feedback: float32(f.Param("feedback", 0.35)),
-				Tone: float32(f.Param("tone", 0.6)), PingPong: f.Param("ping_pong", 1) != 0, Return: s.Buses.B.Return}
-		}
-	}
-	comp := tracker.CompressorSpec{Threshold: -12, Ratio: 3, Attack: 0.005, Release: 0.15}
-	for _, f := range s.Master {
-		if f.Kind == "compressor" {
-			comp = tracker.CompressorSpec{Enabled: f.Param("enabled", 1) != 0, Threshold: float32(f.Param("threshold", -12)),
-				Ratio: float32(f.Param("ratio", 3)), Attack: float32(f.Param("attack", 0.005)), Release: float32(f.Param("release", 0.15)),
-				Makeup: float32(f.Param("makeup", 0))}
-		}
-	}
-	return rev, dly, comp
-}
-
-// Unplayed lists the effects in a score that this build stores but does
-// not play: line inserts, and anything on the buses or the master chain
-// beyond bus A's reverb, bus B's delay and a master compressor.
-func Unplayed(s *score.Score) []string {
-	var out []string
-	for _, l := range s.Lines {
-		for _, f := range l.Inserts {
-			out = append(out, fmt.Sprintf("%s insert %s", l.Name, f.Kind))
-		}
-	}
-	for _, f := range s.Buses.A.FX {
-		if f.Kind != "reverb" {
-			out = append(out, "bus a "+f.Kind)
-		}
-	}
-	for _, f := range s.Buses.B.FX {
-		if f.Kind != "delay" {
-			out = append(out, "bus b "+f.Kind)
-		}
-	}
-	for _, f := range s.Master {
-		if f.Kind != "compressor" {
-			out = append(out, "master "+f.Kind)
-		}
-	}
-	return out
 }

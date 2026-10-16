@@ -127,17 +127,22 @@ func rms(d []float32) float64 {
 // means the scores sound different (a deliberate change re-captures them
 // with SCORE_GOLDEN_PRINT=1).
 //
-// Phase 3 re-captured score_demo: its last bar's fermatas now hold (the
-// demo with them taken out still renders to phase 0's 4a6f89d0e9c4c939;
-// TestDemoWithoutFermatasIsUnchanged).
+// Phase 3 re-captured score_demo: its last bar's fermatas now hold.
+// Phase 4 re-captured it again (54bff7c5ac84c913 before): its volume lane
+// is now followed sample by sample (ramped, not stepped once a block) and
+// its delay bus glides through the rit. instead of jumping; with no lane
+// and a steady tempo it renders exactly as phase 3's code did
+// (TestDemoAtASteadyTempoWithNoLanesIsUnchanged).
 var scoreGolden = map[string]string{
-	"score_demo": "54bff7c5ac84c913",
+	"score_demo": "74ceacc483c638a9",
 }
 
-// The expression passes change nothing a score does not ask for: the demo
-// without its fermatas (the only phase 3 marks it has) sounds exactly as
-// it did before them.
-func TestDemoWithoutFermatasIsUnchanged(t *testing.T) {
+// The effects rack changes nothing a score does not ask for: the demo at
+// one tempo with no lane (and no fermatas) renders bit for bit what phase
+// 3's mixer did — 03eec1bb6cf07418, captured by rendering the same score
+// with phase 3's code — though every line, bus and the master now play
+// through internal/tracker/fx chains.
+func TestDemoAtASteadyTempoWithNoLanesIsUnchanged(t *testing.T) {
 	if testing.Short() {
 		t.Skip("renders the demo")
 	}
@@ -147,7 +152,9 @@ func TestDemoWithoutFermatasIsUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = s.Clone()
+	s.Tempo = s.Tempo[:1]
 	for _, l := range s.Lines {
+		l.Lanes = nil
 		for _, st := range l.Staves {
 			for _, v := range st.Voices {
 				for bi := range v.Measures {
@@ -169,8 +176,8 @@ func TestDemoWithoutFermatasIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := tracker.Hash(data); got != "4a6f89d0e9c4c939" {
-		t.Errorf("the demo without fermatas hashes %s, want phase 0's 4a6f89d0e9c4c939", got)
+	if got := tracker.Hash(data); got != "03eec1bb6cf07418" {
+		t.Errorf("the steady demo hashes %s, want phase 3's 03eec1bb6cf07418", got)
 	}
 }
 
@@ -326,6 +333,54 @@ func TestExpressionFixturePlays(t *testing.T) {
 		}
 		if peak < 0.02 || peak > 1.1 {
 			t.Errorf("line %d: peak %v", li, peak)
+		}
+	}
+}
+
+// The mixer fixture: every effect on a line, a bus or the master, every
+// kind of lane, swing and humanise, through the real library. It plays,
+// the master limiter holds it under -1 dB, it renders the same twice,
+// and inspect lists its mixer.
+func TestMixerFixturePlays(t *testing.T) {
+	if testing.Short() {
+		t.Skip("renders a score")
+	}
+	useRepoResources(t)
+	s, err := score.LoadFile(filepath.Join("testdata", "mixer.fscore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issues := s.Validate(func(n string) bool { return tracker.InstrumentPath(n) != "" }); len(issues) > 0 {
+		t.Fatalf("issues: %v", issues)
+	}
+	render := func() []float32 {
+		data, errs, err := play.RenderScore(s.Clone(), play.RenderOptions{Rate: 48000, Tail: 2})
+		if err != nil || len(errs) > 0 {
+			t.Fatal(err, errs)
+		}
+		return data
+	}
+	a, b := render(), render()
+	if tracker.Hash(a) != tracker.Hash(b) {
+		t.Error("two renders of the same score differ")
+	}
+	peak := float64(tracker.Peak(a))
+	if peak < 0.1 || peak > math.Pow(10, -1.0/20)*1.0001 {
+		t.Errorf("peak %v: silent, or past the limiter's -1 dB", peak)
+	}
+	for _, v := range a {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatal("NaN or Inf in the mix")
+		}
+	}
+	var out bytes.Buffer
+	if code := inspect([]string{filepath.Join("testdata", "mixer.fscore")}, &out); code != 0 {
+		t.Fatalf("inspect: %s", out.String())
+	}
+	for _, want := range []string{"inserts: eq, chorus", "compressor (bypassed)", "lane filter.cutoff", "bus b  return 0.35 pan -0.20", "master gain 1.00: eq, compressor, limiter", "swing 0.62 on 8ths", "humanise ±12 ms",
+		"lane reverb.size, 3 point(s)", "lane return, 3 point(s)", "lane volume, 3 point(s)", "lane eq.high, 2 point(s)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("inspect lacks %q:\n%s", want, out.String())
 		}
 	}
 }

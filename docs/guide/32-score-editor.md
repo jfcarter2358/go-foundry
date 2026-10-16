@@ -41,7 +41,7 @@ markers: [{name: hit, bar: 11, beat: "3"}]
 repeats: [{start: 5, end: 8, times: 2}]
 voltas: [{start: 7, end: 8, passes: [1]}, {start: 9, end: 9, passes: [2]}]
 jumps: [{mark: segno, bar: 3}, {mark: to_coda, bar: 10}, {mark: ds, bar: 14, al: coda}, {mark: coda, bar: 15}]
-playback: {ignore_repeats: false, graces: auto}
+playback: {ignore_repeats: false, graces: auto, swing: {amount: 0.62, unit: 8}, humanize: {timing: 8, velocity: 0.06, seed: 1}}
 concert: false
 params: [{name: intensity, default: 0}]
 bindings: [{param: intensity, line: Horn, target: volume, from: 0, to: 1}]
@@ -50,7 +50,9 @@ lines:
     instrument: strings/violin_section
     volume: 0.8
     pan: -0.3
-    sends: {a: 0.3, b: 0}
+    sends: {a: 0.3, b: 0, pre_a: true}   # pre_a/pre_b: the send is taken before the fader
+    inserts: [{fx: eq, low: -2, b2: 3, b2_freq: 2500}, {fx: compressor, threshold: -18, bypass: true}]
+    swing: {amount: 0.5}         # optional: this line's own swing (0.5 is straight) or humanize
     gliss: slide                 # optional: slide, chromatic or diatonic
     dynamic_overrides: [{at: "2", to: "3", level: 0.2}]
     staves:
@@ -62,11 +64,18 @@ lines:
             | qEb5 qD5 hC5
             |
     lanes:
-      volume: [{at: "5", value: 1}, {at: "6:3", value: 0.6}]
+      volume: [{at: "5", value: 1}, {at: "6:3", value: 0.6, step: true}, {at: "7", value: 0.9}]
+      eq.low: [{at: "1", value: -2, curve: 0.5}, {at: "9", value: -8}]
 buses:
-  a: {fx: [{fx: reverb, size: 0.7}], return: 0.25}
-  b: {fx: [{fx: delay, beats: 0.75, feedback: 0.3}], return: 0.2}
-master: [{fx: compressor, threshold: -12, ratio: 3}]
+  a:
+    fx: [{fx: reverb, size: 0.7}]
+    return: 0.25
+    lanes:                       # optional: the bus's return, pan and effects' settings
+      reverb.size: [{at: "1", value: 0.5}, {at: "9", value: 0.9}]
+  b: {fx: [{fx: delay, beats: 0.75, feedback: 0.3}, {fx: filter, mode: 1, cutoff: 400}], return: 0.2, pan: 0.2}
+master: [{fx: compressor, threshold: -12, ratio: 3}, {fx: limiter, ceiling: -0.3}]
+master_lanes:                    # optional: the master's volume and its effects' settings
+  volume: [{at: "14", value: 1}, {at: "16", value: 0, curve: -0.5}]
 ```
 
 | Key | |
@@ -79,18 +88,42 @@ master: [{fx: compressor, threshold: -12, ratio: 3}]
 | `repeats` | Bars `start`..`end` played `times` times (2 by default). |
 | `voltas` | 1st/2nd endings: bars `start`..`end` played only on the `passes` listed, counted through the repeat they belong to. |
 | `jumps` | `segno`, `coda` (where playback lands: the start of the bar), `to_coda`, `fine`, `dc`, `ds` (where it leaves: the end of the bar). A `dc` or `ds` can say `al: fine` or `al: coda`, and `repeats: true` to take the repeats again on the way through. |
-| `playback` | `ignore_repeats: true` plays the score straight through, every bar once. `graces: before` or `on` plays every grace note before or on the beat (`auto`: acciaccaturas before, appoggiaturas on). |
+| `playback` | `ignore_repeats: true` plays the score straight through, every bar once. `graces: before` or `on` plays every grace note before or on the beat (`auto`: acciaccaturas before, appoggiaturas on). `swing` and `humanize` are the score's feel (see *How a score plays*); a line may have its own. |
 | `concert` | Show every staff at concert pitch (the Concert Pitch toggle). |
 | `params`, `bindings` | Values a script ramps while the score plays, bound to a line's volume, pan, sends or filter cutoff, as in the Tracker. |
-| `lines` | Each line names a library instrument (`category/name`, a `.finst`), has a fader, pan and two sends, and one or more staves. A piano has two. |
+| `lines` | Each line names a library instrument (`category/name`, a `.finst`), has a fader, pan, two sends (post-fader unless `pre_a`/`pre_b`), an insert chain, and one or more staves. A piano has two. |
+| `inserts` | The line's effects, in signal order (see *Effects*). Each is `{fx: <kind>, <setting>: <value>, …}`; a setting left out takes its default, `bypass: true` keeps the effect in the chain but out of the signal. The editor holds up to 8 a chain. |
 | `staves` | `clef` (`treble`, `bass`, `alto`, `tenor`, `treble_8vb`, `treble_8va`, `bass_8vb`, `bass_8va`, `percussion`), an optional `transpose` (written to sounding, so a B♭ clarinet's is `-M2` and a horn in F is `-P5`), and up to four voices. |
 | `gliss` | How the line's glissandi play: `slide` (one continuous pitch), `chromatic` or `diatonic` (a run). Left out, the instrument's `playback.gliss`. |
 | `dynamic_overrides` | Segments of the dynamics lane dragged to a level (0..1, mf is 0.63): the line plays that level between `at` and `to` without changing a printed mark. |
-| `lanes` | Automation. `volume` multiplies the fader and `pan` replaces the pan. Each point is a position and a value; `to:` holds the value flat to a second position. |
-| `buses`, `master` | Bus A's reverb, bus B's delay and the master compressor play today. Other effects are kept in the file and listed by `foundry score inspect` as not played yet. |
+| `lanes` | Automation, followed sample by sample. `volume` multiplies the fader (and the dynamics: the two multiply), `pan` replaces the pan, `cutoff` is a low-pass over the line in Hz, `send_a`/`send_b` replace the sends, and `<fx>.<setting>` moves one of the line's inserts: `eq.low` the first EQ's low shelf, `delay#2.feedback` the second delay's feedback. Each point is a position and a value; `to:` holds the value flat to a second position. From a point to the next the value moves in a straight line, `step: true` holds it and jumps at the next point, `curve: -1..1` bends the line (above 0 it starts slowly). |
+| `buses` | Send buses `a` and `b`: their effect chain (`fx:`, wet only unless a `mix` says otherwise; an empty chain returns what it is sent), `return` level, `pan` and `mute`, and `lanes:` — `return` (replaces the return level), `pan` (replaces the pan) and `<fx>.<setting>` for the bus's own effects (`reverb.size`). |
+| `master` | The chain over the whole mix, before the master `gain`. |
+| `master_lanes` | The master's automation: `volume` (multiplies `gain`: a fade-out of the whole score) and `<fx>.<setting>` for the master chain's effects (`limiter.ceiling`). Points are written as a line's. |
 
 Positions are written `bar` or `bar:beat`, with beats counted the way the
 bar's meter counts them: `5`, `5:3`, `5:2+1/2`.
+
+### Effects
+
+Every chain — a line's inserts, a bus, the master — takes the same
+effects. Frequencies are in Hz, levels in dB, `mix` 0..1 is the wet share
+(on a bus it is 1 unless set, so the bus returns only what the effect
+makes). Settings glide when they change, so a knob turned while the music
+plays never clicks.
+
+| `fx:` | Settings (default) |
+| --- | --- |
+| `eq` | `low` shelf dB (0) at `low_freq` (120), `high` shelf dB (0) at `high_freq` (8000), bands `b1`–`b4` dB (0) with `b1_freq` … (250, 1000, 3000, 8000) and `b1_q` … (1), `output` dB (0). A band at 0 dB is left out. |
+| `filter` | `mode` 0 low-pass, 1 high-pass, 2 band-pass; `cutoff` (1000), `resonance` 0..1 (0.2), `slope` 0 for 12 dB, 1 for 24 dB an octave; `mix` (1). |
+| `chorus` | `rate` Hz (0.8), `depth` ms (2.5), `delay` ms (12), `feedback` -0.9..0.9 (0), `spread` 0..1 (1), `mix` (0.5). |
+| `phaser` | `rate` Hz (0.5), `depth` 0..1 (0.7), `freq` centre (800), `feedback` (0.5), `stages` 2–12 (6), `spread` (0.5), `mix` (0.5). |
+| `drive` | `drive` 0..1 (0.3), `tone` 0..1 (1, open), `mix` (1), `output` dB (0). Quiet signals pass at their level; only peaks saturate. |
+| `crusher` | `bits` 1–16 (8), `downsample` 1–64 (1), `mix` (1). |
+| `delay` | `beats` (0.75: a dotted eighth, in time with the tempo, gliding when it changes), `feedback` 0..0.95 (0.35), `tone` 0..1 (0.6), `ping_pong` 0/1 (1), `mix` (0.3). |
+| `reverb` | `size` (0.6), `damping` (0.4), `width` (1), `mix` (0.25). |
+| `compressor` | `threshold` dB (-12), `ratio` (3), `attack` s (0.005), `release` s (0.15), `makeup` dB (0), `enabled` 0/1 (1). |
+| `limiter` | `ceiling` dB (-0.3), `gain` dB in (0), `release` s (0.1). Looks 1.5 ms ahead: nothing passes the ceiling. |
 
 Pitches in a score are always **concert pitch** (what sounds). A staff's
 `transpose` only changes how it is shown. The notes in the file never change
@@ -251,13 +284,102 @@ and the time it first plays at.
 ### The mixer
 
 The **Mixer** tab (`M`; `F10` in the MuseScore keymap) shows a strip per
-line — its reverb and delay sends and pan as knobs (drag up or down,
-double-click to reset), its fader with a meter, the level in dB, mute and
-solo — then the two send buses' returns (bus A's reverb, bus B's delay) and
-the master fader with the mix's meter. The faders are the same values the
-staff headers show, kept in the file, and they are heard at once while the
-score plays; each drag is one undo step. A line's insert effects are listed
-as the file has them (the effects rack that plays them comes later).
+line — its insert effects, its reverb and delay sends and pan as knobs
+(drag up or down, double-click to reset), its fader with a meter, the level
+in dB, mute and solo — then the two send buses (their effects, the return's
+pan, fader, meter and mute) and the master (its chain, fader and the mix's
+meter). The faders are the same values the staff headers show, kept in the
+file, and everything is heard at once while the score plays; each drag is
+one undo step.
+
+| On a strip | |
+| --- | --- |
+| **+ Insert** | add an effect to the end of the chain; its settings open |
+| An effect's name | its settings: a slider for each (double-click: the default), Bypass, Reset, Remove. Heard as you move them |
+| The dot | bypass the effect (grey) or put it back (green) |
+| Right-click an effect | Settings, Bypass, Move Up, Move Down, Reset to Defaults, Remove |
+| Right-click a send knob | make the send pre-fader (marked **pre**: the bus hears the line whatever its fader does) or post-fader again |
+
+An effect a lane moves says so in its settings; while the lane plays, the
+lane's value wins. Moving or removing an effect takes its lanes with it.
+
+**Play > Swing and Humanise…** sets the score's swing (50 % straight to
+75 %, on eighths or sixteenths) and humanise (timing ±ms, velocity ±%, a
+seed), or — with one line's bars selected, or picked in the popup — a
+line's own, which then replaces the score's for it. Each slider drag is
+one undo step and is heard as the score plays.
+
+### The timeline and the piano roll
+
+The **Timeline** tab (`Ctrl+Alt+M`) is the DAW side of the same file: a
+track per line along a time ruler, automation lanes under the tracks, and a
+piano roll of one line underneath. Nothing in it is a copy — a note drawn in
+the roll is written into the score, spelled and in values the score view
+shows at once, and an edit on the staff is on the roll the next frame. The
+time axis is the written score (bars as printed, a repeat once). Ctrl+wheel
+zooms it, Shift+wheel or the bar along the bottom scrolls it, the wheel over
+the tracks scrolls them and over the roll moves up and down the keys
+(Ctrl+wheel over the keys makes them taller).
+
+| On a track | |
+| --- | --- |
+| **M**, **S** | mute, solo (the mixer's) |
+| **R** | arm the line for recording; with nothing selected the piano roll shows an armed line |
+| **A** | show or hide its automation lanes (the count is how many it has) |
+| **+** | add a lane: volume, pan, cutoff, send A or B, or any setting of one of its insert effects |
+
+Under the lines are **Bus A**, **Bus B** and the **Master**: no region,
+their chain written across, and the same **A** and **+**. A bus takes
+lanes for its return, its pan and any setting of its effects; the master
+for its volume (a fade of the whole mix) and any setting of its chain.
+Their lanes are edited, drawn and heard exactly as a line's.
+| The region | its notes as a strip; a click selects that bar of the line (Shift extends, Ctrl every line) and shows the line in the roll; a double-click goes to the bar in the Score tab |
+| The ruler | as the score's: a click moves the play head, a drag loops between two beats |
+
+In an automation lane a click adds a point (on the grid; Shift: off it) and
+a drag moves it — in time between its neighbours, in value freely — heard
+as it moves; each drag is one undo step. Right-click a point for the shape
+of the segment after it (straight, a step, or a curve with its bend) or to
+delete it; `Delete` deletes the selected point. With the **Draw** tool a
+drag draws the lane freehand: the stroke replaces the points it crosses,
+thinned, and the lane runs on from its end to the next point. A switch's
+lane (a filter's mode) only steps. The lane shows its value at the play head.
+
+The piano roll is the selected line (its staves and voices together, each
+voice in its colour, a selected note outlined, the score view's selected
+note too). **Grid** is what notes snap to — 1/4 … 1/32, or a triplet of 1/4,
+1/8 or 1/16, or Off; Alt while dragging leaves it.
+
+| Select tool | |
+| --- | --- |
+| Click a note | select it (Shift or Ctrl adds); it is selected on the staff too, and heard |
+| Drag a note | move it — and every selected note — on the grid in time, by semitones in pitch |
+| Drag a note's right end | stretch it (and the other selected notes by as much) |
+| Drag empty roll | select the notes in a box |
+| Double-click empty roll | draw a note one grid step long |
+| Right-click a note | delete it |
+| `Delete` | delete the selected notes |
+
+The **Draw** tool (`Ctrl+Alt+D`) draws a note as long as the drag instead.
+A drawn note goes on its pitch's staff (a grand staff splits at middle C)
+in the current voice (**Voice** 1–4 beside the grid); one that would cut a
+note already in that voice goes into the next voice free there, so drawing
+loses nothing, and one that starts and stops with a note in the voice joins
+it as a chord. It is spelled in the key (as a transposing staff is written,
+then stored at sounding pitch), and written as notation: values the meter
+allows, tied across beats and barlines, a triplet where the grid put it.
+The bars a roll edit touches are written afresh this way; what was written
+in them is kept wherever it still applies — each note's spelling and
+accidental display, its event's marks and grace notes, the marks on a rest.
+A note moved on its own takes its articulation and slur marks with it; a
+dynamic stays where it was written (on the rest left behind).
+
+The **velocity** lane under the roll has a stalk a note: grey at the level
+the dynamics give it, in the voice's colour where the note sets its own.
+Drag a stalk to set the velocity (of every selected note, when it is one of
+them); double-click it to give the note back to the dynamics. It is written
+as a `vel=` mark on the note's event, which plays at that MIDI velocity
+whatever the marks say and prints nothing.
 
 ### Exporting audio
 
@@ -323,6 +445,7 @@ A bar that runs over is an error, and one that runs short is a warning.
 | Articulations | `stacc`, `staccmo`, `acc`, `ten`, `marc`, `portato`, `legato` |
 | Ornaments | `tr`, `mord`, `imord`, `turn`, `iturn` (value: the auxiliary's accidental, `tr=#`, a turn's `turn=b/#` upper/lower); `trem=n` (1–4 strokes, bare 3), `trem2=n` (a two-note tremolo with the next event) |
 | Notation | `ferm` (`ferm=short`, `long`, `verylong`), `arp` (`arp=down`), `up`, `down`, `on_beat` / `before_beat` (a grace group's timing) |
+| Playback | `vel=96`: the event's notes play at this MIDI velocity (1–127) whatever the dynamics say — the piano roll's velocity lane; nothing prints |
 | Text | `"dolce"` (`text=`), `expr=`, `tech=` (playing technique: `tech=pizz.`, `tech="con sord."`) |
 | Spanners | `cresc`, `dim` and `hairpin_end` (`cresc=text` prints "cresc." with dashes, any other value prints itself); `slur` and `slur_end`; `gliss` (to the next note; `gliss=wavy`); `8va`, `8vb`, `15ma`, `15mb` and `ottava_end`; `ped` and `ped_end`. An end mark goes on the last note the line covers. |
 
@@ -390,7 +513,25 @@ warns about it. Nothing is lost when an older build opens a newer file.
   `(stacc)` plays its staccato samples, and `tech=pizz.` switches the line to
   pizzicato until `arco` or `ord.`. Technique words replace only their own
   kind: `con sord.` lasts through `pizz.` and `arco` until `senza sord.`.
-- **Lanes** move the line's volume and pan.
+- **Lanes** move what they name sample by sample: a straight lane is a
+  smooth ramp, a step lands on its frame (and fades over at most 64
+  samples, so it does not click), a curve bends. A volume lane multiplies
+  with the dynamics. A bus's and the master's lanes play the same way: a
+  bus's return and pan, the master's volume and every effect setting
+  ramp sample by sample.
+- **Swing** (`swing: {amount, unit}`, unit 8 or 16) lengthens the first
+  of each pair of eighths (or sixteenths) to `amount` of the pair — 0.5 is
+  straight, 0.67 a triplet feel, 0.75 dotted — and shortens the second;
+  everything inside each half moves in proportion. Pairs count from the
+  bar's start (a pickup counts from where its full bar would begin); a
+  pair the bar cuts short stays straight. A line's own `swing` replaces the
+  score's.
+- **Humanize** (`humanize: {timing, velocity, seed}`) moves each note's
+  start by up to `timing` milliseconds either way and its velocity by up to
+  `velocity` of itself. The nudges come from the seed and where each note
+  is written, so the score plays the same way every time, a chord's notes
+  move together, and an edit leaves the rest of the score's nudges as they
+  were. A line's own `humanize` uses the score's seed unless it gives one.
 
 A MIDI export writes a slide as the chromatic run it passes, since a note
 in a MIDI file cannot bend.
@@ -442,6 +583,58 @@ How a score uses it:
 
 The whole format — every key, and the `gen-instruments` command that builds
 the library — is in [the instrument library](31-music-tracker.md#the-instrument-library).
+
+### The instrument library dialog
+
+**Instrument Library…** on a line's menu (or **Library…** in the quick
+picker) opens the library with more room: the categories (the library's
+folders, with their counts), the instruments in one (a search box filters
+them; each says whether it is a `.finst` made here or an imported SFZ or
+SF2, and how many articulations it has), and the chosen one's details — its
+file, playable range, velocity layers (named by the dynamic each sits at),
+round robin, clef, glissando style, samples, the articulations the notation
+can pick, and a keyboard with its range lit. **Preview** plays it by itself
+before it is chosen; **Use on** puts it on the line (heard at once, while
+the score plays too); a double-click does both.
+
+### Importing SFZ and SF2
+
+**Import SFZ / SF2…** in the dialog browses for a file (folders and `.sfz` /
+`.sf2` files; a SoundFont lists its presets to tick) and imports it in the
+background; the new instruments land in the **Imported** category, selected.
+`foundry tracker import-instrument` does the same from the command line. An
+`.sfz` becomes `sounds/instruments/imported/<name>.finst`; a SoundFont one
+instrument a preset under `imported/<bank>/` (a bank of one preset is
+`imported/<bank>.finst`); the samples go under `sounds/samples/imported/`.
+
+What carries over:
+
+| SFZ | In the `.finst` |
+| --- | --- |
+| `<control>`, `<global>`, `<master>`, `<group>`, `<region>` | headers fold into each region, the lower overriding the higher; `default_path`, `octave_offset`, `note_offset`, `#define`, `#include` |
+| `lokey`, `hikey`, `key` (numbers or names, `c4` = 60), `lovel`, `hivel` | zones and velocity layers: the keyboard is cut wherever a region starts or stops, so overlapping regions map exactly |
+| `pitch_keycenter` (or `=sample`: the WAV's own root), `transpose`, `tune` | each sample's base note and fine tune |
+| `volume`, `amplitude`, `pan` | the sample's level; a pan every region shares |
+| `offset`, `end`, `loop_mode`, `loop_start`, `loop_end` (else the WAV's smpl loop) | the sample cut and looped as the region plays it (each distinct way of playing a file is its own sample) |
+| `ampeg_delay/attack/hold/decay/sustain/release` | the volume envelope (with its sustain point) and the release |
+| `seq_length` / `seq_position`, `lorand` / `hirand` | round robin, in turn order |
+| `sw_last` (`sw_down`), `sw_label`, `sw_default`, `sw_lokey`/`sw_hikey` | articulations, named from the label as the starter library names them (*Pizz* → pizzicato, *Spiccato* → staccato, *Trem* → tremolo, *Con sord.* → muted, *Legato*, *Sustain/Arco*), the label kept as a trigger word, so marks and technique text pick them; the keyswitch range is not part of the playable range |
+| `cutoff`, `fil_type`, `resonance` | the instrument's filter, when every region agrees |
+
+| SF2 | In the `.finst` |
+| --- | --- |
+| presets, instruments, zones, global zones | one instrument a preset; a preset zone's generators add to its instrument's, key and velocity ranges intersect |
+| key range, velocity range, root key, coarse and fine tune, the sample's pitch correction | zones, layers, base notes, tuning |
+| sample data (16-bit, with `sm24` 24-bit), loop points and sample modes, the address offsets | WAV samples cut and looped |
+| linked left and right samples | one stereo sample |
+| volume envelope, attenuation, pan, initial filter | envelope and release, level, pan, filter |
+
+What cannot (said in the import's notes, not dropped silently): release
+triggers, modulators and the modulation envelope and LFOs, `<curve>` and
+`<effect>` headers, stacked regions over the same keys and velocities with
+no round robin (a layer plays one sample a note), FLAC samples (convert them
+to WAV), one-shot loops (a note-off releases them unless every region is
+one-shot, when the release is the longest sample).
 
 ## A score in a level
 

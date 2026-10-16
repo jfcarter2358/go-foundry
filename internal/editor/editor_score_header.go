@@ -427,6 +427,15 @@ func scoreLinePopups() {
 			current = l.Instrument
 		}
 		imgui.Text(title)
+		imgui.SameLineV(240, 0)
+		if imgui.Button("Library...##scpicklib") {
+			scoreOpenLibrary(scorePickLine, scorePickAdd)
+			if scorePickAdd {
+				scoreLibrary.addAt = scorePickAt
+			}
+			imgui.CloseCurrentPopup()
+		}
+		editorMenuTooltip("The instrument library: details, preview, SFZ / SF2 import")
 		if name, ok := scorePickerBody(current); ok {
 			if scorePickAdd {
 				e.addLine(scorePickAt, name)
@@ -534,6 +543,10 @@ func scoreLineMenuItems(li int) {
 	if imgui.MenuItem("Instrument...") {
 		scoreOpenPicker(li, imgui.MousePos())
 	}
+	if imgui.MenuItem("Instrument Library...") {
+		scoreOpenLibrary(li, false)
+	}
+	editorMenuTooltip("Every instrument with its range, layers and articulations; import SFZ and SF2 libraries.")
 	if imgui.MenuItem("Select the Line") {
 		e.selectLine(li)
 	}

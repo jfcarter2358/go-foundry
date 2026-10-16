@@ -17,6 +17,8 @@ import (
 
 	"foundry/internal/audio"
 	"foundry/internal/fileutil"
+	"foundry/internal/score/io/instimport"
+	"foundry/internal/score/io/sf2"
 	"foundry/internal/tracker"
 )
 
@@ -34,6 +36,8 @@ const usage = `foundry tracker — work on tracker songs (sounds/*.ftrk) and the
   foundry tracker new <song>                 write an empty song
   foundry tracker gen-samples [-only a,b]    (re)generate the built-in sample library
   foundry tracker gen-instruments [-only a]  (re)generate the starter instruments (.finst) and their samples
+  foundry tracker import-instrument <file.sfz|file.sf2> [-name imported/x] [-preset 0,3] [-list]
+                                             import a sample library as .finst instruments and their samples
 
 Every verb takes -root <project> before its arguments.
 `
@@ -86,6 +90,8 @@ func Main(root string, args []string, out io.Writer) int {
 			return 1
 		}
 		return GenSamples(rest, out)
+	case "import-instrument":
+		return importInstrument(rest, out)
 	case "gen-instruments":
 		if GenInstruments == nil {
 			fmt.Fprintln(out, "tracker gen-instruments: the sample synthesizer is not built into this binary")
@@ -323,5 +329,80 @@ func newSong(rest []string, out io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(out, path)
+	return 0
+}
+
+// importInstrument is import-instrument: an .sfz or a SoundFont into the
+// library, under sounds/instruments/imported/ and sounds/samples/imported/.
+// -list shows a SoundFont's presets without importing.
+func importInstrument(rest []string, out io.Writer) int {
+	fs := flag.NewFlagSet("tracker import-instrument", flag.ContinueOnError)
+	fs.SetOutput(out)
+	name := fs.String("name", "", "library name (default imported/<file>); a SoundFont of several presets gets a folder of that name")
+	presets := fs.String("preset", "", "SoundFont presets to import, by the index -list shows, comma separated (default all)")
+	listOnly := fs.Bool("list", false, "list a SoundFont's presets and stop")
+	if len(rest) == 0 {
+		fmt.Fprintln(out, "tracker import-instrument: name an .sfz or .sf2 file")
+		return 2
+	}
+	path := rest[0]
+	if err := fs.Parse(rest[1:]); err != nil {
+		return 2
+	}
+	if !instimport.Supported(path) {
+		fmt.Fprintf(out, "tracker import-instrument: %s is not an .sfz or .sf2 file\n", path)
+		return 2
+	}
+	if *listOnly {
+		if !strings.EqualFold(filepath.Ext(path), ".sf2") {
+			fmt.Fprintln(out, "tracker import-instrument: -list is for SoundFonts; an .sfz is one instrument")
+			return 2
+		}
+		f, err := sf2.Open(path)
+		if err != nil {
+			fmt.Fprintln(out, err)
+			return 1
+		}
+		fmt.Fprintf(out, "%s: %d presets\n", f.Name, len(f.Presets()))
+		for _, p := range f.Presets() {
+			fmt.Fprintf(out, "  %4d  %03d:%03d  %s\n", p.Index, p.Bank, p.Program, p.Name)
+		}
+		return 0
+	}
+	o := instimport.Options{Name: *name}
+	if *presets != "" {
+		for _, f := range strings.Split(*presets, ",") {
+			k, err := strconv.Atoi(strings.TrimSpace(f))
+			if err != nil {
+				fmt.Fprintf(out, "tracker import-instrument: -preset %q is not a list of numbers\n", *presets)
+				return 2
+			}
+			o.Presets = append(o.Presets, k)
+		}
+	}
+	built, err := instimport.Import(path, o)
+	for _, b := range built {
+		in := b.Instrument
+		var arts []string
+		for _, a := range in.Articulations {
+			arts = append(arts, a.Name)
+		}
+		rng := "full range"
+		if pb := in.Playback; pb.Low != 0 || pb.High != 0 {
+			rng = tracker.NoteName(pb.Low) + ".." + tracker.NoteName(pb.High)
+		}
+		fmt.Fprintf(out, "%s: %q, %d zones, %d samples, %s", b.Name, in.Name, len(in.Zones), len(b.Samples), rng)
+		if len(arts) > 0 {
+			fmt.Fprintf(out, ", articulations %s", strings.Join(arts, ","))
+		}
+		fmt.Fprintln(out)
+		for _, w := range b.Warnings {
+			fmt.Fprintf(out, "  note: %s\n", w)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(out, "tracker import-instrument: %v\n", err)
+		return 1
+	}
 	return 0
 }

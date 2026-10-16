@@ -86,6 +86,9 @@ const (
 	cmdGain
 	cmdReturns
 	cmdStinger
+	cmdFX
+	cmdBypass
+	cmdBus
 )
 
 type command struct {
@@ -97,8 +100,11 @@ type command struct {
 	q    tracker.Quantize
 	tick int64
 	prog *Program
-	mix  LineMix
-	gen  audio.Generator
+	// chains go with prog: the player's own, built from its plans; nil
+	// keeps the playing ones.
+	chains *chainSet
+	mix    LineMix
+	gen    audio.Generator
 }
 
 // maxActive is how many scheduled notes can sound at once; past it the one
@@ -123,9 +129,11 @@ type activeNote struct {
 const bendStep = 120
 
 // LineMix is a line's mixer strip as the editor's faders set it: the
-// score's own Volume, Pan, SendA and SendB, overridden live.
+// score's own Volume, Pan, SendA and SendB (and whether each send is
+// pre-fader), overridden live.
 type LineMix struct {
 	Volume, Pan, SendA, SendB float32
+	PreA, PreB                bool
 }
 
 type paramState struct {
@@ -165,6 +173,9 @@ type Player struct {
 	posSec  atomic.Uint64
 	posInfo atomic.Uint64
 	eng     *tracker.Engine
+	// rateHint is the rate the mixer renders at, for the game thread to
+	// build chains at.
+	rateHint atomic.Int32
 
 	// game is the program last handed to the mixer, for the game thread's
 	// own reads (Score, Performance) and for instrument swaps.
@@ -198,8 +209,17 @@ type Player struct {
 	params []paramState
 	binds  []resolvedBind
 	// faders are each line's strip before curves and bindings: the
-	// score's, until SetMix moves one.
+	// score's, until SetMix moves one. base is each line's strip this
+	// block before its lanes (mixer.go).
 	faders []LineMix
+	base   []tracker.StripControls
+	// busBase and gainBase are the buses' returns and the master gain
+	// before their lanes: the score's, until SetBus, SetReturns or
+	// SetGain moves them.
+	busBase  [2]busMix
+	gainBase float32
+	// chainRate is the rate the engine's chains were built at.
+	chainRate int
 
 	// stingers play over the score; waiting ones start on their boundary.
 	stingers, waiting []stinger
@@ -230,11 +250,22 @@ func NewFromProgram(prog *Program) *Player {
 		stingers:       make([]stinger, 0, maxStingers),
 		waiting:        make([]stinger, 0, maxStingers),
 	}
+	// The chains are built at the device's rate when one is open, so the
+	// first render does not build them again on the mixer goroutine.
+	rate := audio.Rate()
+	if rate <= 0 {
+		rate = 48000
+	}
+	p.rateHint.Store(int32(rate))
 	p.install(prog)
+	p.adoptChains(prog.chains(rate), true)
 	p.game = prog
 	p.publish()
 	return p
 }
+
+// buildRate is the rate to build chains at on the game thread.
+func (p *Player) buildRate() int { return int(p.rateHint.Load()) }
 
 // Start puts the play head at a section (or the top when name is "" or
 // unknown) and starts the transport. Call before the player is handed to
@@ -344,10 +375,45 @@ func (p *Player) SetScore(s *score.Score) ([]error, error) {
 		return errs, err
 	}
 	p.game = prog
-	if !p.send(command{kind: cmdProgram, prog: prog}) {
+	if !p.send(command{kind: cmdProgram, prog: prog, chains: prog.chains(p.buildRate())}) {
 		return errs, fmt.Errorf("score player: command queue full")
 	}
 	return errs, nil
+}
+
+// SetEffects plays the mixer of s from now on — its line inserts, pans,
+// faders and sends, the buses and the master chain — without performing
+// the music again: what the editor sends when an effect is added, removed,
+// reordered or bypassed. s must have the same music as the playing score.
+// Chains that keep their effects keep their sound (a reverb's tail); a
+// changed one starts afresh.
+func (p *Player) SetEffects(s *score.Score) ([]error, error) {
+	prog, errs := p.game.WithMix(s)
+	p.game = prog
+	if !p.send(command{kind: cmdProgram, prog: prog, chains: prog.chains(p.buildRate())}) {
+		return errs, fmt.Errorf("score player: command queue full")
+	}
+	return errs, nil
+}
+
+// SetFX turns one effect parameter live: param of the effect in slot of
+// target's chain — a line's inserts (target = the line), tracker.FXBusA,
+// FXBusB or FXMaster — gliding there over a few milliseconds. The score's
+// own value comes back with the next SetScore or SetEffects, so the
+// editor writes it into the score it sends next.
+func (p *Player) SetFX(target, slot, param int, v float32) bool {
+	return p.send(command{kind: cmdFX, i: target, j: slot, tick: int64(param), f: float64(v)})
+}
+
+// SetBypass takes an effect out of its chain's signal (on) or back in,
+// fading, now.
+func (p *Player) SetBypass(target, slot int, on bool) bool {
+	return p.send(command{kind: cmdBypass, i: target, j: slot, b: on})
+}
+
+// SetBus sets a send bus's return level, pan and mute now.
+func (p *Player) SetBus(bus int, ret, pan float32, mute bool) bool {
+	return p.send(command{kind: cmdBus, i: bus, f: float64(ret), g: float64(pan), b: mute})
 }
 
 // SetInstrument plays a line on another library instrument from now on —
@@ -449,6 +515,13 @@ func (p *Player) Position() Position {
 // LineLevel is a line's recent peak, 0..1+, for meters.
 func (p *Player) LineLevel(line int) float32 { return p.eng.StripLevel(line) }
 
+// Engine is the engine the player drives. It belongs to whatever renders
+// the player; read it only between renders (tests, offline tools).
+func (p *Player) Engine() *tracker.Engine { return p.eng }
+
+// BusLevel is a send bus's (0: A, 1: B) recent return peak, for meters.
+func (p *Player) BusLevel(bus int) float32 { return p.eng.BusLevel(bus) }
+
 // Scope copies the most recent master output (mono) into dst, oldest first.
 func (p *Player) Scope(dst []float32) { p.eng.Scope(dst) }
 
@@ -506,10 +579,16 @@ func (p *Player) install(prog *Program) {
 			p.eng.SetMuteNow(i, p.scoreMute(i))
 		}
 	}
-	p.eng.SetBuses(prog.reverb, prog.delay, prog.comp, s.Gain)
+	g := s.Gain
+	if g == 0 {
+		g = 1
+	}
+	p.gainBase, p.busBase = g, prog.buses
+	p.applyBuses()
+	p.base = make([]tracker.StripControls, len(s.Lines))
 	p.faders = make([]LineMix, len(s.Lines))
 	for i, l := range s.Lines {
-		p.faders[i] = LineMix{Volume: l.Volume, Pan: l.Pan, SendA: l.SendA, SendB: l.SendB}
+		p.faders[i] = LineMix{Volume: l.Volume, Pan: l.Pan, SendA: clamp32(l.SendA, 0, 1), SendB: clamp32(l.SendB, 0, 1), PreA: l.PreA, PreB: l.PreB}
 	}
 	params := make([]paramState, len(s.Params))
 	for i, prm := range s.Params {
@@ -564,7 +643,11 @@ func sameNote(a, b *interpret.Performance, i int) int {
 		return -1
 	}
 	n := &a.Notes[i]
-	// Notes are in onset order: the first at n's tick, then along it.
+	same := func(c *interpret.Note) bool {
+		return c.Tick == n.Tick && c.Line == n.Line && c.Staff == n.Staff && c.Voice == n.Voice && c.MIDI == n.MIDI && c.Pass == n.Pass
+	}
+	// Notes are in onset order: by tick, unless humanise moved them off
+	// it by up to sameNoteWindow seconds.
 	lo, hi := 0, len(b.Notes)
 	for lo < hi {
 		m := int(uint(lo+hi) >> 1)
@@ -575,13 +658,31 @@ func sameNote(a, b *interpret.Performance, i int) int {
 		}
 	}
 	for j := lo; j < len(b.Notes) && b.Notes[j].Tick == n.Tick; j++ {
-		c := &b.Notes[j]
-		if c.Line == n.Line && c.Staff == n.Staff && c.Voice == n.Voice && c.MIDI == n.MIDI && c.Pass == n.Pass {
+		if same(&b.Notes[j]) {
+			return j
+		}
+	}
+	lo, hi = 0, len(b.Notes)
+	from := n.Start - sameNoteWindow
+	for lo < hi {
+		m := int(uint(lo+hi) >> 1)
+		if b.Notes[m].Start < from {
+			lo = m + 1
+		} else {
+			hi = m
+		}
+	}
+	for j := lo; j < len(b.Notes) && b.Notes[j].Start <= n.Start+sameNoteWindow; j++ {
+		if same(&b.Notes[j]) {
 			return j
 		}
 	}
 	return -1
 }
+
+// sameNoteWindow is how far, in seconds, sameNote looks either side of a
+// note's start: past humanise's largest nudge (50 ms) twice over.
+const sameNoteWindow = 0.11
 
 // scoreMute is whether the score itself mutes a line.
 func (p *Player) scoreMute(i int) bool { return LineSilenced(p.prog.Score, i) }
@@ -663,6 +764,7 @@ func (p *Player) apply(c command) {
 		}
 	case cmdProgram:
 		p.install(c.prog)
+		p.adoptChains(c.chains, false)
 	case cmdPlayFrom:
 		p.jump(0, perf.Tempo.Seconds(float64(clampTick(c.tick, perf.Length))))
 		p.playing, p.finished = true, false
@@ -698,9 +800,24 @@ func (p *Player) apply(c command) {
 			p.faders[c.i] = c.mix
 		}
 	case cmdGain:
-		p.eng.SetGain(float32(c.f))
+		p.gainBase = float32(c.f)
+		p.applyBuses()
 	case cmdReturns:
-		p.eng.SetReturns(float32(c.f), float32(c.g))
+		p.busBase[0].ret, p.busBase[1].ret = float32(c.f), float32(c.g)
+		p.applyBuses()
+	case cmdFX:
+		if ch := p.eng.Chain(c.i); ch != nil {
+			ch.SetParam(c.j, int(c.tick), float32(c.f), int(knobGlide*float64(max(p.rate, 1))))
+		}
+	case cmdBypass:
+		if ch := p.eng.Chain(c.i); ch != nil {
+			ch.SetBypass(c.j, c.b)
+		}
+	case cmdBus:
+		if c.i >= 0 && c.i < 2 {
+			p.busBase[c.i] = busMix{ret: float32(c.f), pan: clamp32(float32(c.g), -1, 1), mute: c.b}
+			p.applyBuses()
+		}
 	case cmdStinger:
 		if len(p.stingers)+len(p.waiting) >= maxStingers {
 			return
@@ -787,8 +904,14 @@ func (p *Player) Render(dst []float32, frames, rate int) bool {
 	if p.rate != rate {
 		p.rate = rate
 		p.eng.SetRate(rate)
+		p.rateHint.Store(int32(rate))
 	}
 	p.drain()
+	if p.chainRate != rate {
+		// The chains were built for another rate (the device opened at one
+		// it had not been told of): build them again, once.
+		p.adoptChains(p.prog.chains(rate), true)
+	}
 	out := dst[:frames*2]
 	if p.paused {
 		clear(out)
@@ -907,7 +1030,9 @@ func (p *Player) schedule(frames int) {
 		p.cueOffs(bound, fpos)
 		p.postTimed(bound)
 		p.startWaiting(bound, -1, fpos)
-		fpos += (bound - p.sec) / p.scale * rate
+		fend := fpos + (bound-p.sec)/p.scale*rate
+		p.cueLanes(p.sec, bound, fpos, fend)
+		fpos = fend
 		p.sec = bound
 		at := int(math.Round(fpos))
 		switch act {
@@ -1074,39 +1199,12 @@ func (p *Player) rampControls(dt float64) {
 		p.eng.SetTempo(float32(bpm))
 	}
 	for li := range prog.Score.Lines {
-		f := p.faders[li]
-		c := tracker.StripControls{Volume: f.Volume, Pan: f.Pan, SendA: f.SendA, SendB: f.SendB}
-		if k := prog.volCurve[li]; k >= 0 {
-			c.Volume *= prog.Perf.Curves[k].At(tick)
-		}
-		if k := prog.panCurve[li]; k >= 0 {
-			c.Pan = clamp32(prog.Perf.Curves[k].At(tick), -1, 1)
-		}
-		for _, b := range p.binds {
-			if b.line != li {
-				continue
-			}
-			v := p.params[b.param].cur
-			lin := b.from + (b.to-b.from)*v
-			switch b.target {
-			case tracker.BindVolume:
-				c.Volume *= lin
-			case tracker.BindPan:
-				c.Pan = clamp32(c.Pan+lin, -1, 1)
-			case tracker.BindSendA:
-				c.SendA = lin
-			case tracker.BindSendB:
-				c.SendB = lin
-			case tracker.BindCutoff:
-				from, to := max(b.from, 16), max(b.to, 16)
-				hz := from * float32(math.Pow(float64(to/from), float64(v)))
-				if c.CutoffHz == 0 || hz < c.CutoffHz {
-					c.CutoffHz = hz
-				}
-			}
-		}
-		p.eng.SetStrip(li, c)
+		c := p.stripBase(li)
+		p.base[li] = c
+		p.eng.SetStrip(li, p.laneControls(li, c, tick, false))
+		p.setFXLanes(li, tick, laneStep, false)
 	}
+	p.mixControls(tick)
 }
 
 // noteControls moves the sounding notes that follow something: a held

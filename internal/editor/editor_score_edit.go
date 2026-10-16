@@ -147,11 +147,15 @@ type scoreState struct {
 	auditions []scoreAudition
 	// Reveal asks the view to scroll the selection into sight.
 	Reveal bool
+
+	// TL is the Timeline tab's state: the grid, the tools, the roll's and
+	// the lanes' selections (editor_score_timeline_edit.go).
+	TL scoreTimeline
 }
 
 // newScoreState starts an editor on a score.
 func newScoreState(s *score.Score) *scoreState {
-	e := &scoreState{Dur: score.Duration{Base: score.Quarter}, Transport: newScoreTransport(), LaneSel: scoreLaneSel{Index: -1}}
+	e := &scoreState{Dur: score.Duration{Base: score.Quarter}, Transport: newScoreTransport(), LaneSel: scoreLaneSel{Index: -1}, TL: newScoreTimeline()}
 	e.setScore(s)
 	return e
 }
@@ -166,6 +170,7 @@ func (e *scoreState) setScore(s *score.Score) {
 	e.Armed = false
 	e.Grace = score.NotGrace
 	e.LaneSel, e.laneDrag = scoreLaneSel{Index: -1}, scoreLaneDrag{}
+	e.TL.RollSel, e.TL.AutoSel, e.TL.drag, e.TL.RollLine = nil, scoreAutoSel{Index: -1}, scoreAutoDrag{}, 0
 	e.mixKey = ""
 	e.Transport.Loop, e.Transport.Head = scoreLoop{}, 0
 	e.Rev++
@@ -261,6 +266,10 @@ func (e *scoreState) dropStaleSel() {
 		if edit.Staff(e.Score, q.Loc.Line, q.Loc.Staff) == nil || q.Loc.Bar < 1 || !q.At.Less(e.Score.BarLength(q.Loc.Bar)) {
 			e.Sel = scoreSel{}
 		}
+	}
+	e.TL.RollSel = e.rollSelNow()
+	if e.autoPoint() == nil {
+		e.TL.AutoSel.Index = -1
 	}
 }
 

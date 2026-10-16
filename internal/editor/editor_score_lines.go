@@ -342,7 +342,9 @@ func (e *scoreState) renameLine(i int, name string) bool {
 	if !e.change(func() error { return edit.RenameLine(e.Score, i, name) }) {
 		return false
 	}
-	// An open dynamics lane goes with the line (lanes are kept by name).
+	// The timeline's switches and an open dynamics lane go with the line
+	// (they are kept by name).
+	e.renameTLLine(raw, e.Score.Lines[i].Name)
 	if e.Lanes[raw] {
 		delete(e.Lanes, raw)
 		e.Lanes[e.Score.Lines[i].Name] = true

@@ -151,17 +151,32 @@ func lineTrack(perf *interpret.Performance, li int, l *score.Line, ch uint8) Tra
 	t.Events = append(t.Events,
 		cc(0, CCVolume, int(math.Round(float64(l.Volume)*100))),
 		cc(0, CCPan, int(math.Round(64+float64(l.Pan)*63))))
-	// The volume lane as expression, at its breakpoints and every 16th
-	// along a slope, whenever the value moves.
+	// The volume lane as expression, the pan lane as pan and the cutoff
+	// lane as brightness (CC 74, 16 Hz to 20 kHz on a log scale), at their
+	// breakpoints and every 16th along a slope, whenever the value moves.
 	for _, c := range perf.Curves {
-		if c.Line != li || c.Target != "volume" || len(c.Points) == 0 {
+		if c.Line != li || len(c.Points) == 0 {
+			continue
+		}
+		var ctl int
+		var value func(v float32) int
+		switch c.Target {
+		case "volume":
+			ctl, value = CCExpression, func(v float32) int { return int(math.Round(float64(v) * 127)) }
+		case "pan":
+			ctl, value = CCPan, func(v float32) int { return int(math.Round(64 + float64(v)*63)) }
+		case "cutoff":
+			ctl, value = CCBrightness, func(v float32) int {
+				return int(math.Round(math.Log(math.Max(float64(v), 16)/16) / math.Log(20000.0/16) * 127))
+			}
+		default:
 			continue
 		}
 		last := -1
 		emit := func(tick float64) {
-			v := int(math.Round(float64(c.At(tick)) * 127))
+			v := value(c.At(tick))
 			if v != last {
-				t.Events = append(t.Events, cc(int64(math.Round(tick)), CCExpression, v))
+				t.Events = append(t.Events, cc(int64(math.Round(tick)), ctl, v))
 				last = v
 			}
 		}

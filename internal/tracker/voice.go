@@ -260,7 +260,7 @@ func (e *Engine) renderVoice(v *pvoice, buf []float32, n int, dt float32) bool {
 			cut *= float32(math.Exp2(float64(in.FilterEnv.Value(v.envT[3]))))
 			v.envT[3] = in.FilterEnv.Advance(v.envT[3], dt, v.released)
 		}
-		v.filt.set(in.Filter, cut, in.Resonance, e.rate)
+		setFilter(&v.filt, in.Filter, cut, in.Resonance, e.rate)
 	}
 
 	gain := v.vol * in.Volume * smp.Volume * env * v.fade * v.level
@@ -316,9 +316,9 @@ func (e *Engine) renderVoice(v *pvoice, buf []float32, n int, dt float32) bool {
 			sl, sr = readSample(data, frames, stereo, v.pos, v.interp)
 		}
 		if in.Filter != FilterOff {
-			sl = v.filt.process(0, sl)
+			sl = v.filt.Process(0, sl)
 			if stereo {
-				sr = v.filt.process(1, sr)
+				sr = v.filt.Process(1, sr)
 			} else {
 				sr = sl
 			}

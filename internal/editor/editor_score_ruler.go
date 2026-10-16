@@ -29,12 +29,14 @@ import (
 // scoreTransportH is the transport row's height.
 const scoreTransportH = float32(34)
 
-// scoreViewKind is what the main area shows: the score or the mixer.
+// scoreViewKind is what the main area shows: the score, the timeline
+// (editor_score_timeline.go) or the mixer.
 type scoreViewKind uint8
 
 const (
 	scoreViewScore scoreViewKind = iota
 	scoreViewMixer
+	scoreViewTimeline
 )
 
 // scoreView is the tab on show.
@@ -161,8 +163,11 @@ func scoreTransportBar(pos imgui.Vec2, w float32) {
 			scoreRunCmd(c)
 		}
 	}
-	tab("Score##sctabscore", scoreViewScore, scMixer)
-	editorMenuTooltip("The score: notation, staff headers, the ruler" + scoreKeysSuffix(scMixer))
+	tab("Timeline##sctabtl", scoreViewTimeline, scTimeline)
+	editorMenuTooltip("Tracks with their automation lanes, and a piano roll of the selected line" + scoreKeysSuffix(scTimeline))
+	imgui.SameLine()
+	tab("Score##sctabscore", scoreViewScore, scScoreView)
+	editorMenuTooltip("The score: notation, staff headers, the ruler" + scoreKeysSuffix(scScoreView))
 	imgui.SameLine()
 	tab("Mixer##sctabmixer", scoreViewMixer, scMixer)
 	editorMenuTooltip("A strip per line: fader, pan, sends, mute, solo, meters; the buses and the master" + scoreKeysSuffix(scMixer))

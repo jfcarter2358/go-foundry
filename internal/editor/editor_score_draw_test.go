@@ -249,7 +249,7 @@ func TestScoreHeadersRulerAndMixerThroughTheView(t *testing.T) {
 		// The fader runs from y0 to y1; find the cap at its value.
 		top := scoreViewTop + 10
 		stripH := min(max(900-scoreViewTop-scoreStatusH-20-scoreScrollW, 280), 440)
-		y0 := top + 42 + 4 + 46 + 7
+		y0 := top + 42 + 22 + 4 + 56 + 7 // title, the "+ Insert" slot, the knobs
 		y1 := top + stripH - 50 - 7
 		cap.Y = y1 - (y1-y0)*before/scoreFaderMax
 		scoreFrame(cap, false)

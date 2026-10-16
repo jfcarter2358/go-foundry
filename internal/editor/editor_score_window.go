@@ -36,8 +36,9 @@ package editor
 //
 // The player is told of changes two ways (scoreSyncPlayer): a change to the
 // music hands it a fresh clone to prepare; a change to the mixer alone is
-// sent live (SetMix, SetGain, SetReturns, MuteIndex, SetInstrument), so a
-// fader can be dragged while the music plays.
+// sent live (SetMix, SetGain, SetReturns, MuteIndex, SetInstrument, and for
+// the effects SetFX, SetBypass, SetBus or SetEffects — editor_score_fx.go),
+// so a fader or an effect's knob can be moved while the music plays.
 
 import (
 	"fmt"
@@ -247,6 +248,7 @@ func scoreAdopted() {
 		scoreSentMute = append(scoreSentMute, play.LineSilenced(s, i))
 	}
 	scoreSentGain, scoreSentReturns = s.Gain, [2]float32{s.Buses.A.Return, s.Buses.B.Return}
+	scoreRecordFX(s)
 	if a, b, ok := scoreLoopTicks(scorePlayer.Performance(), e.Transport.Loop); ok && e.Transport.Loop.On {
 		scorePlayer.SetLoop(a, b)
 	} else {
@@ -255,7 +257,7 @@ func scoreAdopted() {
 }
 
 func scoreLineMix(l *score.Line) play.LineMix {
-	return play.LineMix{Volume: l.Volume, Pan: l.Pan, SendA: l.SendA, SendB: l.SendB}
+	return play.LineMix{Volume: l.Volume, Pan: l.Pan, SendA: l.SendA, SendB: l.SendB, PreA: l.PreA, PreB: l.PreB}
 }
 
 // scoreLaneSendEvery paces a dynamics-lane drag's programs: often enough
@@ -282,6 +284,7 @@ func scoreSyncPlayer(force bool) {
 		return
 	}
 	s := e.Score
+	scoreSyncFX(scorePlayer, s)
 	for i, l := range s.Lines {
 		if m := scoreLineMix(l); i >= len(scoreSentMix) || scoreSentMix[i] != m {
 			scorePlayer.SetMix(i, m)
@@ -598,6 +601,17 @@ func scoreRunCmd(c scoreCmd) {
 	case scVoiceCycle:
 		e.setVoice((e.Voice + 1) % score.MaxVoices)
 	case scDelete:
+		// In the timeline: a lane's point, then the roll's notes.
+		if scoreView == scoreViewTimeline {
+			if e.autoPoint() != nil {
+				e.autoDelete()
+				break
+			}
+			if len(e.rollSelNow()) > 0 {
+				e.rollDelete(e.rollLine())
+				break
+			}
+		}
 		// A lane's override, clicked with nothing else selected.
 		if e.Sel.Kind == scoreSelNone && e.laneSelected() != nil {
 			e.laneDelete()
@@ -660,6 +674,22 @@ func scoreRunCmd(c scoreCmd) {
 			scoreView = scoreViewScore
 		} else {
 			scoreView = scoreViewMixer
+		}
+	case scTimeline:
+		if scoreView == scoreViewTimeline {
+			scoreView = scoreViewScore
+		} else {
+			scoreView = scoreViewTimeline
+		}
+	case scScoreView:
+		scoreView = scoreViewScore
+	case scRollDraw:
+		if e.TL.Tool == scoreToolDraw {
+			e.TL.Tool = scoreToolSelect
+			e.Status = "Timeline: Select tool"
+		} else {
+			e.TL.Tool = scoreToolDraw
+			e.Status = "Timeline: Draw tool (drag out notes, draw lanes freehand)"
 		}
 	case scExportAudio:
 		scoreOpenExport()
@@ -748,9 +778,12 @@ func scoreDrawFrame(W, H float32) {
 	scoreToolbar(W)
 	scoreTransportBar(imgui.Vec2{X: 0, Y: editorTopBarH}, W)
 	area := imgui.Vec2{X: W, Y: H - scoreViewTop - scoreStatusH}
-	if scoreView == scoreViewMixer {
+	switch scoreView {
+	case scoreViewMixer:
 		scoreMixerPane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
-	} else {
+	case scoreViewTimeline:
+		scoreTimelinePane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
+	default:
 		scoreViewPane(imgui.Vec2{X: 0, Y: scoreViewTop}, area)
 	}
 	scoreStatusBar(imgui.Vec2{X: 0, Y: H - scoreStatusH}, W)
@@ -1104,6 +1137,11 @@ func scoreMenus() {
 		if imgui.MenuItemV(fmt.Sprintf("Write Tempo Slider (%.0f%%) as Tempo Marks", e.Transport.Scale*100), "", false, e.Transport.Scale != 1) {
 			e.writeTempoScaled()
 		}
+		imgui.Separator()
+		if imgui.MenuItem("Swing and Humanise...") {
+			scoreOpenFeel()
+		}
+		editorMenuTooltip("The score's swing and humanise, or a line's own (with one line's bars selected)")
 		imgui.EndMenu()
 	}
 }
@@ -1310,6 +1348,10 @@ func scoreDialogs() {
 	scoreKeysDialog()
 	scoreExportDialog()
 	scoreLinePopups()
+	scoreFXPopups()
+	scoreFeelPopup()
+	scoreTimelinePopups()
+	scoreLibraryDialog()
 }
 
 // scoreStaffName is "Piano (staff 2)", or the line's name for one staff.

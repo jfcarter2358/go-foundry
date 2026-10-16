@@ -58,6 +58,7 @@ const (
 	CCVolume     = 7
 	CCPan        = 10
 	CCExpression = 11
+	CCBrightness = 74
 )
 
 // Event is one event of a track at an absolute tick.

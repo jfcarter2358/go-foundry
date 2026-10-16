@@ -319,10 +319,16 @@ func (in *interp) writtenDynamics(marks []dynMark, hairs []hairpin) fcurve {
 	return c
 }
 
-// velocity is a note's velocity and accent: the effective level where it
-// starts, times its articulation's accent and any momentary dynamic on
-// the line there (sfz, fp's first level).
+// velocity is a note's velocity and accent: its own vel= when it has one,
+// otherwise the effective level where it starts, times its articulation's
+// accent and any momentary dynamic on the line there (sfz, fp's first
+// level).
 func (in *interp) velocity(r *rawNote) (float32, float32) {
+	if r.vel > 0 {
+		// A velocity set on the note itself (the piano roll's) is what it
+		// plays at, whatever the marks say.
+		return float32(r.vel) / 127, 1
+	}
 	lc := &in.dyn[r.line]
 	e := lc.effective.right(r.velAt)
 	acc := r.accent

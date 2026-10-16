@@ -309,6 +309,20 @@ foundry tracker instruments                       # the library: name, clef, ran
 
 A release ships the library instruments its songs name, and their samples.
 
+Third-party libraries come in as SFZ or SoundFont 2 files. `import-instrument`
+makes a `.finst` of an `.sfz` (its keyswitches become articulations) or one
+of each preset of an `.sf2`, under `sounds/instruments/imported/`, with its
+samples cut, looped and tuned under `sounds/samples/imported/`. The Score
+editor's instrument library dialog does the same
+([Importing SFZ and SF2](32-score-editor.md#importing-sfz-and-sf2) has what
+carries over):
+
+```
+foundry tracker import-instrument ~/libs/ChamberStrings.sfz
+foundry tracker import-instrument ~/libs/GeneralUser.sf2 -list          # its presets
+foundry tracker import-instrument ~/libs/GeneralUser.sf2 -preset 0,40 -name imported/gu
+```
+
 ## From the command line
 
 ```
@@ -319,6 +333,7 @@ foundry tracker render combat_theme -section combat -param intensity=1 -o out.wa
 foundry tracker samples                  the library, as songs name it
 foundry tracker instruments              the instrument library
 foundry tracker new boss_theme           an empty song
+foundry tracker import-instrument x.sfz  an SFZ or SF2 library as .finst instruments (-list, -preset, -name)
 ```
 
 `render` is the same player the game runs, so the WAV is exactly what a

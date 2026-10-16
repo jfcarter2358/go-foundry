@@ -191,13 +191,12 @@ func (s *Score) Validate(instrumentExists func(string) bool) (out []Issue) {
 		if l.Pan < -1 || l.Pan > 1 {
 			add(Error, L, 0, 0, 0, "pan %.2f is outside -1..1", l.Pan)
 		}
-		for _, ln := range l.Lanes {
-			for _, p := range ln.Points {
-				if !inRange(p.At.Bar) || p.HasTo && (!inRange(p.To.Bar) || PosLess(p.To, p.At)) {
-					add(Error, L, 0, 0, p.At.Bar, "lane %s: point outside the score or ending before it starts", ln.Name)
-				}
-			}
+		if l.SendA < 0 || l.SendA > 1 || l.SendB < 0 || l.SendB > 1 {
+			add(Warning, L, 0, 0, 0, "sends a %.2f b %.2f: a send is 0..1 (it plays clamped)", l.SendA, l.SendB)
 		}
+		validateLanes(ScopeLine, l.Lanes, l.Inserts, "the line has no such insert", inRange,
+			func(sev Severity, bar int, f string, a ...any) { add(sev, L, 0, 0, bar, f, a...) })
+		validateChain("insert", l.Inserts, func(f string, a ...any) { add(Warning, L, 0, 0, 0, f, a...) })
 		for _, o := range l.Overrides {
 			if !inRange(o.From.Bar) || !PosLess(o.From, o.To) || !inRange(o.To.Bar) && !(o.To.Bar == n+1 && o.To.Offset.IsZero()) {
 				add(Error, L, 0, 0, o.From.Bar, "dynamic override ends before it starts or is outside the score")
@@ -214,7 +213,43 @@ func (s *Score) Validate(instrumentExists func(string) bool) (out []Issue) {
 			}
 		}
 	}
+	warn := func(f string, a ...any) { add(Warning, 0, 0, 0, 0, f, a...) }
+	for k, b := range [2]*Bus{&s.Buses.A, &s.Buses.B} {
+		if b.Return < 0 || b.Return > 4 {
+			warn("bus %c: return %.2f is outside 0..4 (it plays clamped)", 'a'+k, b.Return)
+		}
+		where := fmt.Sprintf("bus %c: ", 'a'+k)
+		validateLanes(ScopeBus, b.Lanes, b.FX, "the bus has no such effect", inRange,
+			func(sev Severity, bar int, f string, a ...any) { add(sev, 0, 0, 0, bar, where+f, a...) })
+	}
+	validateLanes(ScopeMaster, s.MasterLanes, s.Master, "the master has no such effect", inRange,
+		func(sev Severity, bar int, f string, a ...any) { add(sev, 0, 0, 0, bar, "master: "+f, a...) })
+	validateChain("bus a effect", s.Buses.A.FX, warn)
+	validateChain("bus b effect", s.Buses.B.FX, warn)
+	validateChain("master effect", s.Master, warn)
 	return out
+}
+
+// validateLanes checks one owner's lanes: names its scope takes, effects
+// its chain has, points inside the score, values in range.
+func validateLanes(sc LaneScope, lanes []Lane, chain []FX, noSuch string, inRange func(int) bool, add func(Severity, int, string, ...any)) {
+	for _, ln := range lanes {
+		tgt, err := ParseLaneTargetIn(sc, ln.Name)
+		if err != nil {
+			add(Error, 0, "%v", err)
+		} else if tgt.Kind == LaneFX && ChainSlot(chain, tgt) < 0 {
+			add(Warning, 0, "lane %s: %s (the lane moves nothing)", ln.Name, noSuch)
+		}
+		lo, hi := tgt.Range()
+		for _, p := range ln.Points {
+			if !inRange(p.At.Bar) || p.HasTo && (!inRange(p.To.Bar) || PosLess(p.To, p.At)) {
+				add(Error, p.At.Bar, "lane %s: point outside the score or ending before it starts", ln.Name)
+			}
+			if err == nil && (p.Value < lo || p.Value > hi) {
+				add(Warning, p.At.Bar, "lane %s: value %g outside %g..%g (it plays clamped)", ln.Name, p.Value, lo, hi)
+			}
+		}
+	}
 }
 
 func (s *Score) validateVoice(v *Voice, L, S, V int, add func(Severity, int, int, int, int, string, ...any)) {
@@ -342,6 +377,10 @@ func markValueProblem(mk Mark) string {
 	case "gliss":
 		if mk.Value != "" && mk.Value != "wavy" && mk.Value != "straight" {
 			return fmt.Sprintf("gliss=%s: want wavy or straight", mk.Value)
+		}
+	case "vel":
+		if _, ok := ParseVelocity(mk.Value); !ok {
+			return fmt.Sprintf("vel=%s: want a MIDI velocity 1..127", mk.Value)
 		}
 	}
 	return ""

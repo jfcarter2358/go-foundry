@@ -170,6 +170,10 @@ const (
 	scRepeatBars
 	scEnding
 	scClefChange
+	// The Timeline tab (editor_score_timeline.go).
+	scTimeline
+	scScoreView
+	scRollDraw
 	scCmdCount
 )
 
@@ -282,6 +286,9 @@ func buildScoreCmdInfos() []scoreCmdInfo {
 	set(scRepeatBars, "repeat_bars", "Repeat the selected bars...", "Form")
 	set(scEnding, "ending", "1st / 2nd ending over the selected bars...", "Form")
 	set(scClefChange, "clef_change", "Clef change from the selection...", "Form")
+	set(scTimeline, "timeline", "Score / Timeline view (tracks, lanes, piano roll)", "File & view")
+	set(scScoreView, "score_view", "The Score view", "File & view")
+	set(scRollDraw, "roll_draw_tool", "Timeline: Draw tool on / off", "File & view")
 	return in
 }
 
@@ -575,6 +582,8 @@ func scoreCommonBinds(k *scoreKeymap) {
 	k.bind(scZoomOut, ctrlKey(sdl.SCANCODE_MINUS), ctrlKey(sdl.SCANCODE_KP_MINUS))
 	k.bind(scZoomReset, ctrlKey(sdl.SCANCODE_0))
 	k.bind(scEscape, key(sdl.SCANCODE_ESCAPE))
+	k.bind(scTimeline, ctrlAlt(sdl.SCANCODE_M))
+	k.bind(scRollDraw, ctrlAlt(sdl.SCANCODE_D))
 	k.bind(scPrev, key(sdl.SCANCODE_LEFT))
 	k.bind(scNext, key(sdl.SCANCODE_RIGHT))
 	k.bind(scDelete, key(sdl.SCANCODE_DELETE), key(sdl.SCANCODE_BACKSPACE))

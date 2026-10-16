@@ -87,6 +87,9 @@ type Score struct {
 	// Buses are the two send buses; Master the chain on the mix.
 	Buses  Buses
 	Master []FX
+	// MasterLanes automate the master: its level (times Gain) and its
+	// effects' settings (mix.go, ScopeMaster).
+	MasterLanes []Lane
 }
 
 // Pos is a point in the written score: a bar (1-based) and an offset into
@@ -189,10 +192,12 @@ type Binding struct {
 }
 
 // FX is one effect in a chain: a kind ("reverb", "eq", "compressor") and
-// its settings, in the order written.
+// its settings, in the order written (mix.go; internal/tracker/fx has the
+// kinds). Bypass keeps it in the chain but out of the signal.
 type FX struct {
 	Kind   string
 	Params []FXParam
+	Bypass bool
 }
 
 // FXParam is one effect setting.
@@ -211,10 +216,16 @@ func (f FX) Param(name string, def float64) float64 {
 	return def
 }
 
-// Bus is a send bus: its chain and its return level.
+// Bus is a send bus: its chain, its return level, and the return's pan
+// and mute.
 type Bus struct {
 	FX     []FX
 	Return float32
+	Pan    float32
+	Mute   bool
+	// Lanes automate the bus: its return level, its pan, its effects'
+	// settings (mix.go, ScopeBus).
+	Lanes []Lane
 }
 
 // Buses are send buses A and B.
@@ -232,14 +243,20 @@ type Line struct {
 	Pan    float32
 	Mute   bool
 	Solo   bool
-	// SendA and SendB feed the two buses.
+	// SendA and SendB feed the two buses; PreA and PreB take a send
+	// before the fader (after the inserts).
 	SendA, SendB float32
+	PreA, PreB   bool
 	// Inserts is the line's own effect chain.
 	Inserts []FX
 
 	Staves []*Staff
-	// Lanes are automation over the line: "volume" multiplies its fader.
+	// Lanes are automation over the line: "volume" multiplies its fader;
+	// mix.go has the names.
 	Lanes []Lane
+	// Swing and Humanize, when set, replace the score's for this line.
+	Swing    *Swing
+	Humanize *Humanize
 
 	// Gliss is how the line's glissandi play: "slide", "chromatic" or
 	// "diatonic"; "" is the instrument's own (.finst playback.gliss).
@@ -268,6 +285,10 @@ type PlaybackOptions struct {
 	IgnoreRepeats bool
 	// Graces is when grace notes play.
 	Graces GraceTiming
+	// Swing and Humanize are the whole score's feel (a line may have its
+	// own; mix.go).
+	Swing    Swing
+	Humanize Humanize
 }
 
 // GraceTiming is when grace notes play against their beat.
@@ -413,12 +434,16 @@ type Lane struct {
 }
 
 // LanePoint is a breakpoint; with HasTo it holds Value from At to To.
-// Between points the value moves in a straight line.
+// From it (from To when it holds) to the next point the value moves as
+// Shape says: in a straight line, a step, or a curve bent by Curve
+// (-1..1).
 type LanePoint struct {
 	At    Pos
 	To    Pos
 	HasTo bool
 	Value float32
+	Shape LaneShape
+	Curve float32
 }
 
 // ---------- construction ----------
@@ -486,12 +511,26 @@ func (s *Score) Clone() *Score {
 	c.Params = append([]Param(nil), s.Params...)
 	c.Bindings = append([]Binding(nil), s.Bindings...)
 	c.Buses.A.FX, c.Buses.B.FX = cloneFX(s.Buses.A.FX), cloneFX(s.Buses.B.FX)
+	c.Buses.A.Lanes, c.Buses.B.Lanes = cloneLanes(s.Buses.A.Lanes), cloneLanes(s.Buses.B.Lanes)
 	c.Master = cloneFX(s.Master)
+	c.MasterLanes = cloneLanes(s.MasterLanes)
 	c.Lines = make([]*Line, len(s.Lines))
 	for i, l := range s.Lines {
 		c.Lines[i] = l.Clone()
 	}
 	return &c
+}
+
+func cloneLanes(ls []Lane) []Lane {
+	if ls == nil {
+		return nil
+	}
+	out := make([]Lane, len(ls))
+	for i, ln := range ls {
+		ln.Points = append([]LanePoint(nil), ln.Points...)
+		out[i] = ln
+	}
+	return out
 }
 
 func cloneFX(fx []FX) []FX {
@@ -514,15 +553,16 @@ func (l *Line) Clone() *Line {
 	for i, st := range l.Staves {
 		c.Staves[i] = st.Clone()
 	}
-	c.Lanes = make([]Lane, len(l.Lanes))
-	for i, ln := range l.Lanes {
-		ln.Points = append([]LanePoint(nil), ln.Points...)
-		c.Lanes[i] = ln
-	}
-	if l.Lanes == nil {
-		c.Lanes = nil
-	}
+	c.Lanes = cloneLanes(l.Lanes)
 	c.Overrides = append([]DynOverride(nil), l.Overrides...)
+	if l.Swing != nil {
+		w := *l.Swing
+		c.Swing = &w
+	}
+	if l.Humanize != nil {
+		h := *l.Humanize
+		c.Humanize = &h
+	}
 	return &c
 }
 
@@ -683,10 +723,12 @@ func (s *Score) ParamIndex(name string) int {
 }
 
 // Lane finds a lane by name, or nil.
-func (l *Line) Lane(name string) *Lane {
-	for i := range l.Lanes {
-		if l.Lanes[i].Name == name {
-			return &l.Lanes[i]
+func (l *Line) Lane(name string) *Lane { return laneIn(l.Lanes, name) }
+
+func laneIn(ls []Lane, name string) *Lane {
+	for i := range ls {
+		if ls[i].Name == name {
+			return &ls[i]
 		}
 	}
 	return nil

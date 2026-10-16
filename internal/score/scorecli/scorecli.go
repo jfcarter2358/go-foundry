@@ -281,6 +281,24 @@ func inspect(rest []string, out io.Writer) int {
 		if counts[i] > 0 {
 			fmt.Fprintf(out, "         %d notes, %s..%s\n", counts[i], score.SpellMIDI(lo[i], 0, 1), score.SpellMIDI(hi[i], 0, 1))
 		}
+		if len(l.Inserts) > 0 || l.SendA > 0 || l.SendB > 0 {
+			pre := func(on bool) string {
+				if on {
+					return " pre"
+				}
+				return ""
+			}
+			fmt.Fprintf(out, "         sends a %.2f%s b %.2f%s; inserts: %s\n", l.SendA, pre(l.PreA), l.SendB, pre(l.PreB), chainText(l.Inserts))
+		}
+		for _, ln := range l.Lanes {
+			fmt.Fprintf(out, "         lane %s, %d point(s)\n", ln.Name, len(ln.Points))
+		}
+		if l.Swing != nil {
+			fmt.Fprintf(out, "         swing %.2f on %dths (its own)\n", l.Swing.Amount, max(l.Swing.Unit, 8))
+		}
+		if l.Humanize != nil {
+			fmt.Fprintf(out, "         humanise ±%.0f ms, ±%.0f%% velocity (its own)\n", l.Humanize.Timing, l.Humanize.Velocity*100)
+		}
 		if in != nil {
 			pb := in.Playback
 			low, high := 0, 0
@@ -304,8 +322,21 @@ func inspect(rest []string, out io.Writer) int {
 			}
 		}
 	}
-	for _, u := range play.Unplayed(s) {
-		fmt.Fprintf(out, "  not played yet (effects rack is a later phase): %s\n", u)
+	for k, b := range []score.Bus{s.Buses.A, s.Buses.B} {
+		fmt.Fprintf(out, "  bus %c  return %.2f pan %+.2f%s: %s\n", 'a'+k, b.Return, b.Pan, map[bool]string{true: " muted"}[b.Mute], chainText(b.FX))
+		for _, ln := range b.Lanes {
+			fmt.Fprintf(out, "         lane %s, %d point(s)\n", ln.Name, len(ln.Points))
+		}
+	}
+	fmt.Fprintf(out, "  master gain %.2f: %s\n", s.Gain, chainText(s.Master))
+	for _, ln := range s.MasterLanes {
+		fmt.Fprintf(out, "         lane %s, %d point(s)\n", ln.Name, len(ln.Points))
+	}
+	if w := s.Playback.Swing; w.On() {
+		fmt.Fprintf(out, "  swing %.2f on %dths\n", w.Amount, max(w.Unit, 8))
+	}
+	if h := s.Playback.Humanize; h.On() {
+		fmt.Fprintf(out, "  humanise ±%.0f ms, ±%.0f%% velocity (seed %d)\n", h.Timing, h.Velocity*100, h.Seed)
 	}
 	issues := append(s.Validate(instrumentExists), rangeIssues...)
 	for _, is := range issues {
@@ -649,4 +680,24 @@ func fmtCmd(rest []string, out io.Writer) int {
 		fmt.Fprintf(out, "%s: rewritten\n", path)
 	}
 	return code
+}
+
+// chainText is an effect chain as inspect prints it: "eq, delay
+// (bypassed)", or "none".
+func chainText(chain []score.FX) string {
+	if len(chain) == 0 {
+		return "none"
+	}
+	var parts []string
+	for _, f := range chain {
+		t := f.Kind
+		if f.Bypass {
+			t += " (bypassed)"
+		}
+		if f.Kind == "compressor" && f.Param("enabled", 1) == 0 {
+			t += " (off)"
+		}
+		parts = append(parts, t)
+	}
+	return strings.Join(parts, ", ")
 }

@@ -38,6 +38,16 @@ package score
 // a line's `gliss:` style and `dynamic_overrides: [{at, to, level}]`; a
 // staff's `clefs: [{at: "5:3", clef: bass}]`.
 //
+// Phase 4 added, all optional: an effect's `bypass: true`; a line's
+// `sends: {a, b, pre_a, pre_b}` (pre-fader sends); a bus's `pan:` and
+// `mute:`; lanes for pan, cutoff, the sends and any insert's parameter
+// (mix.go has the names), a lane point's `step: true` or `curve: 0.5`
+// for the segment after it; swing and humanise, for the score in
+// `playback: {swing: {amount: 0.62, unit: 8}, humanize: {timing: 8,
+// velocity: 0.06, seed: 1}}` and for a line as its own `swing:` and
+// `humanize:`; a bus's `lanes:` (return, pan, its effects') and the
+// score's `master_lanes:` (volume, the master chain's effects').
+//
 // Positions are "bar" or "bar:beat" (Score.ParsePos). An effect is a map
 // whose "fx" key names it, the rest its settings in order. Instruments are
 // named, never embedded: one .finst plays the same in every score.
@@ -84,6 +94,8 @@ type rawScore struct {
 	Lines    []rawLine    `yaml:"lines"`
 	Buses    *rawBuses    `yaml:"buses,omitempty"`
 	Master   []FX         `yaml:"master,flow,omitempty"`
+	// MasterLanes are the master's automation (volume, its effects').
+	MasterLanes map[string][]rawLanePoint `yaml:"master_lanes,omitempty"`
 }
 
 type rawTempo struct {
@@ -110,8 +122,21 @@ type rawJump struct {
 }
 
 type rawPlayback struct {
-	IgnoreRepeats bool   `yaml:"ignore_repeats,omitempty"`
-	Graces        string `yaml:"graces,omitempty"`
+	IgnoreRepeats bool         `yaml:"ignore_repeats,omitempty"`
+	Graces        string       `yaml:"graces,omitempty"`
+	Swing         *rawSwing    `yaml:"swing,flow,omitempty"`
+	Humanize      *rawHumanize `yaml:"humanize,flow,omitempty"`
+}
+
+type rawSwing struct {
+	Amount float32 `yaml:"amount"`
+	Unit   int     `yaml:"unit,omitempty"`
+}
+
+type rawHumanize struct {
+	Timing   float32 `yaml:"timing,omitempty"`
+	Velocity float32 `yaml:"velocity,omitempty"`
+	Seed     int64   `yaml:"seed,omitempty"`
 }
 
 type rawOverride struct {
@@ -178,14 +203,18 @@ type rawLine struct {
 	Sends      *rawSends                 `yaml:"sends,flow,omitempty"`
 	Inserts    []FX                      `yaml:"inserts,flow,omitempty"`
 	Gliss      string                    `yaml:"gliss,omitempty"`
+	Swing      *rawSwing                 `yaml:"swing,flow,omitempty"`
+	Humanize   *rawHumanize              `yaml:"humanize,flow,omitempty"`
 	Staves     []rawStaff                `yaml:"staves"`
 	Lanes      map[string][]rawLanePoint `yaml:"lanes,omitempty"`
 	Overrides  []rawOverride             `yaml:"dynamic_overrides,flow,omitempty"`
 }
 
 type rawSends struct {
-	A float32 `yaml:"a,omitempty"`
-	B float32 `yaml:"b,omitempty"`
+	A    float32 `yaml:"a,omitempty"`
+	B    float32 `yaml:"b,omitempty"`
+	PreA bool    `yaml:"pre_a,omitempty"`
+	PreB bool    `yaml:"pre_b,omitempty"`
 }
 
 type rawStaff struct {
@@ -199,6 +228,8 @@ type rawLanePoint struct {
 	At    string  `yaml:"at"`
 	To    string  `yaml:"to,omitempty"`
 	Value float32 `yaml:"value"`
+	Step  bool    `yaml:"step,omitempty"`
+	Curve float32 `yaml:"curve,omitempty"`
 }
 
 type rawBuses struct {
@@ -207,13 +238,20 @@ type rawBuses struct {
 }
 
 type rawBus struct {
-	FX     []FX    `yaml:"fx,flow,omitempty"`
-	Return float32 `yaml:"return"`
+	FX     []FX                      `yaml:"fx,flow,omitempty"`
+	Return float32                   `yaml:"return"`
+	Pan    float32                   `yaml:"pan,omitempty"`
+	Mute   bool                      `yaml:"mute,omitempty"`
+	Lanes  map[string][]rawLanePoint `yaml:"lanes,omitempty"`
 }
 
-// MarshalYAML writes an effect as {fx: kind, setting: value, …}.
+// MarshalYAML writes an effect as {fx: kind, bypass: true, setting: value,
+// …}.
 func (f FX) MarshalYAML() (interface{}, error) {
 	ms := yaml.MapSlice{{Key: "fx", Value: f.Kind}}
+	if f.Bypass {
+		ms = append(ms, yaml.MapItem{Key: "bypass", Value: true})
+	}
 	for _, p := range f.Params {
 		ms = append(ms, yaml.MapItem{Key: p.Name, Value: p.Value})
 	}
@@ -238,6 +276,14 @@ func (f *FX) UnmarshalYAML(unmarshal func(interface{}) error) error {
 				return fmt.Errorf("effect kind %v is not a name", it.Value)
 			}
 			f.Kind = s
+			continue
+		}
+		if k == "bypass" {
+			b, ok := it.Value.(bool)
+			if !ok {
+				return fmt.Errorf("effect bypass: %v is not true or false", it.Value)
+			}
+			f.Bypass = b
 			continue
 		}
 		var v float64
@@ -413,6 +459,16 @@ func Parse(b []byte) (s *Score, err error) {
 		default:
 			return nil, fmt.Errorf("playback: graces %q (want auto, before or on)", r.Playback.Graces)
 		}
+		if r.Playback.Swing != nil {
+			if s.Playback.Swing, err = swingFromRaw(*r.Playback.Swing); err != nil {
+				return nil, fmt.Errorf("playback: %w", err)
+			}
+		}
+		if r.Playback.Humanize != nil {
+			if s.Playback.Humanize, err = humanizeFromRaw(*r.Playback.Humanize); err != nil {
+				return nil, fmt.Errorf("playback: %w", err)
+			}
+		}
 	}
 	for _, rp := range r.Params {
 		s.Params = append(s.Params, Param{Name: rp.Name, Default: rp.Default})
@@ -434,10 +490,125 @@ func Parse(b []byte) (s *Score, err error) {
 	if r.Buses == nil {
 		s.Buses = DefaultBuses()
 	} else {
-		s.Buses = Buses{A: Bus{FX: r.Buses.A.FX, Return: r.Buses.A.Return}, B: Bus{FX: r.Buses.B.FX, Return: r.Buses.B.Return}}
+		s.Buses = Buses{A: busFromRaw(r.Buses.A), B: busFromRaw(r.Buses.B)}
+		if s.Buses.A.Pan < -1 || s.Buses.A.Pan > 1 || s.Buses.B.Pan < -1 || s.Buses.B.Pan > 1 {
+			return nil, fmt.Errorf("buses: pan outside -1..1")
+		}
+		var err error
+		if s.Buses.A.Lanes, err = lanesFromRaw(s, r.Buses.A.Lanes); err != nil {
+			return nil, fmt.Errorf("bus a: %w", err)
+		}
+		if s.Buses.B.Lanes, err = lanesFromRaw(s, r.Buses.B.Lanes); err != nil {
+			return nil, fmt.Errorf("bus b: %w", err)
+		}
 	}
 	s.Master = r.Master
+	if s.MasterLanes, err = lanesFromRaw(s, r.MasterLanes); err != nil {
+		return nil, fmt.Errorf("master: %w", err)
+	}
 	return s, nil
+}
+
+func busFromRaw(b rawBus) Bus { return Bus{FX: b.FX, Return: b.Return, Pan: b.Pan, Mute: b.Mute} }
+
+func busToRaw(s *Score, b Bus) rawBus {
+	return rawBus{FX: b.FX, Return: b.Return, Pan: b.Pan, Mute: b.Mute, Lanes: lanesToRaw(s, b.Lanes)}
+}
+
+// lanesFromRaw reads a lanes block (a line's, a bus's, the master's), the
+// lanes in name order.
+func lanesFromRaw(s *Score, raw map[string][]rawLanePoint) ([]Lane, error) {
+	names := make([]string, 0, len(raw))
+	for n := range raw {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var out []Lane
+	for _, n := range names {
+		ln := Lane{Name: n}
+		for _, rp := range raw[n] {
+			at, err := s.ParsePos(rp.At)
+			if err != nil {
+				return nil, fmt.Errorf("lane %s: %w", n, err)
+			}
+			lp := LanePoint{At: at, Value: rp.Value}
+			switch {
+			case rp.Step && rp.Curve != 0:
+				return nil, fmt.Errorf("lane %s at %s: a point is a step or a curve, not both", n, rp.At)
+			case rp.Step:
+				lp.Shape = LaneStep
+			case rp.Curve != 0:
+				if rp.Curve < -1 || rp.Curve > 1 {
+					return nil, fmt.Errorf("lane %s at %s: curve %g (-1..1)", n, rp.At, rp.Curve)
+				}
+				lp.Shape, lp.Curve = LaneCurve, rp.Curve
+			}
+			if rp.To != "" {
+				if lp.To, err = s.ParsePos(rp.To); err != nil {
+					return nil, fmt.Errorf("lane %s: %w", n, err)
+				}
+				lp.HasTo = true
+			}
+			ln.Points = append(ln.Points, lp)
+		}
+		out = append(out, ln)
+	}
+	return out, nil
+}
+
+// lanesToRaw writes lanes as a lanes block (nil for none).
+func lanesToRaw(s *Score, ls []Lane) map[string][]rawLanePoint {
+	if len(ls) == 0 {
+		return nil
+	}
+	out := map[string][]rawLanePoint{}
+	for _, ln := range ls {
+		pts := []rawLanePoint{}
+		for _, p := range ln.Points {
+			rp := rawLanePoint{At: s.FormatPos(p.At), Value: p.Value}
+			switch p.Shape {
+			case LaneStep:
+				rp.Step = true
+			case LaneCurve:
+				rp.Curve = p.Curve
+			}
+			if p.HasTo {
+				rp.To = s.FormatPos(p.To)
+			}
+			pts = append(pts, rp)
+		}
+		out[ln.Name] = pts
+	}
+	return out
+}
+
+// swingFromRaw reads a swing: amount 0.5 (straight) to 0.75, unit 8 or 16.
+func swingFromRaw(r rawSwing) (Swing, error) {
+	if r.Amount < 0.5 || r.Amount > 0.75 {
+		return Swing{}, fmt.Errorf("swing amount %g (0.5 straight .. 0.75; 0.67 is triplets)", r.Amount)
+	}
+	if r.Unit != 0 && r.Unit != 8 && r.Unit != 16 {
+		return Swing{}, fmt.Errorf("swing unit %d (want 8 or 16)", r.Unit)
+	}
+	return Swing{Amount: r.Amount, Unit: r.Unit}, nil
+}
+
+func swingToRaw(w Swing) *rawSwing { return &rawSwing{Amount: w.Amount, Unit: w.Unit} }
+
+// humanizeFromRaw reads a humanise: timing in ms (0..50), velocity as a
+// fraction (0..0.5).
+func humanizeFromRaw(r rawHumanize) (Humanize, error) {
+	if r.Timing < 0 || r.Timing > 50 {
+		return Humanize{}, fmt.Errorf("humanize timing %g ms (0..50)", r.Timing)
+	}
+	if r.Velocity < 0 || r.Velocity > 0.5 {
+		return Humanize{}, fmt.Errorf("humanize velocity %g (0..0.5)", r.Velocity)
+	}
+	return Humanize{Timing: r.Timing, Velocity: r.Velocity, Seed: r.Seed}, nil
+}
+
+func humanizeToRaw(h Humanize) *rawHumanize {
+	return &rawHumanize{Timing: h.Timing, Velocity: h.Velocity, Seed: h.Seed}
 }
 
 func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
@@ -449,7 +620,21 @@ func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
 		l.Volume = *rl.Volume
 	}
 	if rl.Sends != nil {
-		l.SendA, l.SendB = rl.Sends.A, rl.Sends.B
+		l.SendA, l.SendB, l.PreA, l.PreB = rl.Sends.A, rl.Sends.B, rl.Sends.PreA, rl.Sends.PreB
+	}
+	if rl.Swing != nil {
+		w, err := swingFromRaw(*rl.Swing)
+		if err != nil {
+			return nil, err
+		}
+		l.Swing = &w
+	}
+	if rl.Humanize != nil {
+		h, err := humanizeFromRaw(*rl.Humanize)
+		if err != nil {
+			return nil, err
+		}
+		l.Humanize = &h
 	}
 	if len(rl.Staves) == 0 {
 		return nil, fmt.Errorf("no staves")
@@ -492,29 +677,11 @@ func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
 		}
 		l.Staves = append(l.Staves, st)
 	}
-	names := make([]string, 0, len(rl.Lanes))
-	for n := range rl.Lanes {
-		names = append(names, n)
+	lanes, err := lanesFromRaw(s, rl.Lanes)
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(names)
-	for _, n := range names {
-		ln := Lane{Name: n}
-		for _, rp := range rl.Lanes[n] {
-			at, err := s.ParsePos(rp.At)
-			if err != nil {
-				return nil, fmt.Errorf("lane %s: %w", n, err)
-			}
-			lp := LanePoint{At: at, Value: rp.Value}
-			if rp.To != "" {
-				if lp.To, err = s.ParsePos(rp.To); err != nil {
-					return nil, fmt.Errorf("lane %s: %w", n, err)
-				}
-				lp.HasTo = true
-			}
-			ln.Points = append(ln.Points, lp)
-		}
-		l.Lanes = append(l.Lanes, ln)
-	}
+	l.Lanes = lanes
 	for _, ro := range rl.Overrides {
 		from, err := s.ParsePos(ro.At)
 		if err != nil {
@@ -633,6 +800,12 @@ func Marshal(s *Score) ([]byte, error) {
 		if s.Playback.Graces != GraceAuto && int(s.Playback.Graces) < len(GraceTimings) {
 			r.Playback.Graces = GraceTimings[s.Playback.Graces]
 		}
+		if s.Playback.Swing != (Swing{}) {
+			r.Playback.Swing = swingToRaw(s.Playback.Swing)
+		}
+		if s.Playback.Humanize != (Humanize{}) {
+			r.Playback.Humanize = humanizeToRaw(s.Playback.Humanize)
+		}
 	}
 	for _, p := range s.Params {
 		r.Params = append(r.Params, rawParam{Name: p.Name, Default: p.Default})
@@ -649,8 +822,14 @@ func Marshal(s *Score) ([]byte, error) {
 			v := l.Volume
 			rl.Volume = &v
 		}
-		if l.SendA != 0 || l.SendB != 0 {
-			rl.Sends = &rawSends{A: l.SendA, B: l.SendB}
+		if l.SendA != 0 || l.SendB != 0 || l.PreA || l.PreB {
+			rl.Sends = &rawSends{A: l.SendA, B: l.SendB, PreA: l.PreA, PreB: l.PreB}
+		}
+		if l.Swing != nil {
+			rl.Swing = swingToRaw(*l.Swing)
+		}
+		if l.Humanize != nil {
+			rl.Humanize = humanizeToRaw(*l.Humanize)
 		}
 		for _, st := range l.Staves {
 			rs := rawStaff{Clef: st.Clef, Voices: []string{}}
@@ -665,27 +844,15 @@ func Marshal(s *Score) ([]byte, error) {
 			}
 			rl.Staves = append(rl.Staves, rs)
 		}
-		if len(l.Lanes) > 0 {
-			rl.Lanes = map[string][]rawLanePoint{}
-			for _, ln := range l.Lanes {
-				pts := []rawLanePoint{}
-				for _, p := range ln.Points {
-					rp := rawLanePoint{At: s.FormatPos(p.At), Value: p.Value}
-					if p.HasTo {
-						rp.To = s.FormatPos(p.To)
-					}
-					pts = append(pts, rp)
-				}
-				rl.Lanes[ln.Name] = pts
-			}
-		}
+		rl.Lanes = lanesToRaw(s, l.Lanes)
 		r.Lines = append(r.Lines, rl)
 	}
 	if r.Lines == nil {
 		r.Lines = []rawLine{}
 	}
-	r.Buses = &rawBuses{A: rawBus{FX: s.Buses.A.FX, Return: s.Buses.A.Return}, B: rawBus{FX: s.Buses.B.FX, Return: s.Buses.B.Return}}
+	r.Buses = &rawBuses{A: busToRaw(s, s.Buses.A), B: busToRaw(s, s.Buses.B)}
 	r.Master = s.Master
+	r.MasterLanes = lanesToRaw(s, s.MasterLanes)
 	return yaml.Marshal(r)
 }
 

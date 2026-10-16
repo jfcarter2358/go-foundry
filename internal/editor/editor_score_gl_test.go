@@ -27,6 +27,7 @@ import (
 	"foundry/internal/score/play"
 	"foundry/internal/score/scoredraw"
 	"foundry/internal/testenv"
+	"foundry/internal/tracker/fx"
 	"foundry/internal/uiwin"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -152,6 +153,49 @@ func TestScoreGLWindowDraws(t *testing.T) {
 	if light < 40 {
 		t.Errorf("the first strip's fader cap: %d light pixels", light)
 	}
+
+	// Effects: an EQ, a compressor (bypassed) and a delay on the flute, a
+	// pre-fader reverb send, a chorus on bus A, a limiter on the master,
+	// and the EQ's settings open.
+	undoTo := scEd.undo.len()
+	scEd.addFX(0, fx.KindEQ)
+	scEd.setFXParam(0, 0, "low", -4)
+	scEd.setFXParam(0, 0, "b2", 3)
+	scEd.addFX(0, fx.KindCompressor)
+	scEd.toggleFXBypass(0, 1)
+	scEd.addFX(0, fx.KindDelay)
+	scEd.togglePre(0, 0)
+	scEd.addFX(scoreFXBusA, fx.KindChorus)
+	scEd.addFX(scoreFXMaster, fx.KindLimiter)
+	scoreOpenFXEdit(0, 0, imgui.Vec2{X: 140, Y: scoreViewTop + 70})
+	frame()
+	frame()
+	shot(t, "effects", readFrame(W, H))
+	for scEd.undo.len() > undoTo {
+		scEd.undoStep()
+	}
+	frame()
+
+	// Swing and Humanise, for the score: 62% on eighths, ±8 ms.
+	scEd.setSwing(-1, score.Swing{Amount: 0.62, Unit: 8})
+	scEd.setHumanize(-1, score.Humanize{Timing: 8, Velocity: 0.06, Seed: 3})
+	scEd.endMixGesture()
+	scoreOpenFeel()
+	frame()
+	frame()
+	shot(t, "feel", readFrame(W, H))
+	// A click on the mixer's empty floor closes the popup.
+	was := mouse
+	mouse = imgui.Vec2{X: 1200, Y: 760}
+	imgui.CurrentIO().SetMouseButtonDown(0, true)
+	frame()
+	imgui.CurrentIO().SetMouseButtonDown(0, false)
+	frame()
+	mouse = was
+	for scEd.undo.len() > undoTo {
+		scEd.undoStep()
+	}
+	frame()
 
 	// A loop over bars 3-4, a drum kit added on a percussion staff with a
 	// beat in it, the play head in bar 2 and the tempo slider at 75%.
@@ -279,6 +323,103 @@ func TestScoreGLWindowDraws(t *testing.T) {
 	if lane < 1500 || held < 300 {
 		t.Errorf("the dynamics lane: %d lane pixels, %d override pixels", lane, held)
 	}
+
+	// The Timeline: the flute's volume lane (a swell, a step down), a
+	// low-pass on the violins with its cutoff drawn, the piano roll of the
+	// violins with two of their notes selected, and the play head in bar 3.
+	scoreShowMarks = false
+	scoreView = scoreViewTimeline
+	scEd.Sel = scoreSel{}
+	scEd.autoAdd(0, score.LaneTarget{Kind: score.LaneVolume})
+	scEd.autoPress(0, "volume", score.Pos{Bar: 3}, 1.25, -1)
+	scEd.autoRelease()
+	scEd.autoPress(0, "volume", score.Pos{Bar: 5}, 0.5, -1)
+	scEd.autoRelease()
+	scEd.autoShape(0, "volume", 1, score.LaneStep, 0)
+	scEd.autoAdd(2, score.LaneTarget{Kind: score.LanePan})
+	scEd.autoPress(2, "pan", score.Pos{Bar: 2}, -0.6, -1)
+	scEd.autoRelease()
+	scEd.autoPress(2, "pan", score.Pos{Bar: 6}, 0.6, -1)
+	scEd.autoRelease()
+	scEd.autoShape(2, "pan", 1, score.LaneCurve, 0.7)
+	scEd.addFX(2, fx.KindFilter)
+	cut, _ := scEd.Score.Lines[2].LaneTargetForSlot(len(scEd.Score.Lines[2].Inserts)-1, fx.KindFilter.Spec().Param("cutoff"))
+	if !scEd.autoAdd(2, cut) {
+		t.Fatalf("cutoff lane: %s", scEd.Status)
+	}
+	scEd.autoPress(2, cut.Name(), score.Pos{Bar: 4}, 600, -1)
+	scEd.autoRelease()
+	scEd.TL.RollLine = 2
+	scoreRollTopFor = -1
+	if ns := scEd.rollNotes(); len(ns) > 3 {
+		scEd.rollSelect(2, ns[2:4], false)
+		scEd.Sel = scoreSel{}
+	}
+	scEd.seek(score.Pos{Bar: 3, Offset: score.F(1, 2)})
+	scEd.takeOps()
+	scoreTLZoom = 110
+	// Scrolled to the violins' lanes, the cutoff's among them.
+	scoreTLTrackScroll = 2 * scoreTLRowH
+	defer func() { scoreView, scoreRollTopFor, scoreTLTrackScroll = scoreViewScore, -1, 0 }()
+	frame()
+	frame()
+	img = readFrame(W, H)
+	shot(t, "timeline", img)
+	// The violins' notes are on the roll in voice 1's blue.
+	tg := scoreTimelineGeom(imgui.Vec2{X: 0, Y: scoreViewTop}, imgui.Vec2{X: W, Y: H - scoreViewTop - scoreStatusH})
+	blue := 0
+	for y := int(tg.rollTop); y < int(tg.rollBottom); y++ {
+		for x := int(tg.gridX); x < W; x++ {
+			if c := img.RGBAAt(x, y); c.B > 200 && c.R < 120 && c.G > 120 {
+				blue++
+			}
+		}
+	}
+	if blue < 400 {
+		t.Errorf("the roll's notes: %d blue pixels", blue)
+	}
+	// The mix's tracks under the lines: bus A's return riding down, the
+	// master's volume fading out at the end, scrolled to the bottom.
+	if !scEd.autoAdd(score.OwnerBusA, score.LaneTarget{Kind: score.LaneReturn}) || !scEd.autoAdd(score.OwnerMaster, score.LaneTarget{Kind: score.LaneVolume}) {
+		t.Fatalf("mix lanes: %s", scEd.Status)
+	}
+	scEd.autoPress(score.OwnerBusA, "return", score.Pos{Bar: 4}, 0.1, -1)
+	scEd.autoRelease()
+	scEd.autoPress(score.OwnerMaster, "volume", score.Pos{Bar: 7}, 1, -1)
+	scEd.autoRelease()
+	scEd.autoPress(score.OwnerMaster, "volume", score.Pos{Bar: 9}, 0, -1)
+	scEd.autoRelease()
+	scEd.autoShape(score.OwnerMaster, "volume", 1, score.LaneCurve, -0.6)
+	rows := scoreTLRows(scEd)
+	scoreTLTrackScroll = 1e6 // scoreTLClampView brings it to the bottom
+	frame()
+	frame()
+	img = readFrame(W, H)
+	shot(t, "timeline_mix", img)
+	if last := rows[len(rows)-1]; last.line != score.OwnerMaster || last.lane != "volume" {
+		t.Errorf("the last row is %+v, not the master's volume lane", last)
+	}
+
+	// The instrument library, the violins' instrument selected.
+	scoreView = scoreViewScore
+	scoreOpenLibrary(2, false)
+	frame()
+	frame()
+	shot(t, "library", readFrame(W, H))
+	// Its import panel, browsing a folder with an .sfz chosen.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "samples"), 0o755)
+	os.WriteFile(filepath.Join(dir, "Chamber Strings.sfz"), []byte("<region> sample=samples/a.wav"), 0o644)
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not a library"), 0o644)
+	scoreLibrary.importing, scoreLibrary.browseDir = true, dir
+	scoreLibChoose(filepath.Join(dir, "Chamber Strings.sfz"))
+	frame()
+	frame()
+	shot(t, "import", readFrame(W, H))
+	scoreLibrary.importing = false
+	imgui.CloseCurrentPopup()
+	scoreLibrary.open = false
+	frame()
 }
 
 // readFrame reads the framebuffer back as an opaque image, top row first.

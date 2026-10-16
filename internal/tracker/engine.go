@@ -24,6 +24,8 @@ package tracker
 import (
 	"math"
 	"sync/atomic"
+
+	"foundry/internal/tracker/fx"
 )
 
 // MaxVoices caps sounding notes per engine, released tails included.
@@ -94,6 +96,10 @@ type StripControls struct {
 	// reduces its bit depth. Inserts, before the sends.
 	Drive float32
 	Crush int
+	// PreA and PreB take a send before the fader and pan (after the
+	// inserts, still muted with the strip): the bus hears the line at the
+	// same level whatever its fader does. Effects path only (SetBusChains).
+	PreA, PreB bool
 }
 
 // stripState is a strip's controls, mute fade, filter and meter.
@@ -109,6 +115,18 @@ type stripState struct {
 	// What following voices copy every block: the line's momentary level,
 	// pitch offset (semitones) and pan.
 	fVol, fPitch, fPan float32
+
+	// The effects path (engine_fx.go): pre-fader sends, the insert chain,
+	// the gains reached at the end of the last sub-block (each sub-block
+	// ramps from them to the controls'), and how long the chain's output
+	// has been silent with nothing playing into it.
+	preA, preB         bool
+	chain              *fx.Chain
+	gl0, gr0, sa0, sb0 float32
+	primed             bool
+	quiet              int
+	// rampLeft is the frames the gains have left to reach the controls.
+	rampLeft int
 }
 
 func newStrip() stripState { return stripState{mute: 1, muteTarget: 1, vol: 1, fVol: 1} }
@@ -136,12 +154,23 @@ const (
 	CueKill
 	// CueNoteControl sets Note's Volume, Bend (semitones) and Pan.
 	CueNoteControl
-	// CueStrip sets Strip's Controls.
+	// CueStrip sets Strip's Controls; on the effects path its gains reach
+	// them in a straight line over Frames (0: a control block).
 	CueStrip
 	// CueMute fades Strip out (On) or back in over Secs.
 	CueMute
 	// CueReleaseAll releases every note.
 	CueReleaseAll
+	// CueFX glides parameter Param of effect Slot in Strip's insert chain
+	// (or FXBusA, FXBusB, FXMaster) to Value over Frames.
+	CueFX
+	// CueBus sets send bus Strip's (0 or 1) return to Controls.Volume, its
+	// pan to Controls.Pan and its mute to On, reached in a straight line
+	// over Frames. Effects path only.
+	CueBus
+	// CueGain sets the master gain to Value, reached in a straight line
+	// over Frames (on the effects path; the Tracker's mix steps).
+	CueGain
 )
 
 // Cue is one engine event, At frames into the next Render.
@@ -160,6 +189,9 @@ type Cue struct {
 	// CueMute.
 	On   bool
 	Secs float32
+	// CueFX.
+	Slot, Param, Frames int
+	Value               float32
 }
 
 type rrSlot struct {
@@ -172,6 +204,7 @@ type rrSlot struct {
 // Engine renders voices through strips and buses. See the file comment.
 type Engine struct {
 	levels     [MaxStrips]atomic.Uint32
+	busLevels  [2]atomic.Uint32
 	scope      [scopeLen]atomic.Uint32
 	voicesLive atomic.Int32
 
@@ -192,16 +225,27 @@ type Engine struct {
 	delaySpec  DelaySpec
 	compSpec   CompressorSpec
 	gain       float32
+	// gain0 is the master gain the effects path reached at the end of the
+	// last sub-block, gainLeft the frames it has left to reach gain.
+	gain0      float32
+	gainLeft   int
+	gainPrimed bool
 	bpm        float32
-	rev        *reverb
-	dly        *delay
-	comp       compressor
+	rev        *fx.Freeverb
+	dly        *fx.Echo
+	comp       fx.Comp
 	scopePos   int
 
 	rr      [rrSlots]rrSlot
 	rrClock uint64
 
 	cues []Cue
+
+	// The effects path (engine_fx.go), on once SetBusChains is called: the
+	// buses run their chains and the master chain replaces the compressor.
+	fxPath bool
+	buses  [2]busState
+	master *fx.Chain
 }
 
 // NewEngine returns an engine with strips strips and default buses. It
@@ -213,6 +257,7 @@ func NewEngine(strips int) *Engine {
 	for i := range e.voices {
 		e.voices[i].strip = -2
 	}
+	e.buses[0].ret, e.buses[1].ret = 1, 1
 	e.SetStripCount(strips)
 	return e
 }
@@ -220,8 +265,8 @@ func NewEngine(strips int) *Engine {
 // init (re)builds the buses for a sample rate. Allocates.
 func (e *Engine) init(rate int) {
 	e.rate = rate
-	e.rev = newReverb(rate)
-	e.dly = newDelay(rate)
+	e.rev = fx.NewFreeverb(rate)
+	e.dly = fx.NewEcho(rate)
 	e.applyBuses()
 	e.ensureBuffers()
 }
@@ -290,26 +335,29 @@ func (e *Engine) SetBuses(rev ReverbSpec, dly DelaySpec, comp CompressorSpec, ga
 // SetGain sets the master gain alone, as it is: 0 is silence (SetBuses
 // reads 0 as unity, for a song that never set one). Cheap; any goroutine
 // that owns the engine.
-func (e *Engine) SetGain(gain float32) { e.gain = gain }
+func (e *Engine) SetGain(gain float32) { e.gain, e.gainLeft = gain, controlBlock }
 
 // SetReturns sets the reverb and delay buses' return levels alone, as
 // SetBuses would with the rest of their specs unchanged. Cheap.
 func (e *Engine) SetReturns(reverb, delay float32) {
 	e.reverbSpec.Return, e.delaySpec.Return = reverb, delay
+	e.buses[0].ret, e.buses[1].ret = reverb, delay
 }
 
 func (e *Engine) applyBuses() {
-	e.rev.set(e.reverbSpec)
-	e.dly.set(e.delaySpec, e.bpm, e.rate)
-	e.comp.set(e.compSpec, e.rate)
+	setReverb(e.rev, e.reverbSpec)
+	setDelay(e.dly, e.delaySpec, e.bpm, e.rate)
+	setCompressor(&e.comp, e.compSpec, e.rate)
 }
 
-// SetTempo re-syncs the delay bus to a tempo.
+// SetTempo re-syncs the delay bus, and every tempo-synced effect, to a
+// tempo.
 func (e *Engine) SetTempo(bpm float32) {
 	e.bpm = bpm
 	if e.dly != nil {
-		e.dly.set(e.delaySpec, bpm, e.rate)
+		setDelay(e.dly, e.delaySpec, bpm, e.rate)
 	}
+	e.chainsTempo()
 }
 
 // SetInterp sets the interpolation for instruments that leave theirs unset.
@@ -329,6 +377,15 @@ func (e *Engine) SetStrip(i int, c StripControls) {
 	st.vol, st.pan, st.sendA, st.sendB = c.Volume, c.Pan, c.SendA, c.SendB
 	st.cutoffHz, st.reso = c.CutoffHz, c.Resonance
 	st.drive, st.crush = c.Drive, c.Crush
+	st.preA, st.preB = c.PreA, c.PreB
+	st.rampLeft = controlBlock
+	if !st.primed {
+		// A strip starts where it is first set — not at the target of
+		// the first cue after (a lane cued from the first frame ramps
+		// from its value there).
+		st.gl0, st.gr0 = balance(st.vol*st.mute, st.pan)
+		st.sa0, st.sb0, st.primed = st.sendA, st.sendB, true
+	}
 }
 
 // SetFollow sets what a strip's following notes play at: a level, a pitch
@@ -454,6 +511,9 @@ func (e *Engine) Cue(c Cue) bool {
 // PendingCues is how many cues wait for a later render.
 func (e *Engine) PendingCues() int { return len(e.cues) }
 
+// CueRoom is how many more cues the queue takes before Cue refuses one.
+func (e *Engine) CueRoom() int { return cap(e.cues) - len(e.cues) }
+
 func (e *Engine) applyCue(c *Cue) {
 	switch c.Kind {
 	case CueNoteOn:
@@ -472,10 +532,27 @@ func (e *Engine) applyCue(c *Cue) {
 		e.SetNoteControls(c.Note, c.Volume, c.Bend, c.Pan)
 	case CueStrip:
 		e.SetStrip(c.Strip, c.Controls)
+		if c.Frames > 0 && c.Strip >= 0 && c.Strip < len(e.strips) {
+			e.strips[c.Strip].rampLeft = c.Frames
+		}
 	case CueMute:
 		e.SetMute(c.Strip, c.On, c.Secs)
 	case CueReleaseAll:
 		e.ReleaseAll()
+	case CueFX:
+		if ch := e.chainFor(c.Strip); ch != nil {
+			ch.SetParam(c.Slot, c.Param, c.Value, c.Frames)
+		}
+	case CueBus:
+		e.SetBus(c.Strip, c.Controls.Volume, c.Controls.Pan, c.On)
+		if c.Frames > 0 && c.Strip >= 0 && c.Strip < 2 {
+			e.buses[c.Strip].rampLeft = c.Frames
+		}
+	case CueGain:
+		e.SetGain(c.Value)
+		if c.Frames > 0 {
+			e.gainLeft = c.Frames
+		}
 	}
 }
 
@@ -558,10 +635,10 @@ func (e *Engine) prepStrips(dt float32) {
 		}
 		if hz := st.cutoffHz; hz > 0 && hz < 19000 {
 			if !st.filtOn {
-				st.filt.reset()
+				st.filt.Reset()
 			}
 			st.filtOn = true
-			st.filt.set(FilterLowPass, hz, st.reso, e.rate)
+			setFilter(&st.filt, FilterLowPass, hz, st.reso, e.rate)
 		} else {
 			st.filtOn = false
 		}
@@ -576,7 +653,16 @@ func (e *Engine) mixBlock(out []float32, n int) {
 	nn := n * 2
 	for i := range e.strips {
 		if e.used[i] {
-			clear(e.stripBuf[i][:nn])
+			if e.fxPath {
+				// The whole buffer: a sub-block shorter than the last one
+				// would otherwise leave the end of the last one's signal
+				// for a longer sub-block after an idle one to play again.
+				// (The Tracker's mix keeps that quirk: it is a few frames
+				// of a strip's own sound, and its renders are golden.)
+				clear(e.stripBuf[i])
+			} else {
+				clear(e.stripBuf[i][:nn])
+			}
 			e.used[i] = false
 		}
 	}
@@ -615,6 +701,16 @@ func (e *Engine) mixBlock(out []float32, n int) {
 		}
 	}
 
+	if e.fxPath {
+		for ci := range e.strips {
+			e.mixStripFX(ci, n)
+		}
+		for i := 0; i < nn; i++ {
+			e.dry[i] += e.prevBuf[i]
+		}
+		e.mixBusesFX(out, n)
+		return
+	}
 	for ci := range e.strips {
 		e.mixStrip(ci, n)
 	}
@@ -627,16 +723,16 @@ func (e *Engine) mixBlock(out []float32, n int) {
 	for f := 0; f < n; f++ {
 		l, r := e.dry[f*2], e.dry[f*2+1]
 		if revRet > 0 {
-			wl, wr := e.rev.process(e.a[f*2], e.a[f*2+1])
+			wl, wr := e.rev.Process(e.a[f*2], e.a[f*2+1])
 			l += wl * revRet
 			r += wr * revRet
 		}
 		if dlyRet > 0 {
-			wl, wr := e.dly.process(e.b[f*2], e.b[f*2+1])
+			wl, wr := e.dly.Process(e.b[f*2], e.b[f*2+1])
 			l += wl * dlyRet
 			r += wr * dlyRet
 		}
-		l, r = e.comp.process(l, r)
+		l, r = e.comp.Process(l, r)
 		out[f*2], out[f*2+1] = l*gain, r*gain
 		if f&3 == 0 {
 			e.scope[e.scopePos].Store(math.Float32bits((l + r) * 0.5 * gain))
@@ -669,22 +765,20 @@ func (e *Engine) mixStrip(ci, n int) {
 	// tanh saturation at unity small-signal gain: quiet passages pass as they
 	// are and only peaks above about 1/dk are squashed, so drive adds edge
 	// without the level jump a peak-normalised curve gives everything quiet.
-	dk := 1 + 9*st.drive
+	dk := fx.DriveK(st.drive)
 	dnorm := 1 / dk
 	crush := st.crush > 0 && st.crush < 16
-	steps := float32(int(1) << max(st.crush-1, 0))
+	steps := fx.CrushSteps(st.crush)
 	for f := 0; f < n; f++ {
 		l, r := buf[f*2], buf[f*2+1]
 		if st.filtOn {
-			l, r = st.filt.process(0, l), st.filt.process(1, r)
+			l, r = st.filt.Process(0, l), st.filt.Process(1, r)
 		}
 		if drive {
-			l = float32(math.Tanh(float64(l*dk))) * dnorm
-			r = float32(math.Tanh(float64(r*dk))) * dnorm
+			l, r = fx.Drive(l, dk, dnorm), fx.Drive(r, dk, dnorm)
 		}
 		if crush {
-			l = float32(math.Round(float64(l*steps))) / steps
-			r = float32(math.Round(float64(r*steps))) / steps
+			l, r = fx.Crush(l, steps), fx.Crush(r, steps)
 		}
 		l, r = l*gl, r*gr
 		e.dry[f*2] += l
