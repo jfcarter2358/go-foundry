@@ -47,6 +47,19 @@
 // without a popping wave: the same instances drop out at the same distance
 // every time, each fading over a narrow band of rank.
 //
+// # Ground cover (docs/terrain-paint/PHASE_P3.md)
+//
+// The same instancer draws litter, twigs, needles and pebbles. Three kind
+// flags say how: KindOriented (the clump stands on its own up axis — the
+// ground's normal for `orient: ground`, tilted at random by `tilt_jitter`
+// — carried per instance in a fourth word, orient.go, so a field with any
+// oriented kind is an ORIENTED field, version 2, 16 bytes a clump);
+// KindNoWind (twigs and stones do not sway); KindCard (a flat alpha-cut
+// quad lying on the ground, leaf litter, drawn with a depth bias). A kit
+// and a field with none of them are byte for byte what they were before:
+// the flags live in the kind's existing flags word, and a field without
+// an oriented kind is still version 1 at 12 bytes a clump.
+//
 // Pure Go: no GL, no world. The stage writes these files; render reads them.
 package grassfield
 
@@ -56,6 +69,10 @@ const (
 	KitVersion   = 1
 	FieldMagic   = "FGRS"
 	FieldVersion = 1
+	// FieldVersionOriented is a field whose instances carry a fourth word,
+	// their up axis (orient.go). A field with no oriented kind is still
+	// written as FieldVersion, byte for byte as before.
+	FieldVersionOriented = 2
 )
 
 // File extensions.
@@ -77,16 +94,36 @@ const MaxKinds = 1024
 // axis to 1 at its widest; then the kind's bend and flutter).
 const VertexFloats = 12
 
-// InstanceWords is one packed instance, in uint32s.
-const InstanceWords = 3
+// InstanceWords is one packed instance, in uint32s; OrientedInstanceWords
+// one in an oriented field (Field.Oriented), its up axis the fourth word.
+const (
+	InstanceWords         = 3
+	OrientedInstanceWords = 4
+)
 
 // Kit is the meshes a set of fields draws.
 type Kit struct {
 	Kinds []Kind
 }
 
-// KindCasts marks a kind that casts shadows (within the shadow range).
-const KindCasts = 1
+// Kind flags.
+const (
+	// KindCasts marks a kind that casts shadows (within the shadow range).
+	KindCasts = 1 << iota
+	// KindOriented marks a kind whose clumps stand on their own up axis
+	// (the instance's fourth word, orient.go) instead of world +Y: laid
+	// along the ground's normal (`orient: ground`), tilted at random
+	// (`tilt_jitter`), or both. Its fields are oriented fields.
+	KindOriented
+	// KindNoWind marks a kind that does not sway (`wind: false`: twigs,
+	// pebbles). Its vertices' bend and flutter are 0 as well, so the vertex
+	// stage's wind is nothing either way; the flag says so to tools.
+	KindNoWind
+	// KindCard marks a CARD: a flat alpha-cut quad lying on the ground
+	// (leaf litter), lit as the ground it lies on and drawn with a depth
+	// bias toward the camera so it never fights the terrain under it.
+	KindCard
+)
 
 // Kind is one instanceable clump.
 type Kind struct {
@@ -113,6 +150,12 @@ type Kind struct {
 
 // Casts reports whether the kind casts shadows.
 func (k *Kind) Casts() bool { return k.Flags&KindCasts != 0 }
+
+// Oriented reports whether the kind's clumps stand on their own up axis.
+func (k *Kind) Oriented() bool { return k.Flags&KindOriented != 0 }
+
+// Card reports whether the kind is a flat ground card.
+func (k *Kind) Card() bool { return k.Flags&KindCard != 0 }
 
 // Mesh is one LOD: VertexFloats floats per vertex, three indices a triangle.
 type Mesh struct {
@@ -141,22 +184,35 @@ type Field struct {
 	CellsX, CellsZ int
 	// Kinds is the kit's kind count the runs are laid out for.
 	Kinds int
+	// Oriented fields store OrientedInstanceWords a clump (its up axis in
+	// the fourth word) and are FieldVersionOriented on disk; others store
+	// InstanceWords, as every field did before.
+	Oriented bool
 	// Runs is (offset, count) per cell per kind: run cell·Kinds + kind.
 	Runs []Run
 	// CellY is each cell's ground height range (min, max), world metres:
 	// the cell's box bottom and, with the tallest kind, its top.
 	CellY [][2]float32
-	// Data is the packed instances, InstanceWords each, in run order.
+	// Data is the packed instances, Words() each, in run order.
 	Data []uint32
 }
 
-// Run is one (cell, kind)'s instances: Data[Offset·3 : (Offset+Count)·3].
+// Run is one (cell, kind)'s instances: Data[Offset·w : (Offset+Count)·w],
+// w = Field.Words().
 type Run struct {
 	Offset, Count uint32
 }
 
+// Words is one instance's size in the field, in uint32s.
+func (f *Field) Words() int {
+	if f.Oriented {
+		return OrientedInstanceWords
+	}
+	return InstanceWords
+}
+
 // Count is the field's instance count.
-func (f *Field) Count() int { return len(f.Data) / InstanceWords }
+func (f *Field) Count() int { return len(f.Data) / f.Words() }
 
 // Run is cell c's run of kind k.
 func (f *Field) Run(c, k int) Run { return f.Runs[c*f.Kinds+k] }

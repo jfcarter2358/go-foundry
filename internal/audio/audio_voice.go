@@ -196,6 +196,10 @@ type mixer struct {
 
 	scratch []float32
 
+	// muffle is the under-water low-pass on the effects bus
+	// (audio_muffle.go).
+	muffle muffleState
+
 	// limiterGain and peak are the master limiter's state and its last
 	// reading. Peak is surfaced in Stats as a free level meter, which is what
 	// tells an author their clip is 12 dB hotter than everything else.

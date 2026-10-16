@@ -787,7 +787,7 @@ func drawSpriteBatch(p *spriteProgram, b *spriteBatch, n, base int) {
 func uploadSpriteLighting(prog uint32, lvl *world.Level, frame ShadowFrame) {
 	lights := world.SceneLights(lvl)
 	world.UploadLightsTo(prog, lights, false)
-	world.UploadFogTo(prog, lvl.Fog, lvl.Volumes, lvl)
+	world.UploadFogTo(prog, frameFog(lvl), frameVolumes(lvl), lvl)
 	UploadShadowUniformsTo(prog, lvl.Lights, frame)
 	UploadPointShadowUniformsTo(prog, lights)
 

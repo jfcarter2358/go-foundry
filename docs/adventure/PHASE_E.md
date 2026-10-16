@@ -217,3 +217,60 @@ textures written by this run: ~190 MB under `models/polyhaven` and ~205 MB of
   shot from the scratch project generated from the same document.
 - The ripple shader, the cave/ruins fixes and the new params need the editor
   rebuilt from this tree to show in the user's installed editor.
+
+## Phase E2: visual polish
+
+From the lead's review of the phase E shots. `$S2` is
+`/tmp/claude-1000/-home-jfcarter2358-personal-code-main-foundry/ec789bcb-0346-4ea6-a32e-b00173193e5a/scratchpad/phe2`
+(play scripts `a.play` slot/cave, `b.play` ledge/ruins, `c.play` goal; the
+earthy recolour tool `recolor/`); the scratch project is still `$S/proj`.
+Final shots: `$S2/final/`.
+
+### What changed
+
+| Item | Fix |
+| --- | --- |
+| **Backdrop wall** | The far mountain stamps (four 260–380 m radius massifs, 380–650 m high, merged into one wall that filled the sky with tiled strata) are gone. The far ring now has: two `cut` stamps sinking a ~110 m deep desert **basin** east of the map (all beyond x 450: the map is untouched) — the ruins' valley ends on a scarp over it; four mesas and five low buttes (`plateau`, rough 0.8, talus falloff) standing in it; six lone **peaks** along the horizon at 1.5–3 km, each a jagged 7-point crest (`mountain`, ridges 1, rough 0.8, heights 210–340 m above the basin) — shark-fin silhouettes, not cones. Seen from the ledge they sit 3–8° over the horizon in aerial haze. |
+| **Fog wall** | The default height fog (base 0, density 0.006, falloff 0.12: a 10 m thick opaque layer at the valley floor's level) was the flat beige band. Now `height_base -112` (the basin floor), `height_density 0.0012`, `height_falloff 0.014` (≈70 m scale height) and `aerial_distance 1300`, `aerial_scale_height 450`: haze thickens with depth and down into the basin. |
+| **Floating rock at the upper mouth** (cave Version 3) | Rock drapery hangs from the analytic roof; where a mouth's roof opens to the sky the fin's foot is still under the ground's surface and was meshed as an island. `dropFloatingCave`: every connected piece of a section's raw mesh that touches none of the section box's faces is dropped (the raw mesh is the rock clipped to the box, so anything joined to the walls touches a face). Generic: also strata slivers and sealed air bubbles. |
+| **Cave mouth ground material** (cave Version 3) | The ground round a mouth wore the *far backdrop's* material (the first terrain placement with a material is a far tile: six-times repeat). It now wears the ground stage's map material. |
+| **Floating ruin fragments** (ruins Version 3) | A ruined gateway's cut left its arch stones floating over the colonnade (09_goal). `dropUngrounded`: a variant's pieces whose lowest point is over 0.5 m above its floor are dropped. |
+| **Rock pile** (cave, new Added params, `cave_pile.go`) | `piles` (per 100 m², only where the cave is ≥ `pile_min_width` wide, off the clear lane): each pile a core (a huge slab from `pile_slab_rocks` — new `slabs` stage: Poly Haven rock_face_01/02, coast_rocks_05, coast_land_rocks_02 — or a big block), blocks round it (`pile_rocks`: the namaqualand boulders, lite), chips in a skirt (`pile_chip_rocks`: namaqualand stones/rocks, lite), sizes falling off outward. Every piece **rests on what is under it** — the floor (the void's own blocks included) or the pieces before it, each a dome of its `Top` (not bounding height) — sinking only `pile_sink` (8 %); blocks/slabs lean up to `pile_tilt`, chips any way up. 51 piles, ~6,000 pieces (chips 2/m²; draw/shadow distances 140/50 m, chips 56/20). Floor rocks 0.2→0.12/m², the void's fallen SDF blocks 0.85→0.55 (they were the "blobby mounds"). |
+| **Cave light** | `darkness` 0.95→0.88; the rock-pile chamber gets three warm lamps (3.2/2.6/2.6, radius 13–15 m, two new lamp models against its walls) and the skylight chamber a dim fill (make_level.py `PILE_LIGHTS`). |
+| **Ruins city** | `outliers` 24→110 (78 fit), `spread` 32→75, `max_plinth` 24→46 (towers on tall plinths out of the spurs' flanks), new Added `outlier_scale` (1.1–1.75: the slope towers bigger than the terrace ones), `buildings 1`, `walls 0.85`, `gates 0.5`. All library instances (10 variants). Site mesh 1.05 M → 2.40 M triangles (plinths), 48 → 115 MB. |
+| **Slot** | Rubble density 60→140 (2,224 placed, lite 2k), plants spacing 1.5→0.9 (112), `shafts_strength 1.5`, `shafts_ambient 0.1`. Top-down splat layers on steep faces blend into their own triplanar projection (`surface_fx.glsl` `fxSplatSample`/`fxSplatTriSum`). Terrain material `streaks` 0.4→0.25. |
+| **Player body** | `adventurer_khaki` (+ `_normal`, the mechanic's): the mechanic_crew texture with the orange suit recoloured to khaki canvas and the reflective stripes to brown leather, skin/boots untouched (one-off Go tool `$S2/recolor/`). |
+
+Tests: `stages/cave_phase_e2_test.go` (floating piece dropped / clipped kept;
+pile dome; ungrounded ruin piece dropped).
+
+### Verification
+
+- Scratch and OneDrive regenerated from the same document (OneDrive run 19 min 24 s, peak RSS 1.99 GB, `-workers 6`); `foundry check adventure` loads it (3 chunks, 24 volumes, 8 lights). OneDrive `generated/adventure` 522 → **599 MB**, + ~78 MB of new Poly Haven slab scans.
+- **Walk**: `make_walk.py` now steps 3 m on along each flight before turning for the next (a straight line from a flight's foot cut its parapet's corner — the OneDrive site mesh differs from the scratch one by float noise and caught the walker there). Spawn → relic in 164 s of game time, `relic_trigger.attr.woken` true, in the OneDrive project (`-limit 400`: the default 120 s game-time limit stops it); momentary blocks only.
+- `go test ./internal/procgen/stages -run 'TestCave|TestRuins|TestPileDome|TestEveryKindDocumentsItself'` ok; `go vet` stages/ruins clean.
+- Shots: `$S2/final/` (01–11 as phase E, plus `03_cave_skylight_pile`, `04_cave_rockpile_b`, `06_ledge_city`), rendered with a binary built from the tree as it stood (`foundry2`).
+
+### Still short of the references
+
+- **02 slot smear**: the close right wall in the original 02 pose still
+  shows a smeared, hatched texture. It is not the splat's projection (two
+  shader attempts changed nothing; one reverted) nor the mouth material;
+  walls framed at 2–3 m look right (`sf/b.png`, `sf/c.png`). It is the
+  third-person boom pressed against the wall at < 1 m (magnified rock
+  texture + varnish streaks). The final 02 is shot 1.5 m off that wall. A
+  close-range detail layer on the rock (detail_normal on rockface) would be
+  the real fix.
+- **Rock pile**: piles of scanned blocks and chips now stack at the chamber
+  walls, but the lane is still sand with scattered stones, and the chamber
+  is lamp-lit and dim — no sunbeam (100 m of rock over it). The reference's
+  floor is rock wall to wall.
+- **Peaks/mesas** are 8 m backdrop cells: silhouettes read, faces are soft.
+  Plinths are plain boxes; no ropes/flags.
+- **Ruins render darker** (brown, not tan) in the final shots than in the
+  mid-phase ones (`$S2/s3b/`), with the same data: it arrived with the
+  parallel trails session's surface_fx/material changes landing in the tree
+  (a binary from before them renders the same level bright). Not this
+  phase's; re-shoot once that work settles.
+- Placements 2,680 → ~9,900 (piles 6k, rubble 2.2k): phase F should check
+  CPU cost of the pile instances (all small, lite, short draw distance).

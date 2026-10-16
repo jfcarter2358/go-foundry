@@ -352,6 +352,7 @@ func lenientPlan(d *Doc) map[string]*plannedStage {
 				up = append(up, "extra-error:"+err.Error())
 			}
 		}
+		up = foldPaint(d, k.Params, p, up)
 		ps.hash = PreviewHash(k, ps.seed, p, up)
 		out[s.ID] = ps
 	}

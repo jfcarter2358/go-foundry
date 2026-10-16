@@ -66,7 +66,23 @@ const (
 	// (layers 5–8). 31: free in every program that links fragment.glsl
 	// (render's TestFxUnitsAreFree).
 	FxUnitSplatWeights2 = 31
+	// FxUnitTrail is the ground trails' map (render/ground_trails.go,
+	// docs/trails/SPEC.md), read by a splat with a soft layer. 47: free in
+	// every program that links fragment.glsl (TestFxUnitsAreFree).
+	FxUnitTrail = 47
 )
+
+// GroundTrail is the frame's trail map, published by render's trail update
+// before anything draws: the texture (TrailSize² RG16F, wrapped), the world
+// X/Z of its window's first corner and the window's span in metres. On is
+// false when there is none (switched off, no GL compute), and then no splat
+// takes the FX_TRAIL path.
+var GroundTrail struct {
+	On   bool
+	Tex  uint32
+	Min  [2]float32
+	Span float32
+}
 
 // The matFx bits: surface_fx.glsl's FX_*.
 const (
@@ -79,6 +95,9 @@ const (
 	fxGrade
 	// fxSplat8 is the splat's eight-layer mode, set beside fxSplat.
 	fxSplat8
+	// fxTrail is the splat's soft layers reading the ground trails, set
+	// beside fxSplat (256).
+	fxTrail
 )
 
 // FxLocs is one program's locations for the effects' uniforms.
@@ -95,7 +114,11 @@ type FxLocs struct {
 	splatLayer2, splatAnti2, splatRelief2                  int32
 	splatStrataOn, splatStrataOn2, splatCols               int32
 	// splatRows is a palette atlas's rows (fxSplatRows; 2 otherwise).
-	splatRows                                          int32
+	splatRows int32
+	// The ground trails: the map, its window, and the layers' soft depth
+	// and fill (four and four).
+	trail, trailRect                                   int32
+	splatSoft, splatSoft2, splatFill, splatFill2       int32
 	groundColor, groundHeight, groundRect, groundRange int32
 	groundParams                                       int32
 	streaks, streakColor                               int32
@@ -129,6 +152,9 @@ func NewFxLocs(prog uint32) FxLocs {
 		splatHeight2: loc("fxSplatHeight2"), splatLayer2: loc("fxSplatLayer2"), splatAnti2: loc("fxSplatAnti2"),
 		splatRelief2: loc("fxSplatRelief2"), splatStrataOn: loc("fxSplatStrataOn"), splatStrataOn2: loc("fxSplatStrataOn2"),
 		splatCols: loc("fxSplatCols"), splatRows: loc("fxSplatRows"),
+		trail: loc("fxTrail"), trailRect: loc("fxTrailRect"),
+		splatSoft: loc("fxSplatSoft"), splatSoft2: loc("fxSplatSoft2"),
+		splatFill: loc("fxSplatFill"), splatFill2: loc("fxSplatFill2"),
 	}
 }
 
@@ -226,15 +252,15 @@ func bindSurfaceFxSamplers(prog uint32, force bool) {
 	fxSamplersRest(l)
 }
 
-// fxSamplerLocs is l's eight sampler locations, in FxUnit order.
-func fxSamplerLocs(l *FxLocs) [8]int32 {
-	return [8]int32{l.splatWeights, l.splatAlbedo, l.splatNormal, l.strata, l.groundColor, l.groundHeight, l.detail,
-		l.splatWeights2}
+// fxSamplerLocs is l's nine sampler locations, in FxUnit order.
+func fxSamplerLocs(l *FxLocs) [9]int32 {
+	return [9]int32{l.splatWeights, l.splatAlbedo, l.splatNormal, l.strata, l.groundColor, l.groundHeight, l.detail,
+		l.splatWeights2, l.trail}
 }
 
-// fxUnits is the eight samplers' own units, in the same order.
-var fxUnits = [8]int32{FxUnitSplatWeights, FxUnitSplatAlbedo, FxUnitSplatNormal, FxUnitStrata, FxUnitGroundColor,
-	FxUnitGroundHeight, FxUnitDetail, FxUnitSplatWeights2}
+// fxUnits is the nine samplers' own units, in the same order.
+var fxUnits = [9]int32{FxUnitSplatWeights, FxUnitSplatAlbedo, FxUnitSplatNormal, FxUnitStrata, FxUnitGroundColor,
+	FxUnitGroundHeight, FxUnitDetail, FxUnitSplatWeights2, FxUnitTrail}
 
 // fxSamplersRest points l's samplers at unit 0.
 func fxSamplersRest(l *FxLocs) {
@@ -279,6 +305,9 @@ func applySurfaceFx(f *material.SurfaceFx, texture string, l *FxLocs) {
 			mask |= fxSplat
 			if eight {
 				mask |= fxSplat8
+			}
+			if applyTrail(f, l, eight) {
+				mask |= fxTrail
 			}
 		}
 	}
@@ -430,6 +459,42 @@ func applySplat(f *material.SurfaceFx, l *FxLocs) (ok, eight bool) {
 	gl.Uniform4f(l.splatRipple, max(f.SplatRipple, 0), 1/max(f.SplatRippleWave, 0.02),
 		f.SplatRippleAngle*math.Pi/180, f.SplatRippleLayer)
 	return true, eight
+}
+
+// applyTrail binds the ground trails for a splat with a soft layer and
+// writes its layers' soft depth and fill; false (no FX_TRAIL) for a splat
+// with none, or a frame with no trail map. eight: layers 5–8 too.
+func applyTrail(f *material.SurfaceFx, l *FxLocs, eight bool) bool {
+	if !GroundTrail.On || GroundTrail.Tex == 0 || !f.HasSoft() || l.trail < 0 {
+		return false
+	}
+	n := material.SplatLayers
+	if eight {
+		n = material.SplatLayersMax
+	}
+	var soft, fill [material.SplatLayersMax]float32
+	any := false
+	for i := 0; i < n; i++ {
+		sl := &f.SplatLayers[i]
+		if d := material.SoftLayerDepth(sl); d > 0 {
+			soft[i], fill[i] = d, material.SoftKinds[sl.Soft].Fill
+			any = true
+		}
+	}
+	if !any {
+		return false
+	}
+	gl.ActiveTexture(gl.TEXTURE0 + FxUnitTrail)
+	gl.BindTexture(gl.TEXTURE_2D, GroundTrail.Tex)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.Uniform4f(l.trailRect, GroundTrail.Min[0], GroundTrail.Min[1], 1/GroundTrail.Span, GroundTrail.Span)
+	gl.Uniform4fv(l.splatSoft, 1, &soft[0])
+	gl.Uniform4fv(l.splatFill, 1, &fill[0])
+	if eight {
+		gl.Uniform4fv(l.splatSoft2, 1, &soft[4])
+		gl.Uniform4fv(l.splatFill2, 1, &fill[4])
+	}
+	return true
 }
 
 // applyGround binds the ground blend's two maps and writes its uniforms.

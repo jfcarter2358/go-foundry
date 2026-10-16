@@ -469,7 +469,8 @@ func (s *Scenery) loadNanite() error {
 	}
 	s.Nanite = m
 	s.LocalMin, s.LocalMax = m.Lo, m.Hi
-	s.NaniteGPU = NaniteMeshes && !s.NoNanite && GeometryUploadsOn() && NaniteGPUAvailable != nil && NaniteGPUAvailable()
+	s.NaniteGPU = NaniteMeshes && !s.NoNanite && GeometryUploadsOn() && NaniteGPUAvailable != nil && NaniteGPUAvailable() &&
+		!s.wearsWater()
 	if !s.NaniteGPU {
 		c, err := claimSceneryClassic(m)
 		if err != nil {
@@ -812,4 +813,22 @@ func SceneryToRaw(s *Scenery) RawScenery {
 		r.Scale = &RawVec3{X: sc.X(), Y: sc.Y(), Z: sc.Z()}
 	}
 	return r
+}
+
+// wearsWater reports whether any of a cooked placement's slots wears a
+// material with the water effect. Such a placement stays on the classic path:
+// the GPU cull draws everything it holds in the opaque pass, and water is
+// drawn after it, in render's water pass, over copies of the scene it lies
+// on (docs/terrain-paint/PHASE_W1.md). A generated water tile is a flat
+// handful of triangles, so the classic path costs it nothing.
+func (s *Scenery) wearsWater() bool {
+	if s.Nanite == nil {
+		return false
+	}
+	for si := range s.Nanite.Slots {
+		if m, ok := material.ResolveSurface(s.SlotMaterial(si)); ok && m.HasWater {
+			return true
+		}
+	}
+	return false
 }

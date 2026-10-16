@@ -64,7 +64,9 @@ func init() {
 		// with bigger, square merlons (they eroded to cushions at the site's
 		// cell), and the grade is warmer and more saturated (the towers read
 		// grey against the reference's sandstone).
-		Version: 2,
+		// 3: pieces of a ruined variant that reach nowhere near its floor
+		// (an arch's stones left floating by the ruin's cuts) are dropped.
+		Version: 3,
 		Doc: "Ancient sandstone ruins along a path down a slope: terraces held by battered retaining walls, stairs between " +
 			"them, stepped temple towers with cornices, carved niches and domed crowns, pavilions on columns, gateways, " +
 			"crenellated walls, fallen columns and rubble. The buildings are a library of variants meshed once at a fine " +
@@ -444,6 +446,57 @@ func runRuins(rc *procgen.RunContext) error {
 
 // ---------- the library's meshes ----------
 
+// dropUngrounded drops every connected piece of m whose lowest point is more
+// than reach over the floor (y = 0): nothing holds it up. It returns how
+// many pieces it dropped.
+func dropUngrounded(m *sdf.Mesh, reach float64) int {
+	nv := len(m.Positions)
+	parent := make([]int32, nv)
+	for i := range parent {
+		parent[i] = int32(i)
+	}
+	find := func(x int32) int32 {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+	for t := 0; t+2 < len(m.Indices); t += 3 {
+		a := find(int32(m.Indices[t]))
+		for k := 1; k < 3; k++ {
+			if b := find(int32(m.Indices[t+k])); a != b {
+				parent[b] = a
+			}
+		}
+	}
+	low := map[int32]float64{}
+	for _, ix := range m.Indices {
+		r := find(int32(ix))
+		if y, ok := low[r]; !ok || m.Positions[ix][1] < y {
+			low[r] = m.Positions[ix][1]
+		}
+	}
+	dropped := 0
+	for _, y := range low {
+		if y > reach {
+			dropped++
+		}
+	}
+	if dropped == 0 {
+		return 0
+	}
+	out := m.Indices[:0]
+	for t := 0; t+2 < len(m.Indices); t += 3 {
+		if low[find(int32(m.Indices[t]))] <= reach {
+			out = append(out, m.Indices[t], m.Indices[t+1], m.Indices[t+2])
+		}
+	}
+	m.Indices = out
+	m.Compact()
+	return dropped
+}
+
 // ruinsSharpness is the mesher's: high, for crisp mouldings.
 const ruinsSharpness = 0.85
 
@@ -465,6 +518,9 @@ func ruinsVariant(rc *procgen.RunContext, v *ruins.Variant) (*RuinsVariant, erro
 	tMesh := time.Since(ts)
 	// The base under the floor is never seen.
 	dropBelow(m, func(q sdf.Vec3) bool { return q[1] < -0.3 })
+	// Nor is what a ruin's cuts left hanging in the air: a gateway's arch
+	// with its crown and a pier knocked away leaves its voussoirs floating.
+	dropUngrounded(m, 0.5)
 	ts = time.Now()
 	far := sdf.Vec3{1e6, 1e6, 1e6}
 	simplifyBox(m, far.Mul(-1), far, cell, p.Float("simplify"))

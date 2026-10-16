@@ -107,6 +107,10 @@ func uploadTexture(name string, rgba *image.RGBA, comp *texcompress.Texture) {
 	if err := ensureNormalMapLoaded(name); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+	// Its ARM map is NOT loaded here: only a surface that samples it asks for
+	// it, the first time it is drawn (texture_armmap.go's requestARMMap) —
+	// loaded beside every texture, Poly Haven sets' maps took ~740 MB the
+	// splat and triplanar surfaces never read.
 }
 
 // deferredTexture is one upload LoadTexture left for the frame's GL half.

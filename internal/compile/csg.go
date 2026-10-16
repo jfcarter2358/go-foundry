@@ -161,6 +161,17 @@ type Face struct {
 	SunShare     []float32
 	BackSunShare []float32
 
+	// Lightmap is where the face's direct light is baked per texel
+	// (lightmap.go): its page and its chart there. Page -1 — or the zero
+	// value's 0 on a face from a bake that made no pages — with no pages in
+	// the tree is a face lit per vertex alone; see BSPTree.Lightmaps.
+	Lightmap LightmapChart
+
+	// lmParent is which face, before the grid cut (SubdivideFaces), this one
+	// is a piece of, plus one — the pieces of one face share its chart.
+	// Zero where the bake makes no lightmaps.
+	lmParent int32
+
 	// sourceOrder is which brush this came from, in the level's own walk. Used
 	// only by the coplanar tie-break in clipsAgainst, and deliberately
 	// unexported: it is an artefact of how CSG runs, not part of what a

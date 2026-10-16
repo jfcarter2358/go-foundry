@@ -20,6 +20,11 @@ package stages
 //     slope, height and mask bands, clumping noise, the region's share and
 //     an optional shore band), 12 bytes each, sorted into 16 m cells by
 //     kind in a fixed hashed order;
+//   - GROUND COVER (grass_field_cover.go; docs/terrain-paint/PHASE_P3.md):
+//     a rule may lay its clumps along the ground (`orient: ground`), lean
+//     them (`tilt_jitter`), push them into it (`sink`), keep them still
+//     (`wind: false`) or be CARDS — flat alpha-cut patches of a Poly Haven
+//     ground texture cut out by its own height map, for leaf litter;
 //   - per field, ONE level volume with a `grass:` block naming the file
 //     (world/volume_grass.go), boxed to the tile, `chunk: auto`, owned by
 //     the stage's ID prefix like every placement, so the splice replaces
@@ -51,11 +56,13 @@ const grassFieldVersion = 1
 
 func init() {
 	procgen.RegisterStage(procgen.StageKind{
-		Name:     GrassFieldKind,
-		Label:    "Grass field",
-		Category: "Placement",
-		Regional: procgen.RegionalPerRegion,
-		Version:  grassFieldVersion,
+		Name: GrassFieldKind,
+		// Per-tile reruns after a paint stroke (docs/terrain-paint/PHASE_P2.md).
+		Incremental: true,
+		Label:       "Grass field",
+		Category:    "Placement",
+		Regional:    procgen.RegionalPerRegion,
+		Version:     grassFieldVersion,
 		Doc: "Poly Haven grass, flowers and reeds as a dense GPU-instanced sward: each rule names a polyhaven_plants " +
 			"stage's clumps and where they grow (slope, height and mask bands, clumping, the shore of standing water), " +
 			"at a density per square metre. Writes a kit of small LOD meshes and one compact instance file per terrain " +
@@ -73,8 +80,9 @@ func grassRuleFields() []procgen.ParamDef {
 	fields := []procgen.ParamDef{
 		{Name: "name", Type: procgen.ParamString, Default: s("grass"), Doc: "The rule's name, for the log."},
 		{Name: "enabled", Type: procgen.ParamBool, Default: procgen.Bool(true), Doc: "Off skips the rule."},
-		{Name: "plants", Type: procgen.ParamStage, StageKinds: []string{PolyHavenPlantsKind}, Default: procgen.StageRef(""),
-			Doc: "The polyhaven_plants stage whose clumps this rule grows (its variants: each Poly Haven piece is one clump kind)."},
+		{Name: "plants", Type: procgen.ParamStage, StageKinds: []string{PolyHavenPlantsKind, PolyHavenRocksKind}, Default: procgen.StageRef(""),
+			Doc: "The polyhaven_plants stage whose clumps this rule grows (its variants: each Poly Haven piece is one clump kind). " +
+				"A polyhaven_rocks stage works too — pebbles and stones as ground cover. Not needed for a card rule."},
 		{Name: "pieces", Type: procgen.ParamString, Default: s(""),
 			Doc: "Keep only the pieces whose names contain one of these words (space separated): `tall` takes " +
 				"grass_medium_01's tall_a/b/c. Empty: every piece."},
@@ -91,6 +99,11 @@ func grassRuleFields() []procgen.ParamDef {
 			Doc: "How much shorter a clump is where its weight is low: a patch's margin is shorter, sparser grass."},
 	}
 	fields = append(fields, bandParams()...)
+	// The paint band (paint_bands.go): off until a layer is named.
+	fields = append(fields, paintRuleFields()...)
+	// Orientation along a direction field (paint_orient.go, phase P4):
+	// off until orient_to is set.
+	fields = append(fields, orientRuleFields()...)
 	fields = append(fields,
 		procgen.ParamDef{Name: "shore", Type: procgen.ParamVec2, Label: "Shore band (m)", Default: v2(0, 0), Min: 0, Max: 1000, Step: 0.1,
 			Doc: "Grow only this far from standing water (from, to; the terrain's water mask): reeds round a pond are (0, 6). " +
@@ -116,6 +129,8 @@ func grassRuleFields() []procgen.ParamDef {
 		procgen.ParamDef{Name: "shadows", Type: procgen.ParamBool, Default: procgen.Bool(true),
 			Doc: "Whether these clumps cast shadows (near the camera only; the player's grass shadow distance)."},
 	)
+	// Ground cover (grass_field_cover.go): all Added, defaults = a grass clump.
+	fields = append(fields, groundCoverRuleFields()...)
 	// The scatter bands' defaults suit rocks; a sward wants less clumping.
 	for i := range fields {
 		switch fields[i].Name {
@@ -147,6 +162,7 @@ func grassFieldParams() []procgen.ParamDef {
 			Doc: "The mid and far meshes' share of the near mesh's triangles (0: no such mesh)."},
 		{Name: "margin", Type: procgen.ParamFloat, Label: "Edge margin (m)", Default: procgen.Float(0.5), Min: 0, Max: 100, Step: 0.1,
 			Doc: "Clumps keep this far in from the terrain's edge."},
+		paintExcludeParam(),
 		{Name: "preview_density", Type: procgen.ParamFloat, Label: "Preview density", Default: procgen.Float(0.05), Min: 0.001, Max: 5, PreviewOnly: true,
 			Doc: "The preview's dots per square metre at most (the run's density is far denser)."},
 	}
@@ -158,7 +174,7 @@ func grassRules(p procgen.Params) ([]place.GrassRule, []int) {
 	var out []place.GrassRule
 	var idx []int
 	for i, it := range p.Items("rules") {
-		if !it.Bool("enabled") || it.Str("plants") == "" {
+		if !it.Bool("enabled") || !grassRuleHasSource(it) {
 			continue
 		}
 		r := place.GrassRule{Name: safeName(it.Str("name"), fmt.Sprintf("rule%d", i+1)), Density: it.Float("density"),
@@ -169,6 +185,7 @@ func grassRules(p procgen.Params) ([]place.GrassRule, []int) {
 			r.Scale[0], r.Scale[1] = r.Scale[1], r.Scale[0]
 		}
 		bandRule(it, &r.Band)
+		groundCoverRule(it, &r)
 		out = append(out, r)
 		idx = append(idx, i)
 	}
@@ -181,9 +198,10 @@ func validateGrassField(_ *procgen.Doc, _ *procgen.Stage, p procgen.Params) []st
 		out = append(out, "Choose a terrain stage to grow on")
 	}
 	for i, it := range p.Items("rules") {
-		if it.Bool("enabled") && it.Str("plants") == "" {
-			out = append(out, fmt.Sprintf("rule %d (%s) names no plants stage", i+1, it.Str("name")))
+		if it.Bool("enabled") && !grassRuleHasSource(it) {
+			out = append(out, fmt.Sprintf("rule %d (%s) names no plants stage (or card texture)", i+1, it.Str("name")))
 		}
+		out = append(out, validateCoverRule(i, it)...)
 		if b := it.Vec2("slope"); b[0] > b[1] {
 			out = append(out, fmt.Sprintf("rule %d: its slope band runs backwards (%g..%g°)", i+1, b[0], b[1]))
 		}

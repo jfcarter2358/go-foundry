@@ -1,0 +1,36 @@
+# Meadow: a dense sward of Poly Haven grass with a sprinkling of flowers.
+# Poly Haven (CC0): grass_medium_01, periwinkle_plant, dandelion_01.
+name: Meadow
+doc: Thick knee-high grass with pink periwinkle and dandelions standing out of it.
+order: 20
+layers:
+  - {layer: meadow, strength: 1}
+recipe:
+  paint:
+    - {name: meadow, kind: density}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_grass
+      params:
+        assets: [{id: grass_medium_01}]
+        thin_foliage: true
+    - stage: polyhaven_plants
+      id: cover_flowers
+      params:
+        assets: [{id: dandelion_01}, {id: periwinkle_plant}, {id: shrub_sorrel_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: meadow_grass, plants: cover_grass, pieces: tall, density: 4, scale: [2, 3], slope: [0, 35],
+             cluster: 0, max_triangles: 400, paint: meadow, paint_band: [0, 0.6],
+             tint_a: [1, 1, 0.9], tint_b: [0.85, 0.95, 0.7]}
+          - {name: meadow_flowers, plants: cover_flowers, pieces: periwinkle, density: 0.9, scale: [2, 3],
+             slope: [0, 30], cluster: 0.4, cluster_scale: 10, max_triangles: 500, paint: meadow,
+             paint_band: [0.3, 0.8], range: 0.8, shadows: false}
+          - {name: meadow_dandelions, plants: cover_flowers, pieces: dandelion, density: 0.8, scale: [3, 4.5],
+             slope: [0, 30], cluster: 0.4, cluster_scale: 8, max_triangles: 500, paint: meadow,
+             paint_band: [0.3, 0.8], range: 0.8, shadows: false}

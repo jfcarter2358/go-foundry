@@ -78,8 +78,12 @@ func GeneratorRedo() {
 // the file rather than to any state of it.
 func genApplySnapshot(snap generatorSnapshot) {
 	name := genDoc.Name
+	// Paint has its own undo (editor_generator_paint.go): a document undo
+	// keeps the pixels as they are.
+	pixels := genDoc.PaintData
 	genDoc = snap.Doc
 	genDoc.Name = name
+	genDoc.PaintData = pixels
 	genSelected = snap.Selected
 	if genSelected >= len(genDoc.Stages) {
 		genSelected = len(genDoc.Stages) - 1

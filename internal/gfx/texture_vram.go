@@ -21,7 +21,10 @@ package gfx
 // The form is also what BindNormalMap reads to tell the shader a normal map is
 // two-channel BC5 (TextureFormatOf).
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // TextureForm is how a world texture's texels are stored on the GPU.
 type TextureForm uint8
@@ -119,4 +122,28 @@ func rgba8ChainBytes(w, h int) int64 {
 		}
 		w, h = max(1, w/2), max(1, h/2)
 	}
+}
+
+// TextureVRAMEach is every recorded texture's name and bytes, largest first
+// (the bench's texture listing; docs/adventure/PHASE_F.md).
+func TextureVRAMEach() []TextureVRAMItem {
+	textureVRAM.Lock()
+	defer textureVRAM.Unlock()
+	out := make([]TextureVRAMItem, 0, len(textureVRAM.byName))
+	for n, e := range textureVRAM.byName {
+		out = append(out, TextureVRAMItem{Name: n, Bytes: e.bytes})
+	}
+	sort.Slice(out, func(a, b int) bool {
+		if out[a].Bytes != out[b].Bytes {
+			return out[a].Bytes > out[b].Bytes
+		}
+		return out[a].Name < out[b].Name
+	})
+	return out
+}
+
+// TextureVRAMItem is one texture's share of TextureVRAM.
+type TextureVRAMItem struct {
+	Name  string
+	Bytes int64
 }

@@ -1,0 +1,46 @@
+# Rock path: a stroke becomes a footpath spline in the ground_edit (its width
+# the brush's diameter, editable per point): the bed flattened across and
+# smoothed along, flagstones filling its width (scanned rocks scaled flat,
+# turned along the path, bedded into the ground), a stony splat in the joints
+# with a worn edge, grass worn away toward the middle and thinner and shorter
+# in a band either side, large rocks and logs kept off. Across a river it
+# fords on stepping stones. docs/guide/36-terrain-paint.md "Paths".
+# Poly Haven (CC0): rock_path, dirt_floor, rock_09 (the flagstones, a flat
+# stone scaled to each), rock_moss_set_02 (the ford's stones).
+name: Rock path
+doc: Flagstones along the stroke on a flattened bed - worn edges, grass worn away, a ford of stepping stones across water.
+order: 110
+path:
+  style: rock_path
+  width_scale: 1
+  simplify: 0.3
+  flatten: true
+  rocks: flag_rocks_src
+  shape: {blend: 1.2, wear: 1.2, edge: 0.35, edge_size: 1.1}
+recipe:
+  textures:
+    - {name: path_dirt, id: dirt_floor, scale: 2.5}
+    - {name: path_rock, id: rock_path, scale: 3}
+  material:
+    # The wear band's dirt tint first; the style's surface over it.
+    - {mask: path_wear, texture: path_dirt, slots: [wet, ash, snow], fallback: cracked, strength: 0.35}
+    - {mask: path_rock_path, texture: path_rock, slots: [ash, snow, wet], fallback: gravel}
+  exclude:
+    - {mask: path_wear, kind: grass_field, shrink: 0.6}
+    - {mask: path_clear, kind: scatter}
+  stages:
+    - stage: polyhaven_rocks
+      id: flag_rocks_src
+      params:
+        assets: [{id: rock_09}]
+        back: none
+    - stage: polyhaven_rocks
+      id: path_rocks_src
+      params:
+        assets: [{id: rock_moss_set_02}]
+        back: none
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source
+        path_rocks: path_rocks_src

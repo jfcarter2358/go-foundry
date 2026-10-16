@@ -1032,7 +1032,7 @@ func renderVolumetrics(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3,
 		// With the effects' flashes, so an explosion's smoke is lit by its own
 		// fire and by the one that went off beside it.
 		world.UploadLightsTo(prog, world.SceneLights(lvl), false)
-		world.UploadFogTo(prog, lvl.Fog, lvl.Volumes, lvl)
+		world.UploadFogTo(prog, frameFog(lvl), frameVolumes(lvl), lvl)
 	})
 }
 

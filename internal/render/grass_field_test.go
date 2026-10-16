@@ -148,3 +148,23 @@ func TestGrassShaderConstantsMatchGo(t *testing.T) {
 		}
 	}
 }
+
+// The vertex stage's kind flags are grassfield's (ground cover,
+// docs/terrain-paint/PHASE_P3.md), and a kind's flags split its draw group.
+func TestGrassShaderKindFlagsMatchGo(t *testing.T) {
+	withRepoResources(t)
+	src := mustReadShader(biomeShaderPath("grassfield_common.glsl"))
+	for name, want := range map[string]int{"GRASS_KIND_ORIENTED": grassfield.KindOriented, "GRASS_KIND_CARD": grassfield.KindCard} {
+		var got int
+		i := strings.Index(src, "const int "+name+" = ")
+		if i < 0 {
+			t.Fatalf("%s missing from grassfield_common.glsl", name)
+		}
+		if _, err := fmt.Sscanf(src[i+len("const int "+name+" = "):], "%d", &got); err != nil || got != want {
+			t.Errorf("%s is %d in the shader, %d in Go", name, got, want)
+		}
+	}
+	if !strings.Contains(src, "layout(location = 5) in uint iUp;") {
+		t.Error("the up axis attribute moved: grass_field.go binds it at 5")
+	}
+}

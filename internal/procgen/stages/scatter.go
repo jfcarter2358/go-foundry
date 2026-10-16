@@ -29,9 +29,11 @@ const ScatterKind = "scatter"
 
 func init() {
 	procgen.RegisterStage(procgen.StageKind{
-		Name:     ScatterKind,
-		Label:    "Scatter",
-		Category: "Placement",
+		Name: ScatterKind,
+		// Per-tile reruns after a paint stroke (docs/terrain-paint/PHASE_P2.md).
+		Incremental: true,
+		Label:       "Scatter",
+		Category:    "Placement",
 		// Per environment region of a level generation doc: weighted by the
 		// region, over its band (place_region.go).
 		Regional: procgen.RegionalPerRegion,
@@ -73,6 +75,11 @@ func scatterRuleFields() []procgen.ParamDef {
 			Doc: "The power law's exponent: 0 draws scales evenly, 2–3 many small and few big, as real rock fields are."},
 	}
 	fields = append(fields, bandParams()...)
+	// The paint band (paint_bands.go): off until a layer is named.
+	fields = append(fields, paintRuleFields()...)
+	// Orientation along a direction field (paint_orient.go, phase P4):
+	// off until orient_to is set.
+	fields = append(fields, orientRuleFields()...)
 	fields = append(fields,
 		procgen.ParamDef{Name: "satellites", Type: procgen.ParamFloat, Default: f(0), Min: 0, Max: 100, Step: 0.05,
 			Doc: "Extra candidates round each rock the EARLIER rules placed, per metre of its footprint radius: rubble skirting the boulders."},
@@ -125,6 +132,7 @@ func scatterParams() []procgen.ParamDef {
 			Doc: "The cliff mask level that counts as a cliff for the cliff-base weight."},
 		{Name: "margin", Type: procgen.ParamFloat, Label: "Edge margin (m)", Default: procgen.Float(2), Min: 0, Max: 1000, Step: 0.1,
 			Doc: "Footprints keep this far in from the terrain's edge."},
+		paintExcludeParam(),
 		{Name: "preview_max", Type: procgen.ParamInt, Label: "Preview max", Default: procgen.Int(20000), Min: 100, Max: 1000000, PreviewOnly: true,
 			Doc: "The most rocks a rule places in the preview (the run uses Max rocks)."},
 		{Name: "preview_triangles", Type: procgen.ParamInt, Label: "Proxy triangles", Default: procgen.Int(240), Min: 12, Max: 20000, PreviewOnly: true,

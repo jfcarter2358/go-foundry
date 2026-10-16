@@ -282,7 +282,7 @@ func farPlacementWindow(id string, fm *terrain.FarMeta, segX, segZ []float64, ma
 // writeFarWith cut them), from its grid, its backdrop record and its
 // far_tile.
 func regionFarSegments(rc *procgen.RunContext, g *terrain.Grid, fm *terrain.FarMeta) (segX, segZ []float64) {
-	st := rc.Doc.StageByID(rc.Params.Str("terrain"))
+	st := terrainSourceStage(rc.Doc, rc.Params.Str("terrain")) // through a ground_edit
 	tile := procgen.Resolve(procgen.KindByName(RegionTerrainKind).Params, st.Params).Float("far_tile")
 	half := g.Size() / 2
 	cx, cz := g.MinX+half, g.MinZ+half

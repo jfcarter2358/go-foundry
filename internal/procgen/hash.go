@@ -45,6 +45,53 @@ func StageSeed(docSeed int64, stageID string, defs []ParamDef, p Params) uint64 
 // params must be resolved; upstream are the hashes of the stages its refs
 // name, in StageRefs order.
 func StageHash(k *StageKind, seed uint64, params Params, upstream []string) string {
+	return stageHashOf(k, hashedParams(k.Params, false), seed, params, upstream)
+}
+
+// StageBaseHash is StageHash without the kind's RectCovered parameters
+// (ParamDef.RectCovered): what a stage's base hash is made of. Equal to
+// StageHash for a kind that has none.
+func StageBaseHash(k *StageKind, seed uint64, params Params, upstream []string) string {
+	defs := hashedParams(k.Params, false)
+	var kept []ParamDef
+	cut := false
+	for i := range defs {
+		if defs[i].RectCovered {
+			cut = true
+			continue
+		}
+		kept = append(kept, defs[i])
+	}
+	if !cut {
+		return stageHashOf(k, defs, seed, params, upstream)
+	}
+	return stageHashOf(k, kept, seed, params, upstream)
+}
+
+// CoveredHash is a hash of the stage's RectCovered parameters as the full
+// hash encodes them, or "" when the kind has none or all are Added and at
+// their defaults (a ground_edit with no rivers).
+func CoveredHash(k *StageKind, params Params) string {
+	var defs []ParamDef
+	for i := range k.Params {
+		if k.Params[i].RectCovered && !k.Params[i].PreviewOnly {
+			defs = append(defs, k.Params[i])
+		}
+	}
+	if len(defs) == 0 {
+		return ""
+	}
+	ms := encodeParams(defs, params, false)
+	if len(ms) == 0 {
+		return ""
+	}
+	data, _ := yaml.Marshal(ms)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:12])
+}
+
+// stageHashOf is StageHash over the parameters defs.
+func stageHashOf(k *StageKind, defs []ParamDef, seed uint64, params Params, upstream []string) string {
 	h := sha256.New()
 	var b [8]byte
 	h.Write([]byte("fgen-stage\x00"))
@@ -53,7 +100,7 @@ func StageHash(k *StageKind, seed uint64, params Params, upstream []string) stri
 	h.Write(b[:])
 	binary.LittleEndian.PutUint64(b[:], seed)
 	h.Write(b[:])
-	data, _ := yaml.Marshal(encodeParams(hashedParams(k.Params, false), params, false))
+	data, _ := yaml.Marshal(encodeParams(defs, params, false))
 	binary.LittleEndian.PutUint64(b[:], uint64(len(data)))
 	h.Write(b[:])
 	h.Write(data)

@@ -177,36 +177,58 @@ halved, half resolution) — see `docs/adventure/PHASE_B.md`.
 
 ## HDR and the tone curve
 
-By default a level shades in low dynamic range: the light falling on a
-surface is clamped to 1 before it multiplies the texture, so the brightest a
-sunlit wall can be is its texture, and a strong sun only flattens it. A
-`tonemap:` block opts the level into high dynamic range:
+Every level shades in high dynamic range, with an **automatic exposure**, unless
+it says otherwise. The `tonemap:` block says otherwise:
 
 ```yaml
 tonemap:
-  exposure: 0.75      # scales the scene's light before the curve (default 1)
+  exposure: 0.75      # fixes the exposure (and turns the automatic one off)
+  # auto: true        # meter anyway, and use exposure as a compensation
   curve: aces         # the filmic curve: aces, the only one today
-  # disabled: true    # keep the numbers, shade LDR
+  # disabled: true    # shade LDR, as levels did before HDR
 ```
 
-With it, light above 1 is kept, and the frame's last pass maps it to the
+- **No block**: HDR, exposure metered and adapted as the camera moves.
+- **`exposure:` alone**: HDR at that exposure, fixed. Levels that already had a
+  `tonemap:` block keep the look they were tuned for.
+- **`auto: true` with `exposure:`**: metered, with the exposure as a
+  compensation on top (1.2 = a little brighter than the meter says).
+- **`disabled: true`**: LDR. The light falling on a surface is clamped to 1
+  before it multiplies the texture, so the brightest a sunlit wall can be is its
+  texture, and a strong sun only flattens it.
+
+`FOUNDRY_HDR=0` turns HDR off for a level with no block, for comparing.
+
+**Automatic exposure** meters the middle of the frame (the sky left out) and
+eases toward an exposure that puts its average where an ordinary daylit level's
+LDR shading had it. It adapts part of the way, not all of it: a dark room is
+brightened, not brought up to daylight, and a snowfield darkened, not dulled to
+grey. Walking out into the light it darkens within about a second; walking into
+the dark it brightens over a couple. Its range is 0.4 to 1.8.
+
+**Bloom.** Light far above white glows into the pixels round it: a lamp, the
+sun off water, a muzzle flash. It is the player's `bloom` setting, on by
+default, and costs about 0.3 ms at 1080p.
+
+In HDR, light above 1 is kept, and the frame's last pass maps it to the
 screen through `exposure` and the ACES filmic curve: highlights roll off
 instead of clipping and the mid-tones gain contrast, so a sun of 1.5 to 2 over
 an ambient of about 0.4 gives bright sunlit rock beside deep shade. The sky,
-every fog and atmosphere colour, unlit surfaces and the passes that do not
-shade in HDR (biome scatter, sprites, block terrain, foliage) are screen
-colour, and are carried through the curve's inverse first, so they look
-exactly as they did. Additive effects (sparks) are not, and read a little
+every fog and atmosphere colour and unlit surfaces are screen colour, and are
+carried through the curve's inverse first, so they look exactly as authored.
+Every lit pass — brushes, models, compiled surfaces, terrain, scatter, foliage,
+grass, lit sprites — shades in the scene's units, so a terrain patch and the
+brush beside it agree. Additive effects (sparks) are not, and read a little
 dimmer.
 
 - **Where it applies.** In frames drawn with TAA, the default anti-aliasing:
   the renderer's scene target is a half-float target that can hold light above
   1. The editor's own view, and the `msaa` and `off` modes, stay LDR.
 - **Baked light.** The light baker writes LDR light. In an HDR frame a baked
-  surface's light is taken as scene light at exposure 1, so its brightest
-  baked light shows at the curve's value for 1 (about 0.8). A compiled level
-  that opts in should raise the exposure or its lights to suit; levels lit
-  live, as generated canyons are, need nothing.
+  surface's light is taken as scene light, so its brightest baked light shows
+  at the curve's value for 1 times the exposure. The automatic exposure takes
+  care of that; a level with a fixed exposure should raise it or its lights to
+  suit.
 - **Generators.** The environment stage's `hdr` and `exposure` write the
   block; the desert canyon template turns it on.
 

@@ -30,8 +30,11 @@ void main() {
         vWorldPos = vec3(0.0);
         return;
     }
-    vec3 up = vec3(0.0, 1.0, 0.0);
-    vec3 n = normalize(mix(gNormal, up, 0.55));
+    // The clump's own axis: +Y, or the ground's normal for ground cover
+    // (grassfield_common.glsl). A card is lit as the ground it lies on.
+    vec3 up = gAxis;
+    bool card = (kindFlags & GRASS_KIND_CARD) != 0;
+    vec3 n = card ? up : normalize(mix(gNormal, up, 0.55));
     float viewDepth = biomeViewDepth(gWorldPos);
     vec3 lightAt = gWorldPos + up * 0.06;
 #ifdef GRASS_FLAT_LIGHT
@@ -42,12 +45,13 @@ void main() {
     vec3 base = giDebugAlbedo(gTint);
     // Self-shading toward the base of the clump.
     float ao = giDebug == 1 ? 1.0 : mix(0.5, 1.0, smoothstep(0.0, 0.7, gUp));
-    vec3 col = base * ao * clamp(lighting, 0.0, 1.2);
+    // Scene units (gfx/hdr.go): hdrLightMax is 1 in LDR.
+    vec3 col = base * ao * clamp(lighting, 0.0, 1.2 * hdrLightMax());
     vec3 V = normalize(camPos - gWorldPos);
     for (int i = 0; i < numDirLights; i++) {
         vec3 ld = -normalize(dirLightDir[i]);
         float through = pow(max(dot(-V, ld), 0.0), 4.0);
-        col += base * dirLightColor[i] * dirLightBrightness[i] * through * 0.25 * gUp;
+        col += base * dirLightColor[i] * dirLightBrightness[i] * through * 0.25 * gUp * (card ? 0.0 : 1.0);
     }
     vColor = col;
     vUV = aUV;

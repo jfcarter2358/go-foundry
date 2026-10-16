@@ -233,8 +233,14 @@ void main() {
     // and the ground shadows itself in fine stripes that alias into rings.
     vec3 geoN = gl_FrontFacing ? faceNormal : -faceNormal;
     vec3 shadowAt = vWorldPos + geoN * (0.03 + vViewDepth * 0.0025);
-    vec3 lighting = biomeLighting(shadowAt, normal, vViewDepth, receiveShadows != 0, false);
-    vec3 color = giDebugAlbedo(albedo) * clamp(lighting, 0.0, 1.0);
-    color = applyFog(color, vWorldPos);
+    // Earth and rock: a rough dielectric (specular.glsl). The view vector is
+    // the surface's own, not the lifted shadow point's.
+    PBRSurface ps = pbrSurface(vWorldPos, normal, 0.8, 0.0, 0.5, albedo);
+    vec3 spec = vec3(0.0);
+    vec3 lighting = biomeLightingSpec(shadowAt, normal, vViewDepth, receiveShadows != 0, false, ps, spec);
+    spec += pbrEnvSpecular(ps, vWorldPos, normal, biomeAmbientRef, 1.0);
+    // Scene units, as fragment.glsl shades (gfx/hdr.go; 1 in LDR).
+    vec3 color = giDebugAlbedo(albedo) * clamp(lighting, 0.0, hdrLightMax()) + clamp(spec, 0.0, hdrLightMax());
+    color = applyFogScene(color, vWorldPos);
     outputColor = vec4(color, 1.0);
 }

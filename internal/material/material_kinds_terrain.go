@@ -48,6 +48,7 @@ package material
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -181,7 +182,72 @@ func splatLayerParams(i int) []ParamDef {
 			Doc: "Parallax depth, top-down layers only: the layer's height map moves its texels along the view so stones " +
 				"stand up off the plane instead of lying painted on it, and its crevices darken. Fades out with distance. " +
 				"Three more texture reads where it is on; 0 is off.", Default: FloatValue(0), Min: 0, Max: 1},
+		ParamDef{Name: SplatLayerParam(i, "soft"), Type: ParamEnum, Label: "  Soft ground",
+			Doc: "Ground that gives underfoot: walkers press footprints into it (the ground trails, docs/trails/), " +
+				"their steps sound and kick up as it does, and it drags at them. Sand fills back in within a minute " +
+				"or so; snow keeps its tracks. None: firm ground.",
+			Default: EnumValue(SoftNone), Choices: []string{SoftNone, SoftSand, SoftSnow}},
+		ParamDef{Name: SplatLayerParam(i, "soft_depth"), Type: ParamFloat, Label: "  Soft depth (m)",
+			Doc: "How deep a footprint presses into a soft layer. 0: the kind's own (a few centimetres in sand, " +
+				"twice that in snow).", Default: FloatValue(0), Min: 0, Max: 0.5},
 	}
+}
+
+// The soft-ground kinds a splat layer can be (its `_soft` param): what a
+// footprint presses into. The engine's profile of each — depth, how fast it
+// fills back in, drag, the step's sound and puff — is world.SoftGroundKind's.
+const (
+	SoftNone = "none"
+	SoftSand = "sand"
+	SoftSnow = "snow"
+)
+
+// SoftKind is the part of a soft kind's profile the shader needs as well as
+// the game: how deep a footprint presses (metres; a layer's `_soft_depth`
+// overrides it) and Fill, the share of a footprint that fills back in
+// within a minute or so rather than lasting the session (the trail map's
+// fast and slow channels, render/ground_trails.go).
+type SoftKind struct {
+	Depth, Fill float32
+}
+
+// SoftKinds are the soft kinds' profiles. Sand slumps and blows back into a
+// shallow print; snow holds a deep one.
+var SoftKinds = map[string]SoftKind{
+	SoftSand: {Depth: 0.035, Fill: 0.85},
+	SoftSnow: {Depth: 0.08, Fill: 0.08},
+}
+
+// SoftStepAsset is the name of a soft kind's step sound (sounds/) and puff
+// (particles/, a .fpar): "step_" and the kind. One spelling for the game
+// that plays them (world.SoftGroundKinds) and the release packer that must
+// ship them with any material that has a layer of the kind (pack/refs.go),
+// since nothing in the content names them.
+func SoftStepAsset(kind string) string { return "step_" + kind }
+
+// SoftKindsIn is the soft kinds a material file's text gives a layer (a
+// `layerN_soft: <kind>` line), for the packer.
+func SoftKindsIn(text string) []string {
+	var out []string
+	for k := range SoftKinds {
+		if strings.Contains(text, "_soft: "+k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// SoftLayerDepth is a resolved layer's footprint depth in metres: its own
+// soft_depth, else its kind's; 0 for a firm layer.
+func SoftLayerDepth(l *SplatLayer) float32 {
+	k, ok := SoftKinds[l.Soft]
+	if !ok || l.Texture == "" {
+		return 0
+	}
+	if l.SoftDepth > 0 {
+		return l.SoftDepth
+	}
+	return k.Depth
 }
 
 // splatTailParams are the parameters after the first four layers: the

@@ -24,6 +24,8 @@ package procgen
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 )
@@ -101,11 +103,19 @@ func (e ManifestStage) removeFiles(dir string) {
 	for _, f := range e.Files {
 		p := filepath.Join(dir, filepath.FromSlash(f))
 		os.Remove(p)
-		dirs[filepath.Dir(p)] = true
-	}
-	for d := range dirs {
-		if d != dir {
-			os.Remove(d) // only succeeds when empty
+		// Every folder between the file and the run's folder: a stage's
+		// nested folders (a scatter's tiles/) empty out with it.
+		for d := filepath.Dir(p); len(d) > len(dir) && strings.HasPrefix(d, dir); d = filepath.Dir(d) {
+			dirs[d] = true
 		}
+	}
+	// Deepest first, so a parent is tried once its children are gone.
+	order := make([]string, 0, len(dirs))
+	for d := range dirs {
+		order = append(order, d)
+	}
+	sort.Slice(order, func(a, b int) bool { return len(order[a]) > len(order[b]) })
+	for _, d := range order {
+		os.Remove(d) // only succeeds when empty
 	}
 }

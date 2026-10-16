@@ -36,6 +36,7 @@ uniform int matFx;
 #define FX_MACRO     32
 #define FX_GRADE     64
 #define FX_SPLAT8    128 // the splat's eight-layer mode, beside FX_SPLAT
+#define FX_TRAIL     256 // the splat's soft layers read the ground trails, beside FX_SPLAT
 
 // triplanar: 1/scale, sharpness, upright (0/1).
 uniform vec3 fxTriplanar;
@@ -79,6 +80,21 @@ uniform vec4 fxSplatLayer2;
 uniform vec4 fxSplatAnti2;
 uniform vec4 fxSplatRelief2;
 uniform vec4 fxSplatStrataOn2;
+
+// The GROUND TRAILS (FX_TRAIL; render/ground_trails.go, docs/trails/SPEC.md):
+// footprints pressed into the splat's soft layers. The trail map is a
+// square of ground around the player, wrapped (world X/Z over its span is
+// its uv; REPEAT does the wrap), each texel how far the ground is pressed
+// as a share of the soft layers' depth — red the share that fills back in
+// soon, green the share that lasts — positive a dent, negative a rim.
+// Per layer: its footprint depth in metres (0: firm) and its fill (how
+// much of the red channel it shows rather than the green).
+uniform sampler2D fxTrail;
+uniform vec4 fxTrailRect;  // window's first corner x, z; 1/span; span (m)
+uniform vec4 fxSplatSoft;  // footprint depth (m), per layer; 0 firm
+uniform vec4 fxSplatSoft2; // layers 5–8 (eight-layer mode)
+uniform vec4 fxSplatFill;  // fill share, per layer
+uniform vec4 fxSplatFill2;
 
 // ground_blend.
 uniform sampler2D fxGroundColor;
@@ -504,11 +520,6 @@ void fxSplatAxis(int a, float wa, float layer, float inv, float anti, vec3 p, ve
     sum += wa;
 }
 
-// fxSplatSample is a splat layer's albedo+height and normal+AO at p — its
-// atlas tile `layer`, 1/repeat inv, top down or triplanar (tri) — with its
-// normal already in world space (xyz of the second result; w the AO).
-// strata (0/1): whether the bedding relief and the strata ramp band it when
-// it is triplanar (a second biome's rock is not the strata's).
 // fxSplatTriSum is a layer's three world projections, blended by N.
 void fxSplatTriSum(float layer, float inv, float anti, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, out vec4 ah, out vec4 na) {
     vec3 w = fxTriWeights(N, 6.0);
@@ -523,6 +534,11 @@ void fxSplatTriSum(float layer, float inv, float anti, vec3 p, vec3 N, vec3 dPdx
     na = vec4(normalize(nrm), ao / sum);
 }
 
+// fxSplatSample is a splat layer's albedo+height and normal+AO at p — its
+// atlas tile `layer`, 1/repeat inv, top down or triplanar (tri) — with its
+// normal already in world space (xyz of the second result; w the AO).
+// strata (0/1): whether the bedding relief and the strata ramp band it when
+// it is triplanar (a second biome's rock is not the strata's).
 void fxSplatSample(float layer, float inv, bool tri, float anti, float relief, float strata, vec3 p, vec3 N, vec3 dPdx, vec3 dPdy,
                    out vec4 ah, out vec4 na) {
     if (!tri) {
@@ -633,6 +649,97 @@ void fxSplatAdd(float score, float best, float blend, float layer, float inv, fl
     sum += b;
 }
 
+// ---------- ground trails ----------
+
+// fxTrailPress is how far the ground at xz is pressed, as a share of the
+// soft depth: the trail map's two channels mixed by fill (gradients g, h).
+float fxTrailPress(vec2 xz, float fill, vec2 g, vec2 h) {
+    vec2 v = textureGrad(fxTrail, xz * fxTrailRect.z, g, h).rg;
+    return mix(v.g, v.r, fill);
+}
+
+// fxTrailAt is the ground trails at p, whose splat weights are wt (and wt2
+// in eight-layer mode): ps, the point the layers are to be sampled at —
+// moved along the view ray to where it meets the bottom of a dent, which is
+// what makes a footprint a hole seen in parallax rather than a stain — the
+// dent's own slope (its depth's gradient in x and z, to bend the normal
+// by) and press, how hard the ground is pressed there (0..1; below 0 a
+// rim), faded out toward the window's edge. Nothing (ps = p) away from the
+// soft layers, outside the window, or where nothing has been pressed.
+//
+// The march: from the surface down the view ray in six steps to the deepest
+// a print can be, the first step below the trail's depth there, then a
+// linear refine between it and the step before (relief mapping's secant).
+// A print is a few centimetres deep and the slope of the ray is capped
+// (V·N ≥ 0.25), so the whole march spans at most ~30 cm of ground.
+// Probed first at p and at the march's far end: ground with no print near
+// it — nearly all of it — costs those two reads.
+void fxTrailAt(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, vec4 wt, vec4 wt2, bool eight,
+               out vec3 ps, out vec2 slope, out float press) {
+    ps = p;
+    slope = vec2(0.0);
+    press = 0.0;
+    float wsum = dot(wt, vec4(1.0)) + (eight ? dot(wt2, vec4(1.0)) : 0.0);
+    vec4 on = step(vec4(1e-5), fxSplatSoft), on2 = step(vec4(1e-5), fxSplatSoft2);
+    float softW = dot(wt, on) + (eight ? dot(wt2, on2) : 0.0);
+    if (softW < 0.02 || N.y < 0.5) {
+        return; // firm ground, or a slope too steep to hold a print
+    }
+    float depth = (dot(wt, fxSplatSoft) + (eight ? dot(wt2, fxSplatSoft2) : 0.0)) / max(wsum, 1e-4);
+    float fill = (dot(wt, fxSplatFill * on) + (eight ? dot(wt2, fxSplatFill2 * on2) : 0.0)) / softW;
+    // The window's edge: faded over its last three metres, nothing outside.
+    vec2 rel = (p.xz - fxTrailRect.xy) * fxTrailRect.z;
+    float edge = min(min(rel.x, 1.0 - rel.x), min(rel.y, 1.0 - rel.y)) * fxTrailRect.w;
+    float fade = smoothstep(0.5, 3.0, edge);
+    if (fade <= 0.0 || depth < 0.002) {
+        return;
+    }
+    vec2 g = dPdx.xz * fxTrailRect.z, h = dPdy.xz * fxTrailRect.z;
+    vec3 V = normalize(camPos - p);
+    // Horizontal travel along the ray per metre of descent.
+    vec2 run = -V.xz / max(V.y, 0.25);
+    float far = depth * 1.05;
+    float p0 = fxTrailPress(p.xz, fill, g, h);
+    float p1 = fxTrailPress(p.xz + run * far, fill, g, h);
+    if (max(p0, p1) < 0.01 && p0 > -0.01) {
+        return;
+    }
+    // The march, in metres of descent t; the trail's depth at the ray's
+    // point is press·depth (a rim, negative, stands above the surface,
+    // and the ray is already below it).
+    float tPrev = 0.0, dPrev = max(p0, 0.0) * depth;
+    float t = 0.0, d = dPrev;
+    if (dPrev > 0.0) {
+        for (int i = 1; i <= 6; i++) {
+            t = far * float(i) / 6.0;
+            d = max(fxTrailPress(p.xz + run * t, fill, g, h), 0.0) * depth;
+            if (t >= d) {
+                break;
+            }
+            tPrev = t;
+            dPrev = d;
+        }
+        // The secant between the last step above the floor and the first
+        // at or below it.
+        float a = dPrev - tPrev, b = t - d;
+        t = mix(tPrev, t, a / max(a + b, 1e-5));
+    }
+    vec2 hit = p.xz + run * t;
+    ps = vec3(hit.x, p.y - t, hit.y);
+    press = fxTrailPress(hit, fill, g, h) * fade;
+    // The dent's slope at the hit, by central differences a texel apart,
+    // capped (a print's wall is near vertical; its normal would otherwise
+    // turn right over).
+    float e = fxTrailRect.w / float(textureSize(fxTrail, 0).x);
+    float dx = fxTrailPress(hit + vec2(e, 0.0), fill, g, h) - fxTrailPress(hit - vec2(e, 0.0), fill, g, h);
+    float dz = fxTrailPress(hit + vec2(0.0, e), fill, g, h) - fxTrailPress(hit - vec2(0.0, e), fill, g, h);
+    slope = vec2(dx, dz) * depth / (2.0 * e) * fade;
+    float sl = length(slope);
+    if (sl > 1.5) {
+        slope *= 1.5 / sl;
+    }
+}
+
 // fxSplatSurface is the splat: the layers' albedo, normal and AO at p,
 // height-blended by the weights over the terrain's rectangle. eight is the
 // eight-layer mode (matFx's FX_SPLAT8, tested in main so the visibility
@@ -655,7 +762,12 @@ void fxSplatAdd(float score, float best, float blend, float layer, float inv, fl
 // nothing. The arithmetic per layer, and the order the sums are added in,
 // are unchanged, so the picture is the one-pass splat's; a winning layer's
 // albedo fetch is simply repeated (from the texture cache).
-void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, bool eight, inout vec4 albedo, inout vec3 normal, inout float ao) {
+//
+// trail is FX_TRAIL (also tested in main): the ground trails (fxTrailAt)
+// move the point every layer is sampled at into the footprints, bend the
+// blend's normal down their walls and darken their floors.
+void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, bool eight, bool trail, inout vec4 albedo, inout vec3 normal,
+                    inout float ao) {
     vec2 wuv = (p.xz - fxSplatRect.xy) * fxSplatRect.zw;
     vec4 wt = textureGrad(fxSplatWeights, wuv, dPdx.xz * fxSplatRect.zw, dPdy.xz * fxSplatRect.zw);
     float blend = fxSplatParams.x;
@@ -679,6 +791,13 @@ void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, bool eight, inout vec4
         floorBest = max(floorBest, max(max(fxSplatFloor(L2.x, wt2.x, H2.x), fxSplatFloor(L2.y, wt2.y, H2.y)),
                                        max(fxSplatFloor(L2.z, wt2.z, H2.z), fxSplatFloor(L2.w, wt2.w, H2.w))));
     }
+    // The ground trails: where the layers are seen, through any footprint.
+    vec3 ps = p;
+    vec2 dent = vec2(0.0);
+    float press = 0.0;
+    if (trail) {
+        fxTrailAt(p, N, dPdx, dPdy, wt, wt2, eight, ps, dent, press);
+    }
     // The candidates: where one layer dominates (most of a wall, most of a
     // plain) it is the only one, and pass 1 samples nothing.
     bool c0 = fxSplatCandidate(L.x, wt.x, H.x, floorBest, blend);
@@ -694,17 +813,17 @@ void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, bool eight, inout vec4
     }
     bool only = int(c0) + int(c1) + int(c2) + int(c3) + int(c4) + int(c5) + int(c6) + int(c7) == 1;
     // Pass 1: the scores.
-    float s0 = fxSplatLayerScore(c0, only, L.x, S.x, T.x, A.x, R.x, Q.x, wt.x, H.x, p, N, dPdx, dPdy);
-    float s1 = fxSplatLayerScore(c1, only, L.y, S.y, T.y, A.y, R.y, Q.y, wt.y, H.y, p, N, dPdx, dPdy);
-    float s2 = fxSplatLayerScore(c2, only, L.z, S.z, T.z, A.z, R.z, Q.z, wt.z, H.z, p, N, dPdx, dPdy);
-    float s3 = fxSplatLayerScore(c3, only, L.w, S.w, T.w, A.w, R.w, Q.w, wt.w, H.w, p, N, dPdx, dPdy);
+    float s0 = fxSplatLayerScore(c0, only, L.x, S.x, T.x, A.x, R.x, Q.x, wt.x, H.x, ps, N, dPdx, dPdy);
+    float s1 = fxSplatLayerScore(c1, only, L.y, S.y, T.y, A.y, R.y, Q.y, wt.y, H.y, ps, N, dPdx, dPdy);
+    float s2 = fxSplatLayerScore(c2, only, L.z, S.z, T.z, A.z, R.z, Q.z, wt.z, H.z, ps, N, dPdx, dPdy);
+    float s3 = fxSplatLayerScore(c3, only, L.w, S.w, T.w, A.w, R.w, Q.w, wt.w, H.w, ps, N, dPdx, dPdy);
     float best = max(max(s0, s1), max(s2, s3));
     float s4 = -1e9, s5 = -1e9, s6 = -1e9, s7 = -1e9;
     if (eight) {
-        s4 = fxSplatLayerScore(c4, only, L2.x, S2.x, T2.x, A2.x, R2.x, Q2.x, wt2.x, H2.x, p, N, dPdx, dPdy);
-        s5 = fxSplatLayerScore(c5, only, L2.y, S2.y, T2.y, A2.y, R2.y, Q2.y, wt2.y, H2.y, p, N, dPdx, dPdy);
-        s6 = fxSplatLayerScore(c6, only, L2.z, S2.z, T2.z, A2.z, R2.z, Q2.z, wt2.z, H2.z, p, N, dPdx, dPdy);
-        s7 = fxSplatLayerScore(c7, only, L2.w, S2.w, T2.w, A2.w, R2.w, Q2.w, wt2.w, H2.w, p, N, dPdx, dPdy);
+        s4 = fxSplatLayerScore(c4, only, L2.x, S2.x, T2.x, A2.x, R2.x, Q2.x, wt2.x, H2.x, ps, N, dPdx, dPdy);
+        s5 = fxSplatLayerScore(c5, only, L2.y, S2.y, T2.y, A2.y, R2.y, Q2.y, wt2.y, H2.y, ps, N, dPdx, dPdy);
+        s6 = fxSplatLayerScore(c6, only, L2.z, S2.z, T2.z, A2.z, R2.z, Q2.z, wt2.z, H2.z, ps, N, dPdx, dPdy);
+        s7 = fxSplatLayerScore(c7, only, L2.w, S2.w, T2.w, A2.w, R2.w, Q2.w, wt2.w, H2.w, ps, N, dPdx, dPdy);
         best = max(best, max(max(s4, s5), max(s6, s7)));
     }
     if (best < -1e8) {
@@ -714,26 +833,37 @@ void fxSplatSurface(vec3 p, vec3 N, vec3 dPdx, vec3 dPdy, bool eight, inout vec4
     vec4 col = vec4(0.0);
     vec3 nrm = vec3(0.0);
     float occ = 0.0, sum = 0.0;
-    fxSplatAdd(s0, best, blend, L.x, S.x, T.x, A.x, R.x, Q.x, fxSplatTint[0], p, N, dPdx, dPdy, col, nrm, occ, sum);
-    fxSplatAdd(s1, best, blend, L.y, S.y, T.y, A.y, R.y, Q.y, fxSplatTint[1], p, N, dPdx, dPdy, col, nrm, occ, sum);
-    fxSplatAdd(s2, best, blend, L.z, S.z, T.z, A.z, R.z, Q.z, fxSplatTint[2], p, N, dPdx, dPdy, col, nrm, occ, sum);
-    fxSplatAdd(s3, best, blend, L.w, S.w, T.w, A.w, R.w, Q.w, fxSplatTint[3], p, N, dPdx, dPdy, col, nrm, occ, sum);
+    fxSplatAdd(s0, best, blend, L.x, S.x, T.x, A.x, R.x, Q.x, fxSplatTint[0], ps, N, dPdx, dPdy, col, nrm, occ, sum);
+    fxSplatAdd(s1, best, blend, L.y, S.y, T.y, A.y, R.y, Q.y, fxSplatTint[1], ps, N, dPdx, dPdy, col, nrm, occ, sum);
+    fxSplatAdd(s2, best, blend, L.z, S.z, T.z, A.z, R.z, Q.z, fxSplatTint[2], ps, N, dPdx, dPdy, col, nrm, occ, sum);
+    fxSplatAdd(s3, best, blend, L.w, S.w, T.w, A.w, R.w, Q.w, fxSplatTint[3], ps, N, dPdx, dPdy, col, nrm, occ, sum);
     if (eight) {
-        fxSplatAdd(s4, best, blend, L2.x, S2.x, T2.x, A2.x, R2.x, Q2.x, fxSplatTint[4], p, N, dPdx, dPdy, col, nrm, occ, sum);
-        fxSplatAdd(s5, best, blend, L2.y, S2.y, T2.y, A2.y, R2.y, Q2.y, fxSplatTint[5], p, N, dPdx, dPdy, col, nrm, occ, sum);
-        fxSplatAdd(s6, best, blend, L2.z, S2.z, T2.z, A2.z, R2.z, Q2.z, fxSplatTint[6], p, N, dPdx, dPdy, col, nrm, occ, sum);
-        fxSplatAdd(s7, best, blend, L2.w, S2.w, T2.w, A2.w, R2.w, Q2.w, fxSplatTint[7], p, N, dPdx, dPdy, col, nrm, occ, sum);
+        fxSplatAdd(s4, best, blend, L2.x, S2.x, T2.x, A2.x, R2.x, Q2.x, fxSplatTint[4], ps, N, dPdx, dPdy, col, nrm, occ, sum);
+        fxSplatAdd(s5, best, blend, L2.y, S2.y, T2.y, A2.y, R2.y, Q2.y, fxSplatTint[5], ps, N, dPdx, dPdy, col, nrm, occ, sum);
+        fxSplatAdd(s6, best, blend, L2.z, S2.z, T2.z, A2.z, R2.z, Q2.z, fxSplatTint[6], ps, N, dPdx, dPdy, col, nrm, occ, sum);
+        fxSplatAdd(s7, best, blend, L2.w, S2.w, T2.w, A2.w, R2.w, Q2.w, fxSplatTint[7], ps, N, dPdx, dPdy, col, nrm, occ, sum);
     }
     albedo = vec4(col.rgb / sum, albedo.a);
     normal = normalize(nrm);
     ao *= mix(1.0, occ / sum, fxSplatParams.z);
+    // The footprints: their walls turn the normal (the ground's height is
+    // minus the dent, so its normal leans along the dent's slope), their
+    // floors are packed darker and shadowed, and a rim stands a little
+    // lighter in the light.
+    if (press != 0.0 || dent != vec2(0.0)) {
+        normal = normalize(normal + vec3(dent.x, 0.0, dent.y) * N.y);
+        float pr = clamp(press, 0.0, 1.0);
+        albedo.rgb *= 1.0 - 0.12 * pr + 0.05 * clamp(-press, 0.0, 1.0);
+        ao *= 1.0 - 0.3 * pr;
+    }
     // The sand ripples, on the rippling layer's share of the blend.
     if (fxSplatRipple.x > 0.0) {
         float rl = fxSplatRipple.w;
         float rs = rl < 0.5 ? s0 : (rl < 1.5 ? s1 : (rl < 2.5 ? s2 : s3));
-        float share = max(rs - (best - blend), 0.0) / sum;
+        // A footprint has trodden its ripples flat.
+        float share = max(rs - (best - blend), 0.0) / sum * (1.0 - clamp(press, 0.0, 1.0));
         if (share > 0.0) {
-            fxRipple(p, N, dPdx, dPdy, share, normal, ao);
+            fxRipple(ps, N, dPdx, dPdy, share, normal, ao);
         }
     }
 }

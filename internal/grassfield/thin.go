@@ -182,3 +182,8 @@ func Thin(s *SourceMesh, fraction float64, seed uint64) *SourceMesh {
 	}
 	return out
 }
+
+// PieceCount is s's number of connected components: a clump of blades has
+// many, a pebble or a branch one or two (the stage decimates those instead
+// of thinning them).
+func (s *SourceMesh) PieceCount() int { return len(s.pieces()) }

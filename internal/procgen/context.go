@@ -47,6 +47,23 @@ type Env struct {
 	// regional.go) works for: its key, environment, weight lookup and
 	// bounds. Nil for every stage a document lists itself.
 	Region *RegionContext
+	// BaseHash is the stage's hash with no paint in it: its parameters,
+	// seed and its upstream stages' base hashes. Equal to the stage hash
+	// when nothing above it reads paint. Per-tile reruns key their pieces
+	// by it and by the paint each piece reads (paint_incremental.go).
+	// Empty in a preview.
+	BaseHash string
+	// paintOwn and paintUp are the layers this stage's params name and the
+	// ones its upstream stages read; lineage is how its upstream outputs
+	// came to be this run (paint_incremental.go).
+	paintOwn, paintUp []string
+	paintCovered      []string
+	lineage           string
+	// coveredUp hashes the RectCovered params of the stages above
+	// (paint_incremental.go).
+	coveredUp string
+	// rects are the RectKeyed stages above this one (paint_incremental.go).
+	rects *rectKeys
 
 	progress func(float32)
 	logf     func(string)
@@ -163,12 +180,20 @@ type RunContext struct {
 	// this run. Set it from Run; StageKind.Load rebuilds it when a later run
 	// skips this stage.
 	Artifact any
+	// ArtifactAsLoaded says Artifact is exactly what Load would rebuild
+	// from the files the run wrote (a tiled scatter rounds its footprints as
+	// its file does), so a downstream piece made against it is the same as
+	// one made against a later run's loaded copy (paint_incremental.go's
+	// upstreamLineage).
+	ArtifactAsLoaded bool
 
 	upstream   map[string]*StageResult
 	mu         sync.Mutex
 	files      map[string]bool
 	scenery    []Placement
 	volumes    []VolumeEntry
+	emitters   []Emitter
+	sounds     []Sound
 	level      LevelSettings
 	supersedes map[string][]string
 
@@ -177,6 +202,10 @@ type RunContext struct {
 	Previous *ManifestStage
 	tiles    map[string]string
 	touched  map[string]bool
+
+	// The previous run's volumes, read on demand (paint_incremental.go).
+	prevOnce    sync.Once
+	prevVolumes map[string]VolumeEntry
 }
 
 // Path is the absolute path of a file named rel inside the stage's folder,
@@ -216,6 +245,22 @@ func (rc *RunContext) Place(p ...Placement) {
 func (rc *RunContext) PlaceVolume(v ...VolumeEntry) {
 	rc.mu.Lock()
 	rc.volumes = append(rc.volumes, v...)
+	rc.mu.Unlock()
+}
+
+// PlaceEmitter adds particle emitters (see Emitter). Safe from Parallel
+// workers; they are written sorted by ID.
+func (rc *RunContext) PlaceEmitter(e ...Emitter) {
+	rc.mu.Lock()
+	rc.emitters = append(rc.emitters, e...)
+	rc.mu.Unlock()
+}
+
+// PlaceSound adds positional sounds (see Sound). Safe from Parallel
+// workers; they are written sorted by ID.
+func (rc *RunContext) PlaceSound(s ...Sound) {
+	rc.mu.Lock()
+	rc.sounds = append(rc.sounds, s...)
 	rc.mu.Unlock()
 }
 

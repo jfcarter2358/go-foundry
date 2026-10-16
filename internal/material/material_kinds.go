@@ -46,6 +46,7 @@ const (
 	KindUVTransform = "uv_transform"
 	KindWater       = "water"
 	KindSmooth      = "smooth"
+	KindPBR         = "pbr"
 
 	// Sprite and particle.
 	KindBlendMode   = "blend_mode"
@@ -337,26 +338,10 @@ func init() {
 	// its box ticked are the same surface.
 	RegisterKind(&Kind{
 		Name: KindWater, Domains: surfaceOnly, Label: "Water",
-		Doc: "The animated water path: a rolling swell displacing the surface, a " +
-			"per-pixel normal taken from the wave field, and a fresnel mix toward a " +
-			"reflection colour at grazing angles.",
-		Params: []ParamDef{
-			{Name: "wave_amplitude", Type: ParamFloat, Label: "Wave amplitude",
-				Doc:     "Peak vertical displacement, world units.",
-				Default: FloatValue(0.06), Min: 0, Max: 10},
-			{Name: "wave_length", Type: ParamFloat, Label: "Wave length",
-				Doc:     "World units per wave cycle.",
-				Default: FloatValue(3), Min: 0.01, Max: 500},
-			{Name: "wave_speed", Type: ParamFloat, Label: "Wave speed",
-				Doc:     "Wave cycles a second.",
-				Default: FloatValue(0.35), Min: 0, Max: 20},
-			{Name: "reflectivity", Type: ParamFloat, Label: "Reflectivity",
-				Doc:     "0 is the plain texture; 1 is fully mirror-like at grazing angles.",
-				Default: FloatValue(0.45), Min: 0, Max: 1},
-			{Name: "reflect_color", Type: ParamColor, Label: "Reflect colour",
-				Doc:     "The environment colour the fresnel term mixes in.",
-				Default: ColorValue(mgl32.Vec3{0.55, 0.72, 0.92}), Min: 0, Max: 1},
-		},
+		Doc: "Water: depth colour, refraction and soft shorelines from the scene under it, sky and " +
+			"screen-space reflection, a GGX sun glint, drifting ripples, shore foam and caustics on " +
+			"the bed. The parameters are material_kinds_water.go's (docs/guide/28-materials.md).",
+		Params: waterParamDefs(),
 	})
 
 	// Was Geometry.Smooth/SmoothAngle, ticked per surface in the editor.
@@ -370,6 +355,33 @@ func init() {
 			Doc:     "Degrees. 0 uses the engine's default.",
 			Default: FloatValue(0), Min: 0, Max: 180,
 		}},
+	})
+
+	// New with the lighting pass (docs/lighting/PLAN.md, phase 1): how the
+	// surface reflects light, for the GGX specular every lit surface takes
+	// (specular.glsl). A surface without it is a rough dielectric at these
+	// same defaults. The ARM map (<texture>_arm, AO / roughness / metal, as
+	// Poly Haven ships them) multiplies roughness and metallic per texel when
+	// the texture has one, as glTF's factors multiply its maps.
+	RegisterKind(&Kind{
+		Name: KindPBR, Domains: surfaceOnly, Label: "Physically based",
+		Doc: "How shiny the surface is: its roughness, whether it is a metal, and the " +
+			"strength of a non-metal's reflection. A texture's <name>_arm map (AO, " +
+			"roughness, metal) multiplies them per texel.",
+		Params: []ParamDef{
+			{Name: "roughness", Type: ParamFloat, Label: "Roughness",
+				Doc:     "0 is a mirror, 1 a matte surface with only a broad sheen.",
+				Default: FloatValue(DefaultPBRRoughness), Min: 0, Max: 1},
+			{Name: "metallic", Type: ParamFloat, Label: "Metallic",
+				Doc:     "1 is a metal: no diffuse colour, and its reflection takes the albedo's tint.",
+				Default: FloatValue(0), Min: 0, Max: 1},
+			{Name: "specular", Type: ParamFloat, Label: "Specular",
+				Doc:     "A non-metal's reflectance at normal incidence: 0.5 is the 4% of most materials, 1 is 8% (gems, wet stone).",
+				Default: FloatValue(DefaultPBRSpecular), Min: 0, Max: 1},
+			{Name: "arm", Type: ParamTexture, Label: "ARM map",
+				Doc:     "An AO / roughness / metal texture to use instead of <texture>_arm. Empty looks for that.",
+				Default: TextureValue("")},
+		},
 	})
 
 	// ----- sprite and particle -----

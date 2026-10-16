@@ -109,13 +109,16 @@ type RegionMaterialLayer struct {
 
 func init() {
 	procgen.RegisterStage(procgen.StageKind{
-		Name:     RegionMaterialKind,
-		Label:    "Region material",
-		Category: "Materials",
-		Regional: procgen.RegionalShared,
+		Name: RegionMaterialKind,
+		// Per-tile reruns after a paint stroke (docs/terrain-paint/PHASE_P2.md).
+		Incremental: true,
+		Label:       "Region material",
+		Category:    "Materials",
+		Regional:    procgen.RegionalShared,
 		// The presets' terrain_material stages are this stage, per region.
 		SharedFor: []string{TerrainMaterialKind},
-		Version:   1,
+		// 2: soft-ground layers (sand, snow) marked for the ground trails.
+		Version: 2,
 		Doc: "The material a region terrain's tiles wear: each environment's own ground rules and textures (its preset's " +
 			"terrain_material and Poly Haven textures stages) evaluated over the whole terrain, weighted by the " +
 			"environment's biome mask, and baked into one splat of up to eight layers (textures shared between " +
@@ -132,13 +135,14 @@ func init() {
 
 func regionMaterialParams() []procgen.ParamDef {
 	return append([]procgen.ParamDef{
-		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{RegionTerrainKind}, Default: procgen.StageRef(""),
+		{Name: "terrain", Type: procgen.ParamStage, StageKinds: []string{RegionTerrainKind, GroundEditKind}, Default: procgen.StageRef(""),
 			Doc: "The region terrain whose biome masks weight each environment's ground, and whose masks place its layers."},
 		{Name: "offline", Type: procgen.ParamBool, Default: procgen.Bool(false),
 			Doc: "Use only Poly Haven textures already downloaded (each preset's textures stage may also say so)."},
 		{Name: "preview_layers", Type: procgen.ParamBool, Label: "Preview per layer", Default: procgen.Bool(false), PreviewOnly: true,
 			Doc: "Also show every layer's weight as its own grey picture in the preview."},
-	}, regionTileParams()...)
+	}, append(regionTileParams(), // + the paint list (terrain_material_paint.go)
+		splatPaintParam("a role (sand, cracked, gravel, rock, wet, ash, snow: every environment's layer of it) or one layer's Poly Haven id or albedo name"))...)
 }
 
 func validateRegionMaterial(_ *procgen.Doc, _ *procgen.Stage, p procgen.Params) []string {
@@ -168,7 +172,7 @@ type biomeSource struct {
 // regionMaterialRegions is the regions behind terrain stage terrainRef
 // (a region_terrain) in d: its regions stage's list, sorted by key.
 func regionMaterialRegions(d *procgen.Doc, terrainRef string) ([]regions.Region, error) {
-	ts := d.StageByID(terrainRef)
+	ts := terrainSourceStage(d, terrainRef) // through a ground_edit
 	if ts == nil || ts.Kind != RegionTerrainKind {
 		return nil, fmt.Errorf("Terrain must name a region_terrain stage (got %q)", terrainRef)
 	}

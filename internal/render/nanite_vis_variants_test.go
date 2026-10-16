@@ -28,7 +28,7 @@ func materialSourceForTest(t *testing.T) string {
 func TestMaterialVariantsFindEveryTestTheyFix(t *testing.T) {
 	src := materialSourceForTest(t)
 	for _, key := range []uint32{0, visKeySplat | visKeyMacro | visKeyStreaks, 0xfff} {
-		out, err := specializeMaterialSource(src, key, true)
+		out, err := specializeMaterialSource(src, uint64(key), true)
 		if err != nil {
 			t.Fatalf("key %#x: %v", key, err)
 		}
@@ -83,5 +83,86 @@ func TestMaterialVariantKeyIsWhatTheSurfaceCanUse(t *testing.T) {
 	gfx.FxDebugMask = ^int32(visKeySplat)
 	if k := visShadeKey(&splat, false); k&visKeySplat != 0 {
 		t.Error("FOUNDRY_FX_MASK's switch did not take the splat out of the key")
+	}
+}
+
+// TestMaterialVariantsFoldTheFrameSwitches: a key saying GI and the caustics
+// are off this frame takes every test of them out of the whole source — the
+// probe lookups behind ambientLight's giEnabled were the point
+// (docs/adventure/PHASE_F.md) — and a key without those bits leaves every one.
+func TestMaterialVariantsFoldTheFrameSwitches(t *testing.T) {
+	src := materialSourceForTest(t)
+	full, err := gfx.ExpandShaderIncludes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range visFrameSpecs {
+		if !strings.Contains(full, s.test) {
+			t.Fatalf("the material source no longer tests %q; visFrameSpecs needs updating", s.test)
+		}
+	}
+	out, err := specializeMaterialSource(src, visKeyFrameMask, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range visFrameSpecs {
+		if strings.Contains(out, s.test) {
+			t.Errorf("folded variant still tests %q", s.test)
+		}
+	}
+	kept, err := specializeMaterialSource(src, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range visFrameSpecs {
+		if strings.Count(kept, s.test) != strings.Count(src, s.test) && strings.Count(kept, s.test) != strings.Count(full, s.test) {
+			t.Errorf("key 0 folded %q", s.test)
+		}
+	}
+}
+
+// TestMaterialVariantsFoldTheSplatLayout: a splat's layout key replaces each
+// layer switch fxSplatSurface reads with the literal applySplat would have
+// written — relief keeping its uniform's depth where the layer has one — and
+// a key without the layout bit leaves the uniforms (docs/adventure/PHASE_F.md).
+func TestMaterialVariantsFoldTheSplatLayout(t *testing.T) {
+	src := materialSourceForTest(t)
+	var st gfx.SurfaceState
+	st.Fx.HasSplat = true
+	st.Fx.SplatLayers[0] = material.SplatLayer{Texture: "sand", AntiTile: true}
+	st.Fx.SplatLayers[1] = material.SplatLayer{Texture: "gravel", Relief: 0.07, NoStrata: true}
+	st.Fx.SplatLayers[3] = material.SplatLayer{Texture: "rock", Triplanar: true, AntiTile: true, Relief: 0.5}
+	lay := visSplatLayout(&st)
+	if lay&visKeySplatLayout == 0 {
+		t.Fatal("a splat surface has no layout key")
+	}
+	out, err := specializeMaterialSource(src, visKeySplat|lay, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"T = vec4(0.0, 0.0, 0.0, 1.0),",
+		"A = vec4(1.0, 0.0, 0.0, 1.0),",
+		// Layer 4 is triplanar: applySplat writes it no relief.
+		"R = vec4(0.0, fxSplatRelief.y, 0.0, 0.0);",
+		// Absent layer 3 has NoStrata false, as applySplat's b2f(!NoStrata).
+		"vec4 Q = vec4(1.0, 0.0, 1.0, 1.0);",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("folded source has no %q", want)
+		}
+	}
+	plain, err := specializeMaterialSource(src, visKeySplat, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range visSplatSpecs {
+		if strings.Count(plain, s.text) != strings.Count(src, s.text) {
+			t.Errorf("no layout bit, yet %q was folded", s.text)
+		}
+	}
+	var none gfx.SurfaceState
+	if visSplatLayout(&none) != 0 {
+		t.Error("a surface with no splat has a layout key")
 	}
 }

@@ -258,6 +258,11 @@ func (r *naniteSceneryRenderer) signature(lvl *world.Level) uint64 {
 	return h.Sum64()
 }
 
+// NanitePoolWholeLevel builds the scenery page pool from every Nanite mesh
+// the level places, not only those whose chunks are on (rebuild);
+// FOUNDRY_NANITE_POOL_WHOLE_LEVEL=0 is the old pool of the members alone.
+var NanitePoolWholeLevel = gfx.EnvFlag("FOUNDRY_NANITE_POOL_WHOLE_LEVEL", true)
+
 // naniteSigSeed is signature's hash seed, fixed for the process.
 var naniteSigSeed = maphash.MakeSeed()
 
@@ -286,6 +291,25 @@ func (r *naniteSceneryRenderer) rebuild(lvl *world.Level, sameLevel bool) {
 	for _, m := range list {
 		if r.meshes[m] == nil {
 			samePool = false
+		}
+	}
+	// The pool holds every mesh the level places, its chunk on or off
+	// (NanitePoolWholeLevel): built once, a script switching an area on in
+	// play finds its meshes there and nothing is released and streamed in
+	// again — on the adventure level the ruins coming on had rebuilt it,
+	// a 2 s frame (docs/adventure/PHASE_F.md).
+	if !samePool && NanitePoolWholeLevel {
+		for i := range lvl.Scenery {
+			s := &lvl.Scenery[i]
+			if !s.NaniteGPU || s.Nanite == nil {
+				continue
+			}
+			for _, m := range []*nanite.Mesh{s.Nanite, s.ImpostorMesh} {
+				if m != nil && (m == s.Nanite || DrawDistances && s.HasImpostor()) && !used[m] {
+					used[m] = true
+					list = append(list, m)
+				}
+			}
 		}
 	}
 	if !samePool && sameLevel {

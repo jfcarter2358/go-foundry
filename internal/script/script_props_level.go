@@ -271,6 +271,29 @@ func levelProps() map[string]propAccess {
 			Doc: "how far the camera sees, in world units (the level's `view_distance:`, 1000 by default, clamped to 50–50000); 0 goes back to the default",
 		},
 
+		// Rain on the level's water (phase W5): the water shader's drop
+		// rings, 0..1. Written onto the level like view_distance, so a save
+		// keeps a changed value and a reload puts the authored one back.
+		"rain_ripples": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				if c == nil || c.lvl == nil {
+					return flang.FloatVal(0), true
+				}
+				return flang.FloatVal(float64(c.lvl.RainRipples)), true
+			},
+			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("rain_ripples", "number", v)
+				}
+				if c.lvl != nil {
+					c.lvl.RainRipples = world.ClampRainRipples(f)
+				}
+				return nil
+			},
+			Doc: "how hard rain rings the level's water surfaces, 0 (none, the default) to 1 (a downpour); the level's `rain_ripples:` key",
+		},
+
 		// The camera's lens, for a scope or a sprint's widening. Engine state
 		// like the two switches above; ScriptRuntimeReset puts the default
 		// back, so a zoom held when play ends does not follow the author into
@@ -707,6 +730,172 @@ func levelProps() map[string]propAccess {
 			},
 			Doc: "how much temporal anti-aliasing's output is sharpened, 0 to 1 (0.25 by default); saved for every level and session",
 		},
+		// The render scale and dynamic resolution (gfx/render_scale.go;
+		// docs/adventure/PHASE_F.md, Phase F2), saved to graphics.yaml.
+		"render_scale": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.RenderScale)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("render_scale", "float", v)
+				}
+				gfx.SetRenderScale(float32(f))
+				return nil
+			},
+			Doc: "the share of the screen's width and height the world is drawn at under temporal anti-aliasing, 0.5 to 1 (1 by default), the TAA resolve reconstructing the full picture; the HUD is always drawn at full size; saved for every level and session",
+		},
+		"light_shafts": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.StrVal(gfx.LightShaftsQuality.String()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				sv, ok := v.(flang.StrVal)
+				if !ok {
+					return propErr("light_shafts", "string", v)
+				}
+				q, ok := gfx.ParseShaftsQuality(string(sv))
+				if !ok {
+					return propErr("light_shafts", "off, low or high", v)
+				}
+				gfx.SetLightShaftsQuality(q)
+				return nil
+			},
+			Doc: "the player's light shafts tier: \"high\" (the default: the level's march), \"low\" (half its steps) or \"off\"; a level still has to ask for shafts; saved for every level and session",
+		},
+		"dynamic_resolution": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.DynamicResolution), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("dynamic_resolution", "bool", v)
+				}
+				gfx.SetDynamicResolution(b)
+				return nil
+			},
+			Doc: "whether the render scale moves every frame, between dynamic_resolution_min and render_scale, to hold the world's GPU time at dynamic_resolution_target_ms; off by default, saved for every level and session",
+		},
+		"dynamic_resolution_target_ms": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.DynamicResolutionTargetMs)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("dynamic_resolution_target_ms", "float", v)
+				}
+				gfx.SetDynamicResolutionTargetMs(float32(f))
+				return nil
+			},
+			Doc: "the world's GPU time per frame dynamic resolution aims at, in milliseconds (15 by default: 60 fps with room for the HUD); saved for every level and session",
+		},
+		"dynamic_resolution_min": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.DynamicResolutionMin)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("dynamic_resolution_min", "float", v)
+				}
+				gfx.SetDynamicResolutionMin(float32(f))
+				return nil
+			},
+			Doc: "the least render scale dynamic resolution goes to, 0.5 to 1 (0.5 by default); saved for every level and session",
+		},
+		// The lighting pass's player settings (gfx/lighting_settings.go;
+		// docs/lighting/PLAN.md), saved to graphics.yaml like smooth_lighting.
+		"specular": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.SpecularLighting), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("specular", "bool", v)
+				}
+				gfx.SetSpecularLighting(b)
+				return nil
+			},
+			Doc: "whether lit surfaces take a specular highlight from every light, by their material's roughness and metalness; on by default, saved for every level and session",
+		},
+		"reflections": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.StrVal(gfx.Reflections.String()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				s, ok := v.(flang.StrVal)
+				if !ok {
+					return propErr("reflections", "string", v)
+				}
+				q, ok := gfx.ParseReflectionQuality(string(s))
+				if !ok {
+					return propErr("reflections", "off, low or high", v)
+				}
+				gfx.SetReflections(q)
+				return nil
+			},
+			Doc: "the player's reflection quality: \"off\", \"low\" (the sky and reflection volumes) or \"high\" (plus screen-space reflections); picked by GPU until set, then saved for every level and session",
+		},
+		"ambient_occlusion": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.AmbientOcclusion), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("ambient_occlusion", "bool", v)
+				}
+				gfx.SetAmbientOcclusion(b)
+				return nil
+			},
+			Doc: "whether ambient light is occluded in creases and contact points (screen-space and distance-field AO); picked by GPU until set, then saved",
+		},
+		"bloom": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.Bloom), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("bloom", "bool", v)
+				}
+				gfx.SetBloom(b)
+				return nil
+			},
+			Doc: "whether bright light glows into the pixels around it (HDR frames only); on by default, saved for every level and session",
+		},
+		"contact_shadows": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.ContactShadows), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("contact_shadows", "bool", v)
+				}
+				gfx.SetContactShadows(b)
+				return nil
+			},
+			Doc: "whether the sun casts short screen-space shadows where small things touch the ground; picked by GPU until set, then saved",
+		},
+		"soft_shadows": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.SoftShadows), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("soft_shadows", "bool", v)
+				}
+				gfx.SetSoftShadows(b)
+				return nil
+			},
+			Doc: "whether sun shadows soften with distance from their caster (PCSS); on by default, saved for every level and session",
+		},
 		// The player's live GI tier (gfx.GIQuality), saved to graphics.yaml
 		// like smooth_lighting.
 		"gi_quality": {
@@ -726,6 +915,26 @@ func levelProps() map[string]propAccess {
 				return nil
 			},
 			Doc: "the player's live global illumination quality: \"off\", \"low\", \"medium\" or \"high\" — bounce light worked out every frame from the lights as they are; off is the flat ambient and the baked bounce; picked by GPU until set, then saved for every level and session",
+		},
+		// The player's water quality (gfx.WaterQuality; render/water_pass.go),
+		// saved to graphics.yaml like gi_quality.
+		"water_quality": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.StrVal(gfx.WaterQuality.String()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				s, ok := v.(flang.StrVal)
+				if !ok {
+					return propErr("water_quality", "string", v)
+				}
+				q, ok := gfx.ParseWaterQuality(string(s))
+				if !ok {
+					return propErr("water_quality", "low, medium or high", v)
+				}
+				gfx.SetWaterQuality(q)
+				return nil
+			},
+			Doc: "the player's water quality: \"low\" (sky reflection and depth colour), \"medium\" (+ refraction of the bed) or \"high\" (+ screen-space reflection and caustics, the default); saved for every level and session",
 		},
 		// The player's texture memory settings (gfx.TextureCompression,
 		// gfx.TextureSkipMips), saved to graphics.yaml like smooth_lighting.

@@ -39,6 +39,9 @@ type RawVolume struct {
 	// Ambient cuts the sky's ambient light inside the region — a cave, a
 	// slot canyon — for frames without live GI. See Volume.Ambient.
 	Ambient *RawVolumeAmbient `yaml:"ambient,omitempty"`
+	// Reflection captures the region's own environment for what reflects
+	// inside it: a room's walls instead of the sky. See Volume.Reflection.
+	Reflection *RawVolumeReflection `yaml:"reflection,omitempty"`
 	// Gravity replaces the level's ambient pull inside the region, in units per
 	// second squared: 0 for a zero-g chamber, a negative number to throw things
 	// at the ceiling. Absent leaves gravity alone, which is every volume
@@ -872,17 +875,23 @@ type RawCompile struct {
 	// edge crosses a face.
 	LightMinGrid float32 `yaml:"light_min_grid,omitempty"`
 	// Bake is what the light stage does: "" or "full" bakes every static
-	// light, its ambient and its bounce into the surfaces; "none" skips the
-	// bake, so the level is lit live (GI and every light) in a release build
-	// as it is in the editor. Every light then counts against the live
+	// light, its ambient and its bounce into the surfaces, the direct light
+	// into lightmaps (sharp shadows) and the rest per vertex; "vertex" bakes
+	// it all per vertex on a refined grid, as before lightmaps; "none" skips
+	// the bake, so the level is lit live (GI and every light) in a release
+	// build as it is in the editor. Every light then counts against the live
 	// lighting limits (4 directional, 8 point).
 	Bake string `yaml:"bake,omitempty"`
+	// LightmapTexel is the lightmaps' texel size in world units: smaller is
+	// sharper shadows and more memory. Default 0.5.
+	LightmapTexel float32 `yaml:"lightmap_texel,omitempty"`
 }
 
 // The values RawCompile.Bake takes.
 const (
-	BakeFull = "full"
-	BakeNone = "none"
+	BakeFull   = "full"
+	BakeVertex = "vertex"
+	BakeNone   = "none"
 )
 
 type RawLevel struct {
@@ -982,8 +991,12 @@ type RawLevel struct {
 	// the projection's far plane. Absent (or 0) is the engine's 1000; a large
 	// outdoor level raises it so distant terrain is not clipped away. Longer
 	// costs depth precision at range, so raise it only as far as needed.
-	ViewDistance float32   `yaml:"view_distance,omitempty"`
-	Lights       RawLights `yaml:"lights"`
+	ViewDistance float32 `yaml:"view_distance,omitempty"`
+	// RainRipples is how hard rain rings the level's water surfaces, 0..1:
+	// procedural drop rings drawn by the water shader (phase W5). Absent or
+	// 0 is none. A script changes it with `@level.prop.rain_ripples`.
+	RainRipples float32   `yaml:"rain_ripples,omitempty"`
+	Lights      RawLights `yaml:"lights"`
 }
 
 // RawPlayer is the level's `player:` block — see PlayerSettings.

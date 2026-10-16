@@ -134,7 +134,8 @@ func PlacePlayerCamera(lvl *world.Level) {
 	boomState.ok = false
 	gfx.Cam.Up = gfx.WorldUp
 	gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
-	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.PlayerEyeHeight(), 0})
+	// Less the boots sunk into sand or snow (footsteps.go).
+	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.PlayerEyeHeight() - world.PlayerGroundSink, 0})
 	gfx.RebuildCamMatrix()
 }
 

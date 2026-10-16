@@ -193,6 +193,8 @@ var builtinDocs = []BuiltinDoc{
 		"hitscan from the camera through the cursor, answering `(atom, hit, at)` the same way. Takes hitscan's options; `screen` picks through another point on the window. With the cursor captured the cursor is the middle of the view."},
 	{GroupWorld, "screen_ray", "screen_ray()  ·  screen_ray(point)", "dict",
 		"The ray from the camera through the cursor, or a point on the window in pixels, as `{\"from\": vec, \"direction\": vec}` — the dict hitscan takes."},
+	{GroupWorld, "water_at", "water_at(place)", "dict",
+		"The water at a vec or an object's position, or null where no water surface lies over or under it: `{\"under\": bool, \"depth\": number, \"surface\": number, \"flow\": vec, \"material\": string}`. `depth` is metres below the surface (negative above it), `surface` the still surface's height, `flow` the current in m/s (a river's; zero on still water). Generated ponds, lakes and rivers and brush faces wearing water all answer."},
 	{GroupWorld, "world_to_screen", "world_to_screen(place)", "vec",
 		"Where a vec or an object is on the window: x and y in pixels from the top-left, z its distance in front of the camera. Null when it is behind the camera."},
 	{GroupWorld, "after", "ref <- after(ms, atom, ...)", "null",

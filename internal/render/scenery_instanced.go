@@ -329,7 +329,7 @@ func renderSceneryShadowInstanced(lvl *world.Level, prog uint32, skin *gfx.SkinU
 			continue
 		}
 		geo := &lvl.Scenery[g.rep].Submeshes[g.sub]
-		if geo.Alpha < 0.05 {
+		if !geo.CastsShadow() {
 			continue
 		}
 		// A coarser stand-in where the mesh has one (gfx.Geometry.ShadowLOD).

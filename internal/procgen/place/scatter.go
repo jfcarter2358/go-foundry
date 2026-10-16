@@ -83,6 +83,13 @@ type Rule struct {
 	// whole ground.
 	Near     [][3]float64
 	NearSoft float64
+	// Mask, when set, multiplies the weight at (x, z) by what it answers,
+	// 0..1: the stage's paint bands and exclude layers
+	// (docs/guide/36-terrain-paint.md). A scatter candidate where it is 0
+	// is dropped even inside a weighted cell, so painted edges are sharp
+	// to the candidate, not to the weight cell. Nil: 1 everywhere, and
+	// the rule places exactly as before paint existed.
+	Mask func(x, z float64) float64
 	// Satellites is candidates per metre of footprint radius round each
 	// rock the earlier rules kept, out to SatelliteSpread radii beyond it.
 	Satellites, SatelliteSpread float64
@@ -99,6 +106,43 @@ type Rule struct {
 	CollisionMin, HullMax float64
 	// MaxInstances caps the rule (0: no cap).
 	MaxInstances int
+	// Orient, when set, is a direction field at (x, z) — a unit vector and
+	// a strength 0..1 (a direction paint layer, the paths' tangents, or
+	// downhill; docs/terrain-paint/PHASE_P4.md). A rock's yaw then turns
+	// its long side (whichever of its footprint's X and Z is longer)
+	// along the field, offset by OrientOffset and jittered by up to
+	// ±OrientJitter (radians), and blends back toward its random yaw where
+	// the strength falls. The randomness is the candidate's own yaw draw,
+	// so the RNG stream, and with it every position, is unchanged. Nil:
+	// the yaw is random, exactly as before.
+	Orient                     func(x, z float64) (dx, dz, strength float64)
+	OrientJitter, OrientOffset float64
+}
+
+// OrientYaw is the yaw of a placement whose own random yaw is yaw (its
+// randomness: [0, 2π)), turned along the direction field orient at (x, z)
+// (Rule.Orient): long is true when the model's length lies along its X
+// (so a quarter turn puts it along the field). The field's two senses are
+// equal (a log has no head); half of all placements are flipped end for
+// end, by their randomness.
+func OrientYaw(orient func(x, z float64) (float64, float64, float64), x, z, yaw, jitter, offset float64, long bool) float64 {
+	dx, dz, s := orient(x, z)
+	if s <= 0 {
+		return yaw
+	}
+	s = math.Min(s, 1)
+	u := yaw / (2 * math.Pi)
+	th := math.Atan2(dx, dz) + offset + (2*u-1)*jitter
+	if long {
+		th += math.Pi / 2
+	}
+	if f := u * 16; f-math.Floor(f) >= 0.5 {
+		th += math.Pi
+	}
+	// Back toward the random yaw where the field is weak (mod π: the
+	// shorter way round for an end-for-end symmetric thing).
+	d := math.Remainder(yaw-th, math.Pi)
+	return th + (1-s)*d
 }
 
 // DefaultRule is a rule with every field at the stage's default: boulders
@@ -135,6 +179,14 @@ type ScatterSettings struct {
 	Region *Region
 	// Progress, when set, is called with 0..1.
 	Progress func(float32)
+	// Tiles, when above 0, scatters in independent world tiles of this
+	// side (scatter_tiled.go), each re-scattered only when its own inputs
+	// or an earlier-phase neighbour's rocks changed. TileKey is the hash
+	// of a tile's own inputs ("" or nil: no caching) and Cache keeps tiles
+	// across runs. 0: the classic scatter.
+	Tiles   float64
+	TileKey func(i, j int) string
+	Cache   TileCache
 }
 
 // RuleStats is what a rule did.
@@ -154,6 +206,9 @@ type RuleStats struct {
 type ScatterResult struct {
 	Instances []Instance
 	Stats     []RuleStats
+	// Tiles is a tiled scatter's tiles in row order (nil for the classic
+	// one); their instances, concatenated, are Instances.
+	Tiles []*ScatterTile
 }
 
 // candidate is a rock that might be placed, its randomness drawn.
@@ -194,6 +249,9 @@ func Scatter(g *Ground, s ScatterSettings, pool terrain.Pool) (*ScatterResult, e
 	var cf *CliffField
 	if needCliff && g.HasMask(terrain.MaskCliff) {
 		cf = g.CliffField(s.CliffThreshold)
+	}
+	if s.Tiles > 0 {
+		return scatterTiled(g, &s, cf, maxSp, pool)
 	}
 	grid := newDiscGrid(2, maxSp)
 	for _, d := range s.Avoid {
@@ -241,6 +299,11 @@ func (r *Rule) Weight(g *Ground, cf *CliffField, seed uint64, x, z float64) floa
 	if len(r.Near) > 0 {
 		w *= r.nearWeight(x, z)
 		if w == 0 {
+			return 0
+		}
+	}
+	if r.Mask != nil {
+		if w *= r.Mask(x, z); w <= 0 {
 			return 0
 		}
 	}
@@ -379,7 +442,12 @@ func scatterRule(g *Ground, cf *CliffField, s *ScatterSettings, ri int, r *Rule,
 				// region's rocks follows the union's extent.
 				order = int((wb0[1]+int64(bz)+1<<20)<<41 | (wb0[0]+int64(bx)+1<<20)<<20 | int64(k))
 			}
-			o.cands = append(o.cands, r.draw(rng, x, z, order))
+			c := r.draw(rng, x, z, order)
+			// Drawn first either way, so the stream after it is the same.
+			if r.Mask != nil && r.Mask(x, z) <= 0 {
+				continue
+			}
+			o.cands = append(o.cands, c)
 		}
 		return nil
 	})
@@ -473,7 +541,11 @@ func seat(g *Ground, r *Rule, c *candidate) (Instance, bool) {
 	up := [3]float64{0, 1, 0}
 	nu := normalize(add(scale(up, 1-r.Align), scale(n, r.Align)))
 	tax := [3]float64{math.Cos(c.tiltAx), 0, math.Sin(c.tiltAx)}
-	rot := FromTo(up, nu).Mul(RotAxis(tax, c.tilt)).Mul(RotY(c.yaw))
+	yaw := c.yaw
+	if r.Orient != nil {
+		yaw = OrientYaw(r.Orient, c.x, c.z, c.yaw, r.OrientJitter, r.OrientOffset, v.Extent[0] > v.Extent[2]*1.15)
+	}
+	rot := FromTo(up, nu).Mul(RotAxis(tax, c.tilt)).Mul(RotY(yaw))
 	y, lo, hi := seatHeight(g, rot, c.x, c.z, v.FootprintRadius*s, 0.5*v.BaseBand*s)
 	h := v.Height * s
 	if hi-lo > r.MaxBury*h {

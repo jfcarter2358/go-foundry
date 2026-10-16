@@ -26,6 +26,7 @@ import (
 	"sort"
 
 	"foundry/internal/gfx"
+	"foundry/internal/particle"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -162,6 +163,12 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	// both, exactly as when the sim uploaded them itself.
 	gfx.UploadCamMatrix()
 	gfx.DrainDeferredTextures()
+	// ARM maps asked for by last frame's draws, whose decodes have finished
+	// (gfx/texture_armmap.go).
+	gfx.PumpARMMaps()
+	// The footprints the sim's steps queued, stamped into the ground trails
+	// (ground_trails.go) before any splat reads them.
+	groundTrailsUpdate(lvl, o.Now)
 	// A new frame for the skinning uploads' memory of what each program holds
 	// (gfx.ApplySkinUniforms): the poses moved since the last.
 	gfx.BeginSkinFrame()
@@ -177,7 +184,15 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	// a ray from it, so there is no "unchanged" frame to skip either way.
 	// Every program that shades world geometry reads it from the scene block
 	// this fills — see world.UploadFogTo.
-	world.UploadFog(lvl.Fog, lvl.Volumes, lvl)
+	// The ambient volumes a frame packs are the camera's (world.AmbientViewCull):
+	// its frustum, from the projection last synced and the eye now.
+	world.AmbientViewCull.On = AmbientViewCull && gfx.GIQuality == gfx.GIOff
+	world.AmbientViewCull.Planes = ExtractFrustum(gfx.Projection.Mul4(gfx.Cam.Matrix)).Planes
+	ambTilesReset()
+	// Under water the frame's fog is the water's, and the ripples the sim
+	// queued are taken in (water_interact.go) — before the first upload.
+	beginWaterFrame(lvl, o.Now)
+	world.UploadFog(frameFog(lvl), frameVolumes(lvl), lvl)
 
 	// And the lights, every frame, before anything draws or traces with them.
 	// The scene's lights rather than the level's: an attached light carried to
@@ -231,6 +246,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// cull read it.
 		gfx.Wind.Set(foliageWind.dir, foliageWind.strength, BiomeWindTime)
 		gfx.Wind.Flush()
+		// And the particles that drift in it (a waterfall's mist; phase
+		// W5, particle/particle_wind.go): about 1.5 m/s at strength 1.
+		particle.SetWind(mgl32.Vec3{foliageWind.dir.X(), 0, foliageWind.dir.Y()}.Mul(1.5 * foliageWind.strength))
 		// The cloud wind clock, latched for the same reason: the shadow bake
 		// below and the volumetric pass after the transparent pass must see
 		// one cloud, or its shadow slides off it.
@@ -255,6 +273,22 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 			UpdateGI(lvl, o)
 		}
 		ProfileEnd()
+		// The environment every lit surface reflects (envmap.go): the sky's
+		// cube and the reflection volumes', after GI, whose field and probes
+		// a volume's capture reads, and before the uniforms go up.
+		ProfileBegin("reflections")
+		if !o.skip("reflections") {
+			UpdateEnvMaps(lvl, o)
+		} else {
+			packEnvOff(&gfx.Scene.Block)
+		}
+		ProfileEnd()
+		// The occlusion the last frame left (ao.go), for this frame's
+		// shading to read.
+		beginAOFrame(o)
+		// A compiled level's lightmaps, the first frame they are its
+		// (lightmap.go).
+		syncLightmaps(lvl)
 		UploadShadowUniforms(lvl.Lights, shadowFrame)
 		// Scene lights, so an attached light's cubemap is rendered from
 		// where its carrier has taken it rather than from its offset.
@@ -267,6 +301,10 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// at an effect flash's index are written (off) rather than left at
 		// whatever a light that once had that slot set them to.
 		UploadPointShadowUniforms(sceneLights)
+		// The water bodies whose beds take caustics this frame, for every
+		// program that shades what lies under them (water_caustics.go).
+		prepareWaterCaustics(lvl, gfx.Cam.Position)
+		uploadWaterCausticsTo(gfx.Program)
 
 		// --- Render ---
 		// What is behind everything: the sky's own horizon, the fog colour
@@ -511,6 +549,13 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		naniteOcclusionPass(lvl)
 		ProfileEnd()
 
+		// Which ambient volumes each screen tile can see, from the depth
+		// the two passes left, for the material pass and the shafts
+		// (amb_tiles.go).
+		ProfileBegin("ambient tiles")
+		ambTilesBuild()
+		ProfileEnd()
+
 		// The visibility buffer's material pass: every pixel the cull's
 		// draws still own, shaded once, before anything else draws over
 		// the opaque world (nanite_vis.go).
@@ -633,6 +678,17 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 			ProfileEnd()
 		}
 
+		// --- Water: after the sky, over copies of the scene it lies on, and
+		// before the transparent pass, which then sorts against its depth
+		// (water_pass.go).
+		{
+			var water []TransparentDraw
+			transparentDraws, water = splitWaterDraws(transparentDraws)
+			if !o.skip("water") {
+				renderWater(lvl, water)
+			}
+		}
+
 		// --- Transparent pass: draw collected transparent geometry back-to-front ---
 		ProfileBegin("transparent")
 		if len(transparentDraws) > 0 {
@@ -702,6 +758,12 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// inside a body that has hands — except while the Player panel's
 		// Viewmodel section is open, which is the one moment the editor
 		// itself needs to see this (EditorPreviewActive).
+		// The occlusion and the sun's contact shadow, from the depth the
+		// opaque world left, for the next frame (ao.go). Before the
+		// viewmodel clears the depth.
+		if !o.skip("ao") {
+			runAOPass(lvl, o)
+		}
 		// A TAA frame's motion vectors, from the world's depth before the
 		// viewmodel clears it (taa.go).
 		taaMotionPass()
@@ -726,7 +788,7 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		}
 
 		// A TAA frame's resolve, into the caller's target (taa.go).
-		sceneFrameEnd()
+		sceneFrameEnd(lvl, o.Now)
 
 		DebugStats.ChunksDrawn = chunksDrawn
 		DebugStats.BrushesDrawn = brushesDrawn

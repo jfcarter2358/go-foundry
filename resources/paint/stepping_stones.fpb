@@ -1,0 +1,36 @@
+# Stepping stones: a stroke becomes a footpath spline in the ground_edit, a
+# line of stones a stride apart (0.6-0.8 m) down its middle, slightly
+# zig-zagged, turned along it and bedded in; the ground is not flattened, the
+# grass is only worn between the stones, and a little earth shows. Across a
+# river the stones carry on as a ford, their tops above the water.
+# docs/guide/36-terrain-paint.md "Paths".
+# Poly Haven (CC0): dirt_floor, rock_moss_set_02 (the stones).
+name: Stepping stones
+doc: A line of stepping stones a stride apart, the grass worn between them; they carry on across water as a ford.
+order: 112
+path:
+  style: stepping_stones
+  width_scale: 1
+  simplify: 0.3
+  flatten: false
+  shape: {wear: 0.8, edge: 0.35, stride: 0.7}
+recipe:
+  textures:
+    - {name: path_dirt, id: dirt_floor, scale: 2.5}
+  material:
+    - {mask: path_wear, texture: path_dirt, slots: [wet, ash, snow], fallback: cracked, strength: 0.35}
+    - {mask: path_stepping_stones, texture: path_dirt, slots: [wet, ash, snow], fallback: cracked, strength: 0.6}
+  exclude:
+    - {mask: path_wear, kind: grass_field, shrink: 0.6}
+    - {mask: path_clear, kind: scatter}
+  stages:
+    - stage: polyhaven_rocks
+      id: path_rocks_src
+      params:
+        assets: [{id: rock_moss_set_02}]
+        back: none
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source
+        path_rocks: path_rocks_src

@@ -1,0 +1,18 @@
+# water_alpine.fmat — snow-melt water: almost no sediment, so the bed shows a
+# long way down, and the deeps go a cold blue-green.
+kind: surface
+texture: water
+doc: 'A cold mountain lake: glass-clear, blue-green deeps, little foam.'
+effects:
+  - effect: water
+    absorption: 0.15
+    shallow_color: {r: 0.62, g: 0.86, b: 0.93}
+    scatter_color: {r: 0.008, g: 0.06, b: 0.11}
+    subsurface: 0.3
+    roughness: 0.04
+    refraction: 0.3
+    foam: 0.25
+    caustics: 1.2
+    flow_speed: 0.12
+    wave_amplitude: 0.03
+    detail_strength: 0.7

@@ -622,6 +622,81 @@ func writeFaces(w *colWriter, faces []compile.Face) {
 		w.u32(l.name+".n", counts)
 		w.f32(l.name, flat)
 	}
+	lm := make([]float32, faceLightmapFloats*n)
+	for i := range faces {
+		faceLightmapOf(&faces[i].Lightmap, lm[faceLightmapFloats*i:])
+	}
+	w.f32("face.lightmap", lm)
+}
+
+// faceLightmapFloats is how many float32s a face's lightmap chart takes
+// (compile.LightmapChart): page, the rectangle, origin, U, V, texel.
+const faceLightmapFloats = 15
+
+func faceLightmapOf(c *compile.LightmapChart, out []float32) {
+	copy(out, []float32{float32(c.Page), float32(c.X), float32(c.Y), float32(c.W), float32(c.H),
+		c.Origin[0], c.Origin[1], c.Origin[2], c.U[0], c.U[1], c.U[2], c.V[0], c.V[1], c.V[2], c.Texel})
+}
+
+func setFaceLightmap(c *compile.LightmapChart, s []float32) {
+	c.Page, c.X, c.Y, c.W, c.H = int32(s[0]), int32(s[1]), int32(s[2]), int32(s[3]), int32(s[4])
+	c.Origin = mgl32.Vec3{s[5], s[6], s[7]}
+	c.U = mgl32.Vec3{s[8], s[9], s[10]}
+	c.V = mgl32.Vec3{s[11], s[12], s[13]}
+	c.Texel = s[14]
+}
+
+// writeLightmaps writes the lightmap pages (compile/lightmap.go): their count
+// and size, then every page's RGBA half floats end to end.
+func writeLightmaps(w *colWriter, pages []compile.LightmapPage) {
+	size := int64(0)
+	if len(pages) > 0 {
+		size = int64(pages[0].Size)
+	}
+	w.i64("lightmap.shape", []int64{int64(len(pages)), size})
+	var raw []byte
+	for _, p := range pages {
+		b := make([]byte, 2*len(p.Texels))
+		for i, v := range p.Texels {
+			b[2*i], b[2*i+1] = byte(v), byte(v>>8)
+		}
+		raw = append(raw, b...)
+	}
+	w.bytesCol("lightmap.texels", raw)
+}
+
+// readLightmaps reads them back; a file with none (a per-vertex bake) has
+// none.
+func readLightmaps(f *colFile) ([]compile.LightmapPage, error) {
+	shape, err := f.i64("lightmap.shape")
+	if err != nil {
+		return nil, nil // written before lightmaps: there are none
+	}
+	if len(shape) != 2 || shape[0] < 0 || shape[1] < 0 {
+		return nil, errCompiledCorrupt
+	}
+	count, size := int(shape[0]), int(shape[1])
+	if count == 0 {
+		return nil, nil
+	}
+	raw, err := f.bytes("lightmap.texels")
+	if err != nil {
+		return nil, err
+	}
+	per := size * size * 4
+	if len(raw) != 2*per*count {
+		return nil, errCompiledCorrupt
+	}
+	pages := make([]compile.LightmapPage, count)
+	for p := range pages {
+		tex := make([]uint16, per)
+		b := raw[2*per*p:]
+		for i := range tex {
+			tex[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8
+		}
+		pages[p] = compile.LightmapPage{Size: int32(size), Texels: tex}
+	}
+	return pages, nil
 }
 
 func readFaces(f *colFile) ([]compile.Face, error) {
@@ -732,6 +807,23 @@ func readFaces(f *colFile) ([]compile.Face, error) {
 			})
 		})
 	}
+	jobs = append(jobs, func() error {
+		lm, err := f.f32("face.lightmap")
+		if err != nil {
+			// Written before lightmaps: every face lit per vertex.
+			for i := range faces {
+				faces[i].Lightmap.Page = -1
+			}
+			return nil
+		}
+		if len(lm) != faceLightmapFloats*n {
+			return errCompiledCorrupt
+		}
+		for i := range faces {
+			setFaceLightmap(&faces[i].Lightmap, lm[faceLightmapFloats*i:])
+		}
+		return nil
+	})
 	if err := runAll(jobs); err != nil {
 		return nil, err
 	}

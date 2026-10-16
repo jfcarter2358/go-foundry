@@ -595,7 +595,7 @@ func shadowStaticSurfaces(lvl *world.Level, prog uint32, cull *Frustum) {
 	}
 	s := lvl.Static
 	for _, grp := range sb.groups {
-		if grp.batch.Alpha < 0.05 || s.HiddenFor(grp.key.chunk, grp.coveredBy) || len(grp.surfaces) == 0 {
+		if !batchCastsShadow(&grp.batch.Material) || s.HiddenFor(grp.key.chunk, grp.coveredBy) || len(grp.surfaces) == 0 {
 			continue
 		}
 		if cull == nil {

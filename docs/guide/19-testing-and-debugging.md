@@ -101,6 +101,20 @@ soft edge. `"msaa"` is the fallback, the window's own multisampling as before
 its next start — and `"off"` is neither. `taa_sharpen` (0 to 1) sharpens the
 TAA picture back up.
 
+**Render scale.** Under TAA the world can be drawn smaller than the screen and
+reconstructed to it by the TAA resolve, which then gathers each output pixel
+from the jittered samples of several frames (Unreal's TSR does the same for its
+Nanite scenes). `render_scale` (0.5 to 1, default 1: off) is the share of the
+width and height drawn; the HUD and every screen are always drawn at full size.
+`dynamic_resolution: true` moves the scale every frame, between
+`dynamic_resolution_min` (default 0.5) and `render_scale`, to hold the world's
+GPU time at `dynamic_resolution_target_ms` (default 15, 60 fps with room to
+spare). All four are in `graphics.yaml`, the script properties of the same
+names and the console's `render_scale` command; `FOUNDRY_RENDER_SCALE` and
+`FOUNDRY_DYNAMIC_RES=1` set them for a run, and `FOUNDRY_RENDER_SCALE_PATH=0`
+turns the path off. The measurements are in
+[docs/adventure/PHASE_F.md](../adventure/PHASE_F.md) ("Phase F2").
+
 In a TAA frame, `F10` turns the jitter and the history off and shows the frame
 as drawn, one sample a pixel; in MSAA it switches the multisampling, as it
 always has. `FOUNDRY_AA=taa|msaa|off` sets the mode for a run whatever the
@@ -187,7 +201,8 @@ sees:
 | `field` | the distance field GI traces against, from the camera |
 | `off` | back to normal |
 
-`gi_quality off|low|medium|high` sets the tier. Light leaking through a wall
+`water_quality low|medium|high` sets the player's water tier (the F3 profiler's
+`water: copy` and `water` rows are its cost). `gi_quality off|low|medium|high` sets the tier. Light leaking through a wall
 shows as lit probes on the dark side in the `probes` view, and as a gap in
 the wall in the `field` view.
 
@@ -431,7 +446,8 @@ The world itself is drawn by `foundry play` (`shot`), through `render.DrawWorld`
 would have drawn, HUD and viewmodel included, minus the editor's own markers.
 `-gi off|low|medium|high` fixes the live GI tier. Without it the tier is picked
 by GPU, as a new player's is, so the same script can draw differently on two
-machines.
+machines. `-water low|medium|high` fixes the water quality the same way (high by
+default; see [Materials](28-materials.md#water)).
 
 `-view` draws the pictures in one of the editor's debug views, and a script's
 `view` command switches mid-run, so one script can photograph the same spot both

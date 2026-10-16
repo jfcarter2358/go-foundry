@@ -115,6 +115,7 @@ type RawLayer struct {
 	Tangential     float32 `yaml:"tangential,omitempty"`
 	TurbulenceAmp  float32 `yaml:"turbulence,omitempty"`
 	TurbulenceFreq float32 `yaml:"turbulence_freq,omitempty"`
+	Wind           float32 `yaml:"wind,omitempty"`
 	LocalSpace     bool    `yaml:"local_space,omitempty"`
 
 	// Appearance.
@@ -227,6 +228,7 @@ func rawToLayer(r RawLayer) Layer {
 		Tangential:     r.Tangential,
 		TurbulenceAmp:  r.TurbulenceAmp,
 		TurbulenceFreq: r.TurbulenceFreq,
+		Wind:           r.Wind,
 		LocalSpace:     r.LocalSpace,
 		Render:         RenderKindFromName(r.Render),
 		Volume:         volumeLookFromRaw(r.Volume),
@@ -312,6 +314,7 @@ func layerToRaw(l *Layer) RawLayer {
 		Tangential:     l.Tangential,
 		TurbulenceAmp:  l.TurbulenceAmp,
 		TurbulenceFreq: l.TurbulenceFreq,
+		Wind:           l.Wind,
 		LocalSpace:     l.LocalSpace,
 		Render:         nameIfNot(RenderKindName(l.Render), RenderKindNames[RenderSprite]),
 		Volume:         volumeLookToRaw(l.Volume),

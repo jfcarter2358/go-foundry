@@ -270,13 +270,14 @@ func expandRegion(d *Doc, def *plannedStage, ex *RegionExpansion, byID map[strin
 		}
 		ps := &plannedStage{stage: st, kind: k, params: p, refs: StageRefs(k.Params, p), region: reg}
 		ps.seed = RegionStageSeed(d.Seed, reg.Key, s.ID, k.Params, p)
-		var up []string
+		var up, bup []string
 		for _, r := range ps.refs {
 			u := byID[r]
 			if u == nil {
 				return nil, notes, fmt.Errorf("stage %s: refers to %s, which is not planned", id, r)
 			}
 			up = append(up, u.hash)
+			bup = append(bup, u.base)
 		}
 		// The defining stage last: the region list (every region's weight
 		// depends on all of them) and the preset's location.
@@ -284,6 +285,10 @@ func expandRegion(d *Doc, def *plannedStage, ex *RegionExpansion, byID map[strin
 			ps.refs = append(ps.refs, def.stage.ID)
 		}
 		up = append(up, "region:"+def.hash)
+		bup = append(bup, "region:"+def.base)
+		planPaint(ps, k, p, bup, byID)
+		// The LEVEL doc's paint layers it reads (paint_doc.go).
+		up = foldPaint(d, k.Params, p, up)
 		ps.hash = StageHash(k, ps.seed, p, up)
 		byID[id] = ps
 		done[s.ID] = id

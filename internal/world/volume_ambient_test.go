@@ -146,3 +146,37 @@ func TestFogShaftsRoundTrip(t *testing.T) {
 		t.Fatalf("empty block: %+v", g.Shafts)
 	}
 }
+
+// With the view cull on, a volume whose box misses the frustum and one that
+// cuts nothing are left out; the rest pack nearest first as before. Off, all
+// pack (docs/adventure/PHASE_F.md).
+func TestPackAmbientVolumesCullsToTheView(t *testing.T) {
+	ahead := ambientTestVolume()
+	ahead.ID, ahead.Position = "ahead", mgl32.Vec3{0, 0, -50}
+	behind := ambientTestVolume()
+	behind.ID, behind.Position = "behind", mgl32.Vec3{0, 0, 50}
+	inert := ambientTestVolume()
+	inert.ID, inert.Position = "inert", mgl32.Vec3{0, 0, -30}
+	a := *inert.Ambient
+	a.Sky, a.Ground, a.Dust = 1, 1, 0
+	inert.Ambient = &a
+	vols := []Volume{behind, inert, ahead}
+	// The eye at the origin looking down -Z.
+	pv := mgl32.Perspective(mgl32.DegToRad(60), 1, 0.1, 1000).Mul4(
+		mgl32.LookAtV(mgl32.Vec3{}, mgl32.Vec3{0, 0, -1}, mgl32.Vec3{0, 1, 0}))
+	r := func(i int) mgl32.Vec4 { return mgl32.Vec4{pv[i], pv[4+i], pv[8+i], pv[12+i]} }
+	planes := [6]mgl32.Vec4{r(3).Add(r(0)), r(3).Sub(r(0)), r(3).Add(r(1)), r(3).Sub(r(1)), r(3).Add(r(2)), r(3).Sub(r(2))}
+
+	defer func(on bool, p [6]mgl32.Vec4) { AmbientViewCull.On, AmbientViewCull.Planes = on, p }(AmbientViewCull.On, AmbientViewCull.Planes)
+	var b gfx.SceneBlock
+	AmbientViewCull.On, AmbientViewCull.Planes = true, planes
+	PackAmbientVolumes(&b, vols, nil, mgl32.Vec3{})
+	if b.NumAmbVolumes != 1 || b.AmbVolCenter[0][2] != -50 {
+		t.Fatalf("culled pack: %d volumes, first at z=%v; want only the one ahead", b.NumAmbVolumes, b.AmbVolCenter[0][2])
+	}
+	AmbientViewCull.On = false
+	PackAmbientVolumes(&b, vols, nil, mgl32.Vec3{})
+	if b.NumAmbVolumes != 3 {
+		t.Fatalf("uncull pack: %d volumes, want 3", b.NumAmbVolumes)
+	}
+}

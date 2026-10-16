@@ -60,3 +60,25 @@ func TestPileDomeStacks(t *testing.T) {
 		t.Errorf("past the rim %g, want none", got)
 	}
 }
+
+// TestRuinsDropUngrounded: a ruined variant keeps what stands on its floor
+// and loses a stone hanging in the air.
+func TestRuinsDropUngrounded(t *testing.T) {
+	pier := sdf.Shape{F: func(q sdf.Vec3) float64 {
+		return math.Max(math.Max(math.Abs(q[0])-0.5, math.Abs(q[2])-0.5), math.Max(-0.3-q[1], q[1]-3))
+	}, Box: sdf.Box{Lo: sdf.Vec3{-3, -1, -3}, Hi: sdf.Vec3{3, 6, 3}}, Lip: 1}
+	stone := sdf.Sphere(sdf.Vec3{2, 4.5, 0}, 0.5)
+	shape := sdf.Shape{F: func(q sdf.Vec3) float64 { return math.Min(pier.F(q), stone.F(q)) }, Box: pier.Box, Lip: 1}
+	m, _, err := sdf.Polygonize(shape, sdf.MeshOptions{Cell: 0.1, Workers: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := dropUngrounded(m, 0.5); n != 1 {
+		t.Fatalf("dropped %d pieces, want 1 (the stone)", n)
+	}
+	for _, q := range m.Positions {
+		if q[0] > 1.2 {
+			t.Fatalf("a vertex of the stone survived at %v", q)
+		}
+	}
+}

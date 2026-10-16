@@ -17,6 +17,7 @@ package stages
 // as one instanced proxy.
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -24,7 +25,9 @@ import (
 	"time"
 
 	"foundry/internal/procgen"
+	"foundry/internal/procgen/paint"
 	"foundry/internal/procgen/place"
+	"foundry/internal/procgen/terrain"
 
 	"gopkg.in/yaml.v2"
 )
@@ -159,6 +162,11 @@ func runScatter(rc *procgen.RunContext) error {
 	if err != nil {
 		return err
 	}
+	// Its paint and terrain-mask excludes (paint_bands.go), and the
+	// orientation along a direction field (paint_orient.go).
+	st, _ := grassTerrain(rc, p.Str("terrain"))
+	maskScatterRules(&rc.Env, p, rules, idx, st)
+	orientScatterRules(&rc.Env, st, g, p, rules, idx)
 	ground, err := groundArtifact(rc, p.Str("ground"))
 	if err != nil {
 		return err
@@ -189,8 +197,14 @@ func runScatter(rc *procgen.RunContext) error {
 	if err != nil {
 		return err
 	}
-	res, err := place.Scatter(g, place.ScatterSettings{Rules: rules, Seed: rc.Seed, CliffThreshold: p.Float("cliff_threshold"),
-		Margin: p.Float("margin"), Avoid: avoid, Region: placeRegion(&rc.Env), Progress: func(f float32) { rc.Progress(0.9 * f) }}, &rc.Env)
+	// The rocks a ground_edit placed itself (boulders, path stones;
+	// ground_obstacles.go).
+	obs := terrainObstacles(st)
+	avoid = append(avoid, obs...)
+	set := place.ScatterSettings{Rules: rules, Seed: rc.Seed, CliffThreshold: p.Float("cliff_threshold"),
+		Margin: p.Float("margin"), Avoid: avoid, Region: placeRegion(&rc.Env), Progress: func(f float32) { rc.Progress(0.9 * f) }}
+	// Tiled when anything it reads is painted (scatter_incremental.go).
+	res, err := runScatterPlace(rc, g, set, obs)
 	if err != nil {
 		return err
 	}
@@ -218,11 +232,16 @@ func runScatter(rc *procgen.RunContext) error {
 		imps[v.Model] = path
 	}
 	pls := make([]procgen.Placement, 0, len(res.Instances))
+	ids := scatterIDs(res, rules)
 	for k := range res.Instances {
 		in := &res.Instances[k]
 		r := &rules[in.Rule]
 		counts[in.Rule]++
-		pl := placementOf(fmt.Sprintf("%s_%05d", r.Name, counts[in.Rule]), in, &r.Variants[in.Variant])
+		id := fmt.Sprintf("%s_%05d", r.Name, counts[in.Rule])
+		if ids != nil {
+			id = ids[k]
+		}
+		pl := placementOf(id, in, &r.Variants[in.Variant])
 		pl.Material = mats[in.Rule]
 		imp := ""
 		if draws[in.Rule].wantsImpostor(&r.Variants[in.Variant]) {
@@ -241,6 +260,12 @@ func runScatter(rc *procgen.RunContext) error {
 		return err
 	}
 	rc.Artifact = &FootprintsArtifact{Discs: discs}
+	if res.Tiles != nil {
+		// Tiled: the footprints as footprints.yaml rounds them, so a reader
+		// gets the same discs whether this ran or was read back
+		// (scatter_incremental.go).
+		rc.Artifact, rc.ArtifactAsLoaded = roundedFootprints(discs), true
+	}
 	rc.Logf("%d rocks placed in %s", len(res.Instances), time.Since(t0).Round(time.Millisecond))
 	rc.Progress(1)
 	return nil
@@ -284,13 +309,24 @@ func previewScatter(pc *procgen.PreviewContext) (*procgen.PreviewData, error) {
 	if err != nil {
 		return nil, err
 	}
+	pt, _ := up.Artifact.(*terrain.Terrain)
+	maskScatterRules(&pc.Env, p, rules, idx, pt)
+	orientScatterRules(&pc.Env, pt, g, p, rules, idx)
 	for i := range rules {
 		if rules[i].MaxInstances <= 0 || rules[i].MaxInstances > p.Int("preview_max") {
 			rules[i].MaxInstances = p.Int("preview_max")
 		}
 	}
-	res, err := place.Scatter(g, place.ScatterSettings{Rules: rules, Seed: pc.Seed, CliffThreshold: p.Float("cliff_threshold"),
-		Margin: p.Float("margin"), Progress: pc.Progress}, &pc.Env)
+	pset := place.ScatterSettings{Rules: rules, Seed: pc.Seed, CliffThreshold: p.Float("cliff_threshold"),
+		Margin: p.Float("margin"), Progress: pc.Progress}
+	if len(procgen.MaskRefs(pc.Kind.Params, p)) > 0 {
+		pset.Tiles = paint.TileSize // as the run places it (scatter_incremental.go)
+	}
+	res, err := place.Scatter(g, pset, &pc.Env)
+	if errors.Is(err, place.ErrTiledReach) {
+		pset.Tiles = 0
+		res, err = place.Scatter(g, pset, &pc.Env)
+	}
 	if err != nil {
 		return nil, err
 	}

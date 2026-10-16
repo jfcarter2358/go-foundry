@@ -77,6 +77,13 @@ type StaticGeometry struct {
 	Clusters     []StaticClusterGroup
 	clusterIndex map[string]int
 
+	// Lightmaps are the pages a lightmapped bake left (compile/lightmap.go):
+	// RGBA half floats, Size on a side, the rgb the static lights' direct
+	// light but the baked sun's, a the sun's visibility. A lightmapped
+	// surface's baked-light rows say where in them it reads
+	// (levelio.lightmapRows). Nil for a per-vertex bake.
+	Lightmaps []LightmapPage
+
 	// HiddenChunks names the compiled chunks currently switched off. See
 	// Hidden, which is why this exists at all. Write it through SetChunkHidden,
 	// which keeps the per-surface answer below in step.
@@ -365,4 +372,10 @@ func (s *StaticGeometry) Release() {
 	for i := range s.Surfaces {
 		s.Surfaces[i].Geometry.Unload()
 	}
+}
+
+// LightmapPage is one page of a compiled level's lightmaps.
+type LightmapPage struct {
+	Size   int32
+	Texels []uint16
 }

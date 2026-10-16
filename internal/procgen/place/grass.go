@@ -28,6 +28,14 @@ package place
 // patch's margin is shorter, sparser grass, not a hedge), and its tint
 // mixes two colours by a slow noise (TintScale metres) with a little
 // per-clump jitter — the grass instancer multiplies the scan's albedo by it.
+//
+// ORIENTATION (ground cover, docs/terrain-paint/PHASE_P3.md). A rule with
+// Ground set stands its clumps on the terrain's normal under them (a twig
+// lies down a bank, a leaf card flat on it), and TiltJitter leans each one
+// at random by up to that angle; the axis is the instance's Up, and stays
+// zero (upright, the grass instancer's old 12-byte clump) for every other
+// rule. The extra randomness is drawn from hash slots no older field used,
+// so a rule without either places exactly the clumps it always did.
 
 import (
 	"math"
@@ -60,6 +68,22 @@ type GrassRule struct {
 	// TintScale metres; TintJitter is each clump's own variation (0..1).
 	TintA, TintB          [3]float64
 	TintScale, TintJitter float64
+	// Ground stands the clumps on the terrain's normal (`orient: ground`);
+	// TiltJitter leans each by up to this many radians at random.
+	Ground     bool
+	TiltJitter float64
+	// Orient turns each clump's yaw along a direction field (Rule.Orient,
+	// OrientYaw: a direction layer, the paths' tangents, downhill) with
+	// OrientJitter and OrientOffset (radians); KindYaw, when as long as
+	// Kinds, adds a turn per kind (a quarter turn for a piece whose length
+	// lies along its X). Nil: random yaws, as before. Shrink, when set,
+	// multiplies a clump's scale at (x, z) (a path's wear band: shorter
+	// grass). Both read no randomness of their own: positions, kinds, tints
+	// and every other clump are unchanged.
+	Orient                     func(x, z float64) (dx, dz, strength float64)
+	OrientJitter, OrientOffset float64
+	KindYaw                    []float64
+	Shrink                     func(x, z float64) float64
 }
 
 // GrassInstance is one clump.
@@ -68,7 +92,41 @@ type GrassInstance struct {
 	Pos        [3]float64
 	Yaw, Scale float64
 	Tint       [3]float64
+	// Up is the axis the clump stands on: zero (upright) unless its rule
+	// orients it.
+	Up [3]float64
 }
+
+// grassUp is the up axis of a clump of rule r at (x, z): the ground's
+// normal for a ground rule (else +Y), leaned by up to TiltJitter in a
+// direction drawn from the clump's own hash.
+func grassUp(g *Ground, r *GrassRule, cell uint64, x, z float64) [3]float64 {
+	up := [3]float64{0, 1, 0}
+	if r.Ground {
+		up = g.Normal(x, z, g.Grid.Cell)
+	}
+	if r.TiltJitter > 0 {
+		// A uniform direction, and an angle weighted toward the full lean
+		// (sqrt: uniform over the cap's area).
+		phi := unitHash(cell, 8) * 2 * math.Pi
+		th := r.TiltJitter * math.Sqrt(unitHash(cell, 9))
+		// A tangent basis about up, then up leaned along it.
+		t := [3]float64{1, 0, 0}
+		if math.Abs(up[0]) > 0.9 {
+			t = [3]float64{0, 0, 1}
+		}
+		b := normalize(cross(up, t))
+		t = cross(b, up)
+		sp, cp := math.Sincos(phi)
+		st, ct := math.Sincos(th)
+		for i := range up {
+			up[i] = up[i]*ct + (t[i]*cp+b[i]*sp)*st
+		}
+		up = normalize(up)
+	}
+	return up
+}
+
 
 // GrassSettings is one grass run over a rectangle of ground.
 type GrassSettings struct {
@@ -200,11 +258,26 @@ func Grass(g *Ground, s GrassSettings, rect [4]float64) []GrassInstance {
 				for c := range tint {
 					tint[c] = (r.TintA[c] + (r.TintB[c]-r.TintA[c])*n) * jit
 				}
-				out = append(out, GrassInstance{
-					Kind: r.Kinds[int(noise.Hash64(cell, 5)%uint64(len(r.Kinds)))],
+				ki := int(noise.Hash64(cell, 5) % uint64(len(r.Kinds)))
+				if r.Shrink != nil {
+					sc *= r.Shrink(x, z)
+				}
+				in := GrassInstance{
+					Kind: r.Kinds[ki],
 					Pos:  [3]float64{x, g.Height(x, z), z},
 					Yaw:  unitHash(cell, 7) * 2 * math.Pi, Scale: sc, Tint: tint,
-				})
+				}
+				if r.Orient != nil {
+					off := r.OrientOffset
+					if len(r.KindYaw) == len(r.Kinds) {
+						off += r.KindYaw[ki]
+					}
+					in.Yaw = OrientYaw(r.Orient, x, z, in.Yaw, r.OrientJitter, off, false)
+				}
+				if r.Ground || r.TiltJitter > 0 {
+					in.Up = grassUp(g, r, cell, x, z)
+				}
+				out = append(out, in)
 			}
 		}
 	}

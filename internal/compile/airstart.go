@@ -107,7 +107,12 @@ func (ix *solidIndex) inside(p mgl32.Vec3, ignore []string) bool {
 // A cover face (Face.CoveredBy) is lit for the moment its covering chunks are
 // switched off, so their solids are not in its way.
 func (b *baker) airStart(f *Face, i int, side mgl32.Vec3) (start mgl32.Vec3, buried bool) {
-	p := f.Points[i]
+	return b.airStartAt(f, f.Points[i], side)
+}
+
+// airStartAt is airStart for any point p of face f — a lightmap texel's
+// (lightmap.go) as well as a corner.
+func (b *baker) airStartAt(f *Face, p, side mgl32.Vec3) (start mgl32.Vec3, buried bool) {
 	off := side.Mul(b.opt.ShadowBias)
 	toCentre := bsp.Centroid(f.Points).Sub(p)
 	dist := toCentre.Len()

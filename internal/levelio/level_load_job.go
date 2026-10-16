@@ -330,6 +330,10 @@ func (j *LoadJob) Step() bool {
 		// The object pass discovers textures of its own — a sprite's, an
 		// entity model's — so the list can only be taken once it has run.
 		j.texNames = textureLoadOrder(j.texNeeded)
+		// And the ARM maps of the textures the level's surfaces wear
+		// (gfx/texture_armmap.go), behind the loading screen like the rest:
+		// asked for lazily, mid-play, one arriving was a 54 ms frame.
+		j.texNames = append(j.texNames, gfx.ARMMapsFor(j.texNames)...)
 		gfx.PrefetchTextures(j.texNames)
 		j.stage = loadStageTextures
 

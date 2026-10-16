@@ -1,0 +1,68 @@
+id: step_sand
+seed: 23
+layers:
+- name: grains
+  duration: 0.8
+  loop: false
+  max: 14
+  bursts:
+  - t: 0
+    n: 10
+  shape: sphere
+  radius: 0.05
+  life_min: 0.25
+  life_max: 0.55
+  speed_min: 0.6
+  speed_max: 1.6
+  size_min: 0.012
+  size_max: 0.024
+  gravity: 1
+  drag: 1.5
+  texture: particle_puff
+  blend: alpha
+  lit: true
+  tint:
+    r: 0.95
+    g: 0.95
+    b: 0.95
+  alpha_ramp:
+  - t: 0
+    v: 0.9
+  - t: 0.7
+    v: 0.8
+  - t: 1
+    v: 0
+- name: dust
+  duration: 1.4
+  loop: false
+  max: 6
+  bursts:
+  - t: 0
+    n: 4
+  shape: sphere
+  radius: 0.06
+  life_min: 0.7
+  life_max: 1.2
+  speed_min: 0.15
+  speed_max: 0.45
+  size_min: 0.1
+  size_max: 0.17
+  gravity: -0.02
+  drag: 3
+  texture: particle_puff
+  blend: alpha
+  lit: true
+  tint:
+    r: 1.05
+    g: 1.05
+    b: 1.05
+  size_ramp:
+  - t: 0
+    v: 0.5
+  - t: 1
+    v: 2.4
+  alpha_ramp:
+  - t: 0
+    v: 0.4
+  - t: 1
+    v: 0

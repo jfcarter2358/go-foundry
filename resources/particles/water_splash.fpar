@@ -1,0 +1,92 @@
+# water_splash.fpar — a body dropping into water
+# (docs/terrain-paint/PHASE_W5.md). Played by the simulation's wading watch
+# (sim/water_wade.go through world.SplashWater) when something that falls
+# crosses a water surface downward faster than a step down a bank: a jump
+# into a pond, a fall from a ledge. Rate-scaled by how fast it was falling.
+# A column of water thrown up and falling back (the crown), a ring of spray
+# low over the surface spreading out, and fine mist hanging a moment.
+id: water_splash
+seed: 73
+
+layers:
+  - name: crown
+    duration: 1.6
+    loop: false
+    max: 70
+    bursts:
+      - {t: 0, n: 55}
+    shape: cone
+    radius: 0.25
+    angle: 22
+    life_min: 0.6
+    life_max: 1.2
+    speed_min: 2.5
+    speed_max: 5.5
+    size_min: 0.03
+    size_max: 0.08
+    gravity: 1
+    drag: 0.3
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    tint: {r: 0.95, g: 0.97, b: 1}
+    alpha_ramp:
+      - {t: 0, v: 0.9}
+      - {t: 0.75, v: 0.75}
+      - {t: 1, v: 0}
+
+  - name: ring
+    duration: 1.6
+    loop: false
+    max: 30
+    bursts:
+      - {t: 0, n: 24}
+    shape: disc
+    radius: 0.35
+    life_min: 0.5
+    life_max: 0.9
+    speed_min: 1.5
+    speed_max: 2.8
+    direction_mode: random
+    size_min: 0.18
+    size_max: 0.32
+    gravity: 0.8
+    drag: 2.2
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    size_ramp:
+      - {t: 0, v: 0.5}
+      - {t: 1, v: 1.6}
+    alpha_ramp:
+      - {t: 0, v: 0.6}
+      - {t: 1, v: 0}
+
+  - name: mist
+    duration: 2.5
+    loop: false
+    max: 10
+    bursts:
+      - {t: 0.05, n: 8}
+    shape: sphere
+    radius: 0.4
+    life_min: 1.2
+    life_max: 2
+    speed_min: 0.2
+    speed_max: 0.7
+    size_min: 0.5
+    size_max: 0.9
+    gravity: -0.03
+    drag: 1.8
+    turbulence: 0.4
+    turbulence_freq: 1
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    size_ramp:
+      - {t: 0, v: 0.6}
+      - {t: 1, v: 2}
+    alpha_ramp:
+      - {t: 0, v: 0}
+      - {t: 0.15, v: 0.3}
+      - {t: 1, v: 0}

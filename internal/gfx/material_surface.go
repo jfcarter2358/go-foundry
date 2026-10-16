@@ -71,6 +71,9 @@ type SurfaceState struct {
 	// Fx is the terrain and rock effects (material_fx.go): only ever a
 	// material's, and the zero value — none — for everything else.
 	Fx material.SurfaceFx
+	// PBR is the specular's inputs (material_pbr.go): DefaultPBR unless a
+	// material's pbr effect says otherwise.
+	PBR PBRParams
 }
 
 // identityUV is what UVScale means "unchanged".
@@ -111,14 +114,7 @@ func (s *SurfaceState) overlay(m material.Surface) {
 		s.UVRotation += mgl32.DegToRad(m.UVRotation)
 	}
 	if m.HasWater {
-		s.Water = WaterParams{
-			Enabled:       true,
-			WaveAmplitude: m.Water.WaveAmplitude,
-			WaveLength:    m.Water.WaveLength,
-			WaveSpeed:     m.Water.WaveSpeed,
-			Reflectivity:  m.Water.Reflectivity,
-			ReflectColor:  m.Water.ReflectColor,
-		}
+		s.Water = WaterParams{Enabled: true, Water: m.Water}
 	}
 	if m.HasSmooth {
 		s.Smooth = true
@@ -128,6 +124,9 @@ func (s *SurfaceState) overlay(m material.Surface) {
 	}
 	if m.Fx.Any() {
 		s.Fx = m.Fx
+	}
+	if m.HasPBR {
+		s.PBR = pbrFromMaterial(m)
 	}
 }
 
@@ -188,10 +187,12 @@ func (g *Geometry) SurfaceState() SurfaceState {
 		Tint:         g.Tint,
 		Blend:        g.Blend,
 		VertexColors: len(g.colors) > 0,
+		PBR:          DefaultPBR(),
 	}
 	if m, ok := material.ResolveSurface(g.MaterialName); ok {
 		s.overlay(m)
 	}
+	s.finishWater()
 	return s
 }
 
@@ -211,10 +212,12 @@ func (m *Material) SurfaceState() SurfaceState {
 		Smooth:       m.Smooth,
 		Normals:      m.Normals,
 		VertexColors: m.VertexColors,
+		PBR:          DefaultPBR(),
 	}
 	if res, ok := material.ResolveSurface(m.MaterialName); ok {
 		s.overlay(res)
 	}
+	s.finishWater()
 	return s
 }
 
@@ -258,7 +261,7 @@ func (s *SurfaceState) VertexColorsFlag() int32 {
 // state a material has already had its say in, so that a material's `unlit` or
 // its alpha sends the surface to the right pass.
 func (s *SurfaceState) IsTransparent() bool {
-	return s.Unlit || (s.Alpha > 0 && s.Alpha < 1.0) || textureHasAlpha[s.Texture]
+	return s.Unlit || s.Water.Enabled || (s.Alpha > 0 && s.Alpha < 1.0) || textureHasAlpha[s.Texture]
 }
 
 // Apply pushes everything in the state that is a uniform. Every field is
@@ -282,7 +285,9 @@ func (s *SurfaceState) Apply() {
 	applyWaterUniforms(&s.Water)
 	applyBlendUniforms(s.BlendTexture, s.BlendMask)
 	BindNormalMap(s.NormalMap, HasNormalMapUniform, NormalMapUniform)
+	bindWaterTexturesGlobal(&s.Water)
 	applySurfaceFx(&s.Fx, s.Texture, programFxLocs())
+	applyPBR(s.PBR, s.Texture, &s.Fx, programPBRLocs())
 }
 
 // ApplyUVUniforms sets the three texture-coordinate uniforms together.
@@ -359,6 +364,8 @@ type SurfaceLocs struct {
 	hasNormalMap, normalMap                                int32
 	vertexColors                                           int32
 	fx                                                     FxLocs
+	water                                                  WaterLocs
+	pbr                                                    PBRLocs
 }
 
 // NewSurfaceLocs resolves prog's SurfaceLocs.
@@ -374,6 +381,8 @@ func NewSurfaceLocs(prog uint32) SurfaceLocs {
 		hasNormalMap: loc("hasNormalMap\x00"), normalMap: loc("normalMap\x00"),
 		vertexColors: loc("vertexColors\x00"),
 		fx:           NewFxLocs(prog),
+		water:        NewWaterLocs(prog),
+		pbr:          NewPBRLocs(prog),
 	}
 }
 
@@ -392,17 +401,7 @@ func (s *SurfaceState) ApplyLocs(l *SurfaceLocs) {
 	gl.Uniform1i(l.blend, int32(s.Blend))
 	gl.Uniform1i(l.vertexColors, s.VertexColorsFlag())
 
-	if !s.Water.Enabled {
-		gl.Uniform1i(l.isWater, 0)
-	} else {
-		gl.Uniform1i(l.isWater, 1)
-		gl.Uniform1f(l.waveAmp, s.Water.WaveAmplitude)
-		gl.Uniform1f(l.waveLen, s.Water.WaveLength)
-		gl.Uniform1f(l.waveSpeed, s.Water.WaveSpeed)
-		gl.Uniform1f(l.reflectivity, s.Water.Reflectivity)
-		gl.Uniform3f(l.reflectColor,
-			s.Water.ReflectColor.X(), s.Water.ReflectColor.Y(), s.Water.ReflectColor.Z())
-	}
+	applyWaterLocs(&l.water, &s.Water)
 
 	if s.BlendTexture == "" || s.BlendMask == "" {
 		gl.Uniform1i(l.hasBlend, 0)
@@ -418,7 +417,9 @@ func (s *SurfaceState) ApplyLocs(l *SurfaceLocs) {
 	}
 
 	BindNormalMap(s.NormalMap, l.hasNormalMap, l.normalMap)
+	bindWaterTextures(&l.water, &s.Water)
 	applySurfaceFx(&s.Fx, s.Texture, &l.fx)
+	applyPBR(s.PBR, s.Texture, &s.Fx, &l.pbr)
 }
 
 // DrawThroughProgram draws the geometry with its material applied, through a

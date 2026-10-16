@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foundry/internal/grassfield"
@@ -109,6 +110,19 @@ type grassKitBuilder struct {
 	kit       grassfield.Kit
 	index     map[string]int
 	parts     map[string][]phimport.PlantPart
+	// sink is each kind's sink (grass_field_cover.go; the first rule's).
+	sink []float64
+}
+
+// oriented reports whether any kind is oriented: the fields are then
+// oriented fields.
+func (b *grassKitBuilder) oriented() bool {
+	for i := range b.kit.Kinds {
+		if b.kit.Kinds[i].Oriented() {
+			return true
+		}
+	}
+	return false
 }
 
 // partFor is the imported part a variant names.
@@ -134,9 +148,12 @@ func (b *grassKitBuilder) partFor(v place.Variant) (*phimport.PlantPart, error) 
 	return nil, fmt.Errorf("%s: no part %s in the import", id, name)
 }
 
-// kind is the kit index of variant v, building it on first sight.
+// kind is the kit index of variant v, building it on first sight. A
+// rule's ground cover options are part of the key (grass_field_cover.go),
+// so a piece laid down by one rule and stood up by another is two kinds.
 func (b *grassKitBuilder) kind(v place.Variant, it procgen.Params) (int, error) {
-	if k, ok := b.index[v.Name]; ok {
+	key := v.Name + coverKey(it)
+	if k, ok := b.index[key]; ok {
 		return k, nil
 	}
 	part, err := b.partFor(v)
@@ -144,17 +161,7 @@ func (b *grassKitBuilder) kind(v place.Variant, it procgen.Params) (int, error) 
 		return 0, err
 	}
 	m := part.Mesh
-	src := &grassfield.SourceMesh{Indices: m.Indices}
-	for i, p := range m.Positions {
-		src.Positions = append(src.Positions, [3]float32{p[0], p[1], p[2]})
-		if i < len(m.Normals) {
-			n := m.Normals[i]
-			src.Normals = append(src.Normals, [3]float32{n[0], n[1], n[2]})
-		}
-		if i < len(m.UVs) {
-			src.UVs = append(src.UVs, [2]float32{m.UVs[i][0], m.UVs[i][1]})
-		}
-	}
+	src := sourceOf(m)
 	tex := ""
 	for _, s := range m.Slots {
 		if s.Texture != "" {
@@ -165,32 +172,51 @@ func (b *grassKitBuilder) kind(v place.Variant, it procgen.Params) (int, error) 
 	if tex == "" {
 		return 0, fmt.Errorf("%s has no albedo texture", v.Name)
 	}
+	flags := coverFlags(it)
 	seed := uint64(len(b.kit.Kinds)) + 1
 	tris := len(src.Indices) / 3
 	f0 := math.Min(1, float64(it.Int("max_triangles"))/float64(max(tris, 1)))
-	lod0 := grassfield.Thin(src, f0, seed)
+	// A solid piece (a pebble, a branch) decimates; a clump of blades thins.
+	var lods []*grassfield.SourceMesh
+	solid := flags != 0 && src.PieceCount() < solidPieceLimit
+	if solid {
+		lods = solidLODs(m, it.Int("max_triangles"), b.ratios)
+	} else {
+		lods = []*grassfield.SourceMesh{grassfield.Thin(src, f0, seed)}
+	}
+	lod0 := lods[0]
 	h, r := lod0.Extent()
 	bend, flutter := float32(it.Float("wind_bend")), float32(it.Float("wind_flutter"))
+	if flags&grassfield.KindNoWind != 0 {
+		bend, flutter = 0, 0
+	}
 	kd := grassfield.Kind{Name: v.Name, Texture: tex, Height: h, Radius: r, Bend: bend, Flutter: flutter,
-		Range: float32(it.Float("range"))}
+		Range: float32(it.Float("range")), Flags: flags}
 	if it.Bool("shadows") {
 		kd.Flags |= grassfield.KindCasts
 	}
 	kd.LODs = append(kd.LODs, grassfield.KindMesh(lod0, h, r, bend, flutter))
-	last := len(lod0.Indices)
-	for li, ratio := range b.ratios {
-		if ratio <= 0 {
-			continue
+	if solid {
+		for _, lm := range lods[1:] {
+			kd.LODs = append(kd.LODs, grassfield.KindMesh(lm, h, r, bend, flutter))
 		}
-		lm := grassfield.Thin(src, f0*ratio, seed+uint64(li+1)*0x9e37)
-		if len(lm.Indices) >= last*9/10 {
-			continue // no thinner than the LOD before it
+	} else {
+		last := len(lod0.Indices)
+		for li, ratio := range b.ratios {
+			if ratio <= 0 {
+				continue
+			}
+			lm := grassfield.Thin(src, f0*ratio, seed+uint64(li+1)*0x9e37)
+			if len(lm.Indices) >= last*9/10 {
+				continue // no thinner than the LOD before it
+			}
+			kd.LODs = append(kd.LODs, grassfield.KindMesh(lm, h, r, bend, flutter))
+			last = len(lm.Indices)
 		}
-		kd.LODs = append(kd.LODs, grassfield.KindMesh(lm, h, r, bend, flutter))
-		last = len(lm.Indices)
 	}
-	b.index[v.Name] = len(b.kit.Kinds)
+	b.index[key] = len(b.kit.Kinds)
 	b.kit.Kinds = append(b.kit.Kinds, kd)
+	b.sink = append(b.sink, it.Float("sink"))
 	return len(b.kit.Kinds) - 1, nil
 }
 
@@ -251,6 +277,7 @@ func runGrassField(rc *procgen.RunContext) error {
 		return err
 	}
 	rules, idx := grassRules(p)
+	maskGrassRules(&rc.Env, p, rules, idx, t) // its paint and terrain-mask excludes (paint_bands.go)
 	if len(rules) == 0 {
 		return fmt.Errorf("no enabled rule names a plants stage")
 	}
@@ -259,8 +286,17 @@ func runGrassField(rc *procgen.RunContext) error {
 	lr := p.Vec2("lod_ratios")
 	kb.ratios = [2]float64{lr[0], lr[1]}
 	reach := 0.0
+	longKinds := map[int]bool{} // kinds whose length lies along X (paint_orient.go)
 	for k := range rules {
 		it := items[idx[k]]
+		if isCardRule(it) {
+			ks, err := kb.cardKinds(rc, it)
+			if err != nil {
+				return fmt.Errorf("rule %s: %w", rules[k].Name, err)
+			}
+			rules[k].Kinds = ks
+			continue
+		}
 		vs, _, err := runVariants(rc, it.Str("plants"))
 		if err != nil {
 			return fmt.Errorf("rule %s: %w", rules[k].Name, err)
@@ -286,6 +322,9 @@ func runGrassField(rc *procgen.RunContext) error {
 				return fmt.Errorf("rule %s: %w", rules[k].Name, err)
 			}
 			rules[k].Kinds = append(rules[k].Kinds, ki)
+			if v.Extent[0] > 1.15*v.Extent[2] {
+				longKinds[ki] = true
+			}
 		}
 		reach = math.Max(reach, rules[k].Shore[1]+rules[k].ShoreSoft+1)
 	}
@@ -294,8 +333,8 @@ func runGrassField(rc *procgen.RunContext) error {
 		for _, m := range kd.LODs {
 			tris = append(tris, fmt.Sprint(m.Triangles()))
 		}
-		rc.Logf("kind %s: %s, %.2f m tall, %.2f m across, triangles %s", kd.Name, kd.Texture, kd.Height, 2*kd.Radius,
-			strings.Join(tris, "/"))
+		rc.Logf("kind %s%s: %s, %.2f m tall, %.2f m across, triangles %s", kd.Name, coverLogName(kd.Flags), kd.Texture, kd.Height,
+			2*kd.Radius, strings.Join(tris, "/"))
 	}
 	kdata, err := grassfield.EncodeKit(&kb.kit)
 	if err != nil {
@@ -306,10 +345,15 @@ func runGrassField(rc *procgen.RunContext) error {
 	}
 	kitPath := rc.AssetPath(GrassKitFile)
 
+	// Orientation along a direction field (paint_orient.go).
+	orientGrassRules(&rc.Env, t, g, p, rules, idx, func(kind int) bool { return longKinds[kind] })
 	avoid, err := avoidDiscs(rc, p.Str("avoid"))
 	if err != nil {
 		return err
 	}
+	// The rocks a ground_edit placed itself (ground_obstacles.go).
+	obs := terrainObstacles(t)
+	avoid = append(avoid, obs...)
 	set := place.GrassSettings{Rules: rules, Seed: rc.Seed, Region: placeRegion(&rc.Env), Avoid: avoid,
 		AvoidShrink: p.Float("avoid_shrink"), Water: grassWater(t, reach), Margin: p.Float("margin")}
 	for k := range rules {
@@ -318,16 +362,12 @@ func runGrassField(rc *procgen.RunContext) error {
 			break
 		}
 	}
+	oriented := kb.oriented()
 	x0, z0, size, nx, nz := grassTileGrid(t, g)
 	gb := g.Bounds()
 	cell := float32(p.Float("cell"))
-	type tileOut struct {
-		name string
-		vol  procgen.VolumeEntry
-		n    int
-		rule map[int]int
-	}
-	outs := make([]*tileOut, nx*nz)
+	outs := make([]*grassTileOut, nx*nz)
+	var reused atomic.Int64
 	err = rc.ParallelProgress(nx*nz, func(k int) error {
 		if err := rc.Err(); err != nil {
 			return err
@@ -339,21 +379,36 @@ func runGrassField(rc *procgen.RunContext) error {
 		if rect[2] <= rect[0] || rect[3] <= rect[1] {
 			return nil
 		}
+		// Per-tile reuse (grass_field_incremental.go): last run's field
+		// when nothing it reads has changed.
+		name := fmt.Sprintf("grass_%d_%d", i, j)
+		key := grassTileKey(&rc.Env, name, rect, obs...)
+		if o, ok, err := reuseGrassTile(rc, name, key); err != nil || ok {
+			if ok {
+				reused.Add(1)
+				outs[k] = o
+			}
+			return err
+		}
+		rc.BeginTile(name)
 		ins := place.Grass(g, set, rect)
 		if len(ins) == 0 {
+			rc.SetTile(name, key)
 			return nil
 		}
 		gi := make([]grassfield.Instance, len(ins))
 		top := float32(0)
 		for q, in := range ins {
+			sinkInstance(&in, kb.sink[in.Kind], kb.kit.Kinds[in.Kind].Height)
 			gi[q] = grassfield.Instance{Kind: in.Kind, Pos: [3]float32{float32(in.Pos[0]), float32(in.Pos[1]), float32(in.Pos[2])},
 				Yaw: float32(in.Yaw), Scale: float32(in.Scale),
-				Tint: [3]float32{float32(in.Tint[0]), float32(in.Tint[1]), float32(in.Tint[2])}}
+				Tint: [3]float32{float32(in.Tint[0]), float32(in.Tint[1]), float32(in.Tint[2])},
+				Up:   [3]float32{float32(in.Up[0]), float32(in.Up[1]), float32(in.Up[2])}}
 			top = max(top, kb.kit.Kinds[in.Kind].Height*float32(in.Scale))
 		}
 		f, err := grassfield.BuildField(grassfield.FieldSpec{Kit: kitPath,
 			Min: [2]float32{float32(rect[0]), float32(rect[1])}, Max: [2]float32{float32(rect[2]), float32(rect[3])},
-			Cell: cell, Kinds: len(kb.kit.Kinds)}, gi)
+			Cell: cell, Kinds: len(kb.kit.Kinds), Oriented: oriented}, gi)
 		if err != nil {
 			return err
 		}
@@ -361,12 +416,11 @@ func runGrassField(rc *procgen.RunContext) error {
 		if err != nil {
 			return err
 		}
-		name := fmt.Sprintf("grass_%d_%d", i, j)
 		if err := rc.WriteFile(name+grassfield.FieldExt, data); err != nil {
 			return err
 		}
 		y0, y1 := float64(f.Origin[1]), float64(f.Origin[1]+f.Size[1]+top)
-		o := &tileOut{name: name, n: len(ins), rule: map[int]int{}}
+		o := &grassTileOut{name: name, n: len(ins), rule: map[int]int{}}
 		for _, in := range ins {
 			o.rule[in.Kind]++
 		}
@@ -379,10 +433,14 @@ func runGrassField(rc *procgen.RunContext) error {
 			"grass": map[interface{}]interface{}{"file": rc.AssetPath(name + grassfield.FieldExt), "chunk": "auto"},
 		}
 		outs[k] = o
+		rc.SetTile(name, key)
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+	if rc.Previous != nil {
+		rc.Logf("reused %d of %d tiles (nothing they read changed)", reused.Load(), nx*nz)
 	}
 	art := &GrassFieldArtifact{Kit: kitPath, PerRule: map[string]int{}, Area: (gb[2] - gb[0]) * (gb[3] - gb[1])}
 	for _, kd := range kb.kit.Kinds {
@@ -444,6 +502,9 @@ func previewGrassField(pc *procgen.PreviewContext) (*procgen.PreviewData, error)
 		return nil, err
 	}
 	rules, idx := grassRules(p)
+	pt, _ := up.Artifact.(*terrain.Terrain)
+	maskGrassRules(&pc.Env, p, rules, idx, pt)
+	orientGrassRules(&pc.Env, pt, g, p, rules, idx, nil)
 	items := p.Items("rules")
 	out := &procgen.PreviewData{Bounds: up.Bounds, Images: up.Images}
 	out.Meshes = append(out.Meshes, terrainMeshes(up)...)

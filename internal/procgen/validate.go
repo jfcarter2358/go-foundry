@@ -50,6 +50,7 @@ func (d *Doc) Validate() []Problem {
 	if strings.Contains(d.OutputDir(), "..") || strings.HasPrefix(d.Output, "/") {
 		add("", "", "output %q must be a folder under resources/", d.Output)
 	}
+	out = append(out, validatePaintDefs(d)...)
 	index := map[string]int{}
 	for i := range d.Stages {
 		s := &d.Stages[i]
@@ -107,6 +108,13 @@ func validateParams(d *Doc, at int, stage, prefix string, defs []ParamDef, p Par
 			case len(def.StageKinds) > 0 && !containsStr(def.StageKinds, d.Stages[j].Kind):
 				out = append(out, Problem{stage, where, fmt.Sprintf("names stage %q, a %s; it wants %s",
 					v.Str, d.Stages[j].Kind, strings.Join(def.StageKinds, " or "))})
+			}
+		case ParamMask:
+			if def.IsMaskWord(v.Str) {
+				continue
+			}
+			if msg := validateMask(d, v.Str); msg != "" {
+				out = append(out, Problem{stage, where, msg})
 			}
 		case ParamSpline, ParamCurve:
 			if n := len(v.Points); n < def.MinItems {

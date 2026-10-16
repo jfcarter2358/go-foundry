@@ -25,20 +25,22 @@ import (
 
 // readCube reads every face of a depth cubemap, a coarse sample of each so
 // the comparison is quick.
-func readCube(t *testing.T, cube uint32) []float32 {
+func readCube(t *testing.T, pm PointShadowMap) []float32 {
 	t.Helper()
-	full := make([]float32, PointShadowMapSize*PointShadowMapSize)
+	face := PointShadowMapSize * PointShadowMapSize
+	full := make([]float32, face*6*int(Shadows.PointArrayCubes))
 	var out []float32
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, cube)
-	for face := 0; face < 6; face++ {
-		glext.GetTexImage(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+face), 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(full))
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP_ARRAY, Shadows.PointArray)
+	glext.GetTexImage(gl.TEXTURE_CUBE_MAP_ARRAY, 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(full))
+	for f := 0; f < 6; f++ {
+		base := (int(pm.Layer)*6 + f) * face
 		for y := 0; y < PointShadowMapSize; y += 16 {
 			for x := 0; x < PointShadowMapSize; x += 16 {
-				out = append(out, full[y*PointShadowMapSize+x])
+				out = append(out, full[base+y*PointShadowMapSize+x])
 			}
 		}
 	}
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, 0)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP_ARRAY, 0)
 	if e := gl.GetError(); e != gl.NO_ERROR {
 		t.Fatalf("reading the cube: GL error 0x%X", e)
 	}
@@ -93,7 +95,7 @@ func TestLayeredPointShadowMatchesAFullRedraw(t *testing.T) {
 		RenderPointShadowPass(lights, lvl)
 		PointShadowCaching = true
 		pointShadowStates = nil
-		return readCube(t, Shadows.PointMaps[0].Cubemap)
+		return readCube(t, Shadows.PointMaps[0])
 	}
 	cached := func(what string, want func(pointShadowPlan) bool) []float32 {
 		t.Helper()
@@ -108,7 +110,7 @@ func TestLayeredPointShadowMatchesAFullRedraw(t *testing.T) {
 		if e := gl.GetError(); e != gl.NO_ERROR {
 			t.Fatalf("%s: GL error 0x%X", what, e)
 		}
-		return readCube(t, Shadows.PointMaps[0].Cubemap)
+		return readCube(t, Shadows.PointMaps[0])
 	}
 	same := func(what string, got, want []float32) {
 		t.Helper()

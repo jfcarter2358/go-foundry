@@ -37,6 +37,11 @@ import (
 // LightShafts switches the pass; a level still has to ask (fog: shafts:).
 var LightShafts = gfx.EnvFlag("FOUNDRY_SHAFTS", true)
 
+// AmbientViewCull switches world.AmbientViewCull, the camera-frustum cull of
+// the ambient volumes the frame packs (FOUNDRY_AMBIENT_VIEW_CULL=0: every
+// volume, nearest first, as before; docs/adventure/PHASE_F.md).
+var AmbientViewCull = gfx.EnvFlag("FOUNDRY_AMBIENT_VIEW_CULL", true)
+
 // shaftsRenderer is the program, built on first use.
 type shaftsRenderer struct {
 	tried, ok bool
@@ -84,7 +89,7 @@ type shaftsDraw struct {
 // levelShafts is the frame's shafts, or nil when the level asks for none,
 // the switch is off, or the program will not build.
 func levelShafts(lvl *world.Level, frame ShadowFrame) *shaftsDraw {
-	if !LightShafts || lvl == nil || !lvl.Fog.ShaftsOn() || !shafts.ready() {
+	if !LightShafts || gfx.LightShaftsQuality == gfx.ShaftsOff || lvl == nil || !lvl.Fog.ShaftsOn() || !shafts.ready() {
 		return nil
 	}
 	return &shaftsDraw{lvl: lvl, set: lvl.Fog.Shafts, shadow: frame}
@@ -97,6 +102,10 @@ func shaftsSteps(set world.FogShafts, cheap bool) int32 {
 	if cheap {
 		n = (n + 1) / 2
 	}
+	// The player's low tier (gfx.LightShaftsQuality; Phase F2): half again.
+	if gfx.LightShaftsQuality == gfx.ShaftsLow {
+		n = (n + 1) / 2
+	}
 	return int32(max(n, world.FogShaftsMinSteps))
 }
 
@@ -106,7 +115,8 @@ func (d *shaftsDraw) draw(t *VolumeTargets, distTex uint32, invPV mgl32.Mat4, ca
 	p := &shafts.prog
 	lights := world.SceneLights(d.lvl)
 	world.UploadLightsTo(p.prog, lights, false)
-	world.UploadFogTo(p.prog, d.lvl.Fog, d.lvl.Volumes, d.lvl)
+	world.UploadFogTo(p.prog, frameFog(d.lvl), frameVolumes(d.lvl), d.lvl)
+	ambTilesBindTo(p.prog)
 	UploadShadowUniformsTo(p.prog, d.lvl.Lights, d.shadow)
 	gl.UseProgram(p.prog)
 	bindTex2D(volUnitScene, distTex)

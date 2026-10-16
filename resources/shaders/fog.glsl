@@ -39,6 +39,7 @@
 // of the scene block (scene_block.glsl), which is what "one declaration of the
 // names, driven by one upload" has become.
 #include "scene_block.glsl"
+#include "amb_tiles.glsl"
 
 // ---------- HDR: display-referred colour into the scene's units ----------
 //
@@ -390,9 +391,14 @@ float ambVolFogPath(vec3 worldPos) {
     }
     vec3 dir = seg / segLen;
     float f = 1.0;
+    // Only the volumes worldPos's screen tile can see (amb_tiles.glsl).
+    uint seen = ambVolMaskAt(worldPos);
     for (int i = 0; i < MAX_AMBIENT_VOLUMES; ++i) {
         if (i >= numAmbVolumes) {
             break;
+        }
+        if ((seen & (1u << uint(i))) == 0u) {
+            continue;
         }
         float t0 = 0.0;
         float t1 = segLen;

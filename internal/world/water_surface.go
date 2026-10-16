@@ -71,12 +71,13 @@ func WaterParamsFromRaw(rw *RawWater) gfx.WaterParams {
 	if rw == nil {
 		return gfx.DefaultWaterParams()
 	}
-	return gfx.WaterParams{
-		Enabled:       true,
-		WaveAmplitude: rw.WaveAmplitude,
-		WaveLength:    rw.WaveLength,
-		WaveSpeed:     rw.WaveSpeed,
-		Reflectivity:  rw.Reflectivity,
-		ReflectColor:  mgl32.Vec3{rw.ReflectColor.R, rw.ReflectColor.G, rw.ReflectColor.B},
-	}
+	// The block carries the five original numbers; the rest of the look is
+	// the default water's (material.DefaultWater).
+	w := gfx.DefaultWaterParams()
+	w.WaveAmplitude = rw.WaveAmplitude
+	w.WaveLength = rw.WaveLength
+	w.WaveSpeed = rw.WaveSpeed
+	w.Reflectivity = rw.Reflectivity
+	w.ReflectColor = mgl32.Vec3{rw.ReflectColor.R, rw.ReflectColor.G, rw.ReflectColor.B}
+	return w
 }

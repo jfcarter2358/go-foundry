@@ -481,7 +481,8 @@ func driftMaps(ground *TerrainMaterialArtifact, g2 *terrain.Grid, rise []float32
 // of the terrain stage's.
 func driftTiles(rc *procgen.RunContext, t *terrain.Terrain, g2 *terrain.Grid, rise []float32, mat string) error {
 	tid := rc.Params.Str("terrain")
-	st := rc.Doc.StageByID(tid)
+	// A ground_edit's tiles are planned as its source terrain's.
+	st := terrainSourceStage(rc.Doc, tid)
 	k := procgen.KindByName(TerrainKind)
 	if st == nil || k == nil {
 		return fmt.Errorf("no terrain stage %q", tid)

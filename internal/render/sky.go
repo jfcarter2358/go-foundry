@@ -169,71 +169,11 @@ func RenderSky(lvl *world.Level) {
 	if !skyRender.initialized || lvl == nil || lvl.Sky == nil {
 		return
 	}
-	s := lvl.Sky
-	p := &skyRender.prog
-
-	kind, cube := resolveSkyCubemap(s, true)
-
-	// A transition in flight is a second, frozen sky state to blend away from
-	// — see world.Sky.BeginTransition. Outside one, `from` is just `s` again
-	// and blend is 1, which uploads a "from" state identical to "to" that
-	// sky_frag.glsl never actually samples.
-	from := s
-	blend := s.TransitionBlend()
-	fromKind, fromCube := kind, cube
-	if s.TransitionFrom != nil {
-		from = s.TransitionFrom
-		fromKind, fromCube = resolveSkyCubemap(from, false)
-	}
-
-	// The fog uniforms sky_frag.glsl reads for its horizon blend, uploaded
-	// through the same function every other program's fog goes through. It
-	// leaves the program bound.
-	world.UploadFogTo(p.prog, lvl.Fog, lvl.Volumes, lvl)
-
 	// The camera with its translation dropped: the cube is centred on the eye,
 	// so the sky has no near side to walk toward.
 	view := gfx.Cam.Matrix
 	view[12], view[13], view[14] = 0, 0, 0
-
-	proj := gfx.Projection
-	gl.UniformMatrix4fv(p.U("projection"), 1, false, &proj[0])
-	gl.UniformMatrix4fv(p.U("view"), 1, false, &view[0])
-
-	gl.Uniform1i(p.U("skyKind"), int32(kind))
-	gl.Uniform3f(p.U("skyZenith"), s.Zenith.X(), s.Zenith.Y(), s.Zenith.Z())
-	gl.Uniform3f(p.U("skyHorizon"), s.Horizon.X(), s.Horizon.Y(), s.Horizon.Z())
-	gl.Uniform3f(p.U("skyGround"), s.Ground.X(), s.Ground.Y(), s.Ground.Z())
-	gl.Uniform3f(p.U("skyTint"), s.Tint.X(), s.Tint.Y(), s.Tint.Z())
-	gl.Uniform1f(p.U("skyIntensity"), s.Intensity)
-	gl.Uniform1f(p.U("skyYaw"), mgl32.DegToRad(s.Rotation))
-
-	gl.Uniform1f(p.U("skyBlend"), blend)
-	gl.Uniform1i(p.U("skyKindFrom"), int32(fromKind))
-	gl.Uniform3f(p.U("skyZenithFrom"), from.Zenith.X(), from.Zenith.Y(), from.Zenith.Z())
-	gl.Uniform3f(p.U("skyHorizonFrom"), from.Horizon.X(), from.Horizon.Y(), from.Horizon.Z())
-	gl.Uniform3f(p.U("skyGroundFrom"), from.Ground.X(), from.Ground.Y(), from.Ground.Z())
-	gl.Uniform3f(p.U("skyTintFrom"), from.Tint.X(), from.Tint.Y(), from.Tint.Z())
-	gl.Uniform1f(p.U("skyIntensityFrom"), from.Intensity)
-	gl.Uniform1f(p.U("skyYawFrom"), mgl32.DegToRad(from.Rotation))
-
-	fogBlend, falloff := float32(0), world.FogDefaultSkyFalloff
-	if lvl.Fog != nil && lvl.Fog.Enabled {
-		fogBlend, falloff = lvl.Fog.SkyBlend, lvl.Fog.SkyFalloff
-	}
-	gl.Uniform1f(p.U("skyFogBlend"), fogBlend)
-	gl.Uniform1f(p.U("skyFogFalloff"), falloff)
-
-	gl.Uniform1i(p.U("skyTex"), SkyTexUnit)
-	gl.Uniform1i(p.U("skyTexFrom"), SkyFromTexUnit)
-	if kind == world.SkyCubemap {
-		gl.ActiveTexture(gl.TEXTURE0 + SkyTexUnit)
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, cube)
-	}
-	if blend < 1 && fromKind == world.SkyCubemap {
-		gl.ActiveTexture(gl.TEXTURE0 + SkyFromTexUnit)
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, fromCube)
-	}
+	bindSkyLook(&skyRender.prog, lvl, view, gfx.Projection)
 
 	// Depth writes off: the sky is behind everything, so nothing gains from it
 	// being in the depth buffer, and leaving it out keeps the transparent pass
@@ -290,4 +230,72 @@ func WorldClearColor(lvl *world.Level) mgl32.Vec3 {
 func ApplyWorldClearColor(lvl *world.Level) {
 	c := WorldClearColor(lvl)
 	gl.ClearColor(c.X(), c.Y(), c.Z(), 1.0)
+}
+
+// bindSkyLook uploads everything sky_frag.glsl reads — the sky's kind, art,
+// colours, transition and fog — to p, with view and proj as its matrices,
+// and binds its cubemaps. Shared by RenderSky and the water's sky map
+// (water_sky.go), which draws the same shader into an octahedral texture.
+func bindSkyLook(p *progUniforms, lvl *world.Level, view, proj mgl32.Mat4) {
+	s := lvl.Sky
+
+	kind, cube := resolveSkyCubemap(s, true)
+
+	// A transition in flight is a second, frozen sky state to blend away from
+	// — see world.Sky.BeginTransition. Outside one, `from` is just `s` again
+	// and blend is 1, which uploads a "from" state identical to "to" that
+	// sky_frag.glsl never actually samples.
+	from := s
+	blend := s.TransitionBlend()
+	fromKind, fromCube := kind, cube
+	if s.TransitionFrom != nil {
+		from = s.TransitionFrom
+		fromKind, fromCube = resolveSkyCubemap(from, false)
+	}
+
+	// The fog uniforms sky_frag.glsl reads for its horizon blend, uploaded
+	// through the same function every other program's fog goes through. It
+	// leaves the program bound.
+	world.UploadFogTo(p.prog, frameFog(lvl), frameVolumes(lvl), lvl)
+
+	gl.UniformMatrix4fv(p.U("projection"), 1, false, &proj[0])
+	gl.UniformMatrix4fv(p.U("view"), 1, false, &view[0])
+
+	gl.Uniform1i(p.U("skyKind"), int32(kind))
+	gl.Uniform3f(p.U("skyZenith"), s.Zenith.X(), s.Zenith.Y(), s.Zenith.Z())
+	gl.Uniform3f(p.U("skyHorizon"), s.Horizon.X(), s.Horizon.Y(), s.Horizon.Z())
+	gl.Uniform3f(p.U("skyGround"), s.Ground.X(), s.Ground.Y(), s.Ground.Z())
+	gl.Uniform3f(p.U("skyTint"), s.Tint.X(), s.Tint.Y(), s.Tint.Z())
+	gl.Uniform1f(p.U("skyIntensity"), s.Intensity)
+	gl.Uniform1f(p.U("skyYaw"), mgl32.DegToRad(s.Rotation))
+
+	gl.Uniform1f(p.U("skyBlend"), blend)
+	gl.Uniform1i(p.U("skyKindFrom"), int32(fromKind))
+	gl.Uniform3f(p.U("skyZenithFrom"), from.Zenith.X(), from.Zenith.Y(), from.Zenith.Z())
+	gl.Uniform3f(p.U("skyHorizonFrom"), from.Horizon.X(), from.Horizon.Y(), from.Horizon.Z())
+	gl.Uniform3f(p.U("skyGroundFrom"), from.Ground.X(), from.Ground.Y(), from.Ground.Z())
+	gl.Uniform3f(p.U("skyTintFrom"), from.Tint.X(), from.Tint.Y(), from.Tint.Z())
+	gl.Uniform1f(p.U("skyIntensityFrom"), from.Intensity)
+	gl.Uniform1f(p.U("skyYawFrom"), mgl32.DegToRad(from.Rotation))
+
+	fogBlend, falloff := float32(0), world.FogDefaultSkyFalloff
+	// frameFog: the frame's distance fog (water_interact.go; under water
+	// the murk is a fog volume, so this is the level's still).
+	if f := frameFog(lvl); f != nil && f.Enabled {
+		fogBlend, falloff = f.SkyBlend, f.SkyFalloff
+	}
+	gl.Uniform1f(p.U("skyFogBlend"), fogBlend)
+	gl.Uniform1f(p.U("skyFogFalloff"), falloff)
+
+	gl.Uniform1i(p.U("skyTex"), SkyTexUnit)
+	gl.Uniform1i(p.U("skyTexFrom"), SkyFromTexUnit)
+	if kind == world.SkyCubemap {
+		gl.ActiveTexture(gl.TEXTURE0 + SkyTexUnit)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, cube)
+	}
+	if blend < 1 && fromKind == world.SkyCubemap {
+		gl.ActiveTexture(gl.TEXTURE0 + SkyFromTexUnit)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, fromCube)
+	}
+
 }

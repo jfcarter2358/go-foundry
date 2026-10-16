@@ -213,10 +213,15 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 	raw.SaveMode = world.SaveModeName(level.SaveMode)
 	raw.Gravity = world.CopyFloatPtr(level.Gravity)
 	raw.ViewDistance = level.ViewDistance
-	if level.LightGrid > 0 || level.LightMinGrid > 0 || level.NoBake {
-		raw.Compile = &world.RawCompile{LightGrid: level.LightGrid, LightMinGrid: level.LightMinGrid}
-		if level.NoBake {
+	raw.RainRipples = level.RainRipples
+	if level.LightGrid > 0 || level.LightMinGrid > 0 || level.NoBake || level.BakeVertex || level.LightmapTexel > 0 {
+		raw.Compile = &world.RawCompile{LightGrid: level.LightGrid, LightMinGrid: level.LightMinGrid,
+			LightmapTexel: level.LightmapTexel}
+		switch {
+		case level.NoBake:
 			raw.Compile.Bake = world.BakeNone
+		case level.BakeVertex:
+			raw.Compile.Bake = world.BakeVertex
 		}
 	}
 	raw.Lights = lightsToRaw(level.Lights, keepPrefabContent)

@@ -64,6 +64,10 @@ uniform usampler2D visIDs;
 uniform usampler2D binIDs;
 uniform uint bin;
 uniform vec2 viewSize;
+// The texture derivatives' scale: 1, or under a render scale s
+// (render/dynres.go) s itself — the texture LOD bias log2(s) an upsampling
+// TAA wants, so the reconstruction gets the output's texture detail.
+uniform float derivScale = 1.0;
 uniform int hasNormals;
 uniform int hasLight;
 
@@ -131,10 +135,10 @@ void main() {
     fragBakedLight = b.x * bl[0] + b.y * bl[1] + b.z * bl[2];
     fragBakedIndirect = b.x * bi[0] + b.y * bi[1] + b.z * bi[2];
     fragVertColor = b.x * vc[0] + b.y * vc[1] + b.z * vc[2];
-    nvDUVdx = bx.x * uv[0] + bx.y * uv[1] + bx.z * uv[2];
-    nvDUVdy = by.x * uv[0] + by.y * uv[1] + by.z * uv[2];
-    nvDPdx = bx.x * wp[0] + bx.y * wp[1] + bx.z * wp[2];
-    nvDPdy = by.x * wp[0] + by.y * wp[1] + by.z * wp[2];
+    nvDUVdx = (bx.x * uv[0] + bx.y * uv[1] + bx.z * uv[2]) * derivScale;
+    nvDUVdy = (by.x * uv[0] + by.y * uv[1] + by.z * uv[2]) * derivScale;
+    nvDPdx = (bx.x * wp[0] + bx.y * wp[1] + bx.z * wp[2]) * derivScale;
+    nvDPdy = (by.x * wp[0] + by.y * wp[1] + by.z * wp[2]) * derivScale;
     // Counter-clockwise on screen is the front (GL's default winding): the
     // sign of the homogeneous determinant, which is the screen-space area's
     // for any corners in front of the eye.

@@ -94,6 +94,13 @@ type StageKind struct {
 	// manifest entry (RunContext.Previous, with per-tile hashes) so it can
 	// reuse what is still fresh and prune the rest. Not hashed.
 	Incremental bool
+	// RectKeyed: the stage's artifact may implement RectKeyer, and every
+	// stage downstream of it folds the artifact's key of a piece's
+	// rectangle into that piece's paint key (paint_incremental.go): a
+	// ground_edit's heights follow paint non-locally (a pond's level is its
+	// whole outline's), so a downstream piece must key on the heights it
+	// reads, not only on the paint near it. Not hashed.
+	RectKeyed bool
 }
 
 // Param is the named parameter's definition, or nil.

@@ -1,0 +1,17 @@
+# Ash: burnt ground, ash and charred litter. Poly Haven (CC0): burned_ground_01.
+name: Ash
+doc: Burnt ground with ash and charred litter; no grass.
+order: 150
+layers:
+  - {layer: ash, strength: 1}
+  - {layer: path_clear, strength: 1}
+recipe:
+  paint:
+    - {name: ash, kind: material}
+    - {name: path_clear, kind: exclude}
+  textures:
+    - {name: ash, id: burned_ground_01, scale: 2.5}
+  material:
+    - {layer: ash, texture: ash, slots: [ash, snow, wet], fallback: cracked}
+  exclude:
+    - {layer: path_clear, kind: grass_field}

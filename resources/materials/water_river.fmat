@@ -1,0 +1,34 @@
+# water_river.fmat — moving water. On a generated river's ribbons
+# (ground_edit's rivers, docs/terrain-paint/PHASE_W3.md) `flow_map` steers the
+# ripples and the foam by the ribbon's own flow map — downstream, faster in
+# narrows and riffles, foam streaming off riffles, boulders and falls — so
+# flow_direction and flow_speed are not used there. On a plain face (no
+# vertex colours) it drifts along flow_direction as before.
+#
+# The colour (phase W3's fixes): a little silt and algae, so the shallows show
+# the gravel bed going green-brown and the deep runs a dark green-grey rather
+# than black; the reflection tinted warm and the roughness up, so a choppy
+# reach under a blue sky does not read as a sheet of pure sky blue.
+kind: surface
+texture: water
+doc: 'A flowing river: flow-mapped ripples and foam on a generated river, a little silt and algae.'
+effects:
+  - effect: water
+    absorption: 0.7
+    shallow_color: {r: 0.66, g: 0.78, b: 0.64}
+    scatter_color: {r: 0.09, g: 0.145, b: 0.105}
+    subsurface: 0.4
+    roughness: 0.16
+    refraction: 0.45
+    reflectivity: 0.34
+    reflect_color: {r: 0.92, g: 0.96, b: 0.76}
+    foam: 1
+    caustics: 0.5
+    flow_speed: 1.4
+    flow_direction: [1, 0]
+    flow_map: 1
+    detail_scale: 2.2
+    detail_strength: 1.3
+    wave_amplitude: 0.02
+    wave_length: 1.5
+    wave_speed: 0.8

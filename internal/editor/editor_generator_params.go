@@ -322,6 +322,8 @@ func genScalarWidget(def *procgen.ParamDef, label string, v *procgen.Value, s *p
 		}
 	case procgen.ParamStage:
 		return genStageRefCombo(def, label, v, s)
+	case procgen.ParamMask:
+		return genMaskCombo(label, v, def.MaskWords...) // editor_generator_paint.go
 	}
 	return false
 }

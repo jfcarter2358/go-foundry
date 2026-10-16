@@ -19,7 +19,7 @@ package procgen
 //	float, int, seed     1.5, 4, 1234
 //	bool                 true
 //	enum, texture,
-//	string, stage        ridged
+//	string, stage, mask  ridged
 //	vec2, vec3           {x: 1, y: 2} / {x: 1, y: 2, z: 3}   (or [1, 2, 3])
 //	color                {r: 1, g: 0.5, b: 0.2}              (or [1, 0.5, 0.2])
 //	spline               [{x: 0, z: 0, width: 30}, ...]      (or [[0, 0, 30], ...])
@@ -50,6 +50,7 @@ type rawDoc struct {
 	Seed   int64      `yaml:"seed"`
 	Output string     `yaml:"output,omitempty"`
 	Level  string     `yaml:"level,omitempty"`
+	Paint  []rawPaint `yaml:"paint,omitempty"`
 	Stages []rawStage `yaml:"stages"`
 }
 
@@ -66,6 +67,7 @@ type rawDocOut struct {
 	Seed   int64         `yaml:"seed"`
 	Output string        `yaml:"output,omitempty"`
 	Level  string        `yaml:"level,omitempty"`
+	Paint  []rawPaint    `yaml:"paint,omitempty"`
 	Stages []rawStageOut `yaml:"stages"`
 }
 
@@ -119,17 +121,25 @@ func ReadDoc(path string) (*Doc, error) {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
 	d.Name = NameFromPath(path)
+	// Its paint layers' pixels, from <doc>.paint/ beside it (paint_doc.go).
+	if err := d.LoadPaint(path); err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
 	return d, nil
 }
 
 // WriteDoc writes d to path (atomically, keeping a .bak like every document
-// the editor saves).
+// the editor saves), and its paint layers' changed tiles beside it when it
+// holds any (paint_doc.go).
 func WriteDoc(path string, d *Doc) error {
 	data, err := EncodeDoc(d)
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteFileAtomic(path, data)
+	if err := fileutil.WriteFileAtomic(path, data); err != nil {
+		return err
+	}
+	return d.SavePaint(path)
 }
 
 // DecodeDoc parses a document's bytes. The name is left empty: it is the
@@ -139,7 +149,7 @@ func DecodeDoc(data []byte) (*Doc, error) {
 	if err := yaml.UnmarshalStrict(data, &raw); err != nil {
 		return nil, &DecodeError{Problems: []string{friendlyYAMLError(err)}}
 	}
-	d := &Doc{Doc: raw.Doc, Seed: raw.Seed, Output: raw.Output, Level: raw.Level}
+	d := &Doc{Doc: raw.Doc, Seed: raw.Seed, Output: raw.Output, Level: raw.Level, Paint: paintDefsIn(raw.Paint)}
 	var problems []string
 	for i, rs := range raw.Stages {
 		where := fmt.Sprintf("stage %d", i+1)
@@ -188,7 +198,7 @@ func DecodeDoc(data []byte) (*Doc, error) {
 func friendlyYAMLError(err error) string {
 	s := strings.TrimPrefix(err.Error(), "yaml: ")
 	s = strings.ReplaceAll(s, "unmarshal errors:\n  ", "")
-	s = strings.ReplaceAll(s, " in type procgen.rawDoc", " (a document has doc, seed, output, level and stages)")
+	s = strings.ReplaceAll(s, " in type procgen.rawDoc", " (a document has doc, seed, output, level, paint and stages)")
 	s = strings.ReplaceAll(s, " in type procgen.rawStage", " (a stage has stage, id, enabled and params)")
 	return s
 }
@@ -259,7 +269,7 @@ func decodeValue(d *ParamDef, raw interface{}, where string) (Value, []string) {
 			return Value{}, []string{fmt.Sprintf("%s: %q is not one of %s", where, s, strings.Join(d.Choices, ", "))}
 		}
 		v.Str = s
-	case ParamTexture, ParamString, ParamStage:
+	case ParamTexture, ParamString, ParamStage, ParamMask:
 		s, ok := raw.(string)
 		if !ok {
 			return bad("a name")
@@ -444,7 +454,7 @@ func describeRaw(raw interface{}) string {
 
 // EncodeDoc is the document's file bytes.
 func EncodeDoc(d *Doc) ([]byte, error) {
-	out := rawDocOut{Doc: d.Doc, Seed: d.Seed, Output: d.Output, Level: d.Level}
+	out := rawDocOut{Doc: d.Doc, Seed: d.Seed, Output: d.Output, Level: d.Level, Paint: paintDefsOut(d.Paint)}
 	for i := range d.Stages {
 		s := &d.Stages[i]
 		rs := rawStageOut{Stage: s.Kind, ID: s.ID}
@@ -505,7 +515,7 @@ func encodeValue(d *ParamDef, v Value, omitDefaults bool) interface{} {
 		return int64(v.Num)
 	case ParamBool:
 		return v.Bool
-	case ParamEnum, ParamTexture, ParamString, ParamStage:
+	case ParamEnum, ParamTexture, ParamString, ParamStage, ParamMask:
 		return v.Str
 	case ParamVec2:
 		return yaml.MapSlice{{Key: "x", Value: v.Vec[0]}, {Key: "y", Value: v.Vec[1]}}

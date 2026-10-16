@@ -243,19 +243,21 @@ func TestEnvironmentPresetsAreValid(t *testing.T) {
 // Adding regions to the engine changed no existing document: the
 // desert_canyon template's stage hashes are exactly the ones recorded before
 // phase 1 (2026-10-12, before StageKind.Regional and the expansion existed).
-// If a stage kind's own Version or schema changes on purpose, update these.
+// If a stage kind's own Version or schema changes on purpose, update these
+// (2026-10-15: terrain_material Version 2, the soft-ground layers —
+// ground_mat and the drift, rockface and scatter stages downstream of it).
 func TestDesertCanyonHashesUnchangedByRegions(t *testing.T) {
 	want := map[string]string{
 		"air":        "d2a74f23bb4f980ec56ace4fd04b7a156b7d9247a103d4436840d86bdbcdb7d4",
 		"boulders":   "f884431f9bdd267398995b4ccd097c5830bc388eb38514e310d4574cf30774a2",
 		"bushes":     "435160c11d51cc1622e66aa5dcc4f1e098acc06f767c2bc70bc18788be3c935f",
 		"deadwood":   "71602a7486830366439c29597427454a1a4bfb8bd2df3b424f234317729d6e80",
-		"drift":      "c8e261eeee0e6fa0085489b186d00e621c61ac438b98a12e0cf1f7898aaca7cb",
+		"drift":      "dd10ec4013b89f1b24f7a6565983066d3ab4257f1c4a6ac54575171e36136d91",
 		"ground":     "9c36ee193b88439c4b1ccc2819e5def4c08b2f0dc0f9f6d94a8cb6411fb3f7f5",
-		"ground_mat": "57f8200ee32e1a66f23064f0d1e266b1852929dd41cd5cf91eaf8468ff9217cd",
-		"rockface":   "37607833d2d21f4002a9e87719a7b5460ad066c7b27b815da52f8911d87bcb54",
+		"ground_mat": "9b9e2061757f5ef8a536d69c9c1c3dcb6ada77c89e71735f73d6b57594d07a6f",
+		"rockface":   "4097d6da7f37cc0eac7d1a706701b8e03ebb4ee294e893f97c194a688f421f84",
 		"rockfall":   "79f2c9ee7d2925f1b3fc4ff822aee4ee4e52dd63343d79a2a53d860bfc25c57e",
-		"scatter":    "e267df62e46bc601925d019d54981de628d32e46e075846356634397e5e6fbae",
+		"scatter":    "ff07e26f7c08816cacc067c75e10ed66626cadc73332079542f80f52c9d4d1f6",
 		"stones":     "084428318f971755b407570611c33baadea9aef511f4e3f4a4c97f0412fec615",
 		"tex":        "dd02397d13684110bec21f07a33a06cff82e9a870aafb042b84ae86eb2ce2670",
 		"trees":      "397cf244cf76fe444e156690b0a0ca1b092fc80e978413e5b1f40011840a37da",

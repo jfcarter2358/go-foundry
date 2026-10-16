@@ -437,3 +437,12 @@ func NormalMapName(name string) string { return name + NormalMapSuffix }
 // IsNormalMapName reports whether name is a normal map's rather than an
 // albedo's.
 func IsNormalMapName(name string) bool { return strings.HasSuffix(name, NormalMapSuffix) }
+
+// ARMMapSuffix is appended to a texture's logical name for its ARM map (AO /
+// roughness / metal, gfx/texture_armmap.go), which the engine loads beside the
+// albedo the way it does the normal map — so the packer, which cannot import
+// gfx, needs the name too.
+const ARMMapSuffix = "_arm"
+
+// IsARMMapName reports whether name is an ARM map's rather than an albedo's.
+func IsARMMapName(name string) bool { return strings.HasSuffix(name, ARMMapSuffix) }

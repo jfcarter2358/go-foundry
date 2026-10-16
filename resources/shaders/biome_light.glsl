@@ -47,6 +47,10 @@
 // SHADOW_CASCADES, MAX_DIR_LIGHTS and MAX_POINT_LIGHTS.
 #include "scene_block.glsl"
 
+// GGX specular (specular.glsl): biomeLightingSpec's highlight, fragment.glsl's
+// own model.
+#include "specular.glsl"
+
 #define SHADOW_FADE_FRACTION  0.15
 
 #ifndef BIOME_LIGHT_PCF
@@ -220,24 +224,52 @@ float biomeDiffuse(float ndl, bool twoSided) {
     return lightWrapTerm(twoSided ? abs(ndl) : ndl);
 }
 
-vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShadow, bool twoSided) {
-    vec3 lighting = ambientLight(globalLightColor * globalLightBrightness, worldPos, normal);
+// biomeLightingSpec is biomeLighting with each light's specular reflection, under
+// the same shadow, added to spec (specular.glsl). A two-sided surface takes it
+// only from the light on the side the normal faces.
+// How much of a light a thin, two-sided surface (a leaf, a blade) passes to
+// the eye looking toward the light through it, at its strongest.
+#define BIOME_TRANSLUCENCY 0.35
+
+// biomeAmbientRef is the ambient the last biomeLightingSpec took, for the
+// environment's reflection (pbrEnvSpecular) to be scaled by.
+vec3 biomeAmbientRef = vec3(0.0);
+
+vec3 biomeLightingSpec(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShadow, bool twoSided,
+                       PBRSurface ps, inout vec3 spec) {
+    // The last frame's screen-space occlusion (specular.glsl's ssaoAt): on
+    // the ambient here, on the sun below.
+    vec2 occ = ssaoAt(worldPos);
+    vec3 lighting = ambientLight(globalLightColor * globalLightBrightness, worldPos, normal) * occ.x;
+    biomeAmbientRef = lighting;
 
     for (int i = 0; i < numDirLights; i++) {
         vec3 ldir = -normalize(dirLightDir[i]);
         float diff = biomeDiffuse(dot(normal, ldir), twoSided);
-        vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
+        vec3 radiance = dirLightColor[i] * dirLightBrightness[i];
+        float vis = 1.0;
 
         if (receiveShadow && dirLightCastShadows[i]) {
             float shadow = biomeDirShadow(i, worldPos, viewDepth, normal, ldir);
-            contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
+            vis = 1.0 - shadow * dirLightShadowStrength[i];
         }
         // Clouds shade the grass under them as they shade the floor —
         // cloud_shadow.glsl, spliced in ahead of this file by biomeLightSnippet.
         if (receiveShadow) {
-            contrib *= cloudShadowFactor(i, worldPos);
+            vis *= cloudShadowFactor(i, worldPos) * ssaoContact(i, occ);
         }
-        lighting += contrib;
+        lighting += radiance * diff * vis;
+        spec += radiance * vis * pbrSpecular(normal, ldir, ps);
+        // Light through a leaf or a blade (docs/lighting/PLAN.md, phase 6):
+        // seen against the sun, a thin thing glows with what it lets
+        // through, tinted by itself (the albedo the caller multiplies in).
+        if (twoSided) {
+            vec3 V = normalize(fogCamPos - worldPos);
+            float through = max(dot(-V, ldir), 0.0);
+            through *= through;
+            through *= through;
+            lighting += radiance * vis * (BIOME_TRANSLUCENCY * through);
+        }
     }
 
     for (int i = 0; i < numPointLights; i++) {
@@ -246,18 +278,30 @@ vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShad
         if (dist < pointLightRadius[i]) {
             float t           = 1.0 - (dist / pointLightRadius[i]);
             float attenuation = t * t;
-            float diff        = biomeDiffuse(dot(normal, normalize(toLight)), twoSided);
-            vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
+            vec3  ldir        = toLight / max(dist, 1e-5);
+            float diff        = biomeDiffuse(dot(normal, ldir), twoSided);
+            vec3 radiance = pointLightColor[i] * pointLightBrightness[i] * attenuation;
+            float vis = 1.0;
 
 #ifdef BIOME_LIGHT_POINT_SHADOWS
             if (receiveShadow && pointLightCastShadows[i]) {
                 float shadow = pointShadow(i, worldPos); // point_shadow.glsl
-                contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
+                vis = 1.0 - shadow * pointLightShadowStrength[i];
             }
 #endif
-            lighting += contrib;
+            lighting += radiance * diff * vis;
+            spec += radiance * vis * pbrSpecular(normal, ldir, ps);
         }
     }
 
     return lighting;
+}
+
+// biomeLighting is the diffuse alone, for the passes that take no highlight
+// (the vertex-lit blades and cards).
+vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShadow, bool twoSided) {
+    PBRSurface ps;
+    ps.on = 0.0;
+    vec3 spec = vec3(0.0);
+    return biomeLightingSpec(worldPos, normal, viewDepth, receiveShadow, twoSided, ps, spec);
 }

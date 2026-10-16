@@ -16,7 +16,8 @@ package grassfield
 //	u32 cells_x  u32 cells_z  u32 kinds  u32 instances
 //	(u32 offset, u32 count) × cells·kinds
 //	(f32 min_y, f32 max_y) × cells
-//	u32×3 × instances
+//	u32×3 × instances           (version 2, an oriented field: u32×4, the
+//	                             fourth the up axis, orient.go)
 //
 // A str is a u32 length and its bytes. Decoders check every count against
 // what is left of the file before allocating, so a truncated or corrupt
@@ -212,7 +213,7 @@ func DecodeKit(data []byte) (*Kit, error) {
 // EncodeField is f's file.
 func EncodeField(f *Field) ([]byte, error) {
 	nc := f.CellsX * f.CellsZ
-	if nc <= 0 || f.Kinds <= 0 || len(f.Runs) != nc*f.Kinds || len(f.CellY) != nc || len(f.Data)%InstanceWords != 0 {
+	if nc <= 0 || f.Kinds <= 0 || len(f.Runs) != nc*f.Kinds || len(f.CellY) != nc || len(f.Data)%f.Words() != 0 {
 		return nil, fmt.Errorf("grass field: inconsistent (%d×%d cells, %d kinds, %d runs)", f.CellsX, f.CellsZ, f.Kinds, len(f.Runs))
 	}
 	if err := f.check(); err != nil {
@@ -220,7 +221,11 @@ func EncodeField(f *Field) ([]byte, error) {
 	}
 	var w writer
 	w.b.WriteString(FieldMagic)
-	w.u32(FieldVersion)
+	if f.Oriented {
+		w.u32(FieldVersionOriented)
+	} else {
+		w.u32(FieldVersion)
+	}
 	w.str(f.Kit)
 	for _, v := range f.Origin {
 		w.f32(v)
@@ -265,10 +270,11 @@ func DecodeField(data []byte) (*Field, error) {
 	if err := r.magic(FieldMagic); err != nil {
 		return nil, err
 	}
-	if v := r.u32(); r.err == nil && v != FieldVersion {
-		return nil, fmt.Errorf("grass field version %d, want %d", v, FieldVersion)
+	v := r.u32()
+	if r.err == nil && v != FieldVersion && v != FieldVersionOriented {
+		return nil, fmt.Errorf("grass field version %d, want %d or %d", v, FieldVersion, FieldVersionOriented)
 	}
-	f := &Field{Kit: r.str()}
+	f := &Field{Kit: r.str(), Oriented: v == FieldVersionOriented}
 	for i := range f.Origin {
 		f.Origin[i] = r.f32()
 	}
@@ -283,7 +289,7 @@ func DecodeField(data []byte) (*Field, error) {
 	}
 	nc := f.CellsX * f.CellsZ
 	if f.CellsX <= 0 || f.CellsZ <= 0 || f.Kinds <= 0 || f.Kinds > MaxKinds || nc > len(r.b) ||
-		nc*f.Kinds > len(r.b)/8 || n > len(r.b)/(4*InstanceWords) {
+		nc*f.Kinds > len(r.b)/8 || n > len(r.b)/(4*f.Words()) {
 		return nil, fmt.Errorf("grass field: bad header (%d×%d cells, %d kinds, %d instances)", f.CellsX, f.CellsZ, f.Kinds, n)
 	}
 	runs := r.words(2 * nc * f.Kinds)
@@ -300,7 +306,7 @@ func DecodeField(data []byte) (*Field, error) {
 			f.CellY[c] = [2]float32{ys[2*c], ys[2*c+1]}
 		}
 	}
-	f.Data = r.words(n * InstanceWords)
+	f.Data = r.words(n * f.Words())
 	if r.err != nil {
 		return nil, fmt.Errorf("grass field: %w", r.err)
 	}

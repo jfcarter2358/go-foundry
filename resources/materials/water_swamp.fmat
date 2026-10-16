@@ -1,0 +1,25 @@
+# water_swamp.fmat — tannin-stained, still, silty water: the bed is gone a
+# hand's depth down, the colour is tea-brown, there is no caustic to speak of.
+#
+# Phase W3's colour fixes: the body is a visible tea-brown rather than near
+# black (which left the sky's reflection to colour it all), the reflection is
+# tinted olive and rougher, so a marsh pool under a blue sky reads
+# green-brown, not cartoon blue.
+kind: surface
+texture: water
+doc: 'Swamp or bog water: tea-brown and opaque, still, dull reflections.'
+effects:
+  - effect: water
+    absorption: 2.4
+    shallow_color: {r: 0.56, g: 0.46, b: 0.26}
+    scatter_color: {r: 0.13, g: 0.11, b: 0.05}
+    subsurface: 0.1
+    roughness: 0.18
+    refraction: 0.12
+    foam: 0.1
+    caustics: 0
+    flow_speed: 0.03
+    wave_amplitude: 0.01
+    detail_strength: 0.4
+    reflectivity: 0.3
+    reflect_color: {r: 0.95, g: 0.9, b: 0.6}

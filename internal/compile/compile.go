@@ -173,6 +173,12 @@ func Compile(lvl *world.Level, opt Options) (*Result, error) {
 	if lvl != nil && lvl.LightMinGrid > 0 {
 		opt.Light.MinGridStep = lvl.LightMinGrid
 	}
+	// And its bake: lightmaps for a level read from a file unless it says
+	// `bake: vertex` (world.Level.Lightmap; lightmap.go).
+	if lvl != nil && lvl.Lightmap {
+		opt.Light.Lightmap = true
+		opt.Light.LightmapTexel = lvl.LightmapTexel
+	}
 	p := opt.Progress
 	p.report("Cutting brushes (CSG)", 0)
 	faces, clips, err := csg(lvl)

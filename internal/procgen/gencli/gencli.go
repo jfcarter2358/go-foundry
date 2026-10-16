@@ -17,6 +17,9 @@
 //	foundry gen env write savannah          write a preset's file, only if absent
 //	foundry gen env adjacency               the effective adjacency table (built-in
 //	                                        + resources/environments/adjacency.yaml)
+//	foundry gen paint canyon -layer lush -disc 10,-4,12
+//	                                        brush strokes into a paint layer
+//	                                        (gencli_paint.go)
 //
 // A document is named by its name (resources/generators/<name>.fgen) or by a
 // path. Every command takes -root, the project directory.
@@ -74,6 +77,8 @@ func Main(root string, args []string, out io.Writer) int {
 		return worldMain(root, args[1:], out)
 	case "env":
 		return envMain(root, args[1:], out)
+	case "paint":
+		return paintMain(root, args[1:], out)
 	}
 	usage(out)
 	return 2
@@ -88,6 +93,8 @@ foundry %[1]s world <level>
 foundry %[1]s env list
 foundry %[1]s env write <name>|-all
 foundry %[1]s env adjacency
+foundry %[1]s paint <name|file.fgen> -layer name|-preset name [-no-recipe] [-kind k] [-mode add|erase|smooth|set|flatten] [-value v] [-strength s] [-falloff f] [-curve c] [-disc x,z,r]... [-line x0,z0,x1,z1,r]... [-clear] [-list]
+foundry %[1]s paint -presets
 `, Command)
 }
 
@@ -218,6 +225,8 @@ func runMain(root string, args []string, out io.Writer) int {
 	lp := levelio.LevelPath(d.Level)
 	sopt := fileSpliceOptions(lp, res.Placements(), out)
 	sopt.Settings = res.LevelSettings()
+	sopt.Emitters = res.Emitters()
+	sopt.Sounds = res.Sounds()
 	if len(regionsOnly) > 0 {
 		if sopt.Scope, err = genlevel.RegionScope(d, res, regionsOnly); err != nil {
 			fmt.Fprintf(out, "%s: %v\n", d.Name, err)

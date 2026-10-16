@@ -124,10 +124,35 @@ const (
 	GIDebugProbes
 	// GIDebugField draws the distance field as the camera would see it.
 	GIDebugField
+	// GIDebugSpecular draws the specular alone — the lights' highlights and
+	// the environment's reflection (specular.glsl; docs/lighting/PLAN.md).
+	GIDebugSpecular
+	// GIDebugMirror draws every surface as a perfect mirror, so the
+	// environment it reflects (render/envmap.go) is seen whole.
+	GIDebugMirror
+	// GIDebugAO draws the screen-space occlusion the shading read (ao.go):
+	// grey for the ambient occlusion, red where the sun's contact shadow is.
+	GIDebugAO
 	giDebugModeCount
 )
 
-var giDebugNames = [giDebugModeCount]string{"off", "lighting", "probes", "field"}
+var giDebugNames = [giDebugModeCount]string{"off", "lighting", "probes", "field", "specular", "mirror", "ao"}
+
+// giDebugShaderMode is the world programs' giDebug for m: 1 the lighting
+// view, 2 the specular, 3 the mirror, 0 anything the shading does not draw.
+func giDebugShaderMode(m GIDebugMode) int32 {
+	switch m {
+	case GIDebugLighting:
+		return 1
+	case GIDebugSpecular:
+		return 2
+	case GIDebugMirror:
+		return 3
+	case GIDebugAO:
+		return 4
+	}
+	return 0
+}
 
 func (m GIDebugMode) String() string {
 	if m < 0 || m >= giDebugModeCount {
@@ -706,10 +731,7 @@ func uploadGITo(prog uint32) {
 	g := &gi
 	loc := func(n string) int32 { return gfx.UniformLocName(prog, n) }
 	gl.UseProgram(prog)
-	debug := int32(0)
-	if GIDebug == GIDebugLighting {
-		debug = 1
-	}
+	debug := giDebugShaderMode(GIDebug)
 	if !g.active {
 		// The lighting view is the shader's, not GI's: with GI off it is the
 		// direct light and the flat ambient alone, which is still the picture

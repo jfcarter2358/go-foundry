@@ -133,3 +133,48 @@ func TestGrassDensity(t *testing.T) {
 		t.Fatalf("scales %g..%g", got[0].Scale, got[len(got)-1].Scale)
 	}
 }
+
+// TestGrassGroundOrientation: a ground rule stands each clump on the
+// terrain's normal, tilt jitter leans it by no more than asked, and neither
+// moves, re-kinds or re-turns a single clump — the extra randomness comes
+// from hash slots the upright rule never read — while an upright rule's
+// clumps keep a zero axis (the old 12-byte clump).
+func TestGrassGroundOrientation(t *testing.T) {
+	g := stepGround(t, 128, 1, 4)
+	r := grassRule()
+	r.Band.Slope = [2]float64{0, 90}
+	plain := Grass(g, GrassSettings{Rules: []GrassRule{r}, Seed: 5}, g.Bounds())
+	for _, in := range plain {
+		if in.Up != ([3]float64{}) {
+			t.Fatalf("an upright clump has an axis %v", in.Up)
+		}
+	}
+	r.Ground = true
+	ground := Grass(g, GrassSettings{Rules: []GrassRule{r}, Seed: 5}, g.Bounds())
+	r.TiltJitter = 20 * math.Pi / 180
+	tilted := Grass(g, GrassSettings{Rules: []GrassRule{r}, Seed: 5}, g.Bounds())
+	if len(ground) != len(plain) || len(tilted) != len(plain) {
+		t.Fatalf("orientation changed the count: %d %d %d", len(plain), len(ground), len(tilted))
+	}
+	sloped := 0
+	for i := range plain {
+		p, gr, tl := plain[i], ground[i], tilted[i]
+		if p.Pos != gr.Pos || p.Kind != gr.Kind || p.Yaw != gr.Yaw || p.Scale != gr.Scale || p.Pos != tl.Pos || p.Yaw != tl.Yaw {
+			t.Fatalf("orientation moved clump %d", i)
+		}
+		n := g.Normal(p.Pos[0], p.Pos[2], g.Grid.Cell)
+		if math.Abs(dot(gr.Up, n)-1) > 1e-9 {
+			t.Fatalf("ground axis %v is not the normal %v", gr.Up, n)
+		}
+		if n[1] < 0.99 {
+			sloped++
+		}
+		lean := math.Acos(math.Min(1, dot(tl.Up, n))) * 180 / math.Pi
+		if lean > 20+1e-6 || math.Abs(length(tl.Up)-1) > 1e-9 {
+			t.Fatalf("tilt %.2f° past the 20° jitter (axis %v)", lean, tl.Up)
+		}
+	}
+	if sloped == 0 {
+		t.Fatal("the test ground has no slope to orient on")
+	}
+}

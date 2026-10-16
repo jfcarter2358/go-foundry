@@ -60,6 +60,8 @@ and is always current.
 | [Generators](33-generators.md) | Procedural content as documents: stages that build terrain, rocks and scatter, previewed live and run into a level |
 | [Poly Haven assets](34-polyhaven.md) | The CC0 scan library: the Poly Haven browser, what an import makes, `foundry polyhaven`, the generator stages, texture compression and memory |
 | [Environment regions](35-regions.md) | Several environments in one generated world: region volumes, presets, the world generator, the region list, adjacency rules and "Insert intermediate region", incremental runs |
+| [Terrain paint](36-terrain-paint.md) | Painting a generator's inputs: paint layers and their kinds, the 2D view's brush, paint bands on scatter and grass rules, exclude layers, material overrides, the files beside the .fgen, `foundry gen paint` |
+| [Water](37-water.md) | What water does beyond its look: rings and splashes from wading, falling in and shots, rain on the water, the underwater view (murk, Snell's window, caustics, muffled sound), river and waterfall sounds, `water_at` from a script |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
 | [Saves and checkpoints](26-saves-and-checkpoints.md) | Checkpoint volumes, Retry, save slots, per-level save mode |

@@ -91,12 +91,11 @@ uniform int normalColor;
 // this shader without knowing about it shades exactly as it did before.
 uniform int unlit;
 
-// Water surface. isWater gates the whole path.
-uniform int   isWater;
-uniform float time;
-uniform float waveAmplitude;
-uniform float waveLength;
-uniform float waveSpeed;
+// Water surface. isWater gates the whole path; the height field and its
+// uniforms (isWater, time, the swell) are water_waves.glsl's, shared with
+// vertex.glsl so the two stages cannot drift. The shading is water.glsl's,
+// included above main.
+#include "water_waves.glsl"
 uniform float reflectivity;
 uniform vec3  reflectColor;
 uniform vec3  camPos;
@@ -109,6 +108,13 @@ uniform vec3  camPos;
 // disabled vertex attribute reads a driver default, not zero, so an unlit
 // surface would read as "baked to black" rather than as "not baked".
 uniform int   bakedLight;
+
+// A compiled level's lightmaps (render/lightmap.go; compile/lightmap.go): rgb
+// the static lights' direct light other than the baked sun's, a the sun's
+// visibility. A lightmapped surface's baked row says where it reads them —
+// fragBakedLight.xy the texel, .z the page, .w -2 (or -3: the sun was kept
+// out of its chunk) where a per-vertex row has the sun's share.
+uniform sampler2DArray lightmaps;
 
 // The scene's lights, their shadows and the fog — globalLight*, dirLight*,
 // pointLight*, cascade*, bakedSunLight and the rest — are one uniform block
@@ -123,6 +129,20 @@ uniform int   bakedLight;
 // full resolution. Past the cascades the bake's sun stands: it is the only
 // shadow there is out there.
 #include "scene_block.glsl"
+
+// GGX specular for every light (specular.glsl; docs/lighting/PLAN.md).
+#include "specular.glsl"
+
+// The surface's specular inputs (gfx/material_pbr.go): BIASES from
+// PBR_DEFAULT_ROUGHNESS and PBR_DEFAULT_SPECULAR, and a metalness, so the zero
+// an unwritten uniform holds is a surface with no pbr effect. hasArmMap binds
+// the texture's AO / roughness / metal map (gfx/texture_armmap.go), whose
+// channels the factors multiply.
+uniform float pbrRoughnessBias;
+uniform float pbrMetallic;
+uniform float pbrSpecularBias;
+uniform int   hasArmMap;
+uniform sampler2D armMap;
 
 // Directional cascaded shadows: SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION
 // must match ShadowCascadeBlend / shadowFadeFraction in shadow.go
@@ -184,31 +204,6 @@ in vec3 fragBakedIndirect;
 in vec4 fragVertColor;
 
 out vec4 outputColor;
-
-// MUST stay identical to waterHeight() in vertex.glsl — see the note there.
-float waterHeight(vec2 p) {
-    float k = 6.2831853 / max(waveLength, 0.001);
-    float t = time * waveSpeed * 6.2831853;
-
-    float h = 0.0;
-    h += sin(p.x * k + t) * 0.50;
-    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
-    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
-    return h * waveAmplitude;
-}
-
-// Central-difference gradient of the wave field. Done per-pixel rather than
-// per-vertex so the swell stays smooth regardless of mesh density, and so no
-// extra varying is needed — this fragment shader is also linked against the
-// detail tessellation and scatter vertex stages, which know nothing of water.
-vec3 waterNormal(vec2 p) {
-    float e  = max(waveLength * 0.02, 0.01);
-    float hL = waterHeight(p - vec2(e, 0.0));
-    float hR = waterHeight(p + vec2(e, 0.0));
-    float hD = waterHeight(p - vec2(0.0, e));
-    float hU = waterHeight(p + vec2(0.0, e));
-    return normalize(vec3(hL - hR, 2.0 * e, hD - hU));
-}
 
 // Tangent frame reconstructed from screen-space derivatives, rather than from
 // per-vertex tangent attributes.
@@ -384,49 +379,91 @@ float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
 // dirLightContrib is directional light i's share of this fragment: wrapped
 // Lambert on the side facing the viewer (light_model.glsl), then its cascade
 // shadow and the clouds'. geoNormal is the unbumped normal the shadow bias
-// wants — see main.
-vec3 dirLightContrib(int i, vec3 normal, vec3 geoNormal) {
+// wants — see main. Its specular reflection, under the same shadow, is added
+// to spec.
+vec3 dirLightContrib(int i, vec3 normal, vec3 geoNormal, PBRSurface ps, vec2 occ, inout vec3 spec) {
     vec3 ldir = -normalize(dirLightDir[i]);
     float diff = lightWrapTerm(dot(normal, ldir));
     if (diff <= 0.0) {
         return vec3(0.0); // facing away: no shadow lookup to pay for
     }
-    vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
+    vec3 radiance = dirLightColor[i] * dirLightBrightness[i];
 
+    float vis = 1.0;
     if (dirLightCastShadows[i]) {
         float shadow = calcDirShadow(i, geoNormal, ldir);
         // Shadow strength: 0 = no darkening, 1 = full shadow
-        contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
+        vis = 1.0 - shadow * dirLightShadowStrength[i];
     }
     // The clouds' shadow, on top of the geometry's. Its own map, not a
     // cascade: a cloud is a volume and casts a soft, partial shadow no depth
     // map can hold. See cloud_shadow.glsl.
-    contrib *= cloudShadowFactor(i, fragWorldPos);
-    return contrib;
+    vis *= cloudShadowFactor(i, fragWorldPos);
+    // The sun's contact shadow (render/ao.go): what its shadow map is too
+    // coarse to hold.
+    vis *= ssaoContact(i, occ);
+    spec += radiance * vis * pbrSpecular(normal, ldir, ps);
+    return radiance * diff * vis;
 }
 
-// pointLightContrib is point light i's share: wrapped Lambert, quadratic
-// falloff to nothing at its radius, then its cubemap shadow.
-vec3 pointLightContrib(int i, vec3 normal) {
+// pointLightAt is point light i's colour × brightness × falloff at this
+// fragment (quadratic to nothing at its radius) and the unit direction to it;
+// false out of its reach.
+bool pointLightAt(int i, out vec3 radiance, out vec3 ldir) {
     vec3  toLight = pointLightPos[i] - fragWorldPos;
     float dist    = length(toLight);
     if (dist >= pointLightRadius[i]) {
+        return false;
+    }
+    float t = 1.0 - (dist / pointLightRadius[i]);
+    radiance = pointLightColor[i] * pointLightBrightness[i] * (t * t);
+    ldir = toLight / max(dist, 1e-5);
+    return true;
+}
+
+// pointLightVisibility is how much of point light i its cubemap shadow lets
+// through.
+float pointLightVisibility(int i) {
+    if (!pointLightCastShadows[i]) {
+        return 1.0;
+    }
+    float shadow = pointShadow(i, fragWorldPos); // point_shadow.glsl
+    return 1.0 - shadow * pointLightShadowStrength[i];
+}
+
+// pointLightContrib is point light i's share: wrapped Lambert, quadratic
+// falloff to nothing at its radius, then its cubemap shadow. Its specular, the
+// same shadow on it, is added to spec.
+vec3 pointLightContrib(int i, vec3 normal, PBRSurface ps, inout vec3 spec) {
+    vec3 radiance, ldir;
+    if (!pointLightAt(i, radiance, ldir)) {
         return vec3(0.0);
     }
-    float t           = 1.0 - (dist / pointLightRadius[i]);
-    float attenuation = t * t;
-    float diff        = lightWrapTerm(dot(normal, normalize(toLight)));
+    float diff = lightWrapTerm(dot(normal, ldir));
     if (diff <= 0.0) {
         return vec3(0.0);
     }
-    vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
-
-    if (pointLightCastShadows[i]) {
-        float shadow = pointShadow(i, fragWorldPos); // point_shadow.glsl
-        contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
-    }
-    return contrib;
+    float vis = pointLightVisibility(i);
+    spec += radiance * vis * pbrSpecular(normal, ldir, ps);
+    return radiance * diff * vis;
 }
+
+// pointLightSpecular is point light i's specular alone, for a baked surface:
+// its diffuse arrived from the bake, but a highlight depends on where the eye
+// is and cannot.
+vec3 pointLightSpecular(int i, vec3 normal, PBRSurface ps) {
+    if (ps.on == 0.0) {
+        return vec3(0.0);
+    }
+    vec3 radiance, ldir;
+    if (!pointLightAt(i, radiance, ldir) || dot(normal, ldir) <= 0.0) {
+        return vec3(0.0);
+    }
+    return radiance * pointLightVisibility(i) * pbrSpecular(normal, ldir, ps);
+}
+
+// The water surface's shading and the caustics under it (water.glsl).
+#include "water.glsl"
 
 void main() {
     // Screen-space derivatives, taken once at the top of main and outside every
@@ -454,7 +491,7 @@ void main() {
     if (isWater != 0) {
         // Re-derive from the wave field; the facet normal would only recover the
         // flat triangle and lose the swell entirely.
-        normal = waterNormal(fragWorldPos.xz);
+        normal = waterSurfaceNormal(fragWorldPos);
     } else if (smoothShading != 0 && dot(fragNormal, fragNormal) > 1e-12) {
         // Interpolated across the triangle, so lighting varies continuously
         // instead of stepping at every shared edge.
@@ -526,7 +563,9 @@ void main() {
     if ((matFx & FX_SPLAT) != 0) {
         // FX_SPLAT8 tested here, in main, so the material variants fold it
         // (render/nanite_vis_variants.go): a four-layer bin drops 5–8.
-        fxSplatSurface(fragWorldPos, normal, dPdx, dPdy, (matFx & FX_SPLAT8) != 0, texColor, normal, fxAO);
+        // FX_TRAIL likewise: a bin with no soft layer drops the ground trails.
+        fxSplatSurface(fragWorldPos, normal, dPdx, dPdy, (matFx & FX_SPLAT8) != 0, (matFx & FX_TRAIL) != 0, texColor,
+                       normal, fxAO);
     }
     if ((matFx & FX_GRADE) != 0) {
         fxGradeApply(texColor);
@@ -580,7 +619,44 @@ void main() {
         normal = fxDetailApply(fragWorldPos, geoNormal, normal, dPdx, dPdy, fragViewDepth);
     }
 
+    // The specular's inputs (specular.glsl): the surface's factors, times its
+    // ARM map's roughness and metalness where it has one, whose AO joins the
+    // vertex cavity. Water has a reflection model of its own; an unlit
+    // surface, a decal's mask and an additive mark reflect nothing.
+    float pbrRough = PBR_DEFAULT_ROUGHNESS + pbrRoughnessBias;
+    float pbrMetal = pbrMetallic;
+    if (hasArmMap != 0 && isWater == 0 && (matFx & (FX_TRIPLANAR | FX_SPLAT)) == 0) {
+        vec3 arm = texture(armMap, uv).rgb;
+        vertexAO *= arm.r;
+        if (hasArmMap == 2) {
+            // No pbr effect: the map's own roughness and metal
+            // (gfx.ARMReplaces).
+            pbrRough = arm.g;
+            pbrMetal = arm.b;
+        } else {
+            pbrRough *= arm.g;
+            pbrMetal *= arm.b;
+        }
+    }
+    PBRSurface ps = pbrSurface(fragWorldPos, normal, pbrRough, pbrMetal,
+        PBR_DEFAULT_SPECULAR + pbrSpecularBias, texColor.rgb);
+    if (isWater != 0 || unlit != 0 || surfaceBlend != 0) {
+        ps.on = 0.0;
+    } else if (giDebug == 3) {
+        // The mirror view (render.GIDebugMirror): a white, perfectly smooth
+        // metal, so what the environment holds is seen whole.
+        ps = pbrSurface(fragWorldPos, normal, 0.0, 1.0, 1.0, vec3(1.0));
+        ps.on = 1.0;
+    }
+    vec3 spec = vec3(0.0);
+
     vec3 lighting;
+    // The ambient light the surface took, for the environment's reflection to
+    // be scaled by (specular.glsl's pbrEnvSpecular).
+    vec3 ambientRef;
+    // The last frame's screen-space occlusion here (specular.glsl's ssaoAt):
+    // x on the ambient and the reflection, y on the sun.
+    vec2 occ = ssaoAt(fragWorldPos);
 
     // A compiled level's static geometry had the static lights summed once,
     // offline, and interpolates that answer instead — the light loops, the
@@ -593,14 +669,25 @@ void main() {
         // cloud_shadow.glsl for why a share rather than the whole of it. Unless
         // the sun the map follows is dynamic: then none of the baked answer is
         // its light, and its own term below takes the shadow in full.
-        lighting = fragBakedLight.rgb;
+        // A lightmapped row: the direct light from the texel, the sun's
+        // visibility with it; the indirect part still per vertex.
+        bool mapped = fragBakedLight.w < -1.5;
+        vec4 lmTexel = vec4(0.0);
+        vec3 bakedDirect = max(fragBakedLight.rgb - fragBakedIndirect, vec3(0.0));
+        if (mapped) {
+            lmTexel = textureLod(lightmaps, vec3(fragBakedLight.xy, fragBakedLight.z), 0.0);
+            bakedDirect = lmTexel.rgb;
+        }
+        // The bake's ambient and bounce (fragBakedIndirect) take the screen's
+        // occlusion like a live surface's ambient does.
+        ambientRef = fragBakedIndirect * occ.x;
         // Live GI replaces the ambient and the bounce the bake folded in
         // (fragBakedIndirect is exactly that part), and keeps the static
         // lights' own direct light. See render/gi.go.
         if (giEnabled != 0) {
-            lighting = max(lighting - fragBakedIndirect, vec3(0.0))
-                + ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal);
+            ambientRef = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal) * occ.x;
         }
+        lighting = bakedDirect + ambientRef;
         // The baked sun, re-shadowed by the cascades where they reach (see
         // bakedSunLight). What the bake put in comes off: the sun's unshadowed
         // light on the unbumped normal the bake lit with, times the share it
@@ -609,7 +696,26 @@ void main() {
         // cascades keep — and they hold everything that casts, the compiled
         // world, entities and chunks drawn live, so this is the whole of the
         // sun's shadow, crisp. Where they fade out, the bake's share stands.
-        if (bakedSunLight >= 0 && fragBakedLight.w >= 0.0) {
+        if (mapped && bakedSunLight >= 0 && fragBakedLight.w > -2.5) {
+            // The lightmap's sun: its visibility from the texel, its light
+            // worked out here on whatever normal the surface shades with,
+            // and the cascades' shadow in place of the texel's within their
+            // reach, as below.
+            int s = bakedSunLight;
+            vec3 ldir = -normalize(dirLightDir[s]);
+            float diff = lightWrapTerm(dot(normal, ldir));
+            if (diff > 0.0) {
+                float kept = lmTexel.a;
+                float reach = dirShadowReach();
+                if (reach > 0.0) {
+                    float shadow = calcDirShadowUnfaded(dirLightShadowLayer[s], s, geoNormal, ldir);
+                    kept = mix(kept, (1.0 - shadow * dirLightShadowStrength[s]) * ssaoContact(s, occ), reach);
+                }
+                vec3 sun = dirLightColor[s] * dirLightBrightness[s];
+                lighting += sun * diff * kept;
+                spec += sun * kept * pbrSpecular(normal, ldir, ps);
+            }
+        } else if (bakedSunLight >= 0 && fragBakedLight.w >= 0.0) {
             int s = bakedSunLight;
             vec3 ldir = -normalize(dirLightDir[s]);
             float baked = lightWrapTerm(dot(geoNormal, ldir));
@@ -619,50 +725,74 @@ void main() {
                 float reach = dirShadowReach();
                 if (reach > 0.0) {
                     float shadow = calcDirShadowUnfaded(dirLightShadowLayer[s], s, geoNormal, ldir);
-                    kept = mix(kept, 1.0 - shadow * dirLightShadowStrength[s], reach);
+                    kept = mix(kept, (1.0 - shadow * dirLightShadowStrength[s]) * ssaoContact(s, occ), reach);
                 }
                 vec3 sun = dirLightColor[s] * dirLightBrightness[s];
                 lighting = max(lighting + sun * (diff * kept - baked * fragBakedLight.w), vec3(0.0));
+                // The sun's highlight, under the shadow just worked out; the
+                // clouds' below take their share of it with the rest.
+                spec += sun * kept * pbrSpecular(normal, ldir, ps);
             }
         }
         if (dirLightDynamic[clamp(cloudShadowLight, 0, MAX_DIR_LIGHTS - 1)] == 0) {
-            lighting *= mix(1.0,
+            float cloud = mix(1.0,
                 cloudShadowFactor(cloudShadowLight, fragWorldPos), CLOUD_SHADOW_BAKED_SHARE);
+            lighting *= cloud;
+            spec *= cloud;
         }
         for (int i = 0; i < numDirLights; i++) {
             if (dirLightDynamic[i] != 0) {
-                lighting += dirLightContrib(i, normal, geoNormal);
+                lighting += dirLightContrib(i, normal, geoNormal, ps, occ, spec);
             }
         }
         for (int i = 0; i < numPointLights; i++) {
             if (pointLightDynamic[i] != 0) {
-                lighting += pointLightContrib(i, normal);
+                lighting += pointLightContrib(i, normal, ps, spec);
+            } else {
+                spec += pointLightSpecular(i, normal, ps);
             }
         }
-    } else if (vertexColors != 0 || fxAO < 1.0) {
+    } else if (vertexColors != 0 || vertexAO < 1.0) {
         // Every light, with the vertex cavity taken off (see vertexColors) —
-        // and a splat's layer AO, which vertexAO now carries too.
+        // and a splat's layer AO and an ARM map's, which vertexAO carries too.
         vec3 direct = vec3(0.0);
+        vec3 directSpec = vec3(0.0);
         for (int i = 0; i < numDirLights; i++) {
-            direct += dirLightContrib(i, normal, geoNormal);
+            direct += dirLightContrib(i, normal, geoNormal, ps, occ, directSpec);
         }
         for (int i = 0; i < numPointLights; i++) {
-            direct += pointLightContrib(i, normal);
+            direct += pointLightContrib(i, normal, ps, directSpec);
         }
-        lighting = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal) * vertexAO
-            + direct * mix(1.0, vertexAO, VERTEX_AO_DIRECT);
+        ambientRef = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal) * (vertexAO * occ.x);
+        lighting = ambientRef + direct * mix(1.0, vertexAO, VERTEX_AO_DIRECT);
+        spec += directSpec * mix(1.0, vertexAO, VERTEX_AO_DIRECT);
     } else {
         // Every light, static or dynamic, on anything that was not baked.
-        lighting = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal);
+        ambientRef = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal) * occ.x;
+        lighting = ambientRef;
         for (int i = 0; i < numDirLights; i++) {
-            lighting += dirLightContrib(i, normal, geoNormal);
+            lighting += dirLightContrib(i, normal, geoNormal, ps, occ, spec);
         }
         for (int i = 0; i < numPointLights; i++) {
-            lighting += pointLightContrib(i, normal);
+            lighting += pointLightContrib(i, normal, ps, spec);
         }
     }
 
-    float finalAlpha = texColor.a * alpha;
+    // What the environment sends back (specular.glsl; render/envmap.go): the
+    // sky or the reflection volume p stands in, by roughness, dimmed by the
+    // surface's cavity.
+    spec += pbrEnvSpecular(ps, fragWorldPos, normal, ambientRef,
+        vertexAO * pbrSpecularOcclusion(ps.NoV, occ.x, ps.rough));
+
+    // Caustics on whatever lies under a water surface (water.glsl;
+    // render/water_caustics.go). Zero bodies — the usual case — is one test.
+    if (waterCausticCount > 0 && isWater == 0 && unlit == 0) {
+        lighting *= waterCaustics(fragWorldPos, normal);
+    }
+
+    // A water surface's `tex` is the generated detail map, whose alpha is
+    // noise, not coverage (water.glsl).
+    float finalAlpha = (isWater != 0 ? 1.0 : texColor.a) * alpha;
 
     if (alphaSharpen != 0) {
         // Re-derive a crisp, roughly one-pixel-wide edge from the soft alpha
@@ -696,34 +826,32 @@ void main() {
     // was, or far above in an HDR frame (gfx/hdr.go), where an unlit
     // surface's colour, being screen colour, is carried into the scene's
     // units instead.
-    vec3 surface = unlit != 0 ? hdrFromDisplay(texColor.rgb) : texColor.rgb * clamp(lighting, 0.0, hdrLightMax());
+    // A metal's colour is its reflection's: it has no diffuse (specular.glsl).
+    vec3 surface = unlit != 0 ? hdrFromDisplay(texColor.rgb)
+        : texColor.rgb * pbrDiffuseWeight(pbrMetal) * clamp(lighting, 0.0, hdrLightMax())
+            + clamp(spec, 0.0, hdrLightMax());
     // The GI debug view (gi_debug): the light alone, as if every surface
     // were white, so what GI adds can be told from what the textures are.
     if (giDebug == 1 && unlit == 0) {
         surface = clamp(lighting, 0.0, 1.0);
     }
+    // The specular and mirror views: the reflection alone.
+    if ((giDebug == 2 || giDebug == 3) && unlit == 0) {
+        surface = spec;
+    }
+    // The occlusion view (render.GIDebugAO): the AO in grey, the sun's
+    // contact shadow taking the green and blue out.
+    if (giDebug == 4 && unlit == 0) {
+        surface = vec3(occ.x, occ.x * occ.y, occ.x * occ.y);
+    }
 
     if (isWater != 0) {
-        vec3 viewDir = normalize(camPos - fragWorldPos);
-
-        // Schlick fresnel: water is barely reflective looking straight down and
-        // near-mirror at grazing angles, which is what sells it as a surface.
-        float cosTheta = clamp(dot(normal, viewDir), 0.0, 1.0);
-        float fresnel  = reflectivity + (1.0 - reflectivity) * pow(1.0 - cosTheta, 5.0);
-
-        surface = mix(surface, reflectColor * clamp(lighting, 0.0, 1.0), fresnel);
-
-        // Blinn-Phong glint from each directional light — the moving specular
-        // highlight that reads as sun on water.
-        for (int i = 0; i < numDirLights; i++) {
-            vec3  ldir = -normalize(dirLightDir[i]);
-            vec3  halfVec = normalize(ldir + viewDir);
-            float spec = pow(max(dot(normal, halfVec), 0.0), 128.0);
-            surface += dirLightColor[i] * dirLightBrightness[i] * spec * fresnel;
-        }
-
-        // Grazing angles also read as more opaque, matching the reflection.
-        finalAlpha = clamp(finalAlpha + fresnel * (1.0 - finalAlpha) * 0.5, 0.0, 1.0);
+        // Depth colour, refraction, reflection, glint, foam and the soft
+        // shoreline (water.glsl); finalAlpha comes back as the blend's. It
+        // starts from the surface's own alpha alone: `tex` is the generated
+        // detail map on a water surface, and its alpha is noise.
+        finalAlpha = alpha;
+        surface = waterShade(normal, lighting, finalAlpha);
     }
 
     if (surfaceBlend == 2) {

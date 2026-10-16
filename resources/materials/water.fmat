@@ -1,19 +1,38 @@
-# water.fmat — the animated water surface, as a material.
+# water.fmat — the default water (docs/terrain-paint/PHASE_W1.md).
 #
-# This was a sector's `water:` block: six numbers filled in per surface, and no
-# way to give two ponds the same swell without typing them twice. Put a brush
-# face on this instead and it is water.
+# Depth colour, refraction and a soft shoreline from the scene under the
+# surface, sky and screen-space reflection, a GGX sun glint, drifting ripples,
+# shore foam and caustics on the bed. Put a brush face on this and it is water;
+# a generated lake's tiles (region_terrain) wear it, or a preset, or their own.
 #
-# The numbers here are the engine's own defaults spelled out, so that the file
-# is a worked example rather than an empty one. Delete a line to take that
-# parameter back to the default it already equals.
+# Every number here is the engine's own default spelled out (material.
+# DefaultWater), so the file is a worked example: delete a line to take that
+# parameter back to the default it already equals. The presets beside it —
+# water_tropical, water_alpine, water_lake, water_river, water_swamp, water_sea
+# — are this with the colours and the motion changed.
 kind: surface
 texture: water
-doc: Still water — a pond, a flooded basin. Put it on a flat face.
+doc: 'Still water, the default: a clear temperate lake or pond. Put it on a flat face.'
 effects:
   - effect: water
-    wave_amplitude: 0.06
-    wave_length: 3
-    wave_speed: 0.35
-    reflectivity: 0.45
-    reflect_color: {r: 0.55, g: 0.72, b: 0.92}
+    wave_amplitude: 0.03
+    wave_length: 4
+    wave_speed: 0.3
+    reflectivity: 0.5
+    reflect_color: {r: 1, g: 1, b: 1}
+    absorption: 0.6
+    shallow_color: {r: 0.55, g: 0.8, b: 0.82}
+    scatter_color: {r: 0.025, g: 0.11, b: 0.14}
+    subsurface: 0.5
+    roughness: 0.06
+    refraction: 0.35
+    foam: 0.5
+    shore_fade: 0.12
+    flow_speed: 0.25
+    flow_direction: [1, 0.35]
+    detail_scale: 3
+    detail_strength: 1
+    swell: 0
+    swell_length: 24
+    caustics: 1
+    ssr: 1

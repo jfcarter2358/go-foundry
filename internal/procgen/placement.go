@@ -80,6 +80,42 @@ type PlacementWind struct {
 	Flutter float32 `yaml:"flutter,omitempty"`
 }
 
+// Emitter is one particle emitter a stage places: a `.fpar` effect at a
+// point, as a level's `emitters:` entry (world.RawEmitter) holds it, with
+// the few keys a generator needs. A waterfall's mist at its plunge pool is
+// the first (ground_edit, docs/terrain-paint/PHASE_W4.md). Its ID is
+// prefixed like a placement's, and the splice replaces the generator's
+// emitters as it replaces its scenery.
+type Emitter struct {
+	ID string `yaml:"id"`
+	// Effect names a document under particles/, without the extension.
+	Effect   string `yaml:"effect"`
+	Position Point3 `yaml:"position"`
+	// Rotation is Euler radians (it aims the emission shape).
+	Rotation Point3 `yaml:"rotation,omitempty"`
+	// RateScale multiplies every layer's rate (0: as authored).
+	RateScale float32 `yaml:"rate_scale,omitempty"`
+}
+
+// Sound is one positional sound a stage places: a looping clip under
+// sounds/ at a point, as a level's `sounds:` entry (world.RawSound) holds
+// it, with the keys a generator needs. A river's flow, a rapids' rush, a
+// waterfall's roar and a pond's lapping are the first (ground_edit, phase
+// W5, docs/terrain-paint/PHASE_W5.md). Prefixed like a placement's, and the
+// splice replaces the generator's sounds as it replaces its emitters.
+type Sound struct {
+	ID string `yaml:"id"`
+	// Clip names a file under sounds/, without the extension.
+	Clip     string `yaml:"clip"`
+	Position Point3 `yaml:"position"`
+	// Gain and Pitch multiply the clip's (0: 1). RefDistance and
+	// MaxDistance are the full-gain and silent radii (0: the engine's).
+	Gain        float32 `yaml:"gain,omitempty"`
+	Pitch       float32 `yaml:"pitch,omitempty"`
+	RefDistance float32 `yaml:"ref_distance,omitempty"`
+	MaxDistance float32 `yaml:"max_distance,omitempty"`
+}
+
 // VolumeEntry is one level volume as its YAML map (see the file comment).
 // Its "id" key is the stage's own name for it, prefixed like a placement's.
 type VolumeEntry map[string]interface{}
@@ -96,7 +132,11 @@ type LevelSettings map[string]interface{}
 type placementsFile struct {
 	Scenery []Placement   `yaml:"scenery,omitempty"`
 	Volumes []VolumeEntry `yaml:"volumes,omitempty"`
-	Level   LevelSettings `yaml:"level,omitempty"`
+	// Emitters are the stage's particle emitters (Emitter).
+	Emitters []Emitter `yaml:"emitters,omitempty"`
+	// Sounds are the stage's positional sounds (Sound).
+	Sounds []Sound       `yaml:"sounds,omitempty"`
+	Level  LevelSettings `yaml:"level,omitempty"`
 	// Supersedes is the earlier stages' placements this stage replaces, by
 	// stage ID (RunContext.Supersede).
 	Supersedes map[string][]string `yaml:"supersedes,omitempty"`

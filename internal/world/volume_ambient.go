@@ -101,6 +101,64 @@ func (v *Volume) HasAmbient() bool {
 // AmbientVolumes returns the volumes whose cut is in effect, the nearest to
 // camPos first (by their boxes), at most MaxAmbientVolumes.
 func AmbientVolumes(vols []Volume, lvl *Level, camPos mgl32.Vec3) []*Volume {
+	return ambientVolumesSeen(vols, lvl, camPos, nil)
+}
+
+// AmbientViewCull, when On, is the camera's view frustum (planes as
+// render.ExtractFrustum gives them, inside ≥ 0): PackAmbientVolumes then
+// leaves out every volume whose box misses it, and every volume that cuts
+// nothing (sky and ground 1, no dust). Exact for the camera's passes — a
+// pixel's surface point and the eye ray to it are both inside the frustum,
+// so a volume outside it can neither hold the one nor cross the other — and
+// it matters: every volume in the block is a loop trip per pixel in the
+// material pass's ambient and fog, and two per step of the shafts' march
+// (docs/adventure/PHASE_F.md: 8 → 2 volumes was 3.7 ms of material pass and
+// 1 ms of shafts on the adventure level at 2560x1080). render sets it each
+// frame (off while GI traces probes, which light points off screen;
+// FOUNDRY_AMBIENT_VIEW_CULL=0 = off).
+var AmbientViewCull struct {
+	On     bool
+	Planes [6]mgl32.Vec4
+}
+
+// AmbientPacked is the world box of each volume the last PackAmbientVolumes
+// wrote, in the block's order, for render's per-tile mask (amb_tiles.go).
+var AmbientPacked struct {
+	N      int
+	Lo, Hi [MaxAmbientVolumes]mgl32.Vec3
+}
+
+// ambientVolumeCutsNothing reports whether v's cut leaves the light and the
+// air as they are: no factor below 1 and no dust.
+func ambientVolumeCutsNothing(v *Volume) bool {
+	a := v.Ambient
+	return a.Sky == 1 && a.Ground == 1 && a.Dust == 0
+}
+
+// boxInPlanes is AABB [lo, hi], grown by pad, at least partly on the inner
+// side of every plane.
+func boxInPlanes(p *[6]mgl32.Vec4, lo, hi mgl32.Vec3, pad float32) bool {
+	for _, pl := range p {
+		x, y, z := hi[0]+pad, hi[1]+pad, hi[2]+pad
+		if pl[0] < 0 {
+			x = lo[0] - pad
+		}
+		if pl[1] < 0 {
+			y = lo[1] - pad
+		}
+		if pl[2] < 0 {
+			z = lo[2] - pad
+		}
+		if pl[0]*x+pl[1]*y+pl[2]*z+pl[3] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// ambientVolumesSeen is AmbientVolumes, less (when cull is set) the volumes
+// outside its planes and those that cut nothing.
+func ambientVolumesSeen(vols []Volume, lvl *Level, camPos mgl32.Vec3, cull *[6]mgl32.Vec4) []*Volume {
 	type cand struct {
 		v *Volume
 		d float32
@@ -112,8 +170,15 @@ func AmbientVolumes(vols []Volume, lvl *Level, camPos mgl32.Vec3) []*Volume {
 			continue
 		}
 		d := float32(0)
-		if lo, hi, ok := v.WorldAABB(lvl); ok {
+		lo, hi, ok := v.WorldAABB(lvl)
+		if ok {
 			d = boxDistance(camPos, lo, hi)
+		}
+		if cull != nil {
+			// A metre's pad: TAA's sub-pixel jitter and the planes' rounding.
+			if ambientVolumeCutsNothing(v) || (ok && !boxInPlanes(cull, lo, hi, 1)) {
+				continue
+			}
 		}
 		cs = append(cs, cand{v, d})
 	}
@@ -143,7 +208,11 @@ func boxDistance(p, lo, hi mgl32.Vec3) float32 {
 // PackFogVolumes leaves its own. No GL.
 func PackAmbientVolumes(b *gfx.SceneBlock, vols []Volume, lvl *Level, camPos mgl32.Vec3) {
 	n := 0
-	for _, v := range AmbientVolumes(vols, lvl, camPos) {
+	var cull *[6]mgl32.Vec4
+	if AmbientViewCull.On {
+		cull = &AmbientViewCull.Planes
+	}
+	for _, v := range ambientVolumesSeen(vols, lvl, camPos, cull) {
 		a := v.Ambient
 		basis := v.WorldFogBasis(lvl)
 		for c := 0; c < 3; c++ {
@@ -153,9 +222,16 @@ func PackAmbientVolumes(b *gfx.SceneBlock, vols []Volume, lvl *Level, camPos mgl
 		b.AmbVolCenter[n] = [4]float32{c[0], c[1], c[2], float32(v.Shape)}
 		b.AmbVolHalf[n] = [4]float32{v.HalfX, v.HalfY, v.HalfZ, a.Fade}
 		b.AmbVolParams[n] = [4]float32{a.Sky, a.Ground, a.Fog, a.Dust}
+		lo, hi, ok := v.WorldAABB(lvl)
+		if !ok {
+			// No box to test: a tile must always count it.
+			lo, hi = mgl32.Vec3{-1e30, -1e30, -1e30}, mgl32.Vec3{1e30, 1e30, 1e30}
+		}
+		AmbientPacked.Lo[n], AmbientPacked.Hi[n] = lo, hi
 		n++
 	}
 	b.NumAmbVolumes = int32(n)
+	AmbientPacked.N = n
 	for i := n; i < MaxAmbientVolumes; i++ {
 		b.AmbVolBasis[i] = [3][4]float32{}
 		b.AmbVolCenter[i], b.AmbVolHalf[i], b.AmbVolParams[i] = [4]float32{}, [4]float32{}, [4]float32{}

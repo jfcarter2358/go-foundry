@@ -1,0 +1,46 @@
+# Lake: a wide, deep body — long shallow margins, a ledge, then deep water —
+# at its spill height. (Phase W3: a narrower ledge and a 4.5 m deep middle,
+# so the drop-off runs over metres, not one: seen from above the deep water
+# fades in rather than standing as a hard dark blob.) Reeds in the shallows, wet mud margins, no rocks in
+# the water. docs/guide/36-terrain-paint.md "Ponds, lakes and marshes".
+# Poly Haven (CC0): grass_medium_01 (reeds stand-in), brown_mud_02.
+name: Lake
+doc: A wide lake with long shallow margins and deep water; reeds in the shallows, wet mud margins.
+order: 165
+layers:
+  - {layer: lake, strength: 1}
+recipe:
+  paint:
+    - {name: lake, kind: water}
+  textures:
+    - {name: pond_mud, id: brown_mud_02, scale: 2}
+  material:
+    - {layer: lake, texture: pond_mud, slots: [wet, ash, snow], fallback: cracked, strength: 0.6}
+  exclude:
+    - {layer: lake, kind: scatter}
+  stages:
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source
+        water_sounds: true
+        water:
+          - {layer: lake, style: lake, bank: 7, shelf_depth: 0.6, shelf: 4, depth: 4.5, noise: 0.25, noise_size: 14,
+             bank_slope: 0.22, reach: 24, min_area: 200}
+    - stage: polyhaven_plants
+      id: cover_grass
+      params:
+        assets: [{id: grass_medium_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: shore_reeds, plants: cover_grass, pieces: tall, density: 2.5, scale: [6, 9], slope: [0, 30],
+             cluster: 0.6, cluster_scale: 14, max_triangles: 400, shore: [0, 4], shore_soft: 2, max_depth: 0.15,
+             tint_a: [0.95, 1.0, 0.7], tint_b: [1.1, 1.0, 0.68], tint_scale: 30, wind_bend: 0.4, wind_flutter: 0.06}
+          - {name: shore_sedge, plants: cover_grass, pieces: mid, density: 1.5, scale: [3, 4.5], slope: [0, 30],
+             cluster: 0.45, cluster_scale: 20, max_triangles: 500, shore: [1, 9], shore_soft: 3,
+             tint_a: [0.9, 1.0, 0.72], tint_b: [1.0, 0.98, 0.66], tint_scale: 40}

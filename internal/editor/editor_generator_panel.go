@@ -480,6 +480,7 @@ func generatorStageSection() {
 	}
 	editorTextMutedWrapped(k.Doc)
 	imgui.Separator()
+	genStageExtraPanels(s) // a ground_edit's water bodies (editor_generator_water.go)
 	genParamsPanel(s, k)
 }
 

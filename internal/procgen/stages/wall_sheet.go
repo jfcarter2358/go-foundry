@@ -99,6 +99,17 @@ func wallSheetParams() []procgen.ParamDef {
 			Doc: "How much memory the sections' meshing and cooks may hold at once."},
 		{Name: "caves", Added: true, Type: procgen.ParamStage, StageKinds: []string{CaveKind}, Default: procgen.StageRef(""),
 			Doc: "A cave stage whose void is cut out of the walls, so its mouths open through the rock. Empty: none."},
+		// A close-range detail normal (docs/adventure/PHASE_F.md, Phase F2):
+		// the rock layer repeats every several metres, and a camera pressed
+		// to the wall magnifies it into a smear.
+		{Name: "detail_normal", Added: true, Type: procgen.ParamTexture, Label: "Detail normal", Default: procgen.Texture(""),
+			Doc: "A texture whose normal map is laid over the walls close up (the material's detail_normal effect). Empty: none."},
+		{Name: "detail_scale", Added: true, Type: procgen.ParamFloat, Label: "Detail scale (m)", Default: f(0.8), Min: 0.05, Max: 20, Step: 0.05,
+			Doc: "Metres a repeat of the detail normal."},
+		{Name: "detail_strength", Added: true, Type: procgen.ParamFloat, Label: "Detail strength", Default: f(0.6), Min: 0, Max: 2, Step: 0.05,
+			Doc: "How much the detail bends the normal."},
+		{Name: "detail_distance", Added: true, Type: procgen.ParamFloat, Label: "Detail distance (m)", Default: f(5), Min: 1, Max: 200, Step: 0.5,
+			Doc: "Gone by this far from the eye: the farther, the more of the wall pays for it."},
 	}
 }
 
@@ -423,6 +434,13 @@ func wallMaterial(rc *procgen.RunContext, ground *TerrainMaterialArtifact) (stri
 		e.Set("bounds_max", material.Vec2Value(mgl32.Vec2{float32(ground.Max[0]), float32(ground.Max[1])}))
 		e.Set("height_range", material.Vec2Value(mgl32.Vec2{ground.HeightLo, ground.HeightHi}))
 		e.Set("band", material.FloatValue(float32(band)))
+	}
+	if tex := rc.Params.Str("detail_normal"); tex != "" {
+		e := d.AddEffect(material.KindDetailNormal)
+		e.Set("map", material.TextureValue(tex))
+		e.Set("scale", material.FloatValue(float32(rc.Params.Float("detail_scale"))))
+		e.Set("strength", material.FloatValue(float32(rc.Params.Float("detail_strength"))))
+		e.Set("distance", material.FloatValue(float32(rc.Params.Float("detail_distance"))))
 	}
 	if err := writeMaterial(rc, d); err != nil {
 		return "", err

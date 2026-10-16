@@ -284,8 +284,18 @@ func runRegionMaterial(rc *procgen.RunContext) error {
 	g := t.Grid
 	sz := g.S()
 	n := sz * sz
-	w, err := regionWeights(t, sets, nl, rc.Seed, &rc.Env)
+	// Kept across strokes when the stage reads paint (paint_weight_cache.go).
+	w, wn, reused, err := cachedWeights(rc, func() ([]float32, int, error) {
+		w, err := regionWeights(t, sets, nl, rc.Seed, &rc.Env)
+		return w, nl, err
+	})
 	if err != nil {
+		return err
+	}
+	if wn != nl || len(w) != n*nl {
+		return fmt.Errorf("unpainted weights: %d layers over %d values, want %d over %d", wn, len(w), nl, n*nl)
+	}
+	if err := regionMaterialPaint(&rc.Env, p, g, w, layers, t); err != nil {
 		return err
 	}
 	rc.Progress(0.55)
@@ -341,6 +351,9 @@ func runRegionMaterial(rc *procgen.RunContext) error {
 		files = append(files, file{"weights2.png", sz, sz, w2})
 	}
 	if err := rc.Parallel(len(files), func(i int) error {
+		if (files[i].name == "height.png" || files[i].name == "strata.png") && keepUnpainted(rc, reused, files[i].name) {
+			return nil // follows no paint (paint_weight_cache.go)
+		}
 		data, err := terrain.EncodeRGBA(files[i].w, files[i].h, files[i].pix)
 		if err != nil {
 			return err
@@ -424,6 +437,7 @@ func finishRegionMaterial(rc *procgen.RunContext, a *TerrainMaterialArtifact, nl
 		return err
 	}
 	rc.Artifact = a
+	artifactAsLoaded(rc, data) // a painted one (paint_weight_cache.go)
 	var parts []string
 	for _, l := range a.Layers {
 		parts = append(parts, fmt.Sprintf("%s %s %s %.0f%%", strings.Join(l.Environments, "+"), l.Role, l.ID, 100*l.Coverage))
@@ -527,6 +541,7 @@ func regionMaterialDoc(a *TerrainMaterialArtifact, leadP procgen.Params, layers 
 		if l.anti {
 			e.Set(material.SplatLayerParam(i, "anti_tile"), material.BoolValue(true))
 		}
+		setSoft(e, i, l.layer, l.triplanar)
 		if l.relief > 0 {
 			e.Set(material.SplatLayerParam(i, "relief"), material.FloatValue(float32(l.relief)))
 		}
@@ -690,6 +705,9 @@ func previewRegionMaterial(pc *procgen.PreviewContext) (*procgen.PreviewData, er
 	nl := len(layers)
 	w, err := regionWeights(t, sets, nl, pc.Seed, &pc.Env)
 	if err != nil {
+		return nil, err
+	}
+	if err := regionMaterialPaint(&pc.Env, p, t.Grid, w, layers, t); err != nil {
 		return nil, err
 	}
 	sz := t.Grid.S()

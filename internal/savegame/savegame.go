@@ -85,6 +85,9 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 		Camera:       lvl.Player.Camera,
 		Gravity:      world.CopyFloatPtr(lvl.Gravity),
 		ViewDistance: lvl.ViewDistance,
+
+		RainRipples:    lvl.RainRipples,
+		HasRainRipples: true,
 	}
 	for i := range lvl.Entities {
 		ws.Entities = append(ws.Entities, captureEntity(&lvl.Entities[i]))
@@ -409,6 +412,9 @@ func applyWorld(lvl *world.Level, ws *savefile.WorldState) {
 	}
 	lvl.Gravity = world.CopyFloatPtr(ws.Gravity)
 	lvl.ViewDistance = ws.ViewDistance
+	if ws.HasRainRipples {
+		lvl.RainRipples = ws.RainRipples
+	}
 }
 
 // applyEntities takes out what was destroyed, makes again what was spawned,

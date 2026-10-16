@@ -301,6 +301,9 @@ func castAndPost(rt *ScriptRuntime, atom flang.AtomVal, origin, dir mgl32.Vec3, 
 	}
 	dir = scatter(dir, opts.spread, rt.randomUnit)
 	res := collision.Raycast(rt.lvl, origin, dir, opts.filter)
+	// A shot that crosses a water surface on its way splashes it (phase
+	// W5, script_actions_water.go): the water does not stop the ray.
+	splashShot(rt, origin, res.Stop)
 	payload := []flang.Value{
 		hitscanPayload(res, opts.all),
 		vecValue(res.Stop),

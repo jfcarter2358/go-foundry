@@ -283,11 +283,12 @@ func TestMaterialFxSamplersFitTheMaterialPass(t *testing.T) {
 	var max int32
 	gl.GetIntegerv(gl.MAX_TEXTURE_IMAGE_UNITS, &max)
 	t.Logf("material pass: %d samplers (%d the effects'), the driver allows %d", samplers, fx, max)
-	// Eight: the seven of docs/canyon/PHASE_5.md and the eight-layer
-	// splat's second weights map (docs/regions/PHASE_3.md) — the layers
-	// 5–8 share the two atlases, so that is the only one it adds.
-	if fx != 8 {
-		t.Errorf("%d of the effects' samplers are active in the material pass, want 8", fx)
+	// Nine: the seven of docs/canyon/PHASE_5.md, the eight-layer splat's
+	// second weights map (docs/regions/PHASE_3.md) — the layers 5–8 share
+	// the two atlases, so that is the only one it adds — and the ground
+	// trails' map (docs/trails/SPEC.md).
+	if fx != 9 {
+		t.Errorf("%d of the effects' samplers are active in the material pass, want 9", fx)
 	}
 	if samplers > 32 || int32(samplers) > max {
 		t.Errorf("%d samplers: over the fragment stage's %d", samplers, max)

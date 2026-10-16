@@ -188,6 +188,8 @@ doc: Desert canyon, red sandstone
 seed: 1234
 output: generated/desert_canyon      # under resources/; default generated/<name>
 level: desert_canyon                 # optional: the level that receives placements
+paint:                               # optional: paint layers (36-terrain-paint.md)
+  - {name: meadow, kind: density}
 stages:
   - stage: noise_preview             # which kind of stage
     id: ground                       # unique; lower-case letters, digits, _
@@ -221,6 +223,13 @@ error, and every such problem in the file is listed at once with where it is
 | spline | `[{x: 0, z: 0, width: 30}, ...]` | point table, and the 2D view |
 | curve | `[{x: 0, y: 1}, {x: 1, y: 0}]` | a graph to drag points on |
 | list | `[{thickness: 4, hardness: 0.8}, ...]` | one foldout per item: add, remove, reorder |
+| mask | `meadow` | menu of the document's paint layers ([Terrain paint](36-terrain-paint.md)) |
+
+A mask names one of the document's `paint:` layers. A stage that names a layer
+folds the layer's content into its hash, so painting reruns it, and painting a
+layer it does not name does not. The stages that read paint rerun per tile:
+only the pieces whose painted ground changed are made again, and the result is
+what a run from nothing makes ([Terrain paint: Reruns](36-terrain-paint.md#reruns)).
 
 A vec2's `y` is written `"y"`, quoted: YAML 1.1 reads a bare `y` as `true`.
 
@@ -660,6 +669,298 @@ them:
 | pond_min_depth | float | 0.3 | A hollow shallower than this stays dry. |
 | pond_min_area | float | 40 | A hollow smaller than this (m²) stays dry. |
 
+### ground_edit (Terrain)
+
+Painted edits to a finished terrain (phases W2 and W3): height layers
+raise, lower and flatten the ground, water layers carve ponds, lakes and
+marshes with the water standing in them, and rivers — painted splines, or
+traced down the ground's own drainage — cut channels with flowing water in
+them. It runs on the eroded heights of a
+`terrain` or `region_terrain` stage, so a stroke never reruns erosion; the
+painting side is in [36-terrain-paint.md](36-terrain-paint.md).
+
+**Downstream stages name `ground_edit` as their `terrain`.** It is a
+terrain source like the terrain stages: its output folder is a whole
+terrain folder (terrain.yaml, heightmap.png, every mask), so
+`terrain_material`, `region_material`, `scatter`, `grass_field`, `drift`,
+`wall_sheet` and `vegetation` read the edited ground and its water. It also
+takes over the terrain's placements: every tile (and backdrop piece) of its
+source is superseded and placed again, a moved tile with a recooked mesh.
+The pond, lake and marsh presets' recipes add a `ground_edit` and point the
+document's terrain readers at it. A document without one is exactly what it
+was.
+
+- **Height layers** (`height`): each a paint layer of kind `height`, its
+  metres times `scale` added to the ground. Paint them with add, erase,
+  smooth, or **flatten**, which levels the ground toward the height under
+  the brush where the stroke started (a terrace, a path's bed).
+- **Water layers** (`water`): each connected painted area of a `water`
+  layer (where it is at least `threshold`) is one **body**, carved as a
+  basin:
+  - the bed shelves from the outline: down to `shelf_depth` over `bank`
+    metres, a ledge `shelf` wide, then down to `depth` in the middle, with
+    `noise` on the bed (none at the waterline). A small body is shallower
+    and its bank and shelf narrower;
+  - outside the outline, ground standing higher than the water plus
+    `bank_slope` rise per metre is cut down to it, out to `reach`: a pond
+    painted on a slope gets a cut bank uphill rather than a cliff;
+  - `hummocks` (a marsh) are bumps biased upward, `hummock_size` apart, so
+    some break the surface as islands;
+  - the water stands at the body's **spill height** — the lowest ground on
+    its rim, less `freeboard` — so it never runs out; or at a level pinned
+    in `bodies` (with a berm raised where that is above the rim);
+  - the ground is only lowered inside the outline: a natural hollow deeper
+    than the profile stays.
+- **Bodies** (`bodies`): per-body settings keyed by a world point inside the
+  body (`at`): a pinned `level` (unless `auto`) and a `material`. The body is
+  whichever painted area holds the point, so repainting its edges keeps the
+  setting; a point painted dry orphans the entry (the run's log and the
+  Generator's water bodies panel say so). The panel writes these entries:
+  Lock pins a body at its current level, keyed by its most inland point.
+- **Styles** (`style`): `pond` and `lake` wear `water_lake`, `marsh`
+  `water_swamp`, unless `material` names another water preset
+  ([28-materials.md](28-materials.md), "Water").
+
+The water goes through the same path as region_terrain's: per terrain tile
+and material a flat mesh `pond_<i>_<j>_<material>` at the water's height,
+carried two cells under the bank so the ground draws the shoreline, collision
+none; the water mask (`mask_water.png`, the source's own merged in) that the
+material's `wet` rule and grass_field's `shore` band and `max_depth` read;
+and terrain.yaml's `water:` bodies (kind pond, lake or marsh). The stage also
+writes `water_bodies.yaml`: every body's layer, style, anchor, level, spill
+height, whether it is locked, material, painted and wet areas, and deepest
+water.
+
+What it rewrites: the heights (heightmap.png, over the source's range plus
+16 m each way), the slope and curvature masks round what moved, and the
+water mask. Flow, deposition, cliff, strata and the albedo are the source's
+(hard-linked into its folder). **Incremental**: a stroke recooks only the
+tiles whose samples moved (each recooked tile's file name carries a key of
+its heights, so the editor's live update reloads it), reuses the water
+meshes that did not change, and downstream stages rebuild only the pieces
+whose heights or water moved (the stage's rect key; see "Reruns" in
+36-terrain-paint.md).
+
+**Rivers** (phase W3; the painting side is "Rivers and streams" in
+36-terrain-paint.md). Rivers are carved after the height layers and the
+basins, into the same grid, so everything above (quantisation, recooking,
+rect keys) applies to them unchanged:
+
+- **Hand rivers** (`rivers`): each a spline `path` with a `width` (bank to
+  bank) and `depth` (the deepest point below the water) at every point. The
+  River and Stream brushes add one per stroke; edit it in the 2D view (drag,
+  click to add, right-click to delete, Shift+wheel over a point for its
+  width). It may be drawn either way round: it is **turned to run
+  downhill** (the ground under its first and last seventh compared).
+- **Drainage rivers** (`drainage`): the ground is routed (a priority flood)
+  and every sample whose drained area is at least `drainage_threshold` on
+  the flow mask's scale (0 at 4 m², 1 at a quarter of a km²) is channel;
+  the network is traced into rivers (main stems first, tributaries ending
+  on them), shorter than `drainage_min_length` dropped, simplified,
+  `drainage_width` and `drainage_depth` growing with the flow, a mild
+  `drainage_meander`. The trace runs on the ground with the hand rivers
+  already cut, and is cut where it meets a hand river's corridor and joined
+  to it — so a hand river always wins. **Adopt** (the rivers panel) copies a
+  traced river into a hand river (`from: adopted`).
+- **The surface** never rises downstream: the ground along the channel's
+  middle less `bank_height`, run through a running minimum and smoothed.
+  Where a river ends on another (a **confluence**) its mouth is the other's
+  surface there; where it runs into a pond or lake it ends at the water's
+  level, and the run leaving the water starts at it (the river is split at
+  the standing water: `<name>`, `<name>.2`).
+- **Waterfalls**: a concentrated drop steeper than `max_slope` (rise per
+  metre) and at least `min_fall` high is a step — the surface holds to the
+  lip and drops to the foot — with a **plunge pool** dug below. A long steep
+  stretch (more than three widths and twice its drop) stays a sloping,
+  foamy **rapid** — or, with `cascade_step` set on the river, becomes a
+  **cascade**: a staircase of small falls about that high, each with its own
+  pool, sheet and mist (0, the default, keeps the rapid). Every fall is
+  recorded (terrain.yaml `rivers: falls:` lip, foot, heading, width).
+- **Waterfall sheets** (phase W4): over every fall the stage hangs the
+  falling sheet, `falls_<river>_<n>`, wearing `falls_material` (default
+  `water_falls`, [28-materials.md](28-materials.md) "Water"): from a short
+  level lead-in over the lip, down a ballistic curve (thrown further out
+  the faster the river runs over the lip, landing between an eighth and
+  half the drop out), spreading a little, to just under the pool. Its
+  vertex colours say where it is aerated (glassy at a small fall's lip,
+  white by the foot), where its sides fray and how far down it is. The
+  player walks through it. The ground under it is cut into a **notch**
+  that keeps clear of the sheet across its width and a metre beside it, so
+  the water never hangs over or through smooth ground.
+- **Mist** (phase W4): `falls_mist` (default `waterfall_mist`, a shipped
+  `.fpar`; empty for none) is placed as particle emitters across each
+  fall's foot, one per three metres of sheet, their rate scaled by the drop
+  (`mist_<river>_<n>_<k>`). They are spliced under the generator's prefix
+  like its scenery (a level's `emitters:`), so a rerun replaces them.
+  The mist drifts downwind (the `.fpar`'s `wind`, phase W5).
+- **Sound** (phase W5): with `water_sounds` on (off by default; the River,
+  Stream, Pond, Lake and Marsh brush presets turn it on) ground_edit places
+  looping positional sounds, spliced into the level's `sounds:` under the
+  generator's prefix like the mist: a roar at each fall's foot
+  (`roar_<river>_<n>`, `water_falls`, louder and carrying further for a
+  higher, wider fall; a cascade's steps share one), a sound every
+  `water_sound_spacing` metres (default 24) along each river
+  (`flow_<river>_<k>`: `water_rapids` at riffles and white water,
+  `water_river` elsewhere, louder for wider and faster water), the rush at
+  each confluence (`join_<n>`) and lapping along every pond, lake and marsh
+  shore (`lap_<body>_<k>`, `water_lap`, at most eight a body). None is
+  placed within 0.7 of the spacing of another (a fall keeps a wider berth),
+  each carries a little past the spacing and is detuned a little by its
+  name. Past its max distance a loop gives its voice back, so a long river
+  costs nothing out of earshot. The clips ship generated
+  ([Water](37-water.md)); a recording of the same name in a project
+  replaces them. The run logs `water sounds: n (… flow, … rapids, … falls,
+  … lapping)` and the splice `sounds -n +m`.
+- **Plunge pools** foam in rings round where the sheet lands; a
+  **confluence** foams round the tributary's mouth and trails a mixing line
+  down the main river for five of its widths, fading. White water in the
+  vertex foam is churned choppier and rougher by the water shader.
+- **The channel**: within the banks a parabolic section down to the depth;
+  **pools and riffles** alternate every `riffle_spacing` (default six
+  widths, `pools` their strength: deeper and slow, shallower, fast and
+  foamy); on a bend the deepest line swings to the outer bank and a
+  shelving **point bar** forms inside. Outside, ground above the bank lip,
+  a gentle `floodplain` and then `bank_slope` is cut down to it (faded at
+  `reach`); where the ground beside the river is lower than the water a low
+  levee holds it. `meander` (0 for a painted river: exactly the bends drawn)
+  makes it wander.
+- **Boulders**: with `river_rocks` naming a rocks or polyhaven_rocks stage,
+  `boulders` per riffle per 4 m of width are dropped on the riffle crests
+  (`boulder_<river>_<n>`), sunk a third into the bed; they throw foam round
+  themselves and in a wake downstream. Every boulder (and every path stone)
+  is listed in terrain.yaml's `obstacles:` (x, z, radius), and every
+  `scatter` and `grass_field` over this ground keeps out of them, whatever
+  its own `avoid` — no bush through a boulder, no blade through a stepping
+  stone.
+- **The water** is one ribbon per terrain tile and material,
+  `river_<i>_<j>_<material>` (default `water_river`), on the terrain's own
+  samples — no cracks between tiles or at confluences — running a ring of
+  cells under the banks like the ponds. Its vertices carry the **flow map**
+  (the current, in the vertex colour's green and blue) and the **foam**
+  (red: riffles, rapids, boulders, confluences, a fall's lip and pool), which
+  a material with `flow_map` reads ([28-materials.md](28-materials.md),
+  "Water").
+- **What it writes**: the rivers' wet samples go into the water mask (wet
+  ground, the reeds' `shore` band and grass's `max_depth` follow rivers);
+  the **flow mask** is raised along the channels (to 0.9 of the channel
+  share); and five masks are added — `river_flow_x`, `river_flow_z` (the
+  flow map: 0.5 + 0.5 v / 4 m/s), `river_foam`, `river_bed` (1 in the bed,
+  fading over the banks) and `river_bar` (the point bars). A material's
+  `paint` item can read any of them with `mask` (gravel on `river_bed`, sand
+  on `river_bar`). terrain.yaml gains `rivers:` (rivers, falls,
+  confluences) and the stage writes `rivers.yaml` (each river's kind, entry,
+  material, length, source and mouth levels, what it flows into, and every
+  traced river's points for Adopt).
+
+The river parameters are **rect-covered**: editing a river reruns the stage
+and recooks only the tiles the channel moved, and downstream pieces rebuild
+only where the heights, the water or the river masks changed (and, for a
+scatter or grass tile, where a boulder or stone it keeps out of moved).
+
+**Paths** (phase P4; the painting side is "Paths" in 36-terrain-paint.md).
+Laid after the rivers (so a path knows where the water is), each `paths`
+item is a spline with a `width` per point and a `style`:
+
+| style | stones | surface | wear | fords water |
+| --- | --- | --- | --- | --- |
+| rock_path | flagstones filling the width | 1 | 1 | yes |
+| stepping_stones | a line a stride apart, zig-zagged | 0.45 | 0.7 | yes |
+| dirt_trail | — | 1 | 1 | yes |
+| gravel_path | — | 1 | 1 | yes |
+| game_trail | — | 0.55 | 0.6 | no |
+
+- **Flatten** (`flatten`, on by default; the path presets turn it off for
+  stepping stones and game trails): the centreline's height is smoothed
+  over `smooth` metres (reading only dry ground, so a ford keeps the banks'
+  levels), and the cross-section is levelled to it, easing out over `blend`
+  past the edge. `steps` cuts treads `step_rise` apart where the path is
+  steeper than `max_grade`. Nothing in water or a river's channel is
+  flattened, and the flatten fades out over the last two metres before
+  water.
+- **What it writes**, when at least one path is laid: nine masks —
+  `path_<style>` for each style (the style's splat: 1 on the path, a worn
+  edge that wanders by `edge` × the half width on a noise of `edge_size`
+  metres; 0 under water), `path_wear` (1 along the middle, easing to 0
+  `wear` metres past the edge; thins and shortens grass, tints the ground),
+  `path_clear` (keeps large scatter off the path and a metre past it) and
+  `path_dir_x` / `path_dir_z` (the tangent: 0.5 + 0.5 t × strength, what
+  `orient_to` reads). Material `paint` items read the surfaces and the wear
+  with `mask`; scatter and grass `exclude` entries read `path_clear` and
+  `path_wear` with `mask`. terrain.yaml gains `footpaths:` and the stage
+  writes `paths.yaml` (each path's style, entry, length, fords and stones).
+- **Stones**, from `path_rocks` (or a path's own `rocks` for its flagstones
+  or stepping stones): each is a rock variant scaled per axis to its stone
+  (a flagstone 0.6–0.8 m, a stepping stone half a metre, 10–18 cm thick),
+  turned along the path with a little jitter, tilted to the ground under it
+  and sunk half its thickness, so none floats; no two overlap. Flagstones do
+  not collide (the flattened bed is what a walker stands on). `stones` keeps
+  a share of them, `stone_size` scales them, `stride` spaces stepping stones.
+- **Fords**: where a path (not a game trail) crosses water, stepping stones
+  carry on across it, standing on the bed with their tops 7 cm above the
+  surface, bigger the deeper they stand; none in water deeper than 0.75 m.
+  A path never carves across a channel. Bridges are not built.
+
+`paths` is rect-covered, like `rivers`.
+
+| Param | Type | Default | |
+| --- | --- | --- | --- |
+| terrain | stage | "" | The terrain or region_terrain stage whose finished heights are edited (it must cook its tiles). |
+| height | list | [] | Height layers: `layer` (a height paint layer), `scale` (1). |
+| water | list | [] | Water layers: `layer`, `style` (pond, lake, marsh), `material` (""), `threshold` (0.5), `bank` (3), `shelf_depth` (0.4), `shelf` (3), `depth` (2.2), `noise` (0.12), `noise_size` (7), `hummocks` (0), `hummock_size` (4), `bank_slope` (0.3), `reach` (14), `min_area` (6 m²). |
+| bodies | list | [] | Per-body settings: `at` (a point inside the body), `level`, `auto` (false), `material` (""). |
+| freeboard | float | 0.05 | How far below its rim an automatic level stands. |
+| cook_memory | int | 2000 | How much memory the recooked tiles' cooks may hold at once. |
+| rivers | list | [] | Hand rivers: `name` (""), `path` (spline of x, z, `width` 4, `depth` 1), `material` ("": water_river), `from` (painted, adopted), `bank_height` (0.35), `floodplain` (3), `bank_slope` (0.35), `reach` (10), `meander` (0), `meander_length` (40), `pools` (0.6), `riffle_spacing` (0: six widths), `max_slope` (0.35), `min_fall` (0.6), `speed` (0.9 m/s), `boulders` (0). |
+| drainage | bool | false | Also trace rivers from the ground's drainage. |
+| drainage_threshold | float | 0.55 | The flow value from which ground carries a river. |
+| drainage_min_length | float | 40 | Traced rivers shorter than this are dropped (m). |
+| drainage_width | vec2 | (1.5, 8) | Width at the threshold and at full flow (m). |
+| drainage_depth | vec2 | (0.35, 1.4) | Depth at the threshold and at full flow (m). |
+| drainage_meander | float | 1 | A mild wander for traced rivers (m). |
+| drainage_boulders | float | 0 | Boulders per riffle per 4 m of width in traced rivers. |
+| drainage_material | string | "" | Traced rivers' water material ("": water_river). |
+| drainage_max | int | 0 | Keep at most this many traced rivers, largest first (0: all). |
+| river_rocks | stage | "" | A rocks or polyhaven_rocks stage whose rocks are dropped as boulders in the riffles. |
+| paths | list | [] | Footpaths: `name` (""), `style` (rock_path, stepping_stones, dirt_trail, gravel_path, game_trail; dirt_trail), `path` (spline of x, z, `width` 1.5), `flatten` (true), `blend` (1.2), `smooth` (6), `steps` (false), `step_rise` (0.18), `max_grade` (0.3), `edge` (0.3), `edge_size` (1.6), `wear` (1.2), `stones` (1), `stone_size` (1), `stride` (0.7), `rocks` ("": Path rocks). |
+| path_rocks | stage | "" | A rocks or polyhaven_rocks stage whose rocks become the paths' flagstones, stepping stones and fords. |
+
+```yaml
+- stage: ground_edit
+  id: ground_edit
+  params:
+    terrain: ground
+    height: [{layer: terrace}]
+    water:
+      - {layer: pond, style: pond}
+      - {layer: marsh, style: marsh, threshold: 0.4, bank: 2, shelf_depth: 0.15, shelf: 2, depth: 0.4,
+         hummocks: 0.6, hummock_size: 4, bank_slope: 0.2, reach: 8}
+    bodies:
+      - {at: {x: -60, "y": 40}, level: 0.4}            # the pond held 0.4 m up
+    rivers:
+      - name: brook                                     # what a River brush stroke writes
+        path:
+          - {x: -120, z: 30, width: 6, depth: 1.3}
+          - {x: -40, z: 10, width: 7, depth: 1.3}
+          - {x: 120, z: -5, width: 8, depth: 1.3}
+        pools: 0.65
+        boulders: 1
+    drainage: true                                      # and the streams the ground drains into it
+    drainage_threshold: 0.6
+    river_rocks: river_rocks_src
+    paths:
+      - name: rock_path_1                               # what a Rock path brush stroke writes
+        style: rock_path
+        path:
+          - {x: -24, z: 4, width: 2.2}
+          - {x: -33, z: 13, width: 2.2}
+          - {x: -58, z: 38, width: 2.2}
+        rocks: flag_rocks_src                           # flat flagstones (rock_09)
+    path_rocks: river_rocks_src                         # the fords' stones
+- stage: terrain_material
+  id: ground_mat
+  params: {terrain: ground_edit, ...}                   # reads the edited ground
+```
+
 ### rocks (Rocks)
 
 A family of weathered rock **variants** of one form, each cooked to its own
@@ -846,6 +1147,34 @@ are one draw. `preview_max` caps a rule in the preview only.
 Each run writes `footprints.yaml` (every rock's footprint disc and each rule's
 counts) beside its placements, which a later stage's `avoid` reads.
 
+**Paint** ([Terrain paint](36-terrain-paint.md)). Every rule has a paint band:
+`paint` names a paint layer, `paint_band` (0–1 by default) ramps its painted
+value into the rule's weight (0 at or below the first number, 1 at or above the
+second), and `paint_invert` flips it. The stage's `exclude` list names layers
+that keep every rule clear, each multiplying the weight by 1 − strength × its
+painted value (strength 1 by default); an entry may read a terrain `mask`
+instead, such as a ground_edit's `path_clear`, which keeps rocks and logs off
+its paths (a terrain without the mask reads 0). All of it is off until a layer
+is named, and multiplies the other bands, so painted rocks still keep off
+cliffs.
+
+**Orientation** (phase P4). A rule's `orient_to` turns its rocks along a
+direction field instead of at random: a direction paint layer (with the
+terrain's paths laid over it), `paths` (a ground_edit's path tangents) or
+`downhill` (down the slope, full strength from a 6% grade), with
+`orient_jitter` (12°) and `orient_offset` (0°). A rock's long side (its
+footprint's longer axis) follows the field; where the field is weak the yaw
+blends back toward the random one. Positions are unchanged.
+
+**Tiled when it reads paint.** A scatter that reads a layer (its own band or
+exclude list, or a stage it builds on, such as a painted `ground`) keeps its
+rocks apart tile by tile, in 64 m world tiles, so a stroke re-scatters only
+the tiles near it. Each tile's rocks are cached in `tiles/t_<i>_<j>.bin` and
+numbered per tile, `<rule>_<i>_<j>_<nnnn>`. Rocks land differently from the
+classic whole-ground scatter, which every scatter reading no paint still
+uses. A footprint reaching half a tile or more cannot be tiled: that scatter
+reruns whole, and the log says why.
+
 #### Draw distances and impostors
 
 In a level generation doc's regions (the environment presets' scatters) every
@@ -992,10 +1321,61 @@ Rule fields: `name`, `enabled`, `plants`, `pieces`, `min_size`,
 (0.4), the scatter bands (with `cluster` 0.25 over 30 m and `cliff` 0–0.3 by
 default), `shore`, `shore_soft`, `max_depth`, `tint_a`, `tint_b`,
 `tint_scale`, `tint_jitter`, `wind_bend` (0.25), `wind_flutter` (0.04 m),
-`range` (1) and `shadows` (on).
+`range` (1) and `shadows` (on), and the paint band `paint`, `paint_band`,
+`paint_invert` (scatter's, above), and `orient_to`, `orient_jitter` and
+`orient_offset` (scatter's, above: a piece's length is taken along its Z, and
+a kind clearly longer along X gets a quarter turn — twigs lying downhill,
+grass combed along a path). The stage-level `exclude` list keeps every
+rule out of the painted ground of the layers it names: a path through a
+meadow ([Terrain paint](36-terrain-paint.md)). Its entries may read a
+terrain `mask` with a `strength`, and on grass a `shrink`: `{mask: path_wear,
+shrink: 0.6}` is a path's wear — no grass on its middle, thinner and shorter
+grass in a band either side. A stroke rewrites only the
+fields of the tiles it reaches; the rest are kept as they were (`reused N of
+M tiles` in the log).
 
 The preview draws each rule's clumps as dots, thinned to `preview_density`
 (a preview never imports, so it has no kit).
+
+**Ground cover.** The same rules draw leaf litter, twigs, pine needles,
+moss and pebbles: dense flat clutter that would cost far too much as scenery.
+A few more rule fields, all off by default (a rule that sets none of them
+places, writes and draws exactly as before):
+
+| Field | Default | |
+| --- | --- | --- |
+| `orient` | upright | `ground` lays each clump along the terrain's normal under it, at its random turn about that normal: a twig lies down a bank, a pebble sits on it |
+| `wind` | true | off keeps the clumps still (branches, stones, litter) |
+| `tilt_jitter` | 0 | leans each clump at random by up to this many degrees (a jumble of twigs, stones not all sitting square) |
+| `sink` | 0 | pushes each clump into the ground by this fraction of its height: pebbles half buried, a branch bedded in the litter |
+| `card_textures`, `card` | "" | make the rule **cards**: flat alpha-cut squares lying on the ground, cut out of layer `card` of the `polyhaven_textures` stage `card_textures` |
+| `card_cut` | 0.55 | what of the scan a card keeps: the texels above this height (0..1 of the scan's own range) |
+| `card_tiles` | 2 | the cut-out is split into this many tiles a side; each is a card kind (1 m at scale 1) showing one tile |
+
+A **card** is how litter is drawn. Poly Haven publishes leaf litter as ground
+textures (`forest_leaves_04`, `dry_decay_leaves`, `winter_leaves`), not as
+cut-out leaves, but every set has a displacement map and on a litter scan the
+leaves are what stands up. Keeping the texels above `card_cut` keeps the
+scan's own leaves and drops the soil between them. The cut-out is written once
+as `textures/ph_<id>_card<cut>x<tiles>.png` and shared. Unlike a grass
+cutout its mips do not keep their coverage: far off, a card dissolves into the
+splat under it. Laid over the
+same texture as a splat, the cards add a layer of real leaves that catch the
+light. A card always lies along the ground, never sways and casts no shadow.
+It is drawn with a small depth bias toward the camera, so it never fights the
+terrain under it.
+
+`plants` may name a `polyhaven_rocks` stage as well as a `polyhaven_plants`
+one (pebbles). A piece of only a few connected parts (a pebble, a branch) is
+**solid**: its distant meshes are the scan decimated to `max_triangles` and
+the LOD ratios, not thinned by whole blades, which cannot shorten one piece.
+
+A kind laid down, leaned or kept still is stored per instance with its up
+axis: such a stage writes **oriented** fields (version 2, 16 bytes a clump).
+A stage without any of these options writes the version-1, 12-byte fields it
+always did, and an old field still loads. The brush presets
+([Terrain paint](36-terrain-paint.md#brush-presets)) carry ready-made ground
+cover rules.
 
 ### cliff_wall (Placement)
 
@@ -1819,6 +2199,21 @@ share of everything under it, so snow lies over ash and mud alike. The far
 backdrop takes snow and ash by the same rules from its own heights. With no
 cover key set the material is the four-layer splat it always was.
 
+**Paint.** The `paint` list changes the splat where it is painted
+([Terrain paint](36-terrain-paint.md)). Each item names a `layer`, a `target`
+role (`sand`, `cracked`, `gravel`, `rock`; `wet`, `ash`, `snow` with covers)
+and a `mode`: `override` (the default) moves the splat toward the target by
+`strength` × the painted value through `band` — a gravel trail; `band` keeps
+the target to the painted ground, its share elsewhere going to the other
+layers. Applied after the rules and covers, before the maps are written; the
+far backdrop is not painted. Empty by default. With a paint list, the weights
+before paint are kept in `prepaint.bin`, so a stroke reruns only the paint
+step and the maps after it, not the rules. An item may read a **terrain mask**
+instead of a layer (`mask`, phase W3): `river_bed` puts gravel in a
+ground_edit's river channels, `river_bar` sand on their point bars, and any
+other mask the terrain writes works the same way (the River and Stream
+presets' recipes add these).
+
 ### Rock materials (scatter, cliff_wall, rocks, polyhaven_rocks)
 
 The placing stages write the material their rocks wear,
@@ -2030,7 +2425,7 @@ course only within a window.
 | far, far_cell, far_blend, far_tile, far_material | | | As the terrain stage's backdrop: each region's own country continued past the union's edge, blended by the shares at the nearest edge point. |
 | lead | string | "" | The lead region (volume ID); empty: the one owning the most ground. |
 | flow_mask | enum | d8 | d8 or mfd (see above). |
-| water_material | string | "" | The material the water surfaces wear (any .fmat with a water effect); empty: the stage writes `gen_<doc>_<stage>_water`. |
+| water_material | string | "" | The material the water surfaces wear (any .fmat with a water effect — a preset such as `water_lake`, `water_tropical`, `water_swamp` or `water_sea`, see [Materials](28-materials.md#water)); empty: the stage writes `gen_<doc>_<stage>_water`, the default water with the stage's wave height. |
 | water_texture | texture | water | That written material's texture. |
 | water_waves | float | 0.06 | Its swell, metres. |
 
@@ -2155,6 +2550,15 @@ It stands in for the presets' `terrain_material` stages: a preset placement
 stage expanded per region that names its preset's `terrain_material` is
 rewritten to it.
 
+Its own `paint` list is `terrain_material`'s, over the union's layers. A
+`target` is a role, for every environment's layer of that role (a painted
+trail of `gravel` turns to the desert's gravel on desert ground and the
+savannah's on savannah, by their weights there), or one layer by its Poly
+Haven id or albedo texture name. Paint is world-level: the presets'
+`terrain_material` paint lists are not read here ([Terrain paint](36-terrain-paint.md)).
+As in `terrain_material`, the blended weights before paint are kept
+(`prepaint.bin`), so a stroke reruns only the paint and the maps.
+
 ## Outputs on disk
 
 ```
@@ -2185,6 +2589,7 @@ foundry gen new <name> [-template name] [-force]
 foundry gen world <level>                 make the level's world generator (<level>_world)
 foundry gen env list                      environment presets: built-in, file, or both
 foundry gen env write <name>|-all         write a built-in preset's file, only if absent
+foundry gen paint <name> -layer L -disc x,z,r   brush strokes into a paint layer (36-terrain-paint.md)
 ```
 
 A document with a `regions` stage takes its level's region volumes before

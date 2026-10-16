@@ -213,7 +213,8 @@ func genStepJobs() {
 	genTickRegionsSync() // a region moved in the open level re-previews
 	genStepRun()
 	genStepPreview()
-	genTrySplice() // a splice waiting for a compile or a load to finish
+	genTrySplice()     // a splice waiting for a compile or a load to finish
+	genPaintLiveStep() // a stroke's live rerun (editor_generator_paint_live.go)
 }
 
 func genStepRun() {

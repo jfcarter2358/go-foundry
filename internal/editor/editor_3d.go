@@ -268,6 +268,11 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	// The generator's paint brush (editor_generator_paint3d.go).
+	if genPaint3DMouseDown() {
+		return
+	}
+
 	// The brush first, and it does not disarm: it is the one tool here meant to
 	// be used many clicks running. See editor_scenery.go.
 	if editorBrushHandleClick() {

@@ -1,6 +1,8 @@
 package render
 
 import (
+	"unsafe"
+
 	"fmt"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -70,9 +72,18 @@ const ShadowCasterExtrusion = 150.0
 const ShadowWorldBias = 0.075
 
 // PointShadowMap holds GPU resources for a single point-light cubemap shadow.
+//
+// Its cube is cube Layer of Shadows.PointArray, one cube-map array holding
+// every casting light's: the receivers sample it through ONE
+// samplerCubeArrayShadow (point_shadow.glsl) rather than a samplerCube a
+// light — eight fragment samplers given back to a world program that had
+// reached the 32 a GTX 1070 allows (docs/lighting/PLAN.md). Cubemap is no
+// longer a GL texture: it is the map's identity for the cache's signatures
+// (point_shadow_cache.go), never reused by a later map.
 type PointShadowMap struct {
 	FBO     uint32
 	Cubemap uint32
+	Layer   int32
 	// The static layer (point_shadow_cache.go): the depth of everything that
 	// does not move, kept apart so a frame whose only change is a character
 	// walking past can start from a copy of it rather than redraw the room.
@@ -108,10 +119,16 @@ type ShadowState struct {
 	CubeFarPlane     int32
 	PointMaps        []PointShadowMap
 
-	// DummyCubemap is a 1x1 cubemap bound to unused pointShadowMap units so
-	// that samplerCube uniforms never reference a texture unit holding a 2D
-	// texture (which is an invalid operation in OpenGL and causes undefined
-	// behavior on many drivers).
+	// PointArray is the cube-map array the point lights' shadows are drawn
+	// into, PointArrayCubes cubes of PointShadowMapSize² (cube i is
+	// PointMaps[i]'s). It only grows, so a light switching on and off does not
+	// reallocate it every time.
+	PointArray      uint32
+	PointArrayCubes int32
+
+	// DummyCubemap is a 1x1 cube-map array bound for the point shadows' sampler
+	// while no light casts, so it never reads a texture unit holding a 2D
+	// texture (an invalid operation in OpenGL).
 	DummyCubemap uint32
 }
 
@@ -274,51 +291,90 @@ func newCascadeTexture(layers int32) uint32 {
 	return tex
 }
 
-// createDummyCubemap allocates a 1x1 cubemap with depth=1.0 on all faces.
+// createDummyCubemap allocates a 1x1, one-cube cube-map array with depth=1.0
+// on all faces.
 func createDummyCubemap() uint32 {
+	pixel := []float32{1, 1, 1, 1, 1, 1}
+	return createDepthCubeArray(1, 1, gl.Ptr(pixel), gl.NEAREST)
+}
+
+// createDepthCubeArray makes a comparison cube-map array of cubes cubes of
+// size², its faces filled from pixels (nil: left undefined).
+func createDepthCubeArray(size, cubes int32, pixels unsafe.Pointer, filter int32) uint32 {
 	var tex uint32
 	gl.GenTextures(1, &tex)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, tex)
-	pixel := []float32{1.0}
-	for face := 0; face < 6; face++ {
-		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+face), 0, gl.DEPTH_COMPONENT24,
-			1, 1, 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(pixel))
-	}
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-	// Compared like the real ones, so the samplerCubeShadow it stands in for
-	// reads a defined "lit" rather than whatever an unset compare mode gives.
-	pointShadowCompare()
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, 0)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP_ARRAY, tex)
+	gl.TexImage3D(gl.TEXTURE_CUBE_MAP_ARRAY, 0, gl.DEPTH_COMPONENT24, size, size, 6*cubes, 0,
+		gl.DEPTH_COMPONENT, gl.FLOAT, pixels)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP_ARRAY, gl.TEXTURE_MIN_FILTER, filter)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP_ARRAY, gl.TEXTURE_MAG_FILTER, filter)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP_ARRAY, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+	// Compared like a samplerCubeShadow: a tap hands the hardware the
+	// fragment's own distance and gets back the filtered compare of the 2x2
+	// texels around it (point_shadow.glsl). LEQUAL is "lit".
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP_ARRAY, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP_ARRAY, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP_ARRAY, 0)
 	return tex
 }
 
-// pointShadowCompare makes the bound cubemap a comparison texture: a
-// samplerCubeShadow tap hands the hardware the fragment's own distance and
-// gets back the filtered compare of the 2x2 texels around it
-// (point_shadow.glsl). LEQUAL is "lit": the fragment is no farther than the
-// nearest caster the face saw. A depth blit (the static layer's copy) ignores
-// the compare mode.
+// pointShadowCompare makes the bound cubemap a comparison texture, as the
+// array's cubes are. Only the static layer is a cube of its own now, and it
+// is only ever blitted from (a depth blit ignores the compare mode).
 func pointShadowCompare() {
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE)
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL)
 }
 
+// pointMapIdentity hands out PointShadowMap.Cubemap: a number no earlier map
+// had, so the cache never credits a new map with an old one's content.
+var pointMapIdentity uint32 = 1 << 20
+
+// ensurePointArray grows the cube-map array to hold count cubes. Growing
+// drops what the old one held, so every map is drawn again.
+func ensurePointArray(count int) {
+	if int32(count) <= Shadows.PointArrayCubes && Shadows.PointArray != 0 {
+		return
+	}
+	if Shadows.PointArray != 0 {
+		gl.DeleteTextures(1, &Shadows.PointArray)
+	}
+	Shadows.PointArray = createDepthCubeArray(PointShadowMapSize, int32(count), nil, gl.LINEAR)
+	Shadows.PointArrayCubes = int32(count)
+	pointShadowStates = pointShadowStates[:0]
+	for i := range Shadows.PointMaps {
+		attachPointLayer(gl.FRAMEBUFFER, Shadows.PointMaps[i].FBO, Shadows.PointMaps[i].Layer, 0)
+	}
+	log.Printf("point shadow array: %d cubes (tex=%d)", count, Shadows.PointArray)
+}
+
+// attachPointLayer attaches face of cube layer of the array as fbo's depth,
+// leaving fbo bound to target.
+func attachPointLayer(target, fbo uint32, layer int32, face int) {
+	prev := boundFramebuffer()
+	gl.BindFramebuffer(target, fbo)
+	gl.FramebufferTextureLayer(target, gl.DEPTH_ATTACHMENT, Shadows.PointArray, 0, layer*6+int32(face))
+	if target == gl.FRAMEBUFFER {
+		gl.BindFramebuffer(gl.FRAMEBUFFER, prev)
+	}
+}
+
 // ---------- Point light cubemap shadow maps ----------
 
 func EnsurePointShadowMaps(count int) {
+	if count > 0 {
+		ensurePointArray(count)
+	}
 	for len(Shadows.PointMaps) < count {
-		pm := createPointShadowMap()
+		pm := createPointShadowMap(int32(len(Shadows.PointMaps)))
 		Shadows.PointMaps = append(Shadows.PointMaps, pm)
-		log.Printf("created point shadow map %d (cube=%d, fbo=%d)", len(Shadows.PointMaps)-1, pm.Cubemap, pm.FBO)
+		log.Printf("created point shadow map %d (array cube %d, fbo=%d)", len(Shadows.PointMaps)-1, pm.Layer, pm.FBO)
 	}
 	for len(Shadows.PointMaps) > count {
 		pm := Shadows.PointMaps[len(Shadows.PointMaps)-1]
 		gl.DeleteFramebuffers(1, &pm.FBO)
-		gl.DeleteTextures(1, &pm.Cubemap)
 		if pm.StaticFBO != 0 {
 			gl.DeleteFramebuffers(1, &pm.StaticFBO)
 			gl.DeleteTextures(1, &pm.StaticCubemap)
@@ -332,9 +388,19 @@ func EnsurePointShadowMaps(count int) {
 	}
 }
 
-func createPointShadowMap() PointShadowMap {
-	var pm PointShadowMap
-	pm.Cubemap, pm.FBO = createDepthCube()
+func createPointShadowMap(layer int32) PointShadowMap {
+	pm := PointShadowMap{Layer: layer, Cubemap: pointMapIdentity}
+	pointMapIdentity++
+	gl.GenFramebuffers(1, &pm.FBO)
+	attachPointLayer(gl.FRAMEBUFFER, pm.FBO, layer, 0)
+	prev := boundFramebuffer()
+	gl.BindFramebuffer(gl.FRAMEBUFFER, pm.FBO)
+	gl.DrawBuffer(gl.NONE)
+	gl.ReadBuffer(gl.NONE)
+	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {
+		log.Printf("WARNING: point shadow FBO incomplete (status=0x%X)", st)
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, prev)
 	return pm
 }
 
@@ -755,15 +821,16 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 				continue // nothing this face sees has changed
 			}
 			target := uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face)
+			layer := pm.Layer*6 + int32(face)
 			if layers == shadowAllLayers {
-				gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, target, pm.Cubemap, 0)
+				gl.FramebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, Shadows.PointArray, 0, layer)
 				gl.Clear(gl.DEPTH_BUFFER_BIT)
 			} else {
 				// Start from the static layer's depth rather than a clear.
 				gl.BindFramebuffer(gl.READ_FRAMEBUFFER, pm.StaticFBO)
 				gl.FramebufferTexture2D(gl.READ_FRAMEBUFFER, gl.DEPTH_ATTACHMENT, target, pm.StaticCubemap, 0)
 				gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, pm.FBO)
-				gl.FramebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.DEPTH_ATTACHMENT, target, pm.Cubemap, 0)
+				gl.FramebufferTextureLayer(gl.DRAW_FRAMEBUFFER, gl.DEPTH_ATTACHMENT, Shadows.PointArray, 0, layer)
 				gl.BlitFramebuffer(0, 0, PointShadowMapSize, PointShadowMapSize,
 					0, 0, PointShadowMapSize, PointShadowMapSize, gl.DEPTH_BUFFER_BIT, gl.NEAREST)
 				gl.BindFramebuffer(gl.FRAMEBUFFER, pm.FBO)
@@ -917,7 +984,7 @@ func renderSceneShadowLayers(level *world.Level, prog uint32, skin *gfx.SkinUnif
 }
 
 func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
-	if len(g.Vertices) == 0 || g.Alpha < 0.05 {
+	if len(g.Vertices) == 0 || !g.CastsShadow() {
 		return
 	}
 	// The shadow passes deform from the same palette the colour pass uses, so an
@@ -935,17 +1002,9 @@ func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 // All directional shadows share it; point-light cubemaps start after it.
 const CascadeTexUnit = 1
 
-// shadowUniformNames are the per-program sampler uniforms' names,
-// NUL-terminated and built once: the eight cubemap samplers are set on every
-// lit program every frame.
-var shadowUniformNames = func() (n struct {
-	pointMap [world.MaxPointLights]string
-}) {
-	for i := range n.pointMap {
-		n.pointMap[i] = fmt.Sprintf("pointShadowMap[%d]\x00", i)
-	}
-	return n
-}()
+// PointShadowTexUnit is the unit the point shadows' cube-map array binds to —
+// the first of the eight the per-light cubemaps took.
+const PointShadowTexUnit = CascadeTexUnit + 1
 
 // UploadShadowUniforms sends directional shadow data to the main shader.
 func UploadShadowUniforms(lights world.LightSet, frame ShadowFrame) {
@@ -981,6 +1040,8 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 
 	bindCloudShadowTo(prog)
 	uploadGITo(prog)
+	// And the environment the specular reflects (envmap.go).
+	uploadEnvTo(prog)
 	// And the sun's virtual shadow map, or word that there is none (vsm.go).
 	uploadVSMTo(prog, frame)
 	// The terrain and rock material effects' samplers (gfx/material_fx.go):
@@ -1042,39 +1103,24 @@ func UploadPointShadowUniforms(lights world.LightSet) {
 }
 
 // UploadPointShadowUniformsTo hands the point lights' shadow switches,
-// strengths and far planes to the scene block prog reads, and binds prog's
-// eight cubemap samplers.
+// strengths, far planes and cubes to the scene block prog reads, and binds
+// prog's one point-shadow sampler to the cube-map array.
 func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 	gl.UseProgram(prog)
 	s := gfx.SceneFor(prog)
 	packPointShadows(&s.Block, lights)
 	s.Flush()
 
-	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
-	baseUnit := int32(CascadeTexUnit + 1) // unit 0 = albedo, unit 1 = dir cascade array
-	n := &shadowUniformNames
-
-	// Bind the dummy cubemap to ALL pointShadowMap slots (not just active
-	// lights) so that every samplerCube uniform references a unit with a valid
-	// cubemap. Unassigned samplerCube uniforms default to unit 0 which holds
-	// the diffuse sampler2D — a type mismatch that causes undefined behavior.
-	for i := 0; i < world.MaxPointLights; i++ {
-		texUnit := baseUnit + int32(i)
-		gl.ActiveTexture(uint32(gl.TEXTURE0 + texUnit))
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, Shadows.DummyCubemap)
-		gl.Uniform1i(uniformLoc(n.pointMap[i]), texUnit)
+	// Bound whether or not a light casts — an unassigned sampler would rest
+	// on unit 0 beside the albedo's sampler2D, an invalid draw — to the dummy
+	// array while there is none to read.
+	tex := Shadows.PointArray
+	if tex == 0 || len(Shadows.PointMaps) == 0 {
+		tex = Shadows.DummyCubemap
 	}
-
-	numPt := min(len(lights.Points), world.MaxPointLights)
-	mapIdx := 0
-	for i := 0; i < numPt; i++ {
-		if lights.Points[i].CastsShadows() && mapIdx < len(Shadows.PointMaps) {
-			texUnit := baseUnit + int32(i)
-			gl.ActiveTexture(uint32(gl.TEXTURE0 + texUnit))
-			gl.BindTexture(gl.TEXTURE_CUBE_MAP, Shadows.PointMaps[mapIdx].Cubemap)
-			mapIdx++
-		}
-	}
+	gl.ActiveTexture(gl.TEXTURE0 + PointShadowTexUnit)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP_ARRAY, tex)
+	gl.Uniform1i(world.ProgUniformLoc(prog, "pointShadowCubes\x00"), PointShadowTexUnit)
 	gl.ActiveTexture(gl.TEXTURE0)
 }
 
@@ -1098,5 +1144,18 @@ func packPointShadows(b *gfx.SceneBlock, lights world.LightSet) {
 		b.PointLightCastShadows[i] = [4]int32{cast}
 		b.PointLightShadowStrength[i] = [4]float32{pl.ShadowStrength}
 		b.PointLightFarPlane[i] = [4]float32{pl.Radius}
+	}
+	// Each casting light's cube in the array: the shadow pass gives the maps
+	// out in light order to the casting lights, as many as there are maps
+	// (RenderPointShadowPass). A caster past them reads as unshadowed.
+	mapIdx := int32(0)
+	for i := 0; i < world.MaxPointLights; i++ {
+		b.PointShadowCube[i] = [4]int32{-1}
+		if i < numPt && lights.Points[i].CastsShadows() {
+			if int(mapIdx) < len(Shadows.PointMaps) {
+				b.PointShadowCube[i] = [4]int32{Shadows.PointMaps[mapIdx].Layer}
+			}
+			mapIdx++
+		}
 	}
 }

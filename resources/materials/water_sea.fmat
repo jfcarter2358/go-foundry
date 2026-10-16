@@ -1,0 +1,23 @@
+# water_sea.fmat — open water. A Gerstner-profile swell runs along
+# flow_direction under the ripples; the deeps are a dark ocean blue; the shore
+# foams. For a coast, a wide lake in a gale.
+kind: surface
+texture: water
+doc: 'Open sea: a long sharp-crested swell, deep blue, white water at the shore.'
+effects:
+  - effect: water
+    absorption: 0.3
+    shallow_color: {r: 0.45, g: 0.78, b: 0.86}
+    scatter_color: {r: 0.008, g: 0.05, b: 0.11}
+    subsurface: 0.9
+    roughness: 0.09
+    refraction: 0.4
+    foam: 1
+    caustics: 1
+    flow_speed: 0.5
+    swell: 0.45
+    swell_length: 32
+    wave_amplitude: 0.1
+    wave_length: 6
+    wave_speed: 0.25
+    detail_scale: 5

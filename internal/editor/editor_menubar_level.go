@@ -97,6 +97,7 @@ func editorLevelViewMenu() {
 	}
 	editorMenuTooltip(editorCameraTooltip(flying))
 	editorLiveGIMenu()
+	editorLightingMenu()
 	imgui.EndMenu()
 }
 
@@ -239,4 +240,40 @@ func editorTogglePreviewCompiled() {
 	} else {
 		editorSetStatus("%s", msg)
 	}
+}
+
+// editorLightingMenu is the lighting pass's player settings
+// (gfx/lighting_settings.go), so the viewport shows what a player with them
+// would see.
+func editorLightingMenu() {
+	if !imgui.BeginMenu("Lighting Quality") {
+		return
+	}
+	for _, b := range []struct {
+		label string
+		v     bool
+		set   func(bool)
+		tip   string
+	}{
+		{"Specular", gfx.SpecularLighting, gfx.SetSpecularLighting, "Highlights from every light, by each material's roughness and metalness."},
+		{"Ambient Occlusion", gfx.AmbientOcclusion, gfx.SetAmbientOcclusion, "Darkens ambient light in creases and where things touch."},
+		{"Bloom", gfx.Bloom, gfx.SetBloom, "Bright light glows into the pixels round it (TAA frames)."},
+		{"Contact Shadows", gfx.ContactShadows, gfx.SetContactShadows, "Short screen-space sun shadows under small things."},
+		{"Soft Shadows", gfx.SoftShadows, gfx.SetSoftShadows, "Sun shadows soften with distance from the caster."},
+	} {
+		if imgui.MenuItemV(b.label+"##lq", "", b.v, true) {
+			b.set(!b.v)
+		}
+		editorMenuTooltip(b.tip)
+	}
+	imgui.Separator()
+	for i, name := range gfx.ReflectionQualityNames() {
+		q := gfx.ReflectionQuality(i)
+		if imgui.MenuItemV("Reflections: "+strings.ToUpper(name[:1])+name[1:]+"##rq", "", gfx.Reflections == q, true) {
+			gfx.SetReflections(q)
+		}
+	}
+	editorMenuTooltip("Off: highlights only. Low: the sky and reflection volumes,\n" +
+		"scaled by the GI probes. High: plus screen-space reflections.")
+	imgui.EndMenu()
 }

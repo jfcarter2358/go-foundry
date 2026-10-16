@@ -1,0 +1,30 @@
+# Moss: Poly Haven's moss cushions laid along the ground, still.
+# Poly Haven (CC0): moss_01. (Poly Haven has no moss ground texture; the
+# cushions carry it.)
+name: Moss
+doc: Moss cushions hugging the ground.
+order: 60
+layers:
+  - {layer: moss, strength: 1}
+  - {layer: grass_clear, strength: 0.4}
+recipe:
+  paint:
+    - {name: moss, kind: density}
+    - {name: grass_clear, kind: exclude}
+  exclude:
+    - {layer: grass_clear, kind: grass_field, except: [cover]}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_moss
+      params:
+        assets: [{id: moss_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: moss, plants: cover_moss, orient: ground, wind: false, sink: 0.15, density: 5, scale: [0.8, 1.4],
+             slope: [0, 50], cluster: 0.3, cluster_scale: 6, max_triangles: 600, paint: moss, range: 0.5,
+             shadows: false}

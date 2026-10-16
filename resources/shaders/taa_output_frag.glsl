@@ -23,10 +23,26 @@ uniform ivec2 origin;
 // 1: map through exposure and the ACES fit (an HDR frame); 0: as drawn.
 uniform int tonemap;
 uniform float exposure;
+// Automatic exposure (render/exposure.go): the adapted exposure from the GPU's
+// own buffer, over the reference the scene's hdrExposure was set from — so
+// `exposure` (the level's compensation × the reference) times it over the
+// reference is the compensation × the adapted value.
+uniform int autoExposure;
+uniform float exposureReference;
+layout(std430, binding = 0) readonly buffer Exposure {
+    float exposureValue;
+    float exposureSeeded;
+};
 // 1 (the editor's view, render/editor_scene_frame.go): the scene's depth is
 // written into the caller's depth buffer too, for the overlays drawn after.
 uniform int writeDepth;
 uniform sampler2D depthSrc;
+// The glow round bright light (render/bloom.go), mixed in before the curve:
+// mip 0 of its chain, the sum of bloomScale's reciprocal levels.
+uniform int bloomOn;
+uniform sampler2D bloomTex;
+uniform float bloomStrength;
+uniform float bloomScale;
 
 out vec4 outputColor;
 
@@ -35,7 +51,15 @@ vec3 shown(ivec2 q) {
     if (tonemap == 0) {
         return c;
     }
-    vec3 x = max(c * exposure, vec3(0.0));
+    if (bloomOn != 0) {
+        vec3 glow = textureLod(bloomTex, (vec2(q) + 0.5) / vec2(size), 0.0).rgb * bloomScale;
+        c = mix(c, glow, bloomStrength);
+    }
+    float e = exposure;
+    if (autoExposure != 0) {
+        e *= exposureValue / max(exposureReference, 1e-4);
+    }
+    vec3 x = max(c * e, vec3(0.0));
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 

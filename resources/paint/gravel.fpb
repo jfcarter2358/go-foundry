@@ -1,0 +1,33 @@
+# Gravel: a gravel splat with a scatter of small stones on it.
+# Poly Haven (CC0): gravel_floor, stone_01.
+name: Gravel
+doc: Loose gravel, a few small stones lying on it; no grass.
+order: 70
+layers:
+  - {layer: gravel, strength: 1}
+  - {layer: grass_clear, strength: 0.8}
+recipe:
+  paint:
+    - {name: gravel, kind: material}
+    - {name: grass_clear, kind: exclude}
+  textures:
+    - {name: gravel_floor, id: gravel_floor, scale: 1.5}
+  material:
+    - {layer: gravel, texture: gravel_floor, slots: [ash, snow, wet], fallback: gravel}
+  exclude:
+    - {layer: grass_clear, kind: grass_field, except: [cover]}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_stones
+      params:
+        assets: [{id: stone_01}, {id: rock_moss_set_02}]
+        thin_foliage: false
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: gravel_stones, plants: cover_stones, pieces: stone_01, tint_a: [0.7, 0.68, 0.66], tint_b: [0.85, 0.82, 0.78], orient: ground, wind: false, sink: 0.3,
+             tilt_jitter: 15, density: 2, scale: [0.5, 1.2], slope: [0, 45], cluster: 0, max_triangles: 300,
+             paint: gravel, paint_band: [0.3, 1], range: 0.35, shadows: true}

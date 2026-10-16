@@ -47,6 +47,16 @@ package render
 // grass_field_shadow.go: the cells within gfx.GrassShadowDistance cast, with
 // a kind's mid mesh, into the near cascade (or the virtual shadow map's
 // pages there, as movers: the grass sways).
+//
+// # Ground cover
+//
+// A kind's flags (grassfield.Kind.Flags: oriented, still, card) are part of
+// its draw group and reach the vertex stage as `kindFlags`, so litter, twigs
+// and pebbles draw in the same passes as the grass (docs/terrain-paint/
+// PHASE_P3.md). An ORIENTED field (version 2) carries a fourth instance
+// word, the up axis, fetched as attribute 5 only while such a field is
+// bound; for every other field the attribute's array is off and the stride
+// is the old 12 bytes.
 
 import (
 	"fmt"
@@ -95,6 +105,9 @@ type grassGroup struct {
 	rng     float32
 	casts   bool
 	lods    int
+	// flags are the kinds' grassfield flags less KindCasts (casts says
+	// that): the vertex stage's kindFlags.
+	flags uint32
 }
 
 // grassKitGPU is one kit, uploaded.
@@ -276,7 +289,8 @@ func (k *grassKitGPU) upload() {
 			verts = append(verts, m.Vertices...)
 			idx = append(idx, m.Indices...)
 		}
-		g := grassGroup{texture: kd.Texture, rng: kd.Range, casts: kd.Casts(), lods: len(kd.LODs)}
+		g := grassGroup{texture: kd.Texture, rng: kd.Range, casts: kd.Casts(), lods: len(kd.LODs),
+			flags: kd.Flags &^ grassfield.KindCasts}
 		k.group[i] = -1
 		for gi, o := range k.groups {
 			if o == g {
@@ -313,6 +327,11 @@ func (k *grassKitGPU) upload() {
 	gl.EnableVertexAttribArray(4)
 	gl.VertexAttribIFormat(4, 3, gl.UNSIGNED_INT, 0)
 	gl.VertexAttribBinding(4, 1)
+	// The up axis of an oriented field (enabled per field, drawBatches).
+	gl.VertexAttribIFormat(5, 1, gl.UNSIGNED_INT, 12)
+	gl.VertexAttribBinding(5, 1)
+	gl.DisableVertexAttribArray(5)
+	gl.VertexAttribI4ui(5, 0, 0, 0, 0)
 	gl.VertexBindingDivisor(1, 1)
 	gl.BindVertexArray(0)
 	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
@@ -554,8 +573,13 @@ func (r *grassFieldRenderer) drawBatches(p *progUniforms) {
 				curKit = cur.kit
 				gl.BindVertexArray(curKit.vao)
 			}
-			gl.BindVertexBuffer(1, cur.vbo, 0, int32(grassfield.InstanceWords*4))
 			fd := cur.field
+			gl.BindVertexBuffer(1, cur.vbo, 0, int32(fd.Words()*4))
+			if fd.Oriented {
+				gl.EnableVertexAttribArray(5)
+			} else {
+				gl.DisableVertexAttribArray(5)
+			}
 			gl.Uniform3f(p.U("fieldOrigin"), fd.Origin[0], fd.Origin[1], fd.Origin[2])
 			gl.Uniform3f(p.U("fieldSize"), fd.Size[0], fd.Size[1], fd.Size[2])
 			gl.Uniform1f(p.U("fieldScale"), fd.ScaleMax)
@@ -563,6 +587,7 @@ func (r *grassFieldRenderer) drawBatches(p *progUniforms) {
 		grp := &curKit.groups[b.group]
 		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[grp.texture])
 		gl.Uniform1f(p.U("kindRange"), grp.rng)
+		gl.Uniform1i(p.U("kindFlags"), int32(grp.flags))
 		gl.Uniform2f(p.U("tierWindow"), b.window.From, b.window.To)
 		gl.MultiDrawElementsIndirect(gl.TRIANGLES, gl.UNSIGNED_INT, gl.PtrOffset(b.off*stride), int32(b.n), 0)
 	}

@@ -51,6 +51,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"foundry/internal/procgen/paint"
 )
 
 // Ext is a generator document's extension.
@@ -81,6 +83,15 @@ type Doc struct {
 	Level string
 	// Stages run in this order. A stage may refer only to stages above it.
 	Stages []Stage
+	// Paint declares the document's paint layers (paint_doc.go): masks an
+	// author paints in the Generator's 2D view and stages read through
+	// mask parameters. Their pixels are not in the file.
+	Paint []paint.LayerDef
+	// PaintData is the layers' pixels: read from <doc>.paint/ beside the
+	// file by ReadDoc, written by WriteDoc, painted by the editor. Not in
+	// the file and not in Fingerprint. Nil when the document declares no
+	// layers (every layer then reads 0).
+	PaintData *paint.Set
 }
 
 // Stage is one stage of a document.
@@ -140,6 +151,10 @@ func (d *Doc) Clone() *Doc {
 		return nil
 	}
 	out := *d
+	out.Paint = append([]paint.LayerDef(nil), d.Paint...)
+	// The pixels are shared copy-on-write (procgen/paint): a run or a
+	// preview handed a clone reads a snapshot while the editor paints on.
+	out.PaintData = d.PaintData.Clone()
 	out.Stages = make([]Stage, len(d.Stages))
 	for i, s := range d.Stages {
 		s.Params = s.Params.Clone()

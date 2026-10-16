@@ -89,6 +89,10 @@ type StageResult struct {
 	// gives the prefixed ones.
 	Placements []Placement
 	Volumes    []VolumeEntry
+	// Emitters carry the stage's own IDs too; Result.Emitters prefixes them.
+	Emitters []Emitter
+	// Sounds likewise; Result.Sounds prefixes them.
+	Sounds []Sound
 	// Level is the level-wide settings the stage owns (LevelSettings).
 	Level LevelSettings
 	// Supersedes is the earlier stages' placements this one replaces (by
@@ -102,6 +106,8 @@ type StageResult struct {
 	// Artifact is the in-memory product Run set; nil for a skipped stage
 	// until something asks (StageResult.artifact through Load).
 	Artifact any
+	// AsLoaded: Artifact is what Load would give (RunContext.ArtifactAsLoaded).
+	AsLoaded bool
 
 	kind     *StageKind
 	loadOnce sync.Once
@@ -180,6 +186,32 @@ func (r *Result) Volumes() []VolumeEntry {
 	return out
 }
 
+// Emitters is every stage's particle emitters with level IDs.
+func (r *Result) Emitters() []Emitter {
+	var out []Emitter
+	for _, s := range r.Stages {
+		pre := StagePrefix(r.Generator, s.ID)
+		for _, e := range s.Emitters {
+			e.ID = pre + e.ID
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Sounds is every stage's positional sounds with level IDs.
+func (r *Result) Sounds() []Sound {
+	var out []Sound
+	for _, s := range r.Stages {
+		pre := StagePrefix(r.Generator, s.ID)
+		for _, e := range s.Sounds {
+			e.ID = pre + e.ID
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // LevelSettings is every stage's level-wide settings, merged in document
 // order: a later stage's key replaces an earlier one's. Nil when no stage
 // set any.
@@ -216,6 +248,18 @@ type plannedStage struct {
 	// region is set on a stage expanded for an environment region
 	// (regional.go); such a stage is not in d.Stages.
 	region *RegionContext
+	// base is the hash without any paint folded in, its refs' bases in
+	// place of their hashes; paintOwn the layers its params name and
+	// paintUp the ones its upstream stages read (paint_incremental.go).
+	base              string
+	paintOwn, paintUp []string
+	// paintCovered: the layers of paintUp that reach it ONLY through a
+	// RectKeyed ref, whose rect key stands in for them in a piece's paint
+	// key (paint_incremental.go).
+	paintCovered []string
+	// covered is the hash of its own RectCovered params ("" none) and
+	// coveredUp its ancestors' (paint_incremental.go, phase W3).
+	covered, coveredUp string
 }
 
 // plan hashes every enabled stage in order, then appends the stages expanded
@@ -242,9 +286,10 @@ func planWithNotes(d *Doc) ([]*plannedStage, []string, error) {
 		p := Resolve(k.Params, s.Params)
 		ps := &plannedStage{stage: s, kind: k, params: p, refs: StageRefs(k.Params, p)}
 		ps.seed = StageSeed(d.Seed, s.ID, k.Params, p)
-		var up []string
+		var up, bup []string
 		for _, r := range ps.refs {
 			up = append(up, byID[r].hash) // Validate guarantees r is an enabled stage above
+			bup = append(bup, byID[r].base)
 		}
 		if k.HashExtra != nil {
 			x, err := k.HashExtra(d, s, p)
@@ -256,8 +301,15 @@ func planWithNotes(d *Doc) ([]*plannedStage, []string, error) {
 			// say (the regions stage's pair widths).
 			if x != "" {
 				up = append(up, "extra:"+x)
+				bup = append(bup, "extra:"+x)
 			}
 		}
+		// The paint-free base and the layers read, for per-tile reruns
+		// (paint_incremental.go).
+		planPaint(ps, k, p, bup, byID)
+		// The paint layers it reads (paint_doc.go); nothing for a stage
+		// that names none.
+		up = foldPaint(d, k.Params, p, up)
 		ps.hash = StageHash(k, ps.seed, p, up)
 		byID[s.ID] = ps
 		out = append(out, ps)
@@ -390,8 +442,10 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 	}
 
 	results := map[string]*StageResult{}
+	lineage := map[string]string{} // paint_incremental.go
 	for _, p := range planned {
 		id := p.stage.ID
+		lineage[id] = upstreamLineage(p.refs, results, lineage)
 		sr := &StageResult{ID: id, Kind: p.kind.Name, Hash: p.hash, kind: p.kind,
 			Dir: filepath.Join(dir, id), RelDir: relRoot + "/" + id}
 		if err := ctx.Err(); err != nil {
@@ -407,6 +461,8 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 					return res, fmt.Errorf("stage %s: %w", id, err)
 				}
 				sr.Placements, sr.Volumes, sr.Level, sr.Supersedes = f.Scenery, f.Volumes, f.Level, f.Supersedes
+				sr.Emitters = f.Emitters
+				sr.Sounds = f.Sounds
 			}
 			res.Skipped = append(res.Skipped, id)
 			res.Stages = append(res.Stages, sr)
@@ -435,10 +491,20 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 		if err := os.MkdirAll(sr.Dir, 0o755); err != nil {
 			return res, err
 		}
+		if prev != nil {
+			// Why an incremental stage may rebuild every piece this time
+			// (paint_incremental.go's upstreamLineage).
+			if fresh := freshRefs(p.refs, results); len(fresh) > 0 && len(prev.Tiles) > 0 {
+				logf("[%s] %s ran this time: pieces made against its last output are rebuilt", id, strings.Join(fresh, ", "))
+			}
+		}
 		label := id + " (" + p.kind.Name + ")"
 		rc := &RunContext{
 			Env: Env{Ctx: ctx, Doc: d, Stage: p.stage, Kind: p.kind, Params: p.params, Seed: p.seed,
-				Workers: opts.Workers, Region: p.region, logf: opts.Log},
+				Workers: opts.Workers, Region: p.region, logf: opts.Log,
+				BaseHash: p.base, paintOwn: p.paintOwn, paintUp: p.paintUp, paintCovered: p.paintCovered, lineage: lineage[id],
+				coveredUp: p.coveredUp,
+				rects: upstreamRectKeyed(p, byID, results, planned)},
 			Dir: sr.Dir, RelDir: sr.RelDir, upstream: results, files: map[string]bool{}, Previous: prev,
 		}
 		if opts.Progress != nil {
@@ -476,17 +542,22 @@ func Run(ctx context.Context, d *Doc, opts Options) (*Result, error) {
 		}
 		sort.SliceStable(rc.scenery, func(a, b int) bool { return rc.scenery[a].ID < rc.scenery[b].ID })
 		numberPlacements(rc.scenery, rc.volumes)
+		sort.SliceStable(rc.emitters, func(a, b int) bool { return rc.emitters[a].ID < rc.emitters[b].ID })
+		sort.SliceStable(rc.sounds, func(a, b int) bool { return rc.sounds[a].ID < rc.sounds[b].ID })
 		for _, ids := range rc.supersedes {
 			sort.Strings(ids)
 		}
-		if len(rc.scenery) > 0 || len(rc.volumes) > 0 || len(rc.level) > 0 || len(rc.supersedes) > 0 {
-			f := placementsFile{Scenery: rc.scenery, Volumes: rc.volumes, Level: rc.level, Supersedes: rc.supersedes}
+		if len(rc.scenery) > 0 || len(rc.volumes) > 0 || len(rc.emitters) > 0 || len(rc.sounds) > 0 || len(rc.level) > 0 || len(rc.supersedes) > 0 {
+			f := placementsFile{Scenery: rc.scenery, Volumes: rc.volumes, Emitters: rc.emitters, Sounds: rc.sounds, Level: rc.level, Supersedes: rc.supersedes}
 			if err := writePlacements(rc.Path(PlacementsFileName), f); err != nil {
 				return res, fmt.Errorf("stage %s: placements: %w", id, err)
 			}
 		}
 		sr.Files = prefixFiles(id, rc.sortedFiles())
 		sr.Placements, sr.Volumes, sr.Level, sr.Artifact = rc.scenery, rc.volumes, rc.level, rc.Artifact
+		sr.Emitters = rc.emitters
+		sr.Sounds = rc.sounds
+		sr.AsLoaded = rc.ArtifactAsLoaded
 		sr.Supersedes = rc.supersedes
 		man.Stages[id] = ManifestStage{Kind: p.kind.Name, Hash: p.hash, Files: sr.Files, Tiles: rc.tileHashes()}
 		if err := man.Write(dir); err != nil {

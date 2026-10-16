@@ -1,0 +1,61 @@
+# water_impact.fpar — something small striking water
+# (docs/terrain-paint/PHASE_W5.md). A shot crossing a water surface on its
+# way down (the script's hitscan, script_actions_water.go) and a small body
+# dropping in (sim/water_wade.go: a thrown stone, a can) play it through
+# world.SplashWater. A thin spout of droplets straight up and a puff of
+# spray.
+id: water_impact
+seed: 79
+
+layers:
+  - name: spout
+    duration: 1
+    loop: false
+    max: 24
+    bursts:
+      - {t: 0, n: 18}
+    shape: cone
+    radius: 0.03
+    angle: 12
+    life_min: 0.4
+    life_max: 0.8
+    speed_min: 2
+    speed_max: 4.2
+    size_min: 0.015
+    size_max: 0.035
+    gravity: 1
+    drag: 0.3
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    tint: {r: 0.95, g: 0.97, b: 1}
+    alpha_ramp:
+      - {t: 0, v: 0.9}
+      - {t: 0.7, v: 0.7}
+      - {t: 1, v: 0}
+
+  - name: spray
+    duration: 1
+    loop: false
+    max: 5
+    bursts:
+      - {t: 0, n: 4}
+    shape: sphere
+    radius: 0.05
+    life_min: 0.3
+    life_max: 0.6
+    speed_min: 0.3
+    speed_max: 0.9
+    size_min: 0.1
+    size_max: 0.18
+    gravity: 0.3
+    drag: 2.5
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    size_ramp:
+      - {t: 0, v: 0.6}
+      - {t: 1, v: 1.7}
+    alpha_ramp:
+      - {t: 0, v: 0.5}
+      - {t: 1, v: 0}

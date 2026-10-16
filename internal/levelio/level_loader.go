@@ -424,9 +424,15 @@ func loadLevelObjectsBeforeScenery(raw world.RawLevel, level *world.Level, texNe
 	level.SaveMode = world.SaveModeFromName(raw.SaveMode)
 	level.Gravity = world.CopyFloatPtr(raw.Gravity)
 	level.ViewDistance = raw.ViewDistance
+	level.RainRipples = world.ClampRainRipples(raw.RainRipples)
+	// Lightmaps unless the level asks otherwise (compile/lightmap.go).
+	level.Lightmap = true
 	if raw.Compile != nil {
 		level.LightGrid, level.LightMinGrid = raw.Compile.LightGrid, raw.Compile.LightMinGrid
 		level.NoBake = raw.Compile.Bake == world.BakeNone
+		level.BakeVertex = raw.Compile.Bake == world.BakeVertex
+		level.Lightmap = !level.BakeVertex && !level.NoBake
+		level.LightmapTexel = raw.Compile.LightmapTexel
 	}
 
 	world.ResolveLevelIDCollisions(level.Chunks)

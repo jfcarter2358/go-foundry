@@ -69,7 +69,7 @@ func TestMaterialFragmentSourceRewritesEveryDerivative(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"void nvShadeMain()", "void vx_main()", "vec4 vx_Position;", "vec2 vx_fragTexCoord;",
-		"nvTexture(tex,", "vx_skinPosition(", "vx_waterHeight(", "float waterHeight("} {
+		"nvTexture(tex,", "vx_skinPosition(", "waterHeight(", "#include \"water_waves.glsl\""} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the material pass has no %q", want)
 		}

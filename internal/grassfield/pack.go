@@ -6,6 +6,7 @@ package grassfield
 //	word 0   x (16 bits) | z (16 bits) << 16      over the tile box's X and Z
 //	word 1   y (16 bits) | yaw (8) << 16 | scale (8) << 24
 //	word 2   r | g << 8 | b << 16 | rank << 24     tint at 1.0 = 128
+//	word 3   the up axis (orient.go)                only in an oriented field
 //
 // Positions quantise to Size/65535 — 2 mm across a 128 m tile — and the
 // height to the tile's own height range. Yaw is 1.4° a step, scale 1/255 of
@@ -36,6 +37,10 @@ type Instance struct {
 	Tint [3]float32
 	// Rank is 0..255 (set by BuildField from Pos; read back by Unpack).
 	Rank uint8
+	// Up is the axis the clump stands on (orient.go), kept only by an
+	// oriented field; zero (or +Y) is upright. Unpack fills it from an
+	// oriented field and leaves it zero otherwise.
+	Up [3]float32
 }
 
 // hash64 is a 64-bit mix (splitmix64's finaliser over the words).
@@ -69,8 +74,10 @@ func quant(v, lo, size float32, max float64) uint32 {
 	return uint32(math.Round(math.Min(math.Max(t, 0), 1) * max))
 }
 
-// Pack packs in for field f's box and scale (Rank is taken as given).
-func (f *Field) Pack(in Instance) [InstanceWords]uint32 {
+// Pack packs in for field f's box and scale (Rank is taken as given): the
+// first f.Words() words are the instance (the fourth, its up axis, only
+// in an oriented field).
+func (f *Field) Pack(in Instance) [OrientedInstanceWords]uint32 {
 	x := quant(in.Pos[0], f.Origin[0], f.Size[0], 65535)
 	y := quant(in.Pos[1], f.Origin[1], f.Size[1], 65535)
 	z := quant(in.Pos[2], f.Origin[2], f.Size[2], 65535)
@@ -83,19 +90,24 @@ func (f *Field) Pack(in Instance) [InstanceWords]uint32 {
 	tint := func(v float32) uint32 {
 		return uint32(math.Round(math.Min(math.Max(float64(v)*128, 0), 255)))
 	}
-	return [InstanceWords]uint32{
+	out := [OrientedInstanceWords]uint32{
 		x | z<<16,
 		y | yb<<16 | sb<<24,
 		tint(in.Tint[0]) | tint(in.Tint[1])<<8 | tint(in.Tint[2])<<16 | uint32(in.Rank)<<24,
 	}
+	if f.Oriented {
+		out[3] = PackUp(in.Up)
+	}
+	return out
 }
 
 // Unpack is instance i of the field (Kind is not stored per instance: -1;
 // FieldInstances fills it from the runs).
 func (f *Field) Unpack(i int) Instance {
-	w := f.Data[i*InstanceWords : i*InstanceWords+InstanceWords]
+	nw := f.Words()
+	w := f.Data[i*nw : i*nw+nw]
 	u16 := func(v uint32) float32 { return float32(v&0xffff) / 65535 }
-	return Instance{
+	in := Instance{
 		Kind: -1,
 		Pos: [3]float32{f.Origin[0] + u16(w[0])*f.Size[0], f.Origin[1] + u16(w[1])*f.Size[1],
 			f.Origin[2] + u16(w[0]>>16)*f.Size[2]},
@@ -104,6 +116,10 @@ func (f *Field) Unpack(i int) Instance {
 		Tint:  [3]float32{float32(w[2]&0xff) / 128, float32((w[2]>>8)&0xff) / 128, float32((w[2]>>16)&0xff) / 128},
 		Rank:  uint8(w[2] >> 24),
 	}
+	if f.Oriented {
+		in.Up = UnpackUp(w[3])
+	}
+	return in
 }
 
 // Instances is every instance with its kind, in run order.
@@ -131,6 +147,10 @@ type FieldSpec struct {
 	// short).
 	Cell  float32
 	Kinds int
+	// Oriented makes an oriented field (Field.Oriented): set when the kit
+	// has an oriented kind. A field with an instance whose Up is set is
+	// oriented regardless.
+	Oriented bool
 }
 
 // BuildField packs instances (each Kind < spec.Kinds, inside the tile's
@@ -144,7 +164,10 @@ func BuildField(spec FieldSpec, ins []Instance) (*Field, error) {
 	if spec.Kinds <= 0 || spec.Kinds > MaxKinds {
 		return nil, fmt.Errorf("grass field: %d kinds", spec.Kinds)
 	}
-	f := &Field{Kit: spec.Kit, Cell: spec.Cell, Kinds: spec.Kinds}
+	f := &Field{Kit: spec.Kit, Cell: spec.Cell, Kinds: spec.Kinds, Oriented: spec.Oriented}
+	for i := 0; i < len(ins) && !f.Oriented; i++ {
+		f.Oriented = ins[i].Up != ([3]float32{})
+	}
 	f.CellsX = int(math.Ceil(float64((spec.Max[0] - spec.Min[0]) / spec.Cell)))
 	f.CellsZ = int(math.Ceil(float64((spec.Max[1] - spec.Min[1]) / spec.Cell)))
 	nc := f.CellsX * f.CellsZ
@@ -203,7 +226,8 @@ func BuildField(spec FieldSpec, ins []Instance) (*Field, error) {
 		return x.in.Pos[2] < y.in.Pos[2]
 	})
 	f.Runs = make([]Run, nc*spec.Kinds)
-	f.Data = make([]uint32, 0, len(ks)*InstanceWords)
+	nw := f.Words()
+	f.Data = make([]uint32, 0, len(ks)*nw)
 	for i := range ks {
 		r := &f.Runs[ks[i].run]
 		if r.Count == 0 {
@@ -211,7 +235,7 @@ func BuildField(spec FieldSpec, ins []Instance) (*Field, error) {
 		}
 		r.Count++
 		w := f.Pack(ks[i].in)
-		f.Data = append(f.Data, w[:]...)
+		f.Data = append(f.Data, w[:nw]...)
 	}
 	// Empty runs point where their neighbours end, so an offset is always
 	// in range.

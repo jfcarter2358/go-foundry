@@ -68,13 +68,18 @@ void main() {
 
     vec4 tc = texture(tex, vUV);
 
-    vec3 lighting = biomeLighting(vWorldPos, n, vViewDepth, receiveShadows != 0, false);
-    vec3 color = giDebugAlbedo(tc.rgb) * clamp(lighting, 0.0, 1.0);
+    // Ground: a rough dielectric's faint sheen (specular.glsl).
+    PBRSurface ps = pbrSurface(vWorldPos, n, 0.85, 0.0, 0.5, tc.rgb);
+    vec3 spec = vec3(0.0);
+    vec3 lighting = biomeLightingSpec(vWorldPos, n, vViewDepth, receiveShadows != 0, false, ps, spec);
+    spec += pbrEnvSpecular(ps, vWorldPos, n, biomeAmbientRef, 1.0);
+    // Scene units, as fragment.glsl shades (gfx/hdr.go; 1 in LDR).
+    vec3 color = giDebugAlbedo(tc.rgb) * clamp(lighting, 0.0, hdrLightMax()) + clamp(spec, 0.0, hdrLightMax());
     // The same fog the structural floor under this patch takes — see fog.glsl.
     // It has to be the same call, not a matching one: the patch INTERSECTS
     // that floor, so anywhere both are visible a difference in fade shows up
     // as two differently-distant floors.
-    color = applyFog(color, vWorldPos);
+    color = applyFogScene(color, vWorldPos);
     // Alpha carries the slope-cutoff coverage, not the texture's own — the
     // patch is an opaque surface in the opaque pass, so alpha is read as a
     // coverage mask (or ignored entirely when AA is off), never as blending.

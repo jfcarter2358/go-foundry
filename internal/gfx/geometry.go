@@ -241,25 +241,6 @@ func (g *Geometry) NormalColorFlag() int32 {
 	return st.NormalColorFlag()
 }
 
-// applyWaterUniforms pushes a surface's water settings to the shader. Every
-// draw call sets them, including the disabled case, so a water plane never
-// leaks its wave/fresnel state onto the geometry drawn after it. Called from
-// SurfaceState.Apply, which is the one place a world-program draw sets its
-// per-surface uniforms.
-func applyWaterUniforms(w *WaterParams) {
-	if !w.Enabled {
-		gl.Uniform1i(IsWaterUniform, 0)
-		return
-	}
-	gl.Uniform1i(IsWaterUniform, 1)
-	gl.Uniform1f(WaveAmplitudeUniform, w.WaveAmplitude)
-	gl.Uniform1f(WaveLengthUniform, w.WaveLength)
-	gl.Uniform1f(WaveSpeedUniform, w.WaveSpeed)
-	gl.Uniform1f(ReflectivityUniform, w.Reflectivity)
-	gl.Uniform3f(ReflectColorUniform,
-		w.ReflectColor.X(), w.ReflectColor.Y(), w.ReflectColor.Z())
-}
-
 // applyBlendUniforms pushes a surface's second-texture blend state to the
 // shader. Every draw call sets it, including the disabled case, so a blended
 // surface never leaks its blendTex/blendMask binding onto the geometry drawn
@@ -1027,6 +1008,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	gl.Uniform1i(VertexColorsUniform, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
 	gl.Uniform1i(HasNormalMapUniform, 0)
+	ResetPBRUniforms()
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
@@ -1047,23 +1029,17 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 // physical size whether it is on a 4-unit pond or a 400-unit lake — widening a
 // painted water sector makes it cover more area rather than stretching the
 // swell.
+//
+// Everything but Enabled is the material's resolved water effect
+// (material.Water, material_kinds_water.go): one struct, so a new parameter
+// is added once and reaches every draw.
 type WaterParams struct {
-	Enabled       bool
-	WaveAmplitude float32    // peak vertical displacement, world units
-	WaveLength    float32    // world units per wave cycle
-	WaveSpeed     float32    // wave cycles per second
-	Reflectivity  float32    // 0 = plain texture, 1 = fully mirror-like at grazing angles
-	ReflectColor  mgl32.Vec3 // environment/sky colour mixed in by the fresnel term
+	Enabled bool
+	material.Water
 }
 
-// DefaultWaterParams returns the starting look for a newly painted water sector.
+// DefaultWaterParams returns the starting look for a newly painted water
+// sector: material.DefaultWater, switched on.
 func DefaultWaterParams() WaterParams {
-	return WaterParams{
-		Enabled:       true,
-		WaveAmplitude: 0.06,
-		WaveLength:    3.0,
-		WaveSpeed:     0.35,
-		Reflectivity:  0.45,
-		ReflectColor:  mgl32.Vec3{0.55, 0.72, 0.92},
-	}
+	return WaterParams{Enabled: true, Water: material.DefaultWater()}
 }

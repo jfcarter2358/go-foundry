@@ -83,6 +83,23 @@ type Meta struct {
 	// level, ponds in closed hollows; stages/region_terrain_water.go):
 	// its mask (water depth) and every body. Absent without water.
 	Water *WaterMeta `yaml:"water,omitempty"`
+	// GroundEdit marks a terrain a ground_edit stage edited (edit.go): its
+	// source and what moved. Absent for every terrain a terrain stage made.
+	GroundEdit *GroundEditMeta `yaml:"ground_edit,omitempty"`
+	// Rivers is what a ground_edit's rivers made (river_meta.go): the
+	// waterfalls and confluences phase W4 dresses, and the river masks.
+	// Absent for every terrain without rivers.
+	Rivers *RiversMeta `yaml:"rivers,omitempty"`
+	// Footpaths is what a ground_edit's paths laid (path_meta.go): each
+	// path's style, length, crossings and stones, and the path masks.
+	// Absent for every terrain without paths. (Paths, above, is a carved
+	// canyon's centrelines.)
+	Footpaths *FootpathsMeta `yaml:"footpaths,omitempty"`
+	// Obstacles are the rocks a ground_edit placed itself — river boulders
+	// and path stones — as discs [x, z, radius] (m): the scatter and grass
+	// stages over this terrain keep out of them (phase W4,
+	// stages/ground_obstacles.go). Absent when there are none.
+	Obstacles [][3]float64 `yaml:"obstacles,omitempty"`
 }
 
 // VentMeta is one vent.

@@ -45,7 +45,10 @@ func StandUpWorld(w, h int32) error {
 	gfx.InitTextureFiltering()
 	// Live GI's tier for a player who has never chosen one, by GPU: on a
 	// discrete card, off on an integrated one (gfx.PickDefaultGIQuality).
-	gfx.PickDefaultGIQuality(gl.GoStr(gl.GetString(gl.RENDERER)))
+	renderer := gl.GoStr(gl.GetString(gl.RENDERER))
+	gfx.PickDefaultGIQuality(renderer)
+	// And the lighting pass's tiers on the same terms (gfx/lighting_settings.go).
+	gfx.PickDefaultLighting(renderer)
 	// And the Nanite page pool's budget, by the card's memory
 	// (gfx/nanite_pool_default.go).
 	gfx.PickDefaultNaniteStreamPool()

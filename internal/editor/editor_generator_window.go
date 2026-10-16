@@ -146,6 +146,7 @@ func CloseGeneratorEditorWindow() {
 func onGeneratorEditorClose() {
 	genFreeView3D()
 	genFreeLayerTextures()
+	genPaintFreeOverlay()
 	generatorEditorWindow = nil
 }
 
@@ -173,6 +174,7 @@ func genSetDoc(d *procgen.Doc, path string) {
 	GeneratorClearUndoHistory()
 	generatorMarkSaved()
 	genSpline = genSplineRef{}
+	genPaintReset()
 	genRequestPreview()
 }
 
@@ -259,7 +261,8 @@ func generatorKey() any { return docKey{genDoc, genRev} }
 
 func generatorMarkSaved() {
 	if genDoc != nil {
-		generatorSaved.baseline(generatorKey(), procgen.Fingerprint(genDoc))
+		// The document and its paint (genFingerprint).
+		generatorSaved.baseline(generatorKey(), genFingerprint())
 	}
 }
 
@@ -267,7 +270,7 @@ func generatorEditorDirty() bool {
 	if genDoc == nil {
 		return false
 	}
-	generatorSaved.refresh(generatorKey(), 200, func() uint64 { return procgen.Fingerprint(genDoc) })
+	generatorSaved.refresh(generatorKey(), 200, genFingerprint)
 	return generatorSaved.dirty()
 }
 
@@ -295,6 +298,9 @@ func generatorEditorHandleEvent(event sdl.Event) {
 
 func generatorEditorKey(e sdl.KeyboardEvent) {
 	ctrl := e.Keysym.Mod&(sdl.KMOD_LCTRL|sdl.KMOD_RCTRL) != 0
+	if genPaintKey(ctrl, int(e.Keysym.Sym)) {
+		return // the brush's undo, redo and size
+	}
 	switch {
 	case ctrl && e.Keysym.Sym == sdl.K_s:
 		genSaveCurrent()

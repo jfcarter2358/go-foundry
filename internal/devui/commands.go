@@ -375,9 +375,33 @@ func init() {
 			run: cmdGIDebug,
 		},
 		{
+			name: "lighting", usage: "[setting] [value]",
+			summary: "read or set the lighting quality settings",
+			detail: []string{
+				"With no argument, lists them. Settings: specular, ambient_occlusion, bloom,",
+				"contact_shadows, soft_shadows (on|off), reflections and light_shafts (off|low|high).",
+			},
+			run: cmdLighting,
+		},
+		{
+			name: "render_scale", usage: "[0.5-1] | dynamic [on|off] | target <ms> | min <scale>",
+			summary: "read or set the render scale and dynamic resolution",
+			detail: []string{
+				"The share of the screen the world is drawn at under TAA, upsampled to it (1: full).",
+				"dynamic: the scale moves each frame, from min up to render_scale, to hold the",
+				"world's GPU time at target ms.",
+			},
+			run: cmdRenderScale,
+		},
+		{
 			name: "gi_quality", usage: "[off|low|medium|high]",
 			summary: "read or set the player's live GI tier",
 			run:     cmdGIQuality,
+		},
+		{
+			name: "water_quality", usage: "[low|medium|high]",
+			summary: "read or set the player's water quality",
+			run:     cmdWaterQuality,
 		},
 		{
 			name: "overlay", usage: "[on|off]", summary: "the F3 overlay",
@@ -1108,4 +1132,135 @@ func didYouMean(name string, candidates []string) string {
 		return fmt.Sprintf(" — did you mean %q?", near)
 	}
 	return ""
+}
+
+// cmdWaterQuality is gi_quality for the water tier (render/water_pass.go).
+func cmdWaterQuality(c *cmdCtx) {
+	a := c.arg(0)
+	if a == "" {
+		printf(kindOut, "water_quality %s", gfx.WaterQuality)
+		return
+	}
+	q, ok := gfx.ParseWaterQuality(a)
+	if !ok {
+		printf(kindErr, "water_quality: %q is not one of low, medium, high", a)
+		return
+	}
+	gfx.SetWaterQuality(q)
+	printf(kindOK, "water_quality %s", q)
+}
+
+// cmdLighting reads or sets the lighting pass's settings
+// (gfx/lighting_settings.go).
+func cmdLighting(c *cmdCtx) {
+	bools := []struct {
+		name string
+		v    *bool
+		set  func(bool)
+	}{
+		{"specular", &gfx.SpecularLighting, gfx.SetSpecularLighting},
+		{"ambient_occlusion", &gfx.AmbientOcclusion, gfx.SetAmbientOcclusion},
+		{"bloom", &gfx.Bloom, gfx.SetBloom},
+		{"contact_shadows", &gfx.ContactShadows, gfx.SetContactShadows},
+		{"soft_shadows", &gfx.SoftShadows, gfx.SetSoftShadows},
+	}
+	name := strings.ToLower(c.arg(0))
+	if name == "" {
+		for _, b := range bools {
+			printf(kindOut, "%s %s", b.name, onOffWord(*b.v))
+		}
+		printf(kindOut, "reflections %s", gfx.Reflections)
+		printf(kindOut, "light_shafts %s", gfx.LightShaftsQuality)
+		return
+	}
+	if name == "light_shafts" {
+		a := c.arg(1)
+		if a == "" {
+			printf(kindOut, "light_shafts %s", gfx.LightShaftsQuality)
+			return
+		}
+		q, ok := gfx.ParseShaftsQuality(a)
+		if !ok {
+			printf(kindErr, "light_shafts: %q is not one of off, low, high", a)
+			return
+		}
+		gfx.SetLightShaftsQuality(q)
+		printf(kindOK, "light_shafts %s", q)
+		return
+	}
+	if name == "reflections" {
+		a := c.arg(1)
+		if a == "" {
+			printf(kindOut, "reflections %s", gfx.Reflections)
+			return
+		}
+		q, ok := gfx.ParseReflectionQuality(a)
+		if !ok {
+			printf(kindErr, "reflections: %q is not one of off, low, high", a)
+			return
+		}
+		gfx.SetReflections(q)
+		printf(kindOK, "reflections %s", q)
+		return
+	}
+	for _, b := range bools {
+		if b.name != name {
+			continue
+		}
+		want, err := switchArg(c.args[1:], *b.v)
+		if err != nil {
+			printf(kindErr, "%s: %v", name, err)
+			return
+		}
+		b.set(want)
+		printf(kindOK, "%s %s", name, onOffWord(want))
+		return
+	}
+	printf(kindErr, "lighting: no setting %q", name)
+}
+
+// cmdRenderScale reads or sets the render scale and dynamic resolution
+// (gfx/render_scale.go).
+func cmdRenderScale(c *cmdCtx) {
+	show := func(k lineKind) {
+		printf(k, "render_scale %.2f (now %.2f), dynamic %s, target %.1f ms, min %.2f",
+			gfx.RenderScale, render.CurrentRenderScale(), onOffWord(gfx.DynamicResolution),
+			gfx.DynamicResolutionTargetMs, gfx.DynamicResolutionMin)
+	}
+	a := strings.ToLower(c.arg(0))
+	num := func(s string) (float32, bool) {
+		f, err := strconv.ParseFloat(s, 32)
+		return float32(f), err == nil
+	}
+	switch a {
+	case "":
+		show(kindOut)
+		return
+	case "dynamic":
+		want, err := switchArg(c.args[1:], gfx.DynamicResolution)
+		if err != nil {
+			printf(kindErr, "render_scale dynamic: %v", err)
+			return
+		}
+		gfx.SetDynamicResolution(want)
+	case "target", "min":
+		v, ok := num(c.arg(1))
+		if !ok {
+			printf(kindErr, "render_scale %s: want a number", a)
+			return
+		}
+		if a == "target" {
+			gfx.SetDynamicResolutionTargetMs(v)
+		} else {
+			gfx.SetDynamicResolutionMin(v)
+		}
+	default:
+		v, ok := num(a)
+		if !ok {
+			printf(kindErr, "render_scale: %q is not a scale (0.5-1), dynamic, target or min", a)
+			return
+		}
+		gfx.SetRenderScale(v)
+	}
+	show(kindOK)
 }

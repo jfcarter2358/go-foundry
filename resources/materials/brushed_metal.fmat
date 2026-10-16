@@ -1,0 +1,15 @@
+# brushed_metal.fmat — the pbr effect, as a material.
+#
+# Every lit surface takes a GGX highlight from every light (specular.glsl);
+# without this effect it is shaded as a rough non-metal. Here the plate is a
+# metal, smooth enough for a tight highlight: its diffuse colour goes, and
+# the highlight takes the albedo's tint instead. A texture with a <name>_arm
+# map (AO / roughness / metal, as Poly Haven ships them) would multiply these
+# per texel.
+kind: surface
+texture: hull_plate
+doc: Brushed steel plate. A metal at roughness 0.35; the highlight takes the plate's own colour.
+effects:
+  - effect: pbr
+    roughness: 0.35
+    metallic: 1

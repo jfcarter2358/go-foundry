@@ -158,7 +158,8 @@ func genSpliceLevelFile(d *procgen.Doc, path string, res *procgen.Result, region
 		genStatusf("Splice into %s failed: %v", fileutil.RelAssetPath(path), err)
 		return
 	}
-	st, err := genlevel.SpliceFile(path, res.Generator, res.Placements(), res.Volumes(), genlevel.Options{Settings: res.LevelSettings(), Scope: scope})
+	st, err := genlevel.SpliceFile(path, res.Generator, res.Placements(), res.Volumes(), genlevel.Options{Settings: res.LevelSettings(), Scope: scope,
+		Emitters: res.Emitters(), Sounds: res.Sounds()})
 	if err != nil {
 		genStatusf("Splice into %s failed: %v", fileutil.RelAssetPath(path), err)
 		return

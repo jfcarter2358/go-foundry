@@ -71,9 +71,14 @@ float shDensityAt(vec3 p) {
     if (shFalloff > 0.0) {
         d *= exp(-clamp(shFalloff * (p.y - shBase), -30.0, 80.0));
     }
+    // Only the volumes p's screen tile can see (amb_tiles.glsl).
+    uint seen = numAmbVolumes > 0 ? ambVolMaskAt(p) : 0u;
     for (int i = 0; i < MAX_AMBIENT_VOLUMES; ++i) {
         if (i >= numAmbVolumes) {
             break;
+        }
+        if ((seen & (1u << uint(i))) == 0u) {
+            continue;
         }
         if (ambVolParams[i].w > 0.0) {
             d += ambVolParams[i].w * ambVolWeight(i, p);

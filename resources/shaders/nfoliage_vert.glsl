@@ -92,7 +92,8 @@ void main() {
     vec3 lighting = biomeLighting(lightAt, nw, viewDepth, receiveShadows != 0, thin);
     base = giDebugAlbedo(base);
     tone = giDebug == 1 ? 1.0 : tone;
-    vec3 col = base * tone * clamp(lighting, 0.0, 1.2);
+    // Scene units (gfx/hdr.go): hdrLightMax is 1 in LDR.
+    vec3 col = base * tone * clamp(lighting, 0.0, 1.2 * hdrLightMax());
     if (thin) {
         vec3 V = normalize(camPos - world);
         for (int i = 0; i < numDirLights; i++) {

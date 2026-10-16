@@ -425,7 +425,7 @@ func renderSceneryShadowGPU(in *sceneryInstancer, lvl *world.Level, prog uint32,
 	for gi := range in.groups {
 		g := &in.groups[gi]
 		geo := &lvl.Scenery[g.rep].Submeshes[g.sub]
-		if geo.Alpha < 0.05 {
+		if !geo.CastsShadow() {
 			continue
 		}
 		c := geo.ShadowCaster()

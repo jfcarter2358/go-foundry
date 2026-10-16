@@ -90,6 +90,9 @@ func grassVolume(path string, lo, hi mgl32.Vec3) world.Volume {
 
 func TestGrassFieldDraws(t *testing.T) {
 	w := newVisWorld(t)
+	// The occlusion's per-frame turn would make two settled frames differ:
+	// this is about the grass.
+	withoutFrameLighting(t)
 	if !grassFields.initialized {
 		t.Fatal("GrassFieldInit did not build its programs")
 	}

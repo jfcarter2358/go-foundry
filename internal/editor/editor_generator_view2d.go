@@ -282,6 +282,10 @@ func genView2DBar() {
 	if imgui.Button("Frame##genframe") {
 		genView2DFrame()
 	}
+	// The paint brush (editor_generator_paint.go): its toggle, and its row.
+	imgui.SameLine()
+	genPaintToggle()
+	genPaintBar()
 }
 
 // genStageSpline is one spline param of the selected stage, found anywhere.
@@ -400,6 +404,9 @@ func genView2DCanvas() {
 		drawImage(genV2.overlay, genV2.alpha)
 	}
 	genDrawGrid(dl, origin, end, toScreen, toWorld)
+	// The active paint layer and the brush, which takes the left button
+	// while it is on (editor_generator_paint.go).
+	genPaintCanvas(dl, hovered, imgui.MousePos(), toScreen, toWorld)
 
 	// Layers.
 	if p != nil && genV2.lines {
@@ -432,6 +439,8 @@ func genView2DCanvas() {
 		if on {
 			col = genColor([4]float32{0.35, 0.9, 1, 1})
 		}
+		// A river's banks, from its width channel (editor_generator_river.go).
+		genDrawSplineBanks(dl, sp, on, toScreen)
 		for k := 0; k+1 < len(sp.value.Points); k++ {
 			ax, az := genSplineXZ(sp.def, sp.value.Points[k])
 			bx, bz := genSplineXZ(sp.def, sp.value.Points[k+1])
@@ -464,6 +473,9 @@ func genView2DCanvas() {
 	if editing, rnear := genRegionView2D(dl, hovered, mouse, toScreen, toWorld); editing {
 		active, near = nil, rnear
 	}
+	if genPaintActive() {
+		active, near = nil, -1 // the brush has the left button
+	}
 	genView2DInput(hovered, active, near, mouse, toScreen, toWorld)
 
 	// The readout.
@@ -494,8 +506,15 @@ func genView2DCanvas() {
 func genView2DInput(hovered bool, active *genStageSpline, near int, mouse imgui.Vec2,
 	toScreen func(x, z float64) imgui.Vec2, toWorld func(imgui.Vec2) (float64, float64)) {
 	io := imgui.CurrentIO()
+	genRiverWidthKick()
 	if hovered {
-		if _, wy := io.MouseWheel(); wy != 0 {
+		if _, wy := io.MouseWheel(); wy != 0 && genPaintActive() && genPaintWheelStrength(int32(math.Copysign(1, float64(wy))), genPaintCtrlHeld()) {
+			// Ctrl+wheel with the paint brush on: its strength
+			// (editor_generator_paint3d.go).
+		} else if wy != 0 && genSplineWidthWheel(active, near, wy) {
+			// Shift+wheel over a river's point: its width
+			// (editor_generator_river.go).
+		} else if wy != 0 {
 			bx, bz := toWorld(mouse)
 			genV2.scale = math.Min(math.Max(genV2.scale*math.Pow(1.15, float64(wy)), 1e-4), 1e4)
 			ax, az := toWorld(mouse)

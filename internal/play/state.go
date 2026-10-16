@@ -65,6 +65,15 @@ func State(lvl *world.Level, t float64) string {
 	}
 	fmt.Fprintf(&b, "  %s\n", strings.Join(line, ", "))
 
+	// Water (docs/terrain-paint/PHASE_W5.md): how deep the feet and the eye
+	// are, when there is a surface over or near them.
+	feet := p.Position.Sub(mgl32.Vec3{0, p.BoundHalfY, 0})
+	if wf := world.WaterAt(lvl, feet); wf.Found && wf.Depth > -2 {
+		we := world.WaterAt(lvl, eye)
+		fmt.Fprintf(&b, "  water %s: surface %.2f, feet %.2f m under, eye %.2f m under\n",
+			wf.Material, wf.Surface, wf.Depth, we.Surface-eye.Y())
+	}
+
 	if s := attrs(p.Attributes); s != "" {
 		fmt.Fprintf(&b, "  player: %s\n", s)
 	}

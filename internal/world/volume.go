@@ -120,6 +120,10 @@ type Volume struct {
 	// canyon, a room — see volume_ambient.go. nil is the ordinary case.
 	Ambient *VolumeAmbient
 
+	// Reflection captures the region's own environment for what reflects
+	// inside it — see volume_reflection.go. nil is the ordinary case.
+	Reflection *VolumeReflection
+
 	// Gravity replaces the level's ambient pull inside the region, in units per
 	// second squared — a low-gravity chamber, a well that throws things up, a
 	// pocket of vacuum with nothing to fall toward. nil is the ordinary case: a
@@ -501,6 +505,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		Checkpoint:   r.Checkpoint,
 		Fog:          VolumeFogFromRaw(r.Fog),
 		Ambient:      VolumeAmbientFromRaw(r.Ambient),
+		Reflection:   VolumeReflectionFromRaw(r.Reflection),
 		Cloud:        VolumeCloudFromRaw(r.Cloud),
 		Gravity:      CopyFloatPtr(r.Gravity),
 		ClearsClouds: r.ClearsClouds,
@@ -528,6 +533,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Checkpoint:    v.Checkpoint,
 		Fog:           VolumeFogToRaw(v.Fog),
 		Ambient:       VolumeAmbientToRaw(v.Ambient),
+		Reflection:    VolumeReflectionToRaw(v.Reflection),
 		Cloud:         VolumeCloudToRaw(v.Cloud),
 		Gravity:       CopyFloatPtr(v.Gravity),
 		ClearsClouds:  v.ClearsClouds,

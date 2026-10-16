@@ -40,6 +40,8 @@
 #define MAX_FOG_VOLUMES  8
 // Must match world.MaxAmbientVolumes (and gfx.SceneMaxAmbientVolumes).
 #define MAX_AMBIENT_VOLUMES 8
+// Must match gfx.SceneMaxReflVolumes (render/envmap.go's cube array layers).
+#define MAX_REFL_VOLUMES 8
 
 layout(std140, binding = 0) uniform SceneBlock {
     // ---- lights (world.UploadLightsTo) ----
@@ -148,6 +150,30 @@ layout(std140, binding = 0) uniform SceneBlock {
     vec4  ambVolCenter[MAX_AMBIENT_VOLUMES]; // xyz centre, w shape (world.VolumeShape)
     vec4  ambVolHalf[MAX_AMBIENT_VOLUMES];   // xyz half extents, w fade (metres)
     vec4  ambVolParams[MAX_AMBIENT_VOLUMES]; // x sky, y ground, z fog, w dust
+
+    // ---- lighting quality (gfx/lighting_settings.go; docs/lighting/PLAN.md) ----
+    // Each 0 in a block nothing wrote, which is the lighting before them.
+    int   specularOn;       // GGX specular from the direct lights (specular.glsl)
+    int   envOn;            // image-based specular: 1 the sky's cube is bound
+    int   ssaoOn;           // last frame's screen-space AO is bound (ao.glsl)
+    int   contactShadowsOn; // the sun's contact shadow rides the AO texture
+    // The view-projection the bound AO texture was made with: a fragment's
+    // place in it is its world position through this (ao.glsl).
+    mat4  ssaoPrevViewProj;
+    float envMaxMip;        // the env cube's last mip, the roughest lobe
+    float envIntensity;     // scales the image-based specular
+    float ssaoStrength;     // 0..1, how much of the screen AO is applied
+    int   sdfAOOn;          // occlusion from the GI distance field
+    int   numReflVolumes;
+    int   softShadowsOn;    // PCSS on the cascades (fragment.glsl)
+    float sunAngularRadius; // radians: the penumbra the soft shadows widen to
+    int   envGINormalize;   // scale reflections by the GI probes' light
+    vec4  reflVolCenter[MAX_REFL_VOLUMES]; // xyz the capture point, w its cube layer
+    vec4  reflVolMin[MAX_REFL_VOLUMES];    // xyz the box's low corner, w fade (metres)
+    vec4  reflVolMax[MAX_REFL_VOLUMES];    // xyz the high corner, w intensity
+    // Each point light's cube in the shadow cube-map array, -1 for none
+    // (point_shadow.glsl; render.packPointShadows).
+    int   pointShadowCube[MAX_POINT_LIGHTS];
 };
 
 #endif

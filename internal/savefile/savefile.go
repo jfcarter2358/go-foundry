@@ -152,6 +152,13 @@ type WorldState struct {
 	// ViewDistance is the level's far plane, which a script may have changed
 	// during play (`@level.prop.view_distance`); 0 is the engine default.
 	ViewDistance float32
+	// RainRipples is the rain on the level's water (`@level.prop.rain_ripples`),
+	// which a script may have changed during play. Absent in older saves:
+	// gob reads it as 0, and the restore keeps the level's own then.
+	RainRipples float32
+	// HasRainRipples says RainRipples was captured (a save from before it
+	// existed restores the level file's value, not 0).
+	HasRainRipples bool
 }
 
 // EntityState is one entity. Entity is the entity itself with everything that

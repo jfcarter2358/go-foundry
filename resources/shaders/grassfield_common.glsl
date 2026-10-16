@@ -11,6 +11,14 @@
 // each run its nearest point admits; here each drawn instance shows as much
 // as its OWN distance admits, dissolving over a narrow band of rank, and the
 // survivors grow to keep the ground covered.
+//
+// Ground cover (internal/grassfield orient.go, card.go; docs/terrain-paint/
+// PHASE_P3.md): an ORIENTED kind's clumps stand on their own up axis, the
+// fourth instance word (an oriented field's), instead of +Y — the yawed
+// clump is turned onto it by grassUpRotate (orient.go's UpRotate, line for
+// line). A CARD (flat leaf litter) is also pulled toward the camera by a
+// distance-scaled bias, so it never fights the terrain under it. Kinds with
+// neither flag place exactly as before.
 
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
@@ -19,6 +27,9 @@ layout(location = 2) in vec2 aUV;
 layout(location = 3) in vec4 aWind;
 // x | z << 16; y | yaw << 16 | scale << 24; r | g << 8 | b << 16 | rank << 24.
 layout(location = 4) in uvec3 iData;
+// An oriented field's fourth word: the up axis, octahedral 12 + 12 bits.
+// Not fetched (its array is off) for a field without oriented kinds.
+layout(location = 5) in uint iUp;
 
 uniform vec3 camPos;
 // The field's box (low corner, extent) and its largest scale.
@@ -32,6 +43,12 @@ uniform vec4 grassRangeB;
 // This draw's kinds' share of the range (0: all), and its tier's window.
 uniform float kindRange;
 uniform vec2 tierWindow;
+// This draw's kinds' flags (grassfield.Kind.Flags): 2 oriented, 4 still,
+// 8 card.
+uniform int kindFlags;
+
+const int GRASS_KIND_ORIENTED = 2;
+const int GRASS_KIND_CARD = 8;
 
 const float GRASS_RANK_BAND = 0.06;
 const float GRASS_MAX_COMP = 3.0;
@@ -92,6 +109,25 @@ vec3 grassWind(vec3 root, vec3 p, float height, float up, float out_, float bend
     return d;
 }
 
+// The up axis an oriented instance's fourth word holds (orient.go).
+vec3 grassUnpackUp(uint w) {
+    vec2 f = vec2(float(w & 0xfffu), float((w >> 12u) & 0xfffu)) / 4094.0 * 2.0 - 1.0;
+    vec3 n = vec3(f.x, 1.0 - abs(f.x) - abs(f.y), f.y);
+    if (n.y < 0.0) {
+        n.xz = (1.0 - abs(n.zx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.z >= 0.0 ? 1.0 : -1.0);
+    }
+    return normalize(n);
+}
+
+// grassUpRotate turns v from the upright frame onto axis n: the shortest
+// rotation taking +Y to n (orient.go's UpRotate).
+vec3 grassUpRotate(vec3 n, vec3 v) {
+    float k = 1.0 / (1.0 + n.y);
+    return vec3((1.0 - n.x * n.x * k) * v.x + n.x * v.y - n.x * n.z * k * v.z,
+                -n.x * v.x + n.y * v.y - n.z * v.z,
+                -n.x * n.z * k * v.x + n.z * v.y + (1.0 - n.z * n.z * k) * v.z);
+}
+
 // What grassPlace works out for the stages.
 vec3 gWorldPos;
 vec3 gNormal;
@@ -100,6 +136,8 @@ vec3 gTint;
 float gFade;
 vec2 gXfade;
 float gUp;
+// gAxis is the clump's up axis (+Y unless oriented).
+vec3 gAxis;
 
 // grassPlace places this vertex; false when the instance shows nothing here
 // (thinned out, or outside this draw's tier window).
@@ -125,12 +163,23 @@ bool grassPlace() {
     float c = cos(yaw), s = sin(yaw);
     vec3 l = aPos * vec3(sc * grow.x, sc * hs, sc * grow.x);
     vec3 w = vec3(c * l.x + s * l.z, l.y, -s * l.x + c * l.z);
+    vec3 n = vec3(c * aNormal.x + s * aNormal.z, aNormal.y, -s * aNormal.x + c * aNormal.z);
+    gAxis = vec3(0.0, 1.0, 0.0);
+    if ((kindFlags & GRASS_KIND_ORIENTED) != 0) {
+        gAxis = grassUnpackUp(iUp);
+        w = grassUpRotate(gAxis, w);
+        n = grassUpRotate(gAxis, n);
+    }
     vec3 p = gRoot + w;
     gUp = aWind.x;
     float height = max(sc * hs * aPos.y / max(aWind.x, 1e-3), 0.05);
     p += grassWind(gRoot, p, height, aWind.x, aWind.y, aWind.z, aWind.w);
+    if ((kindFlags & GRASS_KIND_CARD) != 0) {
+        // Toward the camera by 1 cm plus 2 mm a metre: the litter stays
+        // over the ground under it at every distance.
+        p += normalize(camPos - p) * (0.01 + 0.002 * d);
+    }
     gWorldPos = p;
-    vec3 n = vec3(c * aNormal.x + s * aNormal.z, aNormal.y, -s * aNormal.x + c * aNormal.z);
     gNormal = normalize(n + vec3(0.0, 1e-4, 0.0));
     return true;
 }

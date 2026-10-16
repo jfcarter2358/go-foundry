@@ -318,3 +318,9 @@ volumes:
 The Script section of the panel lists every parameter the attached script
 declares, one row each, with a picker over the level's IDs for a `ref`. See
 [Scripting](18-scripting.md).
+
+## Reflection volumes
+
+A volume with **Captures its own reflection** ticked (`reflection:`) gives the
+shiny surfaces inside it the room's reflection instead of the sky's. See
+[Lighting](07-lighting.md#reflections).

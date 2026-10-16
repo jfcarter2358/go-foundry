@@ -17,12 +17,10 @@ layout(location = 7) in mat4 instanceModel;
 layout(location = 13) in vec4 instanceSphere;
 layout(location = 14) in vec4 instanceWind;
 
-// Water animation. isWater gates the whole path; time is seconds since start.
-uniform int   isWater;
-uniform float time;
-uniform float waveAmplitude;
-uniform float waveLength;
-uniform float waveSpeed;
+// Water animation: isWater, time, the swell and waterHeight() itself are
+// water_waves.glsl's, the very text fragment.glsl differentiates for the
+// shading normal — so the displaced crest and the lit crest are one.
+#include "water_waves.glsl"
 
 // Smooth shading: 1 = shade from vertNormal, 0 = let the fragment stage recover
 // a flat facet normal from screen-space derivatives. Locations are pinned so the
@@ -86,24 +84,6 @@ out vec4 fragBakedLight;
 out vec3 fragBakedIndirect;
 // The vertex colour, interpolated (white without vertexColors).
 out vec4 fragVertColor;
-
-// Sum of three travelling sine waves at different headings, so the surface
-// never reads as a single repeating ripple. Driven by world XZ, which keeps
-// wave size independent of how far the plane is scaled up.
-//
-// MUST stay identical to waterHeight() in fragment.glsl — the vertex stage
-// displaces geometry with it and the fragment stage differentiates it for the
-// shading normal. If they drift, lit highlights slide off the actual crests.
-float waterHeight(vec2 p) {
-    float k = 6.2831853 / max(waveLength, 0.001);
-    float t = time * waveSpeed * 6.2831853;
-
-    float h = 0.0;
-    h += sin(p.x * k + t) * 0.50;
-    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
-    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
-    return h * waveAmplitude;
-}
 
 void main() {
     vec2 uv = vertTexCoord * (vec2(1.0) + uvScaleBias);

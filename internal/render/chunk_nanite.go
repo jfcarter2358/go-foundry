@@ -331,7 +331,7 @@ func (g *chunkGPU) drawOcclusion(cb *ChunkBatch) {
 // modelUniform, which this sets to the chunk's.
 func (g *chunkGPU) drawShadow(ch *world.Chunk, cb *ChunkBatch, chunkModel mgl32.Mat4, cull *Frustum, prog uint32,
 	modelUniform int32, current *mgl32.Mat4) {
-	casts := func(gi int) bool { return cb.groups[gi].batch.Alpha >= 0.05 }
+	casts := func(gi int) bool { return batchCastsShadow(&cb.groups[gi].batch.Material) }
 	if k := restKey(ch, casts, len(cb.groups)); k != g.shadowKey {
 		tiles, groups, which, slots := g.tilesFor(ch, cb, casts)
 		g.shadow.setTiles(tiles, groups, slots)

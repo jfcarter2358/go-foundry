@@ -69,6 +69,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroup("Fog##volfoggrp", 0, func() { editorVolumeFog(v) })
 	editorPropGroup("Cloud##volcloudgrp", 0, func() { editorVolumeCloud(v) })
 	editorPropGroup("Ambient (dark interior)##volambgrp", 0, func() { editorVolumeAmbient(v) })
+	editorPropGroup("Reflection capture##volreflgrp", 0, func() { editorVolumeReflection(v) })
 	editorPropGroup("Gravity##volgravgrp", 0, func() { editorVolumeGravity(v) })
 	editorPropGroup("Scatter##volscattergrp", 0, func() { editorVolumeScatter(v) })
 	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
@@ -819,6 +820,47 @@ func editorVolumeAmbient(v *world.Volume) {
 	a.Clamp()
 	if !v.Enabled {
 		imgui.Text("The volume is disabled, so the ambient is not cut.")
+	}
+}
+
+// editorVolumeReflection draws the region's reflection capture
+// (world/volume_reflection.go), on the ambient group's terms.
+func editorVolumeReflection(v *world.Volume) {
+	has := v.Reflection != nil
+	if imgui.Checkbox("Captures its own reflection##volreflon", &has) {
+		EditorPushUndo()
+		if has {
+			r := world.DefaultVolumeReflection()
+			v.Reflection = &r
+			editorSetStatus("Volume %q now captures a reflection", v.ID)
+		} else {
+			v.Reflection = nil
+			editorSetStatus("Removed the reflection capture from volume %q", v.ID)
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Shiny surfaces inside reflect the room, captured from the volume's\n" +
+			"centre and projected onto its box, instead of the sky. Size the\n" +
+			"box to the room's walls and leave it unrotated. Needs live GI\n" +
+			"for the capture; without it the volume reflects the sky.")
+	}
+	if v.Reflection == nil {
+		return
+	}
+	r := v.Reflection
+	on := r.Enabled
+	if imgui.Checkbox("Enabled##volreflen", &on) {
+		EditorPushUndo()
+		r.Enabled = on
+	}
+	editorDragFloatStep("Intensity##volreflint", &r.Intensity, 0, 4, "%.2f", 0.05)
+	editorDragFloatStep("Fade (m)##volreflfade", &r.Fade, 0, 100, "%.1f", 0.1)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far in from the box's walls its reflection takes over.")
+	}
+	r.Clamp()
+	if !v.Enabled {
+		imgui.Text("The volume is disabled, so nothing is captured.")
 	}
 }
 

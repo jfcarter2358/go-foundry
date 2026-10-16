@@ -12,6 +12,7 @@
 // lightWrap and ambientHemisphere — ride in the scene block with the rest of
 // the lights (world.UploadLightsTo).
 #include "scene_block.glsl"
+#include "amb_tiles.glsl"
 
 // Wrapped Lambert: how much of a light a surface at cosine ndl to it takes. At
 // lightWrap 0 it is max(N.L, 0), the hard terminator; above that the light
@@ -66,9 +67,17 @@ float ambVolWeight(int i, vec3 p) {
 // of normal n: 1 outside every ambient volume.
 float ambientVolumeFactor(vec3 p, vec3 n) {
     float f = 1.0;
+    if (numAmbVolumes <= 0) {
+        return f;
+    }
+    // Only the volumes p's screen tile can see (amb_tiles.glsl).
+    uint seen = ambVolMaskAt(p);
     for (int i = 0; i < MAX_AMBIENT_VOLUMES; ++i) {
         if (i >= numAmbVolumes) {
             break;
+        }
+        if ((seen & (1u << uint(i))) == 0u) {
+            continue;
         }
         float w = ambVolWeight(i, p);
         if (w > 0.0) {

@@ -101,3 +101,33 @@ func TestShippedTorchSurvivesASaveReload(t *testing.T) {
 		}
 	}
 }
+
+// TestShippedStepPuffsLoadAndFinish — the sand and snow step puffs the
+// ground trails' footsteps spawn (sim/footsteps.go): one-shots, so each
+// layer has to produce something and then finish, or every step on a dune
+// leaves an emitter behind.
+func TestShippedStepPuffsLoadAndFinish(t *testing.T) {
+	for _, name := range []string{"step_sand", "step_snow"} {
+		d, err := LoadParticle(filepath.Join(testenv.RepoRoot(t), "resources", "particles", name+".fpar"))
+		if err != nil {
+			t.Fatalf("load %s.fpar: %v", name, err)
+		}
+		if len(d.Layers) != 2 {
+			t.Fatalf("%s: %d layers, want 2", name, len(d.Layers))
+		}
+		for i := range d.Layers {
+			l := d.Layers[i]
+			s := NewSystem(l, d.Gravity, d.Seed+uint32(i))
+			s.Step(1.0/60.0, mgl32.Ident4())
+			if s.Count() == 0 {
+				t.Errorf("%s: layer %q burst nothing", name, l.Name)
+			}
+			for f := 0; f < 60*3; f++ {
+				s.Step(1.0/60.0, mgl32.Ident4())
+			}
+			if !s.Done() {
+				t.Errorf("%s: layer %q still running three seconds in", name, l.Name)
+			}
+		}
+	}
+}

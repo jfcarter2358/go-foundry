@@ -211,3 +211,72 @@ for generated output, PHASE_<n>.md at the end).
 
 Each phase adds its part of docs/guide (33-generators.md stage sections; a
 new guide page for painting and one for water).
+
+## Status (2026-10-16, after phase W5)
+
+All nine phases are built; each PHASE_<n>.md has the detail, the files, the
+tests and the measurements. Nothing here is committed.
+
+### What shipped
+
+| Phase | Shipped |
+| --- | --- |
+| W1 | The water shader rebuild (depth colour, refraction, SSR → sky map → ambient, GGX glint, generated detail normals, shore foam, caustics, crest glow), seven `.fmat` presets, `gfx.WaterQuality` low/medium/high, the `water: copy` / `water` profiler rows |
+| P1 | `ParamMask`, `procgen/paint`, sparse tile PNG storage + hashing, `paint` bands on scatter / grass_field / terrain_material / region_material, exclude and material layers, the Generator 2D-view brush, `foundry gen paint` |
+| P2 | The 3D-viewport brush and overlay, paint undo, per-tile incremental reruns (tile-scoped Supersede for scatter, per-tile splat rewrites, rect keys) |
+| P3 | Instancer `orient: ground`, `wind: false`, card kinds; litter/twig/needle/pebble kits from Poly Haven; `.fpb` brush presets with recipes (20 shipped) |
+| W2 | `ground_edit`: height layers, flatten, pond / lake / marsh basins with painted or spill levels, recooked tiles, rewritten water masks |
+| W3 | Painted and drainage rivers → one builder: monotone surface, carved channel, pools/riffles, point bars, waterfalls (data), confluences, flow-mapped ribbons, river masks, boulders, bed dressing |
+| P4 | Direction layers, the path brushes (rock path, dirt trail, gravel path, stepping stones, game trail): splat override, oriented stones, wear, flatten, ford stones |
+| W4 | Waterfall sheets (ballistic curtain, notch, falls shader, `water_falls`), mist emitters (and the generator → level emitter plumbing), cascades, confluence mixing lines, caustics moved onto the water, wet bed, obstacles in scatter footprints |
+| W5 | `world.WaterAt` + `water_at`, rings (wading, entering, shots, splashes) and rain rings (`rain_ripples`), splash presets and sounds, the underwater view (murk fog volume, caustics from below, Snell's window, muffled effects bus, hysteresis), river/falls/confluence/shore sounds placed by ground_edit with distance-culled loops, W4 polish (foam patches/streaks, falls look, mist wind), docs/guide/37-water.md |
+
+### Still open (carried by the phase notes)
+
+- **Rendering / water**: Hi-Z SSR (a min-pyramid march; SSR measured ≈ 0.2
+  ms, so it would buy reach, not time); ripples tile visibly from high above;
+  Gerstner swell is vertical only; the material editor's preview has no
+  copies; no split view when the near plane cuts the water line; one-colour
+  underwater murk; no swimming, buoyancy or breath; no rain weather beyond
+  rings; rings are radial packets (no wake V, no shore reflection); 16 live
+  rings; the waterfall mist's close-up overdraw (a near-camera sprite fade);
+  mist follows the wind, not the current; the falls sheet is one-sided data
+  (shaded two-sided since W5); the game's Graphics tab still lacks a
+  `water_quality` row (the user's OneDrive project).
+- **Audio**: generated water clips, not recordings; the muffle is effects-bus
+  only; loops beyond the mixer's eight in earshot are refused.
+- **Paint / incremental**: upstream-only layers hashed with a 192 m margin;
+  the first rerun after an upstream stage rebuilds every piece; region_material
+  far weights and per-tile materials rerun whole; whole-PNG splat re-reads;
+  layer delete/rename leave folders on disk; no tablet pressure; the brush
+  aims at collision geometry; the overlay can clip ridges.
+- **Ground cover / presets**: seven splat slots run out after ~3 texture
+  presets (paths fall back to existing roles); recipe excludes only reach
+  stages that exist when applied; decimation does not always reach
+  `max_triangles`; scan-dependent kind sizes; per-vertex card lighting, cards
+  never cast. (The rock_path recipe placing its rocks stage after an
+  existing ground_edit, found in W5, is fixed: `OrderStagesByRefs`.)
+- **Terrain edits**: round brushes make round bowls; one level per standing
+  body; flow/deposition not recomputed after edits; a region terrain's own
+  water not reconciled with carved ponds; summed, unclamped height layers;
+  heightmap range widening shifts every sample once; recipe rewiring only on
+  apply.
+- **Rivers / paths**: flow maps at grid resolution (no swirl behind
+  boulders); long thin painted rivers simplify to few points; sand bars not
+  read by `drift`; cascades opt-in; obstacles are discs; no bridges or
+  boardwalks; masks on the terrain grid (thin trails); one stretched flagstone
+  scan; stones not grass-avoided per stone; steps read as a terraced ramp.
+- **Hangs**: the intermittent headless GPU wait (W1–W4: 1 in 4 to 1 in 10
+  runs; evidence with foundry-42). After foundry-42's SceneBuffer orphaning
+  change, W5's 40 headless runs had none.
+
+### Never verified in a live, interactive editor window
+
+Every editor feature of these phases was exercised headlessly (editor tests,
+`foundry gen paint`, `foundry gen run`, `foundry play` shots), never by hand
+in a running editor: the 2D-view and 3D-view brushes, overlays and their
+undo; the paint layer panel; the preset combo and recipe popup; the pond,
+marsh, river and path brushes and their panels (Shift+wheel width, Adopt,
+Edit, −/+); flatten; live updates while painting with water; the
+ground_edit "Water sounds" controls; the particle editor's "Wind" slider; and
+how the water clips sound through speakers.

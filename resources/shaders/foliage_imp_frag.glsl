@@ -112,15 +112,10 @@ void main() {
     float viewDepth = biomeViewDepth(vWorldPos);
     vec3 lighting = biomeLighting(vWorldPos, n, viewDepth, receiveShadows != 0, thin);
     base = giDebugAlbedo(base);
-    vec3 col = base * clamp(lighting, 0.0, 1.2);
-    if (thin) {
-        vec3 V = normalize(camPos - vWorldPos);
-        for (int i = 0; i < numDirLights; i++) {
-            vec3 ld = -normalize(dirLightDir[i]);
-            float through = pow(max(dot(-V, ld), 0.0), 4.0);
-            col += base * dirLightColor[i] * dirLightBrightness[i] * through * 0.3;
-        }
-    }
-    col = applyFog(col, vWorldPos);
+    // Scene units (gfx/hdr.go): hdrLightMax is 1 in LDR.
+    vec3 col = base * clamp(lighting, 0.0, 1.2 * hdrLightMax());
+    // A thin card's light through it is biomeLighting's own now
+    // (BIOME_TRANSLUCENCY), as every blade and leaf takes it.
+    col = applyFogScene(col, vWorldPos);
     outputColor = vec4(col, clamp(a, 0.0, 1.0));
 }

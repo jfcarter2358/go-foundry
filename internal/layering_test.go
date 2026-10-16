@@ -153,6 +153,10 @@ var upward = map[string][]string{
 	// terrain and rock variants and answers instances: pure computation,
 	// the placement stages make level placements of them.
 	"procgen/place": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/paint (the generators' paint layers: sparse world tiles,
+	// sampling, strokes, their PNGs and hashes) is pure computation the
+	// core declares and the stages and the editor read: below procgen.
+	"procgen/paint": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
 	// polyhaven is the Poly Haven API client (listings, cached md5-verified
 	// downloads, thumbnails): pure Go over net/http. The importer
 	// (polyhaven/phimport) cooks, so it may reach gfx through nanitecook;

@@ -169,6 +169,15 @@ func materialFragmentPart(fragSrc string) (string, error) {
 	// The blend pair is optional (a file without blending is still fine).
 	src = strings.ReplaceAll(src, "texture(blendTex,", "nvTexture(blendTex,")
 	src = strings.ReplaceAll(src, "texture(blendMask,", "nvTexture(blendMask,")
+	// And the ARM map (specular.glsl's inputs; gfx/texture_armmap.go).
+	src = strings.ReplaceAll(src, "texture(armMap,", "nvTexture(armMap,")
+	// NV_MATERIAL_PASS lets fragment.glsl leave out what the material pass
+	// should not compile (an #ifndef block), should it ever need to.
+	if v := reVersion.FindStringIndex(src); v != nil {
+		src = src[:v[1]] + "#define NV_MATERIAL_PASS 1\n" + src[v[1]:]
+	} else {
+		src = "#define NV_MATERIAL_PASS 1\n" + src
+	}
 	if strings.Contains(src, "dFdx(") || strings.Contains(src, "dFdy(") {
 		return "", fmt.Errorf("fragment.glsl: a screen-space derivative the material pass does not reconstruct")
 	}

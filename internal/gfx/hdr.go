@@ -48,6 +48,24 @@ import "math"
 // (render.sceneFrameBegin sets and clears it).
 var HDRFrame bool
 
+// HDRByDefault is whether a level without a `tonemap:` block shades in HDR,
+// with automatic exposure (docs/lighting/PLAN.md, phase 4). FOUNDRY_HDR=0
+// turns it off: every such level back to the LDR shading of before.
+var HDRByDefault = EnvFlag("FOUNDRY_HDR", true)
+
+// AutoExposure is the CPU's side of an auto level's exposure: what its
+// compensation multiplies in the scene block's hdrExposure, which carries the
+// display-referred colours into the scene's units. The adapted exposure
+// itself lives on the GPU (render/exposure.go) and is never read back; this
+// stays at the reference, DefaultAutoExposure, which the output divides the
+// adapted value by.
+var AutoExposure float32 = DefaultAutoExposure
+
+// DefaultAutoExposure is the reference exposure: about what the adaptation
+// settles at in an ordinary daylit level, where its mean lands where the LDR
+// shading had it under the ACES curve (render/exposure.go's key).
+const DefaultAutoExposure = 0.75
+
 // HDRLightMax is the brightest summed light an HDR frame keeps (the LDR
 // frame's is 1): far past any sun a level sets, short of overflowing the
 // RGBA16F target once multiplied by an albedo.

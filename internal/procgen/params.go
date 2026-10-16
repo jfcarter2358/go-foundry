@@ -30,6 +30,9 @@ package procgen
 //     Value.CurveAt — a cross-section, a falloff, a remap.
 //   - list: a repeated group of sub-parameters (Fields), e.g. strata layers or
 //     scatter rules. Items are Params of their own, resolved recursively.
+//   - mask: the name of one of the document's paint layers (Doc.Paint,
+//     paint_doc.go), or empty for none. A stage that names a layer folds
+//     the layer's content hash into its own, so painting reruns it.
 
 import (
 	"fmt"
@@ -56,11 +59,12 @@ const (
 	ParamSpline
 	ParamCurve
 	ParamList
+	ParamMask
 )
 
 var paramTypeNames = []string{
 	"float", "int", "bool", "enum", "vec2", "vec3", "color", "texture", "string",
-	"seed", "stage", "spline", "curve", "list",
+	"seed", "stage", "spline", "curve", "list", "mask",
 }
 
 // ParamTypeName is the type's spelling in docs and error messages.
@@ -138,6 +142,34 @@ type ParamDef struct {
 	// changes nothing else: the file, the hash and validation treat it as
 	// any parameter.
 	ReadOnly bool
+	// RectCovered marks a top-level parameter of a RectKeyed kind whose
+	// whole effect on the stage's readers is what the artifact's RectKey
+	// covers — a ground_edit's river splines move the heights and masks a
+	// downstream piece reads, and nothing else (docs/terrain-paint/
+	// PHASE_W3.md). It is left out of the stage's BASE hash (StageBaseHash)
+	// and kept in its full hash: editing it reruns the stage and its
+	// readers, but an incremental reader keys its pieces by the rect keys
+	// and rebuilds only those whose ground moved. Its content is folded
+	// into the readers' UpstreamPaintHash instead, for the caches keyed by
+	// the base hash alone. Off (every kind before W3), nothing changes.
+	RectCovered bool
+	// MaskWords are words a mask parameter (ParamMask) also accepts that
+	// name no paint layer: a scatter or grass rule's `orient_to` takes a
+	// direction layer, or `downhill` or `paths` (docs/terrain-paint/
+	// PHASE_P4.md). A word validates, hashes no paint and is offered by
+	// the editor's combo; a layer declared with the same name is shadowed
+	// by the word. Empty (every mask before P4): nothing changes.
+	MaskWords []string
+}
+
+// IsMaskWord reports whether v is one of a mask parameter's MaskWords.
+func (p *ParamDef) IsMaskWord(v string) bool {
+	for _, w := range p.MaskWords {
+		if w == v {
+			return true
+		}
+	}
+	return false
 }
 
 // DisplayLabel is Label, or Name when there is none.
@@ -227,7 +259,8 @@ type Value struct {
 	// Num is a float, int or seed.
 	Num  float64
 	Bool bool
-	// Str is an enum, texture, string or stage ref.
+	// Str is an enum, texture, string, stage ref or mask (a paint layer's
+	// name).
 	Str string
 	// Vec is a vec2 (x, y), vec3 (x, y, z) or colour (r, g, b).
 	Vec [3]float64
@@ -249,6 +282,7 @@ func Texture(s string) Value           { return Value{Type: ParamTexture, Str: s
 func String(s string) Value            { return Value{Type: ParamString, Str: s} }
 func Seed(n int64) Value               { return Value{Type: ParamSeed, Num: float64(n)} }
 func StageRef(id string) Value         { return Value{Type: ParamStage, Str: id} }
+func Mask(layer string) Value          { return Value{Type: ParamMask, Str: layer} }
 func Vec2(x, y float64) Value          { return Value{Type: ParamVec2, Vec: [3]float64{x, y}} }
 func Vec3(x, y, z float64) Value       { return Value{Type: ParamVec3, Vec: [3]float64{x, y, z}} }
 func Color(r, g, b float64) Value      { return Value{Type: ParamColor, Vec: [3]float64{r, g, b}} }

@@ -349,6 +349,9 @@ func volumeRoleSummary(v *Volume) string {
 	if v.Ambient != nil {
 		roles = append(roles, "ambient")
 	}
+	if v.Reflection != nil {
+		roles = append(roles, "reflection")
+	}
 	if v.Scatter != nil {
 		roles = append(roles, "scatter")
 	}

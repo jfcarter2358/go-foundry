@@ -110,13 +110,16 @@ type TerrainMaterialArtifact struct {
 
 func init() {
 	procgen.RegisterStage(procgen.StageKind{
-		Name:     TerrainMaterialKind,
-		Label:    "Terrain material",
-		Category: "Materials",
+		Name: TerrainMaterialKind,
+		// Per-tile reruns after a paint stroke (docs/terrain-paint/PHASE_P2.md).
+		Incremental: true,
+		Label:       "Terrain material",
+		Category:    "Materials",
 		// Served by the level generation doc's shared stages for every
 		// region; never expanded per region (docs/regions/SPEC.md).
 		Regional: procgen.RegionalShared,
-		Version:  1,
+		// 2: soft-ground layers (sand, snow) marked for the ground trails.
+		Version: 2,
 		Doc: "The material a terrain's tiles wear: sand, cracked ground, gravel and rock layers from a Poly Haven " +
 			"textures stage, splatted by the terrain's masks (rock on slopes and cliffs, triplanar and banded by the " +
 			"strata; gravel in washes; cracked ground on flats; sand in between), height-blended. Also writes the " +
@@ -225,7 +228,8 @@ func terrainMaterialParams() []procgen.ParamDef {
 				"gravel carpet. How much of the gravel they take; 0: none."},
 		{Name: "wash_bar_size", Added: true, Type: procgen.ParamVec2, Label: "Wash bar size (m)", Default: v2(28, 5), Min: 0.5, Max: 500, Step: 0.5,
 			Doc: "A bar's typical length along the flow and width across it."},
-	}, coverParams()...)
+	}, append(coverParams(), // + the paint list (terrain_material_paint.go)
+		splatPaintParam("sand, cracked, gravel or rock (wet, ash or snow with covers)"))...)
 }
 
 func validateTerrainMaterial(_ *procgen.Doc, _ *procgen.Stage, p procgen.Params) []string {
@@ -578,17 +582,38 @@ type terrainMaterialMaps struct {
 	tints         [4][3]float64
 	groundMean    [3]float64
 	rockMean      [3]float64
+	// reused: the unpainted weights came from the cache
+	// (paint_weight_cache.go).
+	reused bool
 }
 
 func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*TextureLayer, covers [3]*TextureLayer, seed uint64,
-	pool terrain.Pool) (*terrainMaterialMaps, error) {
+	pool terrain.Pool, rc *procgen.RunContext) (*terrainMaterialMaps, error) {
 	g := t.Grid
 	sz := g.S()
 	// The four rules, and the covers laid over them when p names any
-	// (terrain_material_cover.go): nc weights a sample, 4 or 7.
-	w, nc, err := coverGroundWeights(t, p, seed, pool)
+	// (terrain_material_cover.go): nc weights a sample, 4 or 7. A run
+	// whose stage reads paint keeps them across strokes
+	// (paint_weight_cache.go); rc is nil in a preview.
+	build := func() ([]float32, int, error) { return coverGroundWeights(t, p, seed, pool) }
+	var w []float32
+	var nc int
+	var err error
+	reused := false
+	if rc != nil {
+		w, nc, reused, err = cachedWeights(rc, build)
+	} else {
+		w, nc, err = build()
+	}
 	if err != nil {
 		return nil, err
+	}
+	// The paint list (terrain_material_paint.go). Both callers hand their
+	// stage's Env as the pool; it is what the paint layers are read from.
+	if env, ok := pool.(*procgen.Env); ok {
+		if err := terrainMaterialPaint(env, p, g, w, nc, t); err != nil {
+			return nil, err
+		}
 	}
 	var coverMeans [3][3]float64
 	for r, l := range covers {
@@ -624,7 +649,7 @@ func buildTerrainMaterialMaps(t *terrain.Terrain, p procgen.Params, layers [4]*T
 		}
 	}
 	out := &terrainMaterialMaps{weights: make([]uint8, 4*sz*sz), ground: make([]uint8, 4*sz*sz), height: make([]uint8, 4*sz*sz),
-		tints: tints, rockMean: means[3]}
+		tints: tints, rockMean: means[3], reused: reused}
 	if nc > 4 {
 		out.weights2 = make([]uint8, 4*sz*sz)
 		out.coverCoverage = make([]float64, 3)
@@ -702,7 +727,7 @@ func runTerrainMaterial(rc *procgen.RunContext) error {
 		return err
 	}
 	rc.Progress(0.05)
-	maps, err := buildTerrainMaterialMaps(t, p, layers, covers, rc.Seed, &rc.Env)
+	maps, err := buildTerrainMaterialMaps(t, p, layers, covers, rc.Seed, &rc.Env, rc)
 	if err != nil {
 		return err
 	}
@@ -723,6 +748,9 @@ func runTerrainMaterial(rc *procgen.RunContext) error {
 		}{"weights2.png", sz, sz, maps.weights2})
 	}
 	if err := rc.Parallel(len(files), func(i int) error {
+		if (files[i].name == "height.png" || files[i].name == "strata.png") && keepUnpainted(rc, maps.reused, files[i].name) {
+			return nil // follows no paint (paint_weight_cache.go)
+		}
 		data, err := terrain.EncodeRGBA(files[i].w, files[i].h, files[i].pix)
 		if err != nil {
 			return err
@@ -771,6 +799,7 @@ func runTerrainMaterial(rc *procgen.RunContext) error {
 		return err
 	}
 	rc.Artifact = a
+	artifactAsLoaded(rc, data) // a painted one (paint_weight_cache.go)
 	rc.Logf("material %s (set the terrain stage's material to it): %d² maps, sand %.0f%%, cracked %.0f%%, gravel %.0f%%, rock %.0f%%, in %s",
 		a.Material, sz, 100*a.Coverage[0], 100*a.Coverage[1], 100*a.Coverage[2], 100*a.Coverage[3], time.Since(t0).Round(time.Millisecond))
 	rc.Progress(1)
@@ -804,6 +833,7 @@ func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]
 		if i == 3 && p.Bool("rock_triplanar") {
 			e.Set(material.SplatLayerParam(i, "triplanar"), material.BoolValue(true))
 		}
+		setSoft(e, i, l, i == 3 && p.Bool("rock_triplanar"))
 		if p.Bool("anti_tile") {
 			e.Set(material.SplatLayerParam(i, "anti_tile"), material.BoolValue(true))
 		}
@@ -832,6 +862,7 @@ func terrainMaterialDoc(a *TerrainMaterialArtifact, p procgen.Params, layers [4]
 			if p.Bool("anti_tile") {
 				e.Set(material.SplatLayerParam(i, "anti_tile"), material.BoolValue(true))
 			}
+			setSoft(e, i, l, false)
 		}
 	}
 	terrainMaterialExtras(d, e, a, p)
@@ -902,7 +933,7 @@ func previewTerrainMaterial(pc *procgen.PreviewContext) (*procgen.PreviewData, e
 		// manifest; read the set's manifest from its last run if there is one.
 		layers = previewLayersFromDisk(pc, p)
 	}
-	maps, err := buildTerrainMaterialMaps(t, p, layers, [3]*TextureLayer{}, pc.Seed, &pc.Env)
+	maps, err := buildTerrainMaterialMaps(t, p, layers, [3]*TextureLayer{}, pc.Seed, &pc.Env, nil)
 	if err != nil {
 		return nil, err
 	}

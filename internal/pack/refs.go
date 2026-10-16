@@ -31,6 +31,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/game"
+	"foundry/internal/material"
 	"foundry/internal/nanite"
 )
 
@@ -144,6 +145,10 @@ func referenceNames(slash string) []string {
 	// would be pruned out of a release for looking unreferenced.
 	if base := strings.TrimSuffix(stem, fileutil.NormalMapSuffix); base != stem {
 		names = append(names, base, dir+"/"+base, base+filepath.Ext(base))
+	}
+	// An ARM map likewise (gfx/texture_armmap.go: AO, roughness, metal).
+	if base := strings.TrimSuffix(stem, fileutil.ARMMapSuffix); base != stem {
+		names = append(names, base, dir+"/"+base)
 	}
 	// A splat layer's height and AO maps are the same: the material names the
 	// albedo and the engine finds <name>_height and <name>_ao beside it
@@ -273,6 +278,19 @@ func reachable(src string, idx assetIndex, roots []string) map[string]bool {
 				if !keep[hit] {
 					keep[hit] = true
 					frontier = append(frontier, hit)
+				}
+			}
+		}
+		// A material with a soft-ground layer (sand, snow) needs its kind's
+		// step sound and puff, which the game names from Go
+		// (material.SoftStepAsset), not the material.
+		if strings.EqualFold(filepath.Ext(path), ".fmat") {
+			for _, k := range material.SoftKindsIn(string(data)) {
+				for hit := range idx[material.SoftStepAsset(k)] {
+					if !keep[hit] {
+						keep[hit] = true
+						frontier = append(frontier, hit)
+					}
 				}
 			}
 		}

@@ -443,7 +443,8 @@ func runCave(rc *procgen.RunContext) error {
 // void comes through, no skirts. It returns their names.
 func caveTiles(rc *procgen.RunContext, t *terrain.Terrain, v *cave.Void, cut []bool) ([]string, error) {
 	tid := rc.Params.Str("terrain")
-	st := rc.Doc.StageByID(tid)
+	// A ground_edit's tiles are planned as its source terrain's.
+	st := terrainSourceStage(rc.Doc, tid)
 	k := procgen.KindByName(TerrainKind)
 	if st == nil || k == nil {
 		return nil, fmt.Errorf("no terrain stage %q", tid)

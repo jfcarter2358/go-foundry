@@ -126,6 +126,7 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 	stepDT = dt
 
 	render.ProfileBegin("player & vehicles")
+	playerLanded := false
 	if g.Play() {
 		// --- Input -> player -> camera ---
 		// The keys say how far to move; the player is what moves, and the
@@ -198,6 +199,11 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 				intent[0] *= world.SprintSpeedScale
 				intent[2] *= world.SprintSpeedScale
 			}
+			// Sand and snow take some of the stride (footsteps.go).
+			if d := playerSoftDrag(); d > 0 {
+				intent[0] *= 1 - d
+				intent[2] *= 1 - d
+			}
 
 			// The pull where the player is standing: the level's `gravity:`,
 			// whatever volume overrides it there, and the player's own scale,
@@ -224,6 +230,7 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 			// happened at — MovePlayer zeroes the fall the instant it reports
 			// it. The script tick drains it (script_events.go).
 			hooks.RecordPlayerGround(moved.OnGround, moved.Landed, moved.Impact)
+			playerLanded = moved.Landed
 
 			// Standing in a frame portal's doorway hands the player over to the
 			// other side — the ship's ramp onto the hangar deck, or back again.
@@ -309,6 +316,14 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 	}
 	if !g.Dev && world.PlayerEntity != nil && world.PlayerEntity.Collision.OnGround {
 		platform.IsOnGround = true
+	}
+	// Steps on soft ground — footprints, their sounds and puffs, the drag
+	// and the sink (footsteps.go) — once every body has moved.
+	if g.Play() {
+		stepWalkers(lvl, dt, playerLanded)
+		// Bodies in water — wading splashes, rings, dropping in
+		// (water_wade.go; docs/terrain-paint/PHASE_W5.md).
+		stepWater(lvl, dt)
 	}
 
 	// Frames follow whatever carries them, so their transforms are recomputed

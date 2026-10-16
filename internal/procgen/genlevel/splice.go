@@ -3,8 +3,8 @@
 //
 // Every entry a generator places carries the ID prefix gen.<generator>.
 // (procgen.IDPrefix), followed by its stage's ID and its own. A splice
-// removes every scenery and volume entry with the generator's prefix, then
-// appends the run's — so a rerun replaces exactly what the last run placed,
+// removes every scenery, volume and emitter entry with the generator's
+// prefix, then appends the run's — so a rerun replaces exactly what the last run placed,
 // a stage removed from the document takes its placements with it, and
 // everything hand-made (anything without the prefix) is left alone and in
 // its order. Naming a hand-made entry with a gen. prefix is the one way to
@@ -52,12 +52,22 @@ type Options struct {
 	// are added. RegionScope makes one for a run of some regions
 	// (region_splice.go). Nil: every entry of the generator.
 	Scope []string
+	// Emitters are the run's particle emitters (procgen.Emitter, IDs
+	// prefixed). Like scenery, the generator's emitters in the level are
+	// replaced by these; SpliceResult takes them from the result when nil.
+	Emitters []procgen.Emitter
+	// Sounds are the run's positional sounds (procgen.Sound, IDs prefixed),
+	// replaced like the emitters; SpliceResult takes them from the result
+	// when nil (phase W5).
+	Sounds []procgen.Sound
 }
 
 // Stats is what a splice changed.
 type Stats struct {
-	RemovedScenery, AddedScenery int
-	RemovedVolumes, AddedVolumes int
+	RemovedScenery, AddedScenery   int
+	RemovedVolumes, AddedVolumes   int
+	RemovedEmitters, AddedEmitters int
+	RemovedSounds, AddedSounds     int
 	// Settings are the level-wide settings written (settings.go), space
 	// separated: a string, so Stats stays comparable.
 	Settings string
@@ -66,6 +76,12 @@ type Stats struct {
 func (s Stats) String() string {
 	out := fmt.Sprintf("scenery -%d +%d, volumes -%d +%d",
 		s.RemovedScenery, s.AddedScenery, s.RemovedVolumes, s.AddedVolumes)
+	if s.RemovedEmitters+s.AddedEmitters > 0 {
+		out += fmt.Sprintf(", emitters -%d +%d", s.RemovedEmitters, s.AddedEmitters)
+	}
+	if s.RemovedSounds+s.AddedSounds > 0 {
+		out += fmt.Sprintf(", sounds -%d +%d", s.RemovedSounds, s.AddedSounds)
+	}
 	if len(s.Settings) > 0 {
 		out += ", settings " + s.Settings
 	}
@@ -76,7 +92,8 @@ func (s Stats) String() string {
 // file instead: settings rewritten to the values they already held are no
 // change.)
 func (s Stats) Changed() bool {
-	return s.RemovedScenery+s.AddedScenery+s.RemovedVolumes+s.AddedVolumes+len(s.Settings) > 0
+	return s.RemovedScenery+s.AddedScenery+s.RemovedVolumes+s.AddedVolumes+s.RemovedEmitters+s.AddedEmitters+
+		s.RemovedSounds+s.AddedSounds+len(s.Settings) > 0
 }
 
 // ToRawScenery converts a placement, ID unchanged.
@@ -114,6 +131,34 @@ func ToRawScenery(p procgen.Placement, opt Options) world.RawScenery {
 			r.Chunk = opt.ChunkAt(p.Position.X, p.Position.Y, p.Position.Z)
 		}
 	}
+	return r
+}
+
+// ToRawEmitter converts an emitter, ID unchanged.
+func ToRawEmitter(e procgen.Emitter) world.RawEmitter {
+	r := world.RawEmitter{ID: e.ID, Effect: e.Effect,
+		Position: world.RawVec3{X: e.Position.X, Y: e.Position.Y, Z: e.Position.Z},
+		Rotation: world.RawVec3{X: e.Rotation.X, Y: e.Rotation.Y, Z: e.Rotation.Z}}
+	if e.RateScale > 0 {
+		rs := e.RateScale
+		r.RateScale = &rs
+	}
+	return r
+}
+
+// ToRawSound converts a sound, ID unchanged: a looping, enabled placement
+// (world.NewSound's defaults) with the generator's gain, pitch and radii.
+func ToRawSound(s procgen.Sound) world.RawSound {
+	r := world.RawSound{ID: s.ID, Clip: s.Clip,
+		Position: world.RawVec3{X: s.Position.X, Y: s.Position.Y, Z: s.Position.Z}}
+	ptr := func(v float32) *float32 {
+		if v <= 0 {
+			return nil
+		}
+		return &v
+	}
+	r.Gain, r.Pitch = ptr(s.Gain), ptr(s.Pitch)
+	r.RefDistance, r.MaxDistance = ptr(s.RefDistance), ptr(s.MaxDistance)
 	return r
 }
 
@@ -170,6 +215,16 @@ func SpliceRaw(raw *world.RawLevel, generator string, scenery []procgen.Placemen
 			return st, fmt.Errorf("placement %q does not carry the generator's prefix %q", p.ID, prefix)
 		}
 	}
+	for _, e := range opt.Emitters {
+		if !strings.HasPrefix(e.ID, prefix) {
+			return st, fmt.Errorf("emitter %q does not carry the generator's prefix %q", e.ID, prefix)
+		}
+	}
+	for _, s := range opt.Sounds {
+		if !strings.HasPrefix(s.ID, prefix) {
+			return st, fmt.Errorf("sound %q does not carry the generator's prefix %q", s.ID, prefix)
+		}
+	}
 
 	keptSc := raw.Scenery[:0:0]
 	for _, s := range raw.Scenery {
@@ -205,6 +260,46 @@ func SpliceRaw(raw *world.RawLevel, generator string, scenery []procgen.Placemen
 		keptV = nil
 	}
 	raw.Volumes = keptV
+
+	keptE := raw.Emitters[:0:0]
+	for _, e := range raw.Emitters {
+		if strings.HasPrefix(e.ID, prefix) && inScope(e.ID, opt.Scope) {
+			st.RemovedEmitters++
+			continue
+		}
+		keptE = append(keptE, e)
+	}
+	for _, e := range opt.Emitters {
+		if !inScope(e.ID, opt.Scope) {
+			continue
+		}
+		keptE = append(keptE, ToRawEmitter(e))
+		st.AddedEmitters++
+	}
+	if len(keptE) == 0 {
+		keptE = nil
+	}
+	raw.Emitters = keptE
+
+	keptS := raw.Sounds[:0:0]
+	for _, s := range raw.Sounds {
+		if strings.HasPrefix(s.ID, prefix) && inScope(s.ID, opt.Scope) {
+			st.RemovedSounds++
+			continue
+		}
+		keptS = append(keptS, s)
+	}
+	for _, s := range opt.Sounds {
+		if !inScope(s.ID, opt.Scope) {
+			continue
+		}
+		keptS = append(keptS, ToRawSound(s))
+		st.AddedSounds++
+	}
+	if len(keptS) == 0 {
+		keptS = nil
+	}
+	raw.Sounds = keptS
 	set, err := SpliceSettings(raw, opt.Settings)
 	if err != nil {
 		return st, err
@@ -218,10 +313,17 @@ func SpliceResult(raw *world.RawLevel, res *procgen.Result, opt Options) (Stats,
 	if opt.Settings == nil {
 		opt.Settings = res.LevelSettings()
 	}
+	if opt.Emitters == nil {
+		opt.Emitters = res.Emitters()
+	}
+	if opt.Sounds == nil {
+		opt.Sounds = res.Sounds()
+	}
 	return SpliceRaw(raw, res.Generator, res.Placements(), res.Volumes(), opt)
 }
 
-// Count is how many of raw's scenery and volume entries the generator owns.
+// Count is how many of raw's scenery and volume entries the generator owns
+// (its emitters are not counted).
 func Count(raw *world.RawLevel, generator string) (scenery, volumes int) {
 	prefix := procgen.IDPrefix(generator)
 	for _, s := range raw.Scenery {

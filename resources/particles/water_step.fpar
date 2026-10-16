@@ -1,0 +1,62 @@
+# water_step.fpar — a foot coming down in shallow water
+# (docs/terrain-paint/PHASE_W5.md). Played by the simulation's wading watch
+# (sim/water_wade.go through world.SplashWater) at every stride a walker
+# takes in water shallower than most of its height, tinted by the water's
+# shallow colour and scaled by how deep and how fast. A crown of droplets
+# kicked up and falling back, and a low puff of spray at the surface; the
+# rings on the water are the shader's (render/water_interact.go).
+id: water_step
+seed: 71
+
+layers:
+  - name: droplets
+    duration: 0.9
+    loop: false
+    max: 24
+    bursts:
+      - {t: 0, n: 16}
+    shape: cone
+    radius: 0.08
+    angle: 35
+    life_min: 0.35
+    life_max: 0.7
+    speed_min: 1.2
+    speed_max: 2.6
+    size_min: 0.018
+    size_max: 0.04
+    gravity: 1
+    drag: 0.4
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    tint: {r: 0.95, g: 0.97, b: 1}
+    alpha_ramp:
+      - {t: 0, v: 0.85}
+      - {t: 0.7, v: 0.7}
+      - {t: 1, v: 0}
+
+  - name: spray
+    duration: 0.9
+    loop: false
+    max: 6
+    bursts:
+      - {t: 0, n: 4}
+    shape: disc
+    radius: 0.12
+    life_min: 0.3
+    life_max: 0.6
+    speed_min: 0.2
+    speed_max: 0.6
+    size_min: 0.14
+    size_max: 0.24
+    gravity: 0.2
+    drag: 2.5
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    size_ramp:
+      - {t: 0, v: 0.6}
+      - {t: 1, v: 1.8}
+    alpha_ramp:
+      - {t: 0, v: 0.45}
+      - {t: 1, v: 0}

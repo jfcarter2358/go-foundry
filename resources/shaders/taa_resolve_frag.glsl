@@ -43,6 +43,14 @@ uniform sampler2D motion;
 uniform int historyValid;
 uniform vec2 size;
 uniform float blendCurrent; // the new frame's share at rest
+// UPSAMPLING (render/dynres.go; docs/adventure/PHASE_F.md, Phase F2). With
+// upscale set, `current` and `motion` are renderSize — smaller than this
+// output-sized history — and render pixel i holds the scene at
+// i + 0.5 - jitterPx (render pixels: the projection was moved by the jitter,
+// so its centre sampled the point jitterPx behind it). See resolveUpscaled.
+uniform int upscale;
+uniform vec2 renderSize;
+uniform vec2 jitterPx;
 
 out vec4 outColor;
 
@@ -97,7 +105,67 @@ vec3 clipToBox(vec3 lo, vec3 hi, vec3 h) {
     return m > 1.0 ? c + v / m : h;
 }
 
+// resolveUpscaled is main's resolve for an output pixel when the frame was
+// drawn smaller than the output (UE4's TAAU, after Karis): this frame's
+// colour at the pixel is the 3x3 render samples round it weighted by a
+// Gaussian of their distance from its centre (exp(-2.29 d²), d in render
+// pixels: a Blackman-Harris fit); the clamp box is the same nine; and the
+// new frame's share is scaled by how near its nearest sample fell (d in
+// output pixels), normalised so its mean over a render pixel is the old
+// share — a pixel no sample came near this frame keeps its history.
+vec4 resolveUpscaled() {
+    vec2 rp = gl_FragCoord.xy / size * renderSize; // output centre, render px
+    vec2 c = rp - 0.5 + jitterPx;                   // in sample indices
+    ivec2 base = ivec2(floor(c + 0.5));
+    ivec2 last = ivec2(renderSize) - 1;
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    vec3 m1 = vec3(0.0), m2 = vec3(0.0);
+    vec3 lo = vec3(1e9), hi = vec3(-1e9);
+    float dmin = 1e9;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            ivec2 q = base + ivec2(dx, dy);
+            vec3 s = toYCoCg(finite3(texelFetch(current, clamp(q, ivec2(0), last), 0).rgb));
+            vec2 d = vec2(q) + 0.5 - jitterPx - rp;
+            float d2 = dot(d, d);
+            float w = exp(-2.29 * d2);
+            sum += w * s;
+            wsum += w;
+            dmin = min(dmin, d2);
+            m1 += s;
+            m2 += s * s;
+            lo = min(lo, s);
+            hi = max(hi, s);
+        }
+    }
+    vec3 cur = sum / max(wsum, 1e-5);
+    vec2 uv = gl_FragCoord.xy / size;
+    vec2 mv = texelFetch(motion, clamp(ivec2(rp), ivec2(0), last), 0).xy;
+    vec2 prev = uv - mv;
+    if (historyValid == 0 || any(lessThan(prev, vec2(0.0))) || any(greaterThan(prev, vec2(1.0)))) {
+        return vec4(fromYCoCg(cur), 1.0);
+    }
+    vec3 mean = m1 / 9.0;
+    vec3 sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
+    vec3 boxLo = max(lo, mean - 1.25 * sigma);
+    vec3 boxHi = min(hi, mean + 1.25 * sigma);
+    vec3 h = clipToBox(boxLo, boxHi, toYCoCg(sampleHistory(prev)));
+    // The nearest sample's distance in output pixels, and its weight's mean
+    // over a render pixel's area (pi / 2.29 output px² over 1/s² of them).
+    float s = renderSize.x / size.x;
+    float conf = exp(-2.29 * dmin / (s * s)) / (1.372 * s * s);
+    float speed = length(mv * size);
+    float a = mix(blendCurrent, 0.5, clamp(speed / 32.0, 0.0, 1.0));
+    a = clamp(a * conf, 0.0, 0.5);
+    return vec4(fromYCoCg(mix(h, cur, a)), 1.0);
+}
+
 void main() {
+    if (upscale != 0) {
+        outColor = resolveUpscaled();
+        return;
+    }
     ivec2 p = ivec2(gl_FragCoord.xy);
     ivec2 last = ivec2(size) - 1;
     vec3 cur = toYCoCg(finite3(texelFetch(current, p, 0).rgb));

@@ -65,8 +65,9 @@ import (
 const RegionTerrainKind = "region_terrain"
 
 // TerrainSources are the kinds whose artifact is a *terrain.Terrain: what a
-// stage reading a terrain may refer to.
-var TerrainSources = []string{TerrainKind, RegionTerrainKind}
+// stage reading a terrain may refer to. ground_edit (ground_edit.go) is one:
+// a terrain with painted edits.
+var TerrainSources = []string{TerrainKind, RegionTerrainKind, GroundEditKind}
 
 func init() {
 	procgen.RegisterStage(procgen.StageKind{
@@ -207,7 +208,8 @@ func regionTerrainAutoMaterial(d *procgen.Doc, s *procgen.Stage, p procgen.Param
 	}
 	for i := range d.Stages {
 		m := &d.Stages[i]
-		if m.Kind != RegionMaterialKind || m.Disabled || m.Params.Str("terrain") != s.ID {
+		// Directly, or through a ground_edit of this terrain.
+		if m.Kind != RegionMaterialKind || m.Disabled || !refersToTerrain(d, m.Params.Str("terrain"), s.ID) {
 			continue
 		}
 		mat = "gen_" + safeName(d.Name, "gen") + "_" + safeName(m.ID, "stage")

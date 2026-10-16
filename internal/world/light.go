@@ -418,6 +418,13 @@ func PackLights(b *gfx.SceneBlock, ls LightSet) {
 	b.GlobalLightBrightness = ls.Global.EffectiveBrightness()
 	b.LightWrap = max(ls.Global.Wrap, 0)
 	b.AmbientHemisphere = min(max(ls.Global.Hemisphere, 0), 1)
+	// The player's specular setting (gfx/lighting_settings.go): the GGX
+	// highlight every lit pass adds (specular.glsl).
+	b.SpecularOn = boolInt(gfx.SpecularLighting)
+	// And soft shadows (vsm.glsl's PCSS): the sun's disc, half a degree
+	// across as the real one is (a touch more, so a shadow's widening reads).
+	b.SoftShadowsOn = boolInt(gfx.SoftShadows)
+	b.SunAngularRadius = SunAngularRadius
 
 	numDir := min(len(ls.Directional), MaxDirLights)
 	b.NumDirLights = int32(numDir)
@@ -449,6 +456,10 @@ func PackLights(b *gfx.SceneBlock, ls LightSet) {
 		b.PointLightDynamic[i] = [4]int32{boolInt(p.LitLive())}
 	}
 }
+
+// SunAngularRadius is the sun's angular radius, in radians, its soft shadows
+// widen by (vsm.glsl): 0.35°, a little over the real sun's 0.27°.
+const SunAngularRadius = 0.0061
 
 // vec3Std140 is v as one std140 array element: a vec3 padded to 16 bytes.
 func vec3Std140(v mgl32.Vec3) [4]float32 { return [4]float32{v[0], v[1], v[2], 0} }

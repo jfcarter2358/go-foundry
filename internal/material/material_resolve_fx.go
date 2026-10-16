@@ -27,6 +27,10 @@ type SplatLayer struct {
 	// `_strata` param off; the default, false, is every triplanar layer
 	// banded as always).
 	NoStrata bool
+	// Soft is the layer's soft-ground kind (SoftSand, SoftSnow; "" firm),
+	// SoftDepth its footprint depth in metres (0: the kind's own).
+	Soft      string
+	SoftDepth float32
 }
 
 // SurfaceFx is a surface's terrain and rock effects, resolved.
@@ -115,6 +119,21 @@ type SurfaceFx struct {
 	GradeBrightness float32
 }
 
+// HasSoft reports whether the splat has a soft-ground layer it draws (one
+// with a texture: layers 5–8 only in eight-layer mode, which resolve
+// already cleared otherwise).
+func (f *SurfaceFx) HasSoft() bool {
+	if !f.HasSplat {
+		return false
+	}
+	for i := range f.SplatLayers {
+		if l := &f.SplatLayers[i]; l.Soft != "" && l.Texture != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Any reports whether the surface wears any of them.
 func (f *SurfaceFx) Any() bool {
 	return f.HasTriplanar || f.HasSplat || f.HasGroundBlend || f.HasStreaks || f.HasDetailNormal || f.HasMacro || f.HasGrade
@@ -142,6 +161,10 @@ func resolveSurfaceFx(d *Doc, s *Surface) {
 				AntiTile:  e.Bool(SplatLayerParam(i, "anti_tile")),
 				Relief:    e.Float(SplatLayerParam(i, "relief")),
 				NoStrata:  !e.Bool(SplatLayerParam(i, "strata")),
+				SoftDepth: e.Float(SplatLayerParam(i, "soft_depth")),
+			}
+			if s := e.Enum(SplatLayerParam(i, "soft")); s == SoftSand || s == SoftSnow {
+				l.Soft = s
 			}
 			if l.Texture != "" {
 				if i < SplatLayers {

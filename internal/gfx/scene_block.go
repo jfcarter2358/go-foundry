@@ -52,6 +52,8 @@ const (
 	SceneMaxFogVolumes  = 8
 	// SceneMaxAmbientVolumes is world.MaxAmbientVolumes.
 	SceneMaxAmbientVolumes = 8
+	// SceneMaxReflVolumes is the reflection volumes the env cube array holds.
+	SceneMaxReflVolumes = 8
 )
 
 // SceneBlock is scene_block.glsl's SceneBlock in std140 layout, member for
@@ -144,9 +146,29 @@ type SceneBlock struct {
 	AmbVolCenter  [SceneMaxAmbientVolumes][4]float32    // 4352: xyz centre, w shape
 	AmbVolHalf    [SceneMaxAmbientVolumes][4]float32    // 4480: xyz half extents, w fade
 	AmbVolParams  [SceneMaxAmbientVolumes][4]float32    // 4608: sky, ground, fog, dust
+
+	// ---- lighting quality (lighting_settings.go; docs/lighting/PLAN.md) ----
+	SpecularOn       int32                           // 4736
+	EnvOn            int32                           // 4740
+	SsaoOn           int32                           // 4744
+	ContactShadowsOn int32                           // 4748
+	SsaoPrevViewProj mgl32.Mat4                      // 4752
+	EnvMaxMip        float32                         // 4816
+	EnvIntensity     float32                         // 4820
+	SsaoStrength     float32                         // 4824
+	SdfAOOn          int32                           // 4828
+	NumReflVolumes   int32                           // 4832
+	SoftShadowsOn    int32                           // 4836
+	SunAngularRadius float32                         // 4840
+	EnvGINormalize   int32                           // 4844
+	ReflVolCenter    [SceneMaxReflVolumes][4]float32 // 4848: xyz capture point, w cube layer
+	ReflVolMin       [SceneMaxReflVolumes][4]float32 // 4976: xyz low corner, w fade
+	ReflVolMax       [SceneMaxReflVolumes][4]float32 // 5104: xyz high corner, w intensity
+	// PointShadowCube is each point light's cube in the shadow array, -1 none.
+	PointShadowCube [SceneMaxPointLights][4]int32 // 5232
 }
 
-// SceneBlockSize is the block's size in bytes: 4736.
+// SceneBlockSize is the block's size in bytes: 5360.
 const SceneBlockSize = int(unsafe.Sizeof(SceneBlock{}))
 
 // SceneBuffer is one SceneBlock on the CPU and the GL buffer it is sent to.
@@ -193,7 +215,11 @@ func (s *SceneBuffer) Flush() {
 		return
 	}
 	gl.BindBuffer(gl.UNIFORM_BUFFER, s.buf)
-	gl.BufferSubData(gl.UNIFORM_BUFFER, 0, SceneBlockSize, unsafe.Pointer(&s.Block))
+	// Orphaned: new storage under the same name, rather than a write into
+	// memory draws already queued may still be reading — which the driver
+	// must otherwise wait out, and Mesa's D3D12 driver (WSL) was seen to hang
+	// in (docs/terrain-paint/PHASE_W4.md, "Hang").
+	gl.BufferData(gl.UNIFORM_BUFFER, SceneBlockSize, unsafe.Pointer(&s.Block), gl.DYNAMIC_DRAW)
 	gl.BindBuffer(gl.UNIFORM_BUFFER, 0)
 	s.sent, s.synced = s.Block, true
 	s.Bind()

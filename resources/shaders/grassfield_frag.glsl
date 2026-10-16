@@ -62,6 +62,7 @@ void main() {
         discard;
     }
     vec3 c = vColor * t.rgb;
-    c = applyFog(c, vWorldPos);
+    // Lit in scene units in the vertex stage (gfx/hdr.go).
+    c = applyFogScene(c, vWorldPos);
     outputColor = vec4(c, clamp(a, 0.0, 1.0));
 }

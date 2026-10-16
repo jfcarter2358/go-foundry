@@ -70,6 +70,10 @@ void main() {
     // than mixed toward it. See applyFogAdditive in fog.glsl.
     if (blendMode == 2) {
         rgb = applyFogAdditive(rgb, fragWorldPos);
+    } else if (lit != 0) {
+        // Lit: albedo times light, scene units like every lit surface
+        // (gfx/hdr.go), clamped as they are.
+        rgb = applyFogScene(min(rgb, vec3(hdrLightMax())), fragWorldPos);
     } else {
         rgb = applyFog(rgb, fragWorldPos);
     }

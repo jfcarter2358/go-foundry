@@ -26,10 +26,12 @@ func TestASurfaceWithNoMaterialIsUnchanged(t *testing.T) {
 		Texture: "brick", Alpha: 0.5, Unlit: true,
 		BlendTexture: "moss", BlendMask: "dirt",
 		UVOffset: mgl32.Vec2{0.25, 0},
-		Water:    WaterParams{Enabled: true, WaveSpeed: 2},
+		Water:    func() WaterParams { w := WaterParams{Enabled: true}; w.WaveSpeed = 2; return w }(),
 	}
 	s := g.SurfaceState()
-	if s.Texture != "brick" || s.Alpha != 0.5 || !s.Unlit {
+	// A water surface wears the generated detail map as its albedo
+	// (water_draw.go's finishWater); everything else is its own.
+	if s.Texture != WaterDetailTexture || s.Alpha != 0.5 || !s.Unlit {
 		t.Errorf("state = %+v", s)
 	}
 	if s.BlendTexture != "moss" || s.BlendMask != "dirt" {
@@ -68,7 +70,7 @@ func TestAMaterialOverlaysRatherThanReplaces(t *testing.T) {
 
 func TestAMaterialsTextureWinsWhenItHasOne(t *testing.T) {
 	d := &material.Doc{Name: "puddle", Domain: material.DomainSurface, Texture: "water"}
-	d.AddEffect(material.KindWater)
+	d.AddEffect(material.KindUnlit)
 	putMaterial(t, d)
 
 	g := Geometry{Texture: "concrete", MaterialName: "puddle"}
@@ -81,8 +83,30 @@ func TestAMaterialsTextureWinsWhenItHasOne(t *testing.T) {
 	if s.NormalMap != "water" {
 		t.Errorf("normal map = %q, want it to follow the material's texture", s.NormalMap)
 	}
-	if !s.Water.Enabled {
-		t.Error("water did not resolve")
+	if !s.Unlit {
+		t.Error("the material's effect did not resolve")
+	}
+}
+
+// A water material is drawn in the water pass (IsTransparent) wearing the
+// generated detail map, whatever texture it or its wearer names.
+func TestAWaterSurfaceWearsTheDetailMap(t *testing.T) {
+	d := &material.Doc{Name: "pond", Domain: material.DomainSurface, Texture: "water"}
+	d.AddEffect(material.KindWater)
+	putMaterial(t, d)
+	g := Geometry{Texture: "concrete", MaterialName: "pond", Alpha: 1}
+	s := g.SurfaceState()
+	if !s.Water.Enabled || s.Texture != WaterDetailTexture || s.NormalMap != WaterDetailTexture {
+		t.Errorf("state = %+v", s)
+	}
+	if !s.IsTransparent() {
+		t.Error("water must leave the opaque pass")
+	}
+	if g.CastsShadow() {
+		t.Error("water must not cast a shadow")
+	}
+	if s.Water.Water != material.DefaultWater() {
+		t.Errorf("a bare effect is not the default water: %+v", s.Water.Water)
 	}
 }
 

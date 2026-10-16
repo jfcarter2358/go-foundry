@@ -1,0 +1,47 @@
+# Pond: open water in a carved basin — a shelving bank, a shallow ledge, a
+# deeper middle — standing at the basin's spill height (pin a level in the
+# Generator's water bodies panel). (Phase W3: a 0.7 m shelf and reeds only
+# where the water is under 15 cm, so a pond reads as open water, not a
+# reed bed over a puddle.) Reeds along the shore, wet mud on the
+# banks, no rocks in the water. docs/guide/36-terrain-paint.md "Ponds,
+# lakes and marshes". Poly Haven (CC0): grass_medium_01 (reeds stand-in),
+# brown_mud_02.
+name: Pond
+doc: A pond carved into the ground with shelving banks; reeds on the shore, wet mud banks.
+order: 160
+layers:
+  - {layer: pond, strength: 1}
+recipe:
+  paint:
+    - {name: pond, kind: water}
+  textures:
+    - {name: pond_mud, id: brown_mud_02, scale: 2}
+  material:
+    - {layer: pond, texture: pond_mud, slots: [wet, ash, snow], fallback: cracked, strength: 0.8}
+  exclude:
+    - {layer: pond, kind: scatter}
+  stages:
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source
+        water_sounds: true
+        water:
+          - {layer: pond, style: pond, shelf_depth: 0.7, depth: 2.5}
+    - stage: polyhaven_plants
+      id: cover_grass
+      params:
+        assets: [{id: grass_medium_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: shore_reeds, plants: cover_grass, pieces: tall, density: 2.5, scale: [6, 9], slope: [0, 30],
+             cluster: 0.6, cluster_scale: 14, max_triangles: 400, shore: [0, 4], shore_soft: 2, max_depth: 0.15,
+             tint_a: [0.95, 1.0, 0.7], tint_b: [1.1, 1.0, 0.68], tint_scale: 30, wind_bend: 0.4, wind_flutter: 0.06}
+          - {name: shore_sedge, plants: cover_grass, pieces: mid, density: 1.5, scale: [3, 4.5], slope: [0, 30],
+             cluster: 0.45, cluster_scale: 20, max_triangles: 500, shore: [1, 9], shore_soft: 3,
+             tint_a: [0.9, 1.0, 0.72], tint_b: [1.0, 0.98, 0.66], tint_scale: 40}

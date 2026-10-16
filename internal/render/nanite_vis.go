@@ -149,6 +149,12 @@ type naniteVisPass struct {
 	reset     progUniforms
 	material  progUniforms
 	matSkin   gfx.SkinUniforms
+	// matSkins is each material program's skinning locations (frameUniforms).
+	matSkins map[uint32]*gfx.SkinUniforms
+	// The level, frame key and placement count warmMaterialVariants built for.
+	warmed    *world.Level
+	warmedKey uint32
+	warmedN   int
 	vao       uint32
 	maxBlock  int64
 	// Buffers: the frame's records, the bins' indirect draws and tile
@@ -171,10 +177,10 @@ type naniteVisPass struct {
 	// The material pass's source and its specialised programs, by key
 	// (nanite_vis_variants.go); generic is the program above, viewed as one.
 	matSrc   string
-	variants map[uint32]*visMatProg
+	variants map[uint64]*visMatProg
 	generic  *visMatProg
 	// binKeys is each shaded bin's variant key, this frame.
-	binKeys []uint32
+	binKeys []uint64
 
 	// The frame.
 	active      bool
@@ -863,6 +869,7 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 		gl.Uniform1i(m.U("visIDs"), naniteVisIDUnit)
 		gl.Uniform1i(m.U("binIDs"), naniteVisBinUnit)
 		gl.Uniform2f(m.U("viewSize"), float32(w), float32(h))
+		gl.Uniform1f(m.U("derivScale"), upscaleDerivScale())
 		gl.Uniform1ui(m.U("tileCap"), uint32(tilesX*tilesY))
 		gl.Uniform1ui(m.U("tilesX"), uint32(tilesX))
 	}
@@ -888,11 +895,14 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 	// shares with the one before (its material's every uniform and texture,
 	// its flags, its buffers) is not set again.
 	v.order = v.order[:0]
+	frameKey := visFrameKey(lvl, frame)
+	v.warmMaterialVariants(lvl, frameKey)
 	v.binKeys = slices.Grow(v.binKeys[:0], len(v.bins))[:len(v.bins)]
 	for bi := range v.bins {
 		if bn := &v.bins[bi]; bn.shade && bn.drawn {
 			v.order = append(v.order, bi)
-			v.binKeys[bi] = visShadeKey(&frameSurface(bn.mat).st, bn.baked)
+			st := &frameSurface(bn.mat).st
+			v.binKeys[bi] = uint64(visShadeKey(st, bn.baked)|frameKey) | visSplatLayout(st)
 		}
 	}
 	slices.SortStableFunc(v.order, func(a, b int) int {
@@ -916,11 +926,21 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 	baked, hasNormals, hasLight := int32(-1), int32(-1), int32(-1)
 	gl.ActiveTexture(gl.TEXTURE0)
 	var m *visMatProg
+	keyOpen := false
 	for _, bi := range v.order {
 		bn := &v.bins[bi]
 		st := &frameSurface(bn.mat).st
 		if p := v.materialProgram(v.binKeys[bi]); p != m {
 			// A new program: nothing the last one was sent carries over.
+			if naniteMatProfileKeys {
+				// Each variant's share of the pass, for the F3 profile
+				// and the bench (FOUNDRY_NANITE_MAT_PROFILE=1).
+				if keyOpen {
+					ProfileEnd()
+				}
+				ProfileBegin(fmt.Sprintf("mat %#06x", v.binKeys[bi]&0xffffffff))
+				keyOpen = true
+			}
 			m = p
 			ready(m)
 			appliedOK = false
@@ -954,6 +974,9 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 		bind(7, orDummy(bn.cbo, v.dummy))
 		gl.DrawArraysIndirect(gl.TRIANGLES, gl.PtrOffset(bi*16))
 		shaded++
+	}
+	if keyOpen {
+		ProfileEnd()
 	}
 	DebugStats.NaniteVisBins = shaded
 	if query != 0 {
@@ -1017,9 +1040,12 @@ func orDummy(buf, dummy uint32) uint32 {
 func (v *naniteVisPass) frameUniforms(p uint32, lvl *world.Level, frame ShadowFrame, now float64) {
 	lights := world.SceneLights(lvl)
 	world.UploadLightsTo(p, lights, false)
-	world.UploadFogTo(p, lvl.Fog, lvl.Volumes, lvl)
+	world.UploadFogTo(p, frameFog(lvl), frameVolumes(lvl), lvl)
+	ambTilesBindTo(p)
 	UploadShadowUniformsTo(p, lvl.Lights, frame)
 	UploadPointShadowUniformsTo(p, lights)
+	// The caustics on a bed under water (water_caustics.go).
+	uploadWaterCausticsTo(p)
 	gl.UseProgram(p)
 	loc := func(name string) int32 { return gfx.UniformLoc(p, name+"\x00") }
 	gl.UniformMatrix4fv(loc("projection"), 1, false, &gfx.Projection[0])
@@ -1030,7 +1056,17 @@ func (v *naniteVisPass) frameUniforms(p uint32, lvl *world.Level, frame ShadowFr
 	gl.Uniform1i(loc("alphaSharpen"), 0)
 	gl.Uniform1i(loc("coverageDither"), 0)
 	gl.Uniform1i(loc("tex"), 0)
-	gfx.ApplySkinUniforms(&v.matSkin, p, nil)
+	// Each material program its own cache: one shared by the variants looked
+	// both locations up again at every switch of program, every frame.
+	sk := v.matSkins[p]
+	if sk == nil {
+		if v.matSkins == nil {
+			v.matSkins = map[uint32]*gfx.SkinUniforms{}
+		}
+		sk = &gfx.SkinUniforms{}
+		v.matSkins[p] = sk
+	}
+	gfx.ApplySkinUniforms(sk, p, nil)
 	ident := mgl32.Ident4()
 	gl.UniformMatrix4fv(loc("model"), 1, false, &ident[0])
 }
