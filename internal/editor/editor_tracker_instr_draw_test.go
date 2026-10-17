@@ -10,8 +10,9 @@ import (
 )
 
 // The instrument pane draws with its stacks even for each kind of slot: a
-// plain embedded instrument, one carrying layers and articulations, and one
-// playing a library instrument (the read-only view).
+// plain embedded instrument, one carrying layers and articulations (the
+// layers section's editors: layers, takes, an articulation's own zones),
+// and one playing a library instrument (the read-only view).
 func TestTrackerInstrumentPaneDrawsEveryKindOfSlot(t *testing.T) {
 	dir := t.TempDir()
 	prev := fileutil.ResourcesPath
@@ -31,6 +32,14 @@ func TestTrackerInstrumentPaneDrawsEveryKindOfSlot(t *testing.T) {
 	}
 	e := trkTestState()
 	rich := lib.Clone()
+	// An articulation of its own samples, one zone split by velocity, so
+	// the editor draws every part of the layers section.
+	rich.Samples = append(rich.Samples, "keys/piano_soft")
+	pizz := rich.AddArticulation("pizzicato")
+	rich.SetOwnZones(pizz, true)
+	rich.Articulations[pizz].Zones[0].Layers = nil
+	rich.Articulations[pizz].Zones[0].SplitByVelocity()
+	rich.Articulations[pizz].Zones[0].AddRoundRobin(1, 1)
 	ref := tracker.NewInstrument("Ref", "")
 	if err := ref.UseLibrary("keys/lib"); err != nil {
 		t.Fatal(err)

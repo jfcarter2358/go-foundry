@@ -123,6 +123,23 @@ func (b bar) beatEnd(i int) score.Frac {
 	return b.length
 }
 
+// BeatEnd is the end of the beat a time falls in (the bar's end for its
+// last beat; past the score's end, the score's end).
+func (l Layout) BeatEnd(t score.Frac) score.Frac {
+	if l.Bars() == 0 || !t.Less(l.End()) {
+		return l.End()
+	}
+	b := l.BarAt(t)
+	br := l.bar(b)
+	off := t.Sub(br.start)
+	for i := len(br.beats) - 1; i >= 0; i-- {
+		if !off.Less(br.beats[i]) {
+			return br.start.Add(br.beatEnd(i))
+		}
+	}
+	return br.start.Add(br.beatEnd(0))
+}
+
 // onBeat reports whether an offset is a beat start (or the bar's end).
 func (b bar) onBeat(x score.Frac) bool {
 	if x.Eq(b.length) {

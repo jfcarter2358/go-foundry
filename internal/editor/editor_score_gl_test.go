@@ -134,6 +134,20 @@ func TestScoreGLWindowDraws(t *testing.T) {
 		t.Errorf("first staff: %d paper pixels, %d ink pixels", paper, ink)
 	}
 
+	// The keypad's jazz layout, the selected note given a scoop (its cell
+	// lit), and the articulation layout; then back as it was.
+	scEd.toggleMark("scoop", "")
+	scEd.setKeypad(scoreKpJazz)
+	frame()
+	frame()
+	shot(t, "keypad_jazz", readFrame(W, H))
+	scEd.setKeypad(scoreKpArtic)
+	frame()
+	frame()
+	shot(t, "keypad_artic", readFrame(W, H))
+	scEd.toggleMark("scoop", "")
+	scEd.setKeypad(scoreKpNotes)
+
 	// The mixer tab: a strip per line, the buses and the master. The
 	// faders' caps are light on the dark strips.
 	scoreView = scoreViewMixer

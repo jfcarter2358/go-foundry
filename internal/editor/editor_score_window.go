@@ -642,12 +642,20 @@ func scoreRunCmd(c scoreCmd) {
 	case scExportImage:
 		scoreOpenImage()
 	case scLayout:
-		e.Layout2 = !e.Layout2
-		if e.Layout2 {
-			e.Status = "Keypad: second layout (1 64th, 2 128th, 3 256th, 4 breve)"
+		// The second layout and back, as F8 has it in Sibelius.
+		if e.Keypad == scoreKpMore {
+			e.setKeypad(scoreKpNotes)
 		} else {
-			e.Status = "Keypad: first layout"
+			e.setKeypad(scoreKpMore)
 		}
+	case scLayoutNext:
+		e.setKeypad(e.Keypad + 1)
+	case scLayoutNotes:
+		e.setKeypad(scoreKpNotes)
+	case scLayoutArtic:
+		e.setKeypad(scoreKpArtic)
+	case scLayoutJazz:
+		e.setKeypad(scoreKpJazz)
 	case scDot:
 		e.toggleDot()
 	case scRest:
@@ -931,7 +939,7 @@ func scoreToolRow() {
 	for i := len(scoreDirectDurs) - 1; i >= 0; i-- {
 		d := scoreDirectDurs[i]
 		if d.base == score.D128 || d.base == score.D256 {
-			if !e.Layout2 {
+			if e.Keypad != scoreKpMore {
 				continue
 			}
 		}
@@ -1228,8 +1236,20 @@ func scoreMenus() {
 		editorMenuTooltip("Every selected note to its other spelling (F# to Gb).")
 		item("Spell in Key", scSpellInKey, true)
 		editorMenuTooltip("Every selected note (the whole score with nothing selected) as the key\nspells it: the key's own note, else a sharp rising and a flat falling.")
-		if imgui.MenuItemV("Second Keypad Layout", km.label(scLayout), e.Layout2, true) {
-			scoreRunCmd(scLayout)
+		if imgui.BeginMenu("Keypad Layout") {
+			for i, c := range []scoreCmd{scLayoutNotes, scLayout, scLayoutArtic, scLayoutJazz} {
+				if imgui.MenuItemV(scoreKpNames[i]+"##sckl", km.label(c), e.Keypad == i, true) {
+					if i == scoreKpMore {
+						e.setKeypad(scoreKpMore)
+					} else {
+						scoreRunCmd(c)
+					}
+				}
+			}
+			if imgui.MenuItemV("Next Layout##sckl", km.label(scLayoutNext), false, true) {
+				scoreRunCmd(scLayoutNext)
+			}
+			imgui.EndMenu()
 		}
 		imgui.EndMenu()
 	}

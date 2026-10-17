@@ -38,6 +38,7 @@ package engrave
 
 import (
 	"math"
+	"strings"
 
 	"foundry/internal/score"
 )
@@ -244,7 +245,7 @@ func (p *pager) names() {
 		if p.o.Part != "" || mode == score.NamesNone {
 			continue
 		}
-		full, short := l.Name, l.ShortName()
+		full, short := TransposedName(l, p.o.Concert), l.ShortName()
 		switch mode {
 		case score.NamesFull:
 			short = full
@@ -925,5 +926,32 @@ func PartBook(s *score.Score, line int, concert bool) *Book {
 	}
 	name := s.Lines[line].Name
 	lay, multi := s.Layout.ForPart(name)
-	return Paginate(s, PageOptions{Layout: lay, Lines: []int{line}, Part: name, Concert: concert, MultiRests: multi})
+	return Paginate(s, PageOptions{Layout: lay, Lines: []int{line}, Part: TransposedName(s.Lines[line], concert || s.Concert), Concert: concert, MultiRests: multi})
+}
+
+// TransposedName is a line's name as a written part is headed: "Horn in
+// F", "Clarinet in B♭" — the key a written C sounds in — when a staff is
+// written away from sounding by more than octaves and the page is not at
+// concert pitch, so a player sees the part is transposed. The name alone
+// otherwise, or when it already says what it is in ("Clarinet in Bb").
+func TransposedName(l *score.Line, concert bool) string {
+	if concert || strings.Contains(" "+strings.ToLower(l.Name)+" ", " in ") {
+		return l.Name
+	}
+	for _, st := range l.Staves {
+		iv := st.Transpose
+		if st.Percussion() || iv.Chromatic%12 == 0 && iv.Diatonic%7 == 0 {
+			continue
+		}
+		k := score.Pitch{Octave: 4}.Transpose(iv)
+		name := string("CDEFGAB"[k.Step])
+		switch {
+		case k.Alter < 0:
+			name += strings.Repeat("♭", int(-k.Alter))
+		case k.Alter > 0:
+			name += strings.Repeat("♯", int(k.Alter))
+		}
+		return l.Name + " in " + name
+	}
+	return l.Name
 }

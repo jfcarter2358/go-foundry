@@ -439,6 +439,10 @@ func markValueProblem(mk Mark) string {
 		if mk.Value != "" && mk.Value != "wavy" && mk.Value != "straight" {
 			return fmt.Sprintf("gliss=%s: want wavy or straight", mk.Value)
 		}
+	case "doit", "fall":
+		if mk.Value != "" && mk.Value != "long" {
+			return fmt.Sprintf("%s=%s: want long (or no value)", mk.Name, mk.Value)
+		}
 	case "vel":
 		if _, ok := ParseVelocity(mk.Value); !ok {
 			return fmt.Sprintf("vel=%s: want a MIDI velocity 1..127", mk.Value)

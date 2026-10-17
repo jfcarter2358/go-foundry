@@ -20,7 +20,9 @@ package engrave
 // run between the two notes like beams that do not touch a half note's
 // stems. An arpeggio is a wavy line left of the chord and its accidentals
 // (spacing leaves the room, arrangeColumn), with an arrowhead for `up` or
-// `down`.
+// `down`. Jazz slides stand beside the top note — a scoop or a plop left of
+// the accidentals, a doit or a fall right of the dots — and a jazz bend
+// over it.
 
 import (
 	"math"
@@ -44,6 +46,7 @@ func (e *engraver) drawExpression(sc *staffCtx) {
 					continue
 				}
 				e.drawArticulations(sc, x)
+				e.drawJazz(sc, x)
 				e.drawTremolo(sc, x)
 			}
 		}
@@ -118,6 +121,87 @@ var articulations = []articulation{
 	// Open and stopped: a horn's "o" and "+", a hi-hat's.
 	{"open", "brassMuteOpen", "brassMuteOpen", false, 4},
 	{"stopped", "brassMuteClosed", "brassMuteClosed", false, 4},
+}
+
+// ---------- jazz slides ----------
+
+// jazzGap is the room between a note (its accidentals, its dots) and a
+// jazz slide beside it.
+const jazzGap = 0.15
+
+// jazzGlyphs are the slides beside an event: in (a scoop or a plop, left
+// of it) and out (a doit or a fall, right of it), "" for none.
+func jazzGlyphs(x *ev) (in, out string) {
+	if x.e == nil || len(x.notes) == 0 {
+		return "", ""
+	}
+	for _, m := range x.e.Marks {
+		switch m.Name {
+		case "scoop":
+			in = "brassScoop"
+		case "plop":
+			if in == "" {
+				in = "brassPlop"
+			}
+		case "doit":
+			out = "brassDoitShort"
+			if m.Value == "long" {
+				out = "brassDoitMedium"
+			}
+		case "fall":
+			if out == "" {
+				out = "brassFallLipShort"
+				if m.Value == "long" {
+					out = "brassFallLipMedium"
+				}
+			}
+		}
+	}
+	return in, out
+}
+
+// drawJazz draws an event's jazz marks at its top note: a scoop rising
+// into the head from below-left, a plop dropping into it from above-left,
+// a doit rising and a fall dropping from its right, and a bend's dip over
+// it, above the stem and whatever else is there.
+func (e *engraver) drawJazz(sc *staffCtx, x *ev) {
+	if x.col == nil || len(x.notes) == 0 {
+		return
+	}
+	top := x.notes[len(x.notes)-1]
+	y := top.y
+	if x.e.Has("bend") {
+		b, _ := e.f.Box("brassBend")
+		cx := x.x + top.dx + x.headW/2
+		w, h := b.W()*x.size, b.H()*x.size
+		cy := math.Min(y-0.75-h/2, sc.sky.topIn(cx-w/2, cx+w/2, math.Inf(1))-0.25-h/2)
+		e.put(sc, x, e.centred(RoleArticulation, x.ref, "brassBend", cx, cy, x.size))
+	}
+	in, out := jazzGlyphs(x)
+	if in == "" && out == "" {
+		return
+	}
+	place := func(g string, right bool, edge float64) {
+		b, _ := e.f.Box(g)
+		ox := edge - b.Min.X*x.size // left edge at edge
+		if !right {
+			ox = edge - b.Max.X*x.size // right edge at edge
+		}
+		var oy float64
+		switch g {
+		case "brassScoop", "brassFallLipShort", "brassFallLipLong":
+			oy = y - 0.15 - b.Min.Y*x.size // hanging from the head's middle
+		default:
+			oy = y + 0.15 - b.Max.Y*x.size // standing on it
+		}
+		e.put(sc, x, e.glyphItem(RoleArticulation, x.ref, g, ox, oy, x.size))
+	}
+	if in != "" {
+		place(in, false, x.col.x+x.jazzInX)
+	}
+	if out != "" {
+		place(out, true, x.col.x+x.jazzOutX)
+	}
 }
 
 // eventArticulations are an event's articulations, nearest first; also

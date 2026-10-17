@@ -474,3 +474,30 @@ func TestDetectKeysFindsAModulation(t *testing.T) {
 		t.Errorf("G major throughout: %+v", ks)
 	}
 }
+
+// A drum hit is written no longer than its beat, whatever the meter, and
+// a grace note is left as it came.
+func TestDrumHitsEndWithTheirBeat(t *testing.T) {
+	for _, c := range []struct {
+		sig              string
+		start, end, want score.Frac
+	}{
+		{"4/4", score.F(1, 4), score.F(3, 4), score.F(1, 2)},     // beat 2 held to beat 4
+		{"4/4", score.F(3, 8), score.F(9, 8), score.F(1, 2)},     // an off-beat over the barline
+		{"4/4", score.F(1, 16), score.F(1, 8), score.F(1, 8)},    // short already
+		{"6/8", score.F(1, 8), score.F(3, 4), score.F(3, 8)},     // a compound beat is 3/8
+		{"3+2+2/8", score.F(3, 8), score.F(7, 8), score.F(5, 8)}, // the 2 group
+	} {
+		l := layout(t, c.sig, 0, 4)
+		got := DrumHits([]Note{{Start: c.start, End: c.end, MIDI: 38}, {Start: c.start, End: c.end, MIDI: 38, Grace: true}}, l)
+		if !got[0].End.Eq(c.want) {
+			t.Errorf("%s: a hit %s..%s ends at %s, want %s", c.sig, c.start, c.end, got[0].End, c.want)
+		}
+		if !got[1].End.Eq(c.end) {
+			t.Errorf("%s: the grace note moved", c.sig)
+		}
+	}
+	if end := layout(t, "4/4", 0, 2).BeatEnd(score.F(5, 1)); !end.Eq(score.F(2, 1)) {
+		t.Errorf("past the end: %s", end)
+	}
+}

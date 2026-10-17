@@ -691,3 +691,24 @@ func TestCrossStaffNotesRoundTrip(t *testing.T) {
 		t.Errorf("the upper staff: %q", got)
 	}
 }
+
+// Jazz marks go out as MusicXML's own: <scoop>, <plop>, <doit> and
+// <falloff> articulations (a long one with line-length="long") and the
+// <brass-bend> technical, and come back as they were.
+func TestJazzMarksRoundTrip(t *testing.T) {
+	useRepoResources(t)
+	s, err := score.LoadFile(filepath.Join("..", "..", "engrave", "testdata", "jazz.fscore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, b := roundTrip(t, s, ExportOptions{})
+	for _, want := range []string{"<scoop/>", "<plop/>", "<doit/>", "<falloff/>", `<falloff line-length="long"/>`, `<doit line-length="long"/>`, "<brass-bend/>"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("the export has no %s", want)
+		}
+	}
+	got := score.FormatVoice(back.Lines[0].Staves[0].Voices[0])
+	if want := score.FormatVoice(s.Lines[0].Staves[0].Voices[0]); got != want {
+		t.Errorf("came back\n%s\nwant\n%s", got, want)
+	}
+}

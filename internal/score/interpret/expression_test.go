@@ -303,3 +303,43 @@ func TestASlideIntoATremoloKeepsIt(t *testing.T) {
 		t.Errorf("the tremolo's strikes: %d (%s)", g, heard(p))
 	}
 }
+
+// Jazz articulations bend the note: a scoop up and a plop down into it
+// over its first 16th, a doit up and a fall down out of it over its last
+// eighth (longer for =long), a bend dipping a semitone; a note already
+// sliding keeps its glissando.
+func TestJazzArticulations(t *testing.T) {
+	s := one(t, "bars: 2", "| qC5(scoop) qC5(plop) qC5(doit) qC5(fall) | qC5(bend) qC5(fall=long) qC5(scoop,fall) qC5 |")
+	p := perform(t, s)
+	if len(p.Notes) != 8 {
+		t.Fatalf("%d notes: %s", len(p.Notes), heard(p))
+	}
+	at := func(i int, off float64) float32 { n := p.Notes[i]; return n.BendAt(float64(n.Tick) + off) }
+	for _, c := range []struct {
+		note int
+		off  float64
+		want float32
+	}{
+		{0, 0, -3}, {0, 120, -1.5}, {0, 240, 0}, {0, 900, 0}, // scoop: from a minor third below over a 16th
+		{1, 0, 4}, {1, 240, 0}, // plop: from a major third above
+		{2, 479, 0}, {2, 720, 2.5}, {2, 960, 5}, // doit: up a fourth over its last eighth
+		{3, 480, 0}, {3, 960, -7}, // fall: down a fifth
+		{4, 0, 0}, {4, 240, -1}, {4, 480, 0}, {4, 700, 0}, // bend: a semitone dip over an eighth
+		{5, 320, 0}, {5, 640, -6}, {5, 960, -12}, // fall=long: an octave over two thirds of a quarter
+		{6, 0, -3}, {6, 240, 0}, {6, 479, 0}, {6, 960, -7}, // scoop then fall
+	} {
+		if got := at(c.note, c.off); !near32(got, c.want) {
+			t.Errorf("note %d at +%v: bend %v, want %v", c.note+1, c.off, got, c.want)
+		}
+	}
+	if len(p.Notes[7].Bend) != 0 {
+		t.Errorf("a plain note bends: %+v", p.Notes[7].Bend)
+	}
+	// A glissando's slide wins over a fall on the same note.
+	s = one(t, "bars: 1", "| hC4(gliss,fall) hG4 |")
+	s.Lines[0].Gliss = "slide"
+	p = perform(t, s)
+	if n := p.Notes[0]; !near32(n.BendAt(1920), 7) {
+		t.Errorf("the slide lost to the fall: %+v", n.Bend)
+	}
+}

@@ -2,7 +2,7 @@ version: 1
 title: Score Demo
 composer: Foundry
 bars: 16
-gain: 0.8
+gain: 0.72
 tempo: [{bar: 1, bpm: 92, text: Andante con moto}, {bar: 15, bpm: 92, text: rit.,
     ramp: true}, {bar: 16, bpm: 66}]
 meter: [{bar: 1, sig: 4/4}]

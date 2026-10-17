@@ -1,0 +1,12 @@
+version: 1
+title: Jazz marks
+lines:
+- name: Trumpet
+  instrument: brass/trumpet
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qC5(scoop) qD#5(plop) q.E5(doit) eG4(fall)
+      | hA4(bend) qBb4(fall=long) qF5(doit=long)
+      | eC5(scoop,fall) eE5 qF#4+A4(plop) hG5(scoop,doit)

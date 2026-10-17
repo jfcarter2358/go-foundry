@@ -451,10 +451,14 @@ func trkInstrumentEditor(in *tracker.Instrument) {
 		// next resolve, so there is nothing to edit until it is embedded.
 		return
 	}
+	// Velocity layers, round robin and articulations, edited
+	// (editor_tracker_layers.go); open when the instrument has any.
+	flags := imgui.TreeNodeFlags(0)
 	if len(in.Articulations) > 0 || trkHasLayers(in) {
-		if imgui.CollapsingHeaderV("Layers & articulations##trkinarts", 0) {
-			trkInstrInfo(in)
-		}
+		flags = imgui.TreeNodeFlagsDefaultOpen
+	}
+	if imgui.CollapsingHeaderV("Layers & articulations##trkinarts", flags) {
+		trkLayersSection(in)
 	}
 	if imgui.CollapsingHeaderV("Samples & keymap##trkinsamp", imgui.TreeNodeFlagsDefaultOpen) {
 		trkInstrSamples(in)

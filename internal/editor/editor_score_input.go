@@ -67,7 +67,8 @@ func scoreEditorHandleEvent(event sdl.Event) {
 
 // scoreWordsEvent gives a lyric or chord symbol field the keys it acts on
 // itself (the text goes to the field): Return, Escape, Tab, Backspace in
-// an empty field, and Ctrl+Alt+L, the next verse.
+// an empty field, and the next verse (lyrics_verse_2's key, Ctrl+Alt+L
+// unless it is rebound).
 func scoreWordsEvent(sc sdl.Scancode, mod sdl.Keymod) bool {
 	ch := scoreChordOf(sc, mod)
 	switch {
@@ -79,7 +80,8 @@ func scoreWordsEvent(sc sdl.Scancode, mod sdl.Keymod) bool {
 		scEd.wordsKey(scoreWordTab)
 	case sc == sdl.SCANCODE_BACKSPACE && scEd.Words.Text == "":
 		scEd.wordsKey(scoreWordBackspace)
-	case ch == ctrlAlt(sdl.SCANCODE_L):
+	case scoreKeymapActive().command(ch) == scLyrics2:
+		// Whatever lyrics_verse_2 is bound to (Ctrl+Alt+L by default).
 		scEd.wordsKey(scoreWordNextVerse)
 	default:
 		return false

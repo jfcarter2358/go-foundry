@@ -335,6 +335,8 @@ var scoreMarkWords = map[string][]string{
 	"hairpin": {"cresc", "dim"}, "crescendo": {"cresc"}, "diminuendo": {"dim"}, "decrescendo": {"dim"},
 	"ottava": {"8va", "8vb", "15ma", "15mb"}, "pedal": {"ped"}, "open": {"open"}, "stopped": {"stopped"},
 	"technique": {"tech"}, "expression": {"expr"}, "text": {"text", "expr", "tech"},
+	"scoop": {"scoop"}, "plop": {"plop"}, "doit": {"doit"}, "fall": {"fall"}, "falloff": {"fall"},
+	"bend": {"bend"}, "jazz": {"scoop", "plop", "doit", "fall", "bend"},
 }
 
 // scoreFindMarks are the mark names a word finds, or nil. "dynamic" finds

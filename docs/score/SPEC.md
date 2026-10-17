@@ -178,9 +178,9 @@ that round-trip, documented in the guide chapter. Phase-specific additions
 | Respell | `Return` |
 | Voice 1–4 | `Ctrl+Alt+1`–`4` |
 | Tuplets | `Ctrl+3`, `Ctrl+5`, `Ctrl+2`–`9` |
-| Slur, cresc, dim, gliss | `S`, `H`, `Shift+H`, `G` |
+| Slur, cresc, dim, gliss | `S`, `H`, `Shift+H`, `Alt+G` (`G` is the note G; phase 3) |
 | Dynamic / expression text | `Ctrl+E` |
-| Articulations | keypad second layout, or `'` `>` `_` `^` |
+| Articulations | keypad second layout (and its Artic. and Jazz layouts), or `'` `>` `_` `Shift+'` (marcato: `^` is `Shift+6`, the sixth below; phase 3) |
 | Bar select / all lines / extend | click / `Ctrl`+click / `Shift`+click |
 | Copy, paste (or Alt+click), repeat | `Ctrl+C`, `Ctrl+V`, `R` |
 | Play/stop, play from selection, loop selection | `Space`, `P`, `L` |
@@ -188,7 +188,8 @@ that round-trip, documented in the guide chapter. Phase-specific additions
 | Undo, redo | `Ctrl+Z`, `Ctrl+Y` |
 | Keymap overlay | `F1` |
 
-An on-screen keypad panel mirrors the keypad (mockup screen 7).
+An on-screen keypad panel mirrors the keypad (mockup screen 7), with its
+four layouts as tabs: Notes, More, Artic., Jazz.
 
 ## Phases (one commit each, `ENH: Score editor phase N - <title>`)
 

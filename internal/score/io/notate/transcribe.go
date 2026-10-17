@@ -25,7 +25,7 @@ type TranscribeOptions struct {
 	// Split is the lowest note of a grand staff's upper staff (zero: 60).
 	Split int
 	// Percussion writes a drum part: at most two voices, hits that land
-	// together one chord.
+	// together one chord, each no longer than its beat (DrumHits).
 	Percussion bool
 	// NoGraces keeps notes played as grace notes (MarkGraces) as ordinary
 	// notes; NoLegato keeps every gap a player left (Legato closes the small
@@ -72,6 +72,9 @@ func Transcribe(notes []Note, l Layout, o TranscribeOptions) ([]Staff, error) {
 	if err != nil {
 		return nil, err
 	}
+	if o.Percussion {
+		notes = DrumHits(notes, l)
+	}
 	groups := make([][]Note, len(clefs))
 	for _, n := range notes {
 		g := 0
@@ -87,7 +90,8 @@ func Transcribe(notes []Note, l Layout, o TranscribeOptions) ([]Staff, error) {
 	staffChords := make([][][]Chord, len(groups))
 	for gi, g := range groups {
 		staffChords[gi] = Separate(g, voices, o.Grid.Unit)
-		if !o.NoLegato {
+		// A drum hit has no legato to close: its length is DrumHits'.
+		if !o.NoLegato && !o.Percussion {
 			for _, v := range staffChords[gi] {
 				Legato(v, l, score.F(1, 8))
 			}

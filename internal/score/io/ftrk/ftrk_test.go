@@ -536,4 +536,46 @@ func TestASingleDrumComesInOnItsLine(t *testing.T) {
 	if !strings.Contains(strings.Join(warns, "\n"), "several notes") {
 		t.Errorf("warnings %v", warns)
 	}
+	if got := sc.Lines[0].Staves[0].Lines; got != 1 {
+		t.Errorf("the kick's staff has %d lines (0 is five), want its .finst's one", got)
+	}
+}
+
+// A song's drum notes last until the channel's next note, as a tracker
+// plays them; a drum part writes them as hits, each no longer than its
+// beat: a backbeat is quarter notes and rests, not half notes tied over the
+// barline.
+func TestDrumHitsComeInAsHits(t *testing.T) {
+	useRepoResources(t)
+	score.ReloadKits()
+	s := tracker.NewSong("Snare")
+	s.BPM, s.LPB, s.BeatsPerBar = 120, 4, 4
+	s.SetChannelCount(1)
+	snare := tracker.NewInstrument("Snare", "")
+	snare.Ref = "drums/snare_acoustic"
+	s.Instruments = []*tracker.Instrument{snare}
+	p := tracker.NewPattern("a", 32, 1)
+	for _, r := range []int{4, 12, 20, 28} {
+		c, err := tracker.ParseCell("C-4 01 40")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Cells[r][0] = c
+	}
+	s.Patterns, s.Order = []*tracker.Pattern{p}, []int{0}
+	sc, _, err := Import(s, midi.Options{Name: "snare", NoDynamics: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := sc.Lines[0].Staves[0]
+	if st.Clef != "percussion" || st.Lines != 1 {
+		t.Errorf("the snare's staff: %s with %d lines", st.Clef, st.Lines)
+	}
+	text := score.FormatVoice(st.Voices[0])
+	if strings.Contains(text, "~") || strings.Contains(text, "h") {
+		t.Errorf("the backbeat is held: %s", text)
+	}
+	if n := strings.Count(text, "qr"); n != 4 {
+		t.Errorf("want a quarter rest on beats 1 and 3 of both bars: %s", text)
+	}
 }

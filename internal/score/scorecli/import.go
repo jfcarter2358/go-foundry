@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode"
 
+	"foundry/internal/audio"
 	"foundry/internal/score"
 	"foundry/internal/score/io/ftrk"
 	"foundry/internal/score/io/gm"
@@ -29,7 +30,9 @@ Reads a Standard MIDI File (.mid, .midi, .rmi), a MusicXML score
 export) or a Tracker song (.ftrk, a file or a song's library name with
 the extension) and writes it as sounds/<name>.fscore.
 
-  -o name          the score's library name (default: the file's name)
+  -o name          the score's library name (default: the file's name), or
+                   a file: a path ending in .fscore or an absolute one is
+                   written there (inside sounds/ it is that library name)
   -title text      its title (default: the file's)
   -list            show the parts and the guesses and write nothing
   -skip 2,5        leave parts out (numbers as -list shows them)
@@ -109,6 +112,12 @@ func importCmd(rest []string, out io.Writer) int {
 	if *name == "" {
 		*name = libraryName(file)
 	}
+	dest, err := importDest(*name)
+	if err != nil {
+		fmt.Fprintf(out, "score import: -o %q: %v\n", *name, err)
+		return 2
+	}
+	*name = dest.name
 
 	var s *score.Score
 	var warns []string
@@ -223,11 +232,11 @@ func importCmd(rest []string, out io.Writer) int {
 	if peak, err := play.FitGain(s, 0.9); err == nil && peak > 0.9 {
 		warns = append(warns, fmt.Sprintf("the mix peaked at %.2f; master gain set to %.2f", peak, s.Gain))
 	}
-	if p := score.ScorePath(*name); p != "" && !*force {
+	if p := dest.existing(); p != "" && !*force {
 		fmt.Fprintf(out, "score import: %s already exists (use -force to replace it, or -o another name)\n", p)
 		return 1
 	}
-	if err := score.Save(*name, s); err != nil {
+	if err := dest.save(s); err != nil {
 		fmt.Fprintf(out, "score import: %v\n", err)
 		return 1
 	}
@@ -245,7 +254,7 @@ func importCmd(rest []string, out io.Writer) int {
 			}
 		}
 	}
-	fmt.Fprintf(out, "%s: %q, %d bars, %d lines, %d notes\n", score.ScorePath(*name), s.Title, s.Measures(), len(s.Lines), notes)
+	fmt.Fprintf(out, "%s: %q, %d bars, %d lines, %d notes\n", dest.where(), s.Title, s.Measures(), len(s.Lines), notes)
 	for _, l := range s.Lines {
 		var staves []string
 		for _, st := range l.Staves {
@@ -264,6 +273,67 @@ func importCmd(rest []string, out io.Writer) int {
 		fmt.Fprintf(out, "  %s\n", is)
 	}
 	return 0
+}
+
+// importTarget is where an import writes: a library name under sounds/, or
+// (path set) a file anywhere else.
+type importTarget struct {
+	name, path string
+}
+
+// importDest reads -o: a library name ("sketches/hangar"), or a file — a
+// path ending in .fscore, or an absolute one — which is the library name
+// it has when it lies under sounds/, and is written where it says when it
+// does not. A library name never leaves sounds/ (a "../" in one is
+// refused), so a path is never joined under it.
+func importDest(o string) (importTarget, error) {
+	if strings.HasSuffix(strings.ToLower(o), score.FileExt) || filepath.IsAbs(o) {
+		abs, err := filepath.Abs(o)
+		if err != nil {
+			return importTarget{}, err
+		}
+		if !strings.HasSuffix(strings.ToLower(abs), score.FileExt) {
+			abs += score.FileExt
+		}
+		if root, err := filepath.Abs(audio.SoundsDir()); err == nil {
+			if rel, err := filepath.Rel(root, abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return importTarget{name: filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))}, nil
+			}
+		}
+		return importTarget{name: libraryName(abs), path: abs}, nil
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(o)))
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return importTarget{}, fmt.Errorf("a library name stays inside sounds/ (name a file with .fscore to write elsewhere)")
+	}
+	return importTarget{name: clean}, nil
+}
+
+// existing is the file already at the target, or "".
+func (t importTarget) existing() string {
+	if t.path == "" {
+		return score.ScorePath(t.name)
+	}
+	if st, err := os.Stat(t.path); err == nil && !st.IsDir() {
+		return t.path
+	}
+	return ""
+}
+
+// save writes the score to the target.
+func (t importTarget) save(s *score.Score) error {
+	if t.path == "" {
+		return score.Save(t.name, s)
+	}
+	return score.SaveFile(t.path, s)
+}
+
+// where is the file written, for the report.
+func (t importTarget) where() string {
+	if t.path == "" {
+		return score.ScorePath(t.name)
+	}
+	return t.path
 }
 
 // libraryName makes a file name a score name: "Hangar Sketch (v2).mid" is

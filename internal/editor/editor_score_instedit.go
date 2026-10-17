@@ -13,8 +13,11 @@ package editor
 //     the words that pick each articulation. These are edited here, in the
 //     library dialog, and saved back to the .finst; every score and song
 //     using the instrument reads them from there.
-//   - The sound (samples, zones, velocity layers, envelopes, filter): the
-//     Tracker's instrument editor edits those. "Open in instrument editor"
+//   - The sound (samples, zones, velocity layers, round robin, the
+//     articulations' own samples, gain and release, envelopes, filter):
+//     the Tracker's instrument editor edits those (its "Layers &
+//     articulations" section is editor_tracker_layers.go). "Open in
+//     instrument editor"
 //     opens the Tracker on a scratch song holding a copy of the instrument,
 //     with its library name ready in "Save to library", which writes it
 //     back.

@@ -232,6 +232,25 @@ func (e *engraver) arrangeColumn(sb *staffBar, c *column, evs []*ev) (left, righ
 		}
 	}
 
+	// Jazz slides into a note left of it, past its accidentals and any
+	// arpeggio; out of it right, past the dots.
+	for _, x := range chords {
+		in, out := jazzGlyphs(x)
+		if in != "" {
+			x.jazzInX = arpEdge - jazzGap
+			arpEdge = x.jazzInX - e.f.Width(in)*x.size
+			ink(arpEdge, arpEdge)
+		}
+		if out != "" {
+			r := headsRight
+			if x.dots > 0 {
+				r = math.Max(r, x.shift+x.dotX+float64(x.dots-1)*dotSpacing+e.f.Width("augmentationDot"))
+			}
+			x.jazzOutX = r + jazzGap
+			ink(x.jazzOutX, x.jazzOutX+e.f.Width(out)*x.size)
+		}
+	}
+
 	// Rests, out of the other voices' way (and of each other); a rest's
 	// dot clear of the chords' dots.
 	var placed []*ev
@@ -314,11 +333,24 @@ func headClash(chords []*ev, y, x0, x1 float64) bool {
 	return false
 }
 
+// sameWayGap is the room between a voice's stem and the heads of a voice
+// beside it stemmed the same way.
+const sameWayGap = 0.25
+
 // voiceShift is how far right chord x must move to clear chord p of an
 // earlier voice at the same onset, and whether it must.
 func (e *engraver) voiceShift(p, x *ev) (float64, bool) {
 	pl, ph := lowHigh(p)
 	xl, xh := lowHigh(x)
+	if p.hasStem && x.hasStem && p.up == x.up {
+		// Two voices stemmed the same way (a third voice beside the
+		// first, a fourth beside the second) never share a stem, however
+		// far apart: on one stem they would read as one voice's chord.
+		// The later voice stands right of the earlier one's stem.
+		_, pr := headSpan(p)
+		xl0, _ := headSpan(x)
+		return p.shift + pr - xl0 + sameWayGap*x.size, true
+	}
 	if xl > ph+1 || xh < pl-1 {
 		return 0, false // a third or more apart
 	}

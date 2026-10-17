@@ -12,6 +12,8 @@ import (
 	"foundry/internal/score"
 	"foundry/internal/score/edit"
 	"foundry/internal/tracker"
+
+	"github.com/veandco/go-sdl2/sdl"
 )
 
 func wordsState(t *testing.T, voice string) *scoreState {
@@ -302,5 +304,26 @@ func TestScoreChordPlaySettings(t *testing.T) {
 	e.undoStep()
 	if e.Score.Lines[0].ChordPlay == nil {
 		t.Error("undo")
+	}
+}
+
+// In the open lyric field the next verse is lyrics_verse_2's key, whatever
+// it is bound to: rebound, the new key moves on and Ctrl+Alt+L is let go.
+func TestScoreLyricNextVerseFollowsTheKeymap(t *testing.T) {
+	prev := scEd
+	t.Cleanup(func() { scEd = prev; scoreKeys = nil })
+	scEd = wordsState(t, "| qD5 qE5 qF#5 qr |")
+	scoreKeys = scoreSibeliusKeymap()
+	scEd.selectEvent(edit.Loc{Bar: 1}, -1)
+	scEd.startLyrics(1)
+	if !scoreWordsEvent(sdl.SCANCODE_L, sdl.KMOD_LCTRL|sdl.KMOD_LALT) || scEd.Words.Verse != 2 {
+		t.Fatalf("Ctrl+Alt+L: verse %d", scEd.Words.Verse)
+	}
+	scoreBindChord(scoreKeys, scLyrics2, ctrlAlt(sdl.SCANCODE_Y), false)
+	if scoreWordsEvent(sdl.SCANCODE_L, sdl.KMOD_LCTRL|sdl.KMOD_LALT) || scEd.Words.Verse != 2 {
+		t.Errorf("Ctrl+Alt+L still moves on after rebinding: verse %d", scEd.Words.Verse)
+	}
+	if !scoreWordsEvent(sdl.SCANCODE_Y, sdl.KMOD_LCTRL|sdl.KMOD_LALT) || scEd.Words.Verse != 3 {
+		t.Errorf("the rebound key: verse %d", scEd.Words.Verse)
 	}
 }

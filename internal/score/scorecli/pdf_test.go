@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"foundry/internal/score"
 	"foundry/internal/score/io/pdf"
 )
 
@@ -65,7 +66,7 @@ func TestExportPDFVerb(t *testing.T) {
 	if w, h, _ := f.MediaBox(f.Pages[0]); int(w+0.5) != 595 || int(h+0.5) != 842 {
 		t.Errorf("-paper a4: %gx%g", w, h)
 	}
-	if f.Info()["Subject"] != "Part: Horn" {
+	if f.Info()["Subject"] != "Part: Horn in F" {
 		t.Errorf("info %v", f.Info())
 	}
 	// Refusals.
@@ -126,5 +127,33 @@ func TestInspectShowsTheLayout(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("inspect lacks %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// SPEC's .fscore sketch reads as written (its hairpin shorthand too), and
+// inspect gives the line's range in the score's spelling: B♭ major's
+// notes are Bb4..Eb5, not the MIDI names A#4..D#5.
+func TestInspectTheSpecSketch(t *testing.T) {
+	repo := useRepoResources(t)
+	var out bytes.Buffer
+	if code := inspect([]string{filepath.Join(repo, "internal", "score", "scorecli", "testdata", "spec_sketch.fscore")}, &out); code != 0 {
+		t.Fatalf("inspect: %s", out.String())
+	}
+	for _, want := range []string{"7 notes, Bb4..Eb5", "key    bar 1    Bb major", "bus a  return 0.25"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("inspect lacks %q:\n%s", want, out.String())
+		}
+	}
+	for _, bad := range []string{"error", "warning"} {
+		if strings.Contains(out.String(), bad) {
+			t.Errorf("inspect reports an %s:\n%s", bad, out.String())
+		}
+	}
+	s, err := score.LoadFile(filepath.Join(repo, "internal", "score", "scorecli", "testdata", "spec_sketch.fscore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := score.FormatMeasure(s.Lines[0].Staves[0].Voices[0].Measures[1]); got != "qEb5 qD5 hC5(cresc)" {
+		t.Errorf("bar 2: %s", got)
 	}
 }

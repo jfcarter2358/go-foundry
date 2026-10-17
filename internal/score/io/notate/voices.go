@@ -224,3 +224,24 @@ func Legato(voice []Chord, l Layout, maxGap score.Frac) {
 		}
 	}
 }
+
+// DrumHits writes struck notes the way drum parts are read: a hit lasts no
+// longer than the beat it falls in. A drum sounds the same however long the
+// key was held, and a player's (or a tracker's note-until-the-next-note)
+// length would otherwise come out as half notes tied over barlines — a
+// backbeat that reads as a held sound. Grace notes are left alone.
+func DrumHits(notes []Note, l Layout) []Note {
+	if l.Bars() == 0 {
+		return notes
+	}
+	for i := range notes {
+		n := &notes[i]
+		if n.Grace {
+			continue
+		}
+		if end := l.BeatEnd(n.Start); end.Less(n.End) {
+			n.End = end
+		}
+	}
+	return notes
+}

@@ -64,6 +64,8 @@ var goldenCases = []goldenCase{
 	{"lines", "lines", engrave.Options{}},
 	{"form", "form", engrave.Options{}},
 	{"voices4", "voices4", engrave.Options{}},
+	{"crowded", "crowded", engrave.Options{}},
+	{"jazz", "jazz", engrave.Options{}},
 	{"demo_bars_9_12", "../../../../resources/sounds/score_demo", engrave.Options{From: 9, To: 12, BarNumbers: 1}},
 	{"lyrics", "lyrics", engrave.Options{}},
 	{"tab", "tab", engrave.Options{}},

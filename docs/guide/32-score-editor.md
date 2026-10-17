@@ -189,7 +189,7 @@ voices 2–4 green, orange and magenta.
 | Sharp, flat, natural | `+` (or `=`), `-`, `0`, keypad `8` `9` `7`; again for a double sharp or flat. With nothing selected the accidental goes on the next note written |
 | Semitone, step, octave | `Up`/`Down`, `Alt+Up`/`Down` (in the key), `Ctrl+Up`/`Down` — the selected note, or every note of the selected bars |
 | Respell | `Return` (F♯ ↔ G♭) |
-| Values | keypad `1`–`6` = 32nd … whole (laptop `Alt+1`–`6`); `F8` or keypad `/` switches to the second layout, where `1`–`4` are 64th, 128th, 256th and breve. In note input the value is the next note's, chosen before the letter (`4 C 3 D E` is a quarter and two eighths); out of note input the selected note takes it and the bar reflows |
+| Values | keypad `1`–`6` = 32nd … whole (laptop `Alt+1`–`6`); `F8` switches to the second layout and back, where `1`–`4` are 64th, 128th, 256th and breve (keypad `/` steps through all four layouts: Notes, More, Artic., Jazz). In note input the value is the next note's, chosen before the letter (`4 C 3 D E` is a quarter and two eighths); out of note input the selected note takes it and the bar reflows |
 | Dot | keypad `.` (`Alt+.`): once a dot, again a double dot, again none — like the value, the next note's in note input |
 | Rest | keypad `0` (`Alt+0`): in note input a rest after the selection, otherwise the selected note becomes one |
 | Tie | keypad `Enter` or `T` |
@@ -332,7 +332,8 @@ place of its neighbour (staccatissimo replaces staccato, marcato the accent).
 | Crescendo / diminuendo hairpin | `H` / `Shift+H`, the same way. **Marks > cresc. (Text)** and **dim. (Text)** write the words with dashes |
 | Glissando | `Alt+G` (`G` is the note G): a straight line to the next note; **Marks > Wavy Glissando** for the wavy one. How it plays is the line's (right-click the header: **Glissandi Play**) or the instrument's |
 | Dynamic or words | `Ctrl+E` opens the expression box: type `mf`, `sfz`, `pizz.`, `con sord.`, `dolce`, `cresc.` or `rit.` and press `Enter`, or click one of its buttons. It files what you type by what it is: a dynamic, a technique word (which switches the instrument's articulation), cresc./dim. with dashes (words around them, such as `poco cresc.` or `dim. molto`, are printed as typed), tempo text (at the selection, played as a tempo change) or expression text |
-| Articulations | `.` staccato, `'` staccatissimo, `Shift+.` (`>`) accent, `Shift+-` (`_`) tenuto, `Shift+'` marcato; or the keypad's second layout (`F8`): `7` staccato, `8` tenuto, `9` staccatissimo, `+` marcato. On the first layout keypad `+` is the accent |
+| Articulations | `.` staccato, `'` staccatissimo, `Shift+.` (`>`) accent, `Shift+-` (`_`) tenuto, `Shift+'` marcato; or the keypad's second layout (`F8`): `7` staccato, `8` tenuto, `9` staccatissimo, `+` marcato. On the first layout keypad `+` is the accent. The articulation layout (`F10`) has them all: `7` staccato, `8` tenuto, `9` staccatissimo, `+` accent, `4` marcato, `5` portato, `6` fermata, `1` open, `2` stopped, `3` arpeggio |
+| Jazz marks | the keypad's jazz layout (`F12`): `7` scoop, `8` plop, `9` bend, `+` fall, `4` doit, `5` long fall, `6` long doit; or **Marks > Jazz** and the palette's Jazz row. A scoop rises into the note from a minor third below and a plop drops into it from a third above, over its first 16th; a doit rises a fourth and a fall drops a fifth over its last eighth (the long ones an octave over its last quarter); a bend dips a semitone and comes back |
 | Grace notes | the second layout's keypad `5` (acciaccatura) or `6` (appoggiatura) in note input: the next notes typed are grace notes; press it again and type the note they lean on |
 | Move notes to another voice | `Ctrl+Alt+1`–`4` out of note input, with a note selected or with bars selected (every note in them from the other voices moves, its marks and grace notes with it; a tuplet's notes stay, since a tuplet moves whole) |
 | Tempo mark or tempo text | `Ctrl+Alt+T`: words, a tempo and the beat it counts (0 for text only: rit., accel., a tempo) |
@@ -695,7 +696,10 @@ How the pages are made:
 - **Names.** Full instrument names on the first system, short names after
   (or full, or short, everywhere, or none — **Instrument names** in the
   setup), each centred on its line's staves; the first system is indented
-  by them. Parts print no names on their systems.
+  by them. Parts print no names on their systems. A transposing line's
+  full name says what it is in when the page is written ("Horn in F",
+  "Clarinet in B♭": the key a written C sounds in), unless its name already
+  does or the view is at concert pitch; a part for it is headed so too.
 - **Cautionary signatures.** When the next system starts with a key, time or
   clef change, this one ends with it: the clef just before the last barline,
   a double barline before a key change, then the new key and time after it.
@@ -753,8 +757,14 @@ staff space, as the continuous view engraves them.
 
 The keypad panel (toolbar **Keypad**, `Ctrl+Alt+K`) mirrors the numeric
 keypad in Sibelius's layout and is clickable; the selected note's value,
-dot, accidental, accent, tie and rest are lit, and its **More** tab is the
-second layout (64th to breve, grace notes, articulations). **F1** in the Score window shows the active keymap over the score.
+dot, accidental, accent, tie and rest are lit. Its four tabs are the
+layouts, as in Sibelius: **Notes** (the common values, accidentals, the
+accent; `F7`), **More** (the second layout: 64th to breve, grace notes, the
+common articulations; `F8`), **Artic.** (every articulation, the fermata,
+open and stopped, the arpeggio; `F10`) and **Jazz** (scoop, plop, bend,
+doit, fall, short and long; `F12`); keypad `/` steps through them, and on
+the last two the keys put marks on (lit when the selected note has them)
+instead of values. **Notes > Keypad Layout** picks one too. **F1** in the Score window shows the active keymap over the score.
 
 **Edit > Keyboard Shortcuts** picks the keymap — **Sibelius** (the default) or
 **MuseScore** (digits `1`–`8` are 64th … breve, `Alt+2`–`9` intervals, `J`
@@ -789,6 +799,7 @@ what sounds, then optional marks.
 | Grace note | `/eD5` is an acciaccatura (slashed, played just before the beat), `^eD5` an appoggiatura (played on the beat). Grace notes take no time in the bar. |
 | Tuplet | `3{eC4 eD4 eE4}` is three in the time of two. `5:3{…}` gives the ratio. Without one, `n{` plays n in the time of the usual number: 3 in 2, 2 in 3, 5, 6 or 7 in 4, 9 in 8. Tuplets nest, and each stays inside one bar. |
 | Marks | In brackets after the event, separated by commas: `(p)`, `(stacc,acc)`, `(tech=pizz.)`, `("dolce")`. Inside the brackets, `.` `'` `>` `_` `^` stand for staccato, staccatissimo, accent, tenuto and marcato. |
+| Hairpin | `<` or `>` after the event, before or after its marks, opens a crescendo or diminuendo hairpin: `h.C5<` is `h.C5(cresc)`, `qD5(f)>` is `qD5(f,dim)`. Outside the brackets they mean nothing else (an accent is `(>)`). The printer writes the marks themselves, so a file saved again spells `(cresc)`. |
 
 Spelling matters. `F#4` and `Gb4` sound the same but are different notes on
 the page. The key signature never changes what a written pitch means; it only
@@ -801,6 +812,7 @@ A bar that runs over is an error, and one that runs short is a warning.
 | --- | --- |
 | Dynamics | `pppp` … `ffff`, `niente`; the accents `sf`, `sfz`, `sffz`, `fz`, `rf`, `rfz`; `fp`, `sfp`, `sfpp` |
 | Articulations | `stacc`, `staccmo`, `acc`, `ten`, `marc`, `portato`, `legato` |
+| Jazz | `scoop`, `plop` (drawn left of the note), `doit`, `fall` (right of it; `doit=long`, `fall=long` go further), `bend` (over it); each played as a pitch bend on the note |
 | Ornaments | `tr`, `mord`, `imord`, `turn`, `iturn` (value: the auxiliary's accidental, `tr=#`, a turn's `turn=b/#` upper/lower); `trem=n` (1–4 strokes, bare 3), `trem2=n` (a two-note tremolo with the next event) |
 | Notation | `ferm` (`ferm=short`, `long`, `verylong`), `arp` (`arp=down`), `up`, `down`, `on_beat` / `before_beat` (a grace group's timing), `cross=up` / `cross=down` (the notes written on the line's staff above or below their own) |
 | Playback | `vel=96`: the event's notes play at this MIDI velocity (1–127) whatever the dynamics say — the piano roll's velocity lane; nothing prints |
@@ -1115,7 +1127,7 @@ foundry score render <score> [flags]       render to a WAV
 foundry score render <score> -png out.png  engrave the notation to an image
 foundry score play <score> [flags]         play on the audio device, printing the bar and beat
 foundry score fmt [-check] [score …]       rewrite scores in canonical form
-foundry score import <file> [-o name]      a MIDI, MusicXML or Tracker (.ftrk) file as a score (-list shows the parts first)
+foundry score import <file> [-o name]      a MIDI, MusicXML or Tracker (.ftrk) file as a score (-list shows the parts first); -o a library name, or a file (ending .fscore, or absolute) written where it says
 foundry score export-midi <score> [-o f]   the score as a Standard MIDI File
 foundry score export-pdf <score> [flags]   the full score and its parts as PDFs
 foundry score export-musicxml <score>      the score as MusicXML 4.0 (-o f.musicxml or f.mxl, -no-layout)
@@ -1174,7 +1186,11 @@ the groups of 3+2+2/8 (5/8 beams 3+2 and 7/8 2+2+3), and each tuplet on its
 own; in a compound meter a dotted beat of 16ths keeps one primary beam
 with its 16ths' beam broken at each eighth, so the beat's three eighths
 read. With two or more voices on a staff, voices 1 and 3 have stems up and 2
-and 4 down, whatever the pitch, and rests move out of the way; a stem that
+and 4 down, whatever the pitch, and rests move out of the way; two voices
+stemmed the same way (1 and 3, 2 and 4) never share a stem: the later one's
+notes stand right of the earlier one's stem, and a rest where the other
+voice of its direction has a note stands beside that note at the voice's
+height rather than over its stem; a stem that
 points away from the staff from a note outside it is shortened to two and a
 half spaces; the `up` and `down` marks force a stem. A sung staff (a line
 with lyrics, or a choir's or a voice's) has its dynamics over it, out of
@@ -1206,7 +1222,10 @@ foundry score import sketch.mid -o hangar_sketch -instrument 3=strings/viola_sec
 and the meter and key (from the file, or guessed), and writes nothing. An
 import never overwrites an existing score unless you pass `-force`. It prints
 the lines it made and every warning, and lowers the master gain if the music
-would clip.
+would clip. `-o` is the score's library name (`sketches/hangar` is
+`sounds/sketches/hangar.fscore`), or a file: a path ending in `.fscore`, or
+an absolute one, is written where it says (inside `sounds/` it is that
+library name), and a library name may not climb out of `sounds/`.
 
 **MusicXML** is already notation, so it comes in as written: notes, chords,
 rests, dots, ties, tuplets, grace notes, up to four voices per staff, any
@@ -1278,6 +1297,12 @@ order positions and identical patterns shared.
   (`-voices 1` writes overlaps as chords).
 - **Legato.** Small gaps a player leaves between notes are closed
   (`-no-legato` keeps them as rests).
+- **Drum hits.** A drum part's notes are hits: each is written no longer
+  than the beat it falls in (a drum sounds the same however long the key
+  is held, and a Tracker song's notes last to the channel's next note), so
+  a backbeat comes in as quarters and rests, never as half notes tied over
+  the barline. A percussion line has the staff lines its instrument asks
+  for: a single drum's one line, a kit's five.
 - **Instruments.** A track's instrument comes from its name and program; a
   file Foundry exported names each line's library instrument, and comes
   back with it.

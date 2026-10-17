@@ -127,6 +127,7 @@ var markNames = map[string]string{
 	"marc": "Marcato", "tr": "Trill", "mord": "Mordent", "imord": "Inverted mordent", "turn": "Turn",
 	"iturn": "Inverted turn", "trem": "Tremolo", "trem2": "Two-note tremolo", "arp": "Arpeggio",
 	"gliss": "Glissando", "ferm": "Fermata", "legato": "Legato",
+	"scoop": "Scoop", "plop": "Plop", "doit": "Doit", "fall": "Fall", "bend": "Bend",
 }
 
 // toggleMark is an articulation, ornament, tremolo or arpeggio key or
@@ -234,10 +235,10 @@ func (e *scoreState) gliss(value string) bool {
 }
 
 // keypadMark is keypad 7, 8, 9 and + (slot 7..10): accidentals and the
-// accent on the first layout, articulations on the second.
+// accent on the first layout, marks on the others (scoreKeypadMarks).
 func (e *scoreState) keypadMark(slot int) {
-	if e.Layout2 {
-		e.toggleMark([]string{"stacc", "ten", "staccmo", "marc"}[slot-7], "")
+	if m, ok := scoreKeypadMark(e.Keypad, slot); ok {
+		e.keypadToggle(m)
 		return
 	}
 	switch slot {
@@ -249,6 +250,86 @@ func (e *scoreState) keypadMark(slot int) {
 		e.accidental(edit.Flat)
 	default:
 		e.toggleMark("acc", "")
+	}
+}
+
+// The keypad's layouts, in the order "/" steps through them.
+const (
+	scoreKpNotes = iota
+	scoreKpMore
+	scoreKpArtic
+	scoreKpJazz
+	scoreKpLayouts
+)
+
+// scoreKpNames are the layouts' names, as the panel's tabs show them.
+var scoreKpNames = [scoreKpLayouts]string{"Notes", "More", "Artic.", "Jazz"}
+
+// scoreKeypadMarks are the marks a layout puts on the keypad, by slot
+// (1..6 the value keys, 7, 8, 9 and 10 for "+"): the second layout's
+// common articulations on 7, 8, 9 and +; the articulation layout's every
+// articulation, the fermata and the arpeggio; the jazz layout's slides
+// and the bend.
+var scoreKeypadMarks = [scoreKpLayouts]map[int]scorePaletteMark{
+	scoreKpMore: {
+		7:  {"stacc", "", "articStaccatoAbove", "Staccato", scNone},
+		8:  {"ten", "", "articTenutoAbove", "Tenuto", scNone},
+		9:  {"staccmo", "", "articStaccatissimoAbove", "Staccatissimo", scNone},
+		10: {"marc", "", "articMarcatoAbove", "Marcato", scNone},
+	},
+	scoreKpArtic: {
+		7:  {"stacc", "", "articStaccatoAbove", "Staccato", scNone},
+		8:  {"ten", "", "articTenutoAbove", "Tenuto", scNone},
+		9:  {"staccmo", "", "articStaccatissimoAbove", "Staccatissimo", scNone},
+		10: {"acc", "", "articAccentAbove", "Accent", scNone},
+		4:  {"marc", "", "articMarcatoAbove", "Marcato", scNone},
+		5:  {"portato", "", "articTenutoStaccatoAbove", "Portato", scNone},
+		6:  {"ferm", "", "fermataAbove", "Fermata", scNone},
+		1:  {"open", "", "brassMuteOpen", "Open (o)", scNone},
+		2:  {"stopped", "", "brassMuteClosed", "Stopped / closed (+)", scNone},
+		3:  {"arp", "", "arpeggiatoUp", "Arpeggio", scNone},
+	},
+	scoreKpJazz: {
+		7:  {"scoop", "", "brassScoop", "Scoop", scNone},
+		8:  {"plop", "", "brassPlop", "Plop", scNone},
+		9:  {"bend", "", "brassBend", "Bend", scNone},
+		10: {"fall", "", "brassFallLipShort", "Fall", scNone},
+		4:  {"doit", "", "brassDoitShort", "Doit", scNone},
+		5:  {"fall", "long", "brassFallLipMedium", "Long fall", scNone},
+		6:  {"doit", "long", "brassDoitMedium", "Long doit", scNone},
+	},
+}
+
+// scoreKeypadMark is the mark a keypad slot puts on in a layout.
+func scoreKeypadMark(layout, slot int) (scorePaletteMark, bool) {
+	if layout < 0 || layout >= scoreKpLayouts {
+		return scorePaletteMark{}, false
+	}
+	m, ok := scoreKeypadMarks[layout][slot]
+	return m, ok
+}
+
+// keypadToggle puts a keypad mark on the selected notes, or takes it off.
+func (e *scoreState) keypadToggle(m scorePaletteMark) {
+	if m.Name == "ferm" {
+		e.fermata(m.Value)
+		return
+	}
+	e.toggleMark(m.Name, m.Value)
+}
+
+// setKeypad switches the keypad to a layout.
+func (e *scoreState) setKeypad(layout int) {
+	e.Keypad = ((layout % scoreKpLayouts) + scoreKpLayouts) % scoreKpLayouts
+	switch e.Keypad {
+	case scoreKpMore:
+		e.Status = "Keypad: More (1 64th, 2 128th, 3 256th, 4 breve, 5 6 graces, 7 8 9 + articulations)"
+	case scoreKpArtic:
+		e.Status = "Keypad: Articulations (7 8 9 + staccato, tenuto, staccatissimo, accent; 4 5 6 marcato, portato, fermata; 1 2 3 open, stopped, arpeggio)"
+	case scoreKpJazz:
+		e.Status = "Keypad: Jazz (7 scoop, 8 plop, 9 bend, + fall, 4 doit, 5 long fall, 6 long doit)"
+	default:
+		e.Status = "Keypad: first layout"
 	}
 }
 

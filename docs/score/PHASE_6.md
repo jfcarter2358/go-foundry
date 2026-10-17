@@ -354,3 +354,77 @@ None of SPEC's phase 6 line is left out. What stays, with why:
   SFZ/SF2 features a `.finst` has no place for, what MusicXML has no
   element for, system codecs on Linux, PDF text as outlines, one take
   over a repeat) stand, each with its reason above.
+
+## Final audit round 1
+
+The auditor's pass over the finished editor found fifteen gaps; each is
+fixed below, or (one) kept with the reason.
+
+| Found | Fixed in |
+| --- | --- |
+| An unbeamed acciaccatura of a 16th or shorter had no slash: Bravura gives `graceNoteSlash*` anchors only on the eighth's flag, and `drawStem` gave up the stem-slash fallback even when the anchors were missing | `engrave/beam.go`: a shorter grace takes the eighth flag's slash moved toward the notehead by the extra flags' height (the fallback only when that fails too). `TestShortAcciaccaturasAreSlashed` (16th and 32nd against their appoggiaturas) |
+| Single drums from a Tracker song, a MIDI file or the Import dialog came in on five-line staves: only `edit.NewLineFor` and the MusicXML reader set `Staff.Lines` | `io/midi/import.go` `line`: a percussion staff takes its instrument's `staff_lines` (the importer every one of those paths goes through). `TestASingleDrumComesInOnItsLine` now checks the one line |
+| Drum hits from a Tracker song came in as held notes tied over barlines (the tracker's note-until-the-next-note lengths, then `Legato`) | `io/notate`: `DrumHits` writes a percussion part's notes no longer than the beat each falls in (`Layout.BeatEnd`), and a drum part takes no legato. covenant_assault's snare is now `qr qC4 qr qC4`. `TestDrumHitsEndWithTheirBeat` (4/4, over a barline, 6/8, 3+2+2/8, graces), `TestDrumHitsComeInAsHits` |
+| The keypad had only Notes/More; the mockup's Artic. and Jazz tabs and the jazz marks were missing, dropped without a note | Jazz marks `scoop`, `plop`, `doit`, `fall` (`=long` for both), `bend` in the model (`score.JazzMarks`, `doit=long`/`fall=long` validated), played as pitch bends (`interpret.jazz`), engraved beside the note (scoop/plop left of its accidentals, doit/fall right of its dots, room left by `arrangeColumn`; the bend over the stem), MusicXML `<scoop>`, `<plop>`, `<doit>`, `<falloff line-length="long">` and `<brass-bend>` both ways, the palette's Jazz row, **Marks > Jazz**, Find by name. The keypad's four layouts (`scoreState.Keypad`): tabs Notes, More, Artic., Jazz; keypad `/` steps through them, `F7`/`F8`/`F10`/`F12` go to one (Sibelius's), **Notes > Keypad Layout**; on the articulation and jazz layouts the keys put marks on. `TestJazzArticulations`, `TestJazzMarks`, `TestJazzMarksRoundTrip`, `TestScoreKeypadLayouts`; golden `jazz`; GL shots `keypad_jazz`, `keypad_artic` |
+| SPEC's `h.C5<` hairpin shorthand was not in the grammar and its spelling never decided | `score/grammar.go`: `<` or `>` after an event, before or after its marks, opens a crescendo or diminuendo hairpin (shorthand for `(cresc)`/`(dim)`; the printer writes the marks). `TestGrammarHairpinShorthand`; SPEC's sketch as `scorecli/testdata/spec_sketch.fscore`, read by `TestInspectTheSpecSketch` |
+| No UI authored velocity layers, round robin or articulation zone sets | `tracker/instrument_edit.go` (`Zone.SplitByVelocity`, `RemoveLayer`, `SetLayerVelocity`, `AddRoundRobin`, `SetRoundRobin`, `RemoveRoundRobin`, `Takes`; `Instrument.AddArticulation`, `RemoveArticulation`, `MoveArticulation`, `RenameArticulation`, `SetTriggers`, `SetOwnZones`) and `editor/editor_tracker_layers.go`: the Tracker's **Layers & articulations** section edits them for a song's own instrument (the copy **Open in Instrument Editor** opens), every change an undo step, **Save to library** writes the `.finst`. `TestZoneVelocityLayers`, `TestZoneRoundRobin`, `TestArticulationEdits` (through the file); `TestTrackerInstrumentPaneDrawsEveryKindOfSlot` draws every part. `editor_score_instedit.go`'s comment now says what the Tracker edits |
+| Four voices: voice 3 shared voice 1's stem (read as a chord); voice-3 rests sat over each stem's tip, at different heights, into beams and accidentals | `engrave/chord.go` `voiceShift`: two voices stemmed the same way never share a stem, the later right of the earlier's (`sameWayGap`); `engrave/rest.go`: a rest where the other voice of its direction has a stemmed note stands beside it (past the column's dots), clear only of heads there, so a voice's rests keep one height. `TestSameWayVoicesStandApart`; goldens `voices4` (looked at), `crowded` (new: the auditor's score) |
+| Tempo text sat on an ornament on a high note when the ornament ended just past the words' measured width | `engrave/system.go`: a tempo mark asks the skyline over its width plus `systemClearX` either side. `TestTempoTextClearsAnOrnament` (fails at 0); golden `form` moved ("a tempo" now over the coda sign, not beside it) |
+| `foundry score import -o /abs/path.fscore` wrote folders inside `resources/sounds` | `scorecli/import.go` `importDest`: `-o` is a library name, or a file (ending `.fscore`, or absolute) written there — a path inside `sounds/` is that library name — and a library name may not climb out of `sounds/`. `TestImportToAPath` |
+| The lyric field's next verse was hard-coded to Ctrl+Alt+L | `editor_score_input.go`: the field asks the keymap for `lyrics_verse_2`'s key. `TestScoreLyricNextVerseFollowsTheKeymap` (rebound: the new key moves on, Ctrl+Alt+L is let go) |
+| SPEC's Input model table said `G` and `^` for glissando and marcato | SPEC.md's table now says `Alt+G` and `Shift+'` with the reasons phase 3 recorded, and that the keypad has four layouts |
+| The shipped demo clipped (peak 1.01): every export warned | `score_demo.fscore` master gain 0.8 → 0.72; the audio golden re-captured (`a0a49aac155fb96f`), the steady-tempo test pinned to phase 3's 0.8 so it still proves the mixer unchanged. `foundry score export score_demo -formats all` prints no clip note |
+| A transposing instrument's part (and full-score staff name) did not say what it is in | `engrave/page.go` `TransposedName`: "Horn in F", "Clarinet in B♭" — the key a written C sounds in — for a part and a written full score's full names, not at concert pitch, an octave away, or when the name already says. `TestTransposedPartTitles`; `TestTheDemoOnPages`, `TestExportPDFVerb` and golden `page_demo_1` updated |
+| `score inspect` printed ranges by MIDI name (`A#4..D#5` in B♭ major) | `scorecli.go` `writtenRange`: the stored pitches at the range's ends, as the score spells them. `TestInspectTheSpecSketch` (`Bb4..Eb5`) |
+| PHASE_3 named `TestDemoWithoutFermatasIsUnchanged`, renamed since | PHASE_3.md names `TestDemoAtASteadyTempoWithNoLanesIsUnchanged` and records the rename |
+
+### Decisions
+
+- **Hairpin shorthand is `<` and `>` outside the brackets**, as SPEC's
+  sketch wrote it; inside them `>` stays the accent. It is read, never
+  written: the file keeps one spelling of a hairpin, `(cresc)`/`(dim)`.
+- **The keypad has Sibelius's layout keys**: `F7` first, `F8` second (and
+  back, as SPEC has it), `F10` articulations, `F12` jazz; keypad `/` is
+  "next layout" (the mockup's legend). The articulation and jazz layouts'
+  value keys put marks on; values stay on the first two.
+- **Jazz marks are pitch bends on their note** — the scheduler's existing
+  per-note curve — so they play on any instrument, export to MIDI as pitch
+  bend where a slide would, and leave a glissando's slide alone.
+- **A drum hit lasts at most its beat** on import (MIDI and Tracker alike):
+  notation of a drum is when it is struck, not how long a key was held.
+- **Same-way voices stand apart**: Gould's rule for voices 1 and 3 (2 and
+  4) sounding together — never one stem — and their rests beside the other
+  voice's note rather than above its stem.
+
+### How to verify (round 1)
+
+```
+go test ./internal/score/... ./internal/tracker/... ./internal/editor/ ./internal/
+SCORE_SHOT=/tmp/s.png FOUNDRY_GL_TEST=1 go test -run TestScoreGL ./internal/editor/   # s_keypad_jazz.png, s_keypad_artic.png
+foundry score render internal/score/engrave/testdata/jazz.fscore -png /tmp/jazz.png -scale 24
+foundry score render internal/score/engrave/testdata/crowded.fscore -png /tmp/crowded.png -scale 16
+foundry score inspect internal/score/scorecli/testdata/spec_sketch.fscore     # "7 notes, Bb4..Eb5"
+foundry score import resources/sounds/covenant_assault.ftrk -o /tmp/cov.fscore  # written there; drums on one line, as hits
+foundry score export score_demo -formats all -o /tmp/demo                     # no clip note
+foundry score export-pdf score_demo -o /tmp/pdf -png /tmp/pdf                 # score_demo_horn_p1.png: "Horn in F"
+task test-release
+```
+
+Checked by eye: the 16th acciaccatura's slash, the jazz fixture (each mark
+beside its note, the bend over the stem), the crowded score (voice 3 right
+of voice 1's stems, its rests at one height, "accel." over the trill), the
+four-voice golden, the form golden's raised "a tempo", the covenant_assault
+drums on one line as quarters and eighths, the horn part's heading, and the
+GL shots of the keypad's Jazz and Artic. tabs (the scooped note's cell
+lit). The jazz fixture's MusicXML validates against the 4.0 XSD.
+
+`go test ./...` and `task test-release`: every package passes but
+`internal/glext`'s `TestEveryReadbackGoesThroughTheWrappers`, the
+pre-existing failure in the other session's render work.
+
+### Kept (round 1)
+
+- **A MIDI keyboard on real hardware** is still untested: this machine has
+  no `/dev/snd/seq` and no keyboard (`foundry score midi` says so), and
+  WinMM can only be built and vetted here. Everything above the device
+  layer runs through `mididev.Virtual` and the real scheduler offline.

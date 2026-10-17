@@ -87,8 +87,10 @@ type scoreState struct {
 	Dur score.Duration
 	// Voice is the voice notes go into, 0..3.
 	Voice int
-	// Layout2 is the keypad's second layout (64th, 128th, 256th, breve).
-	Layout2 bool
+	// Keypad is the keypad's layout (scoreKpNotes … scoreKpJazz): the
+	// first, the second (64th, 128th, 256th, breve, graces and the common
+	// articulations), the articulations, the jazz marks.
+	Keypad int
 	// Armed is an accidental chosen with nothing selected: the next note
 	// written takes it.
 	Armed    bool
@@ -902,9 +904,14 @@ func (e *scoreState) respell() {
 
 // ---------- rhythm ----------
 
-// keypadDur is what a keypad slot (1-6) means in the current layout.
+// keypadDur is what a keypad slot (1-6) means in the current layout: a
+// value on the first two; nothing on the articulation and jazz layouts,
+// whose slots are marks (scoreKeypadMarks).
 func (e *scoreState) keypadDur(slot int) (score.DurBase, bool) {
-	if e.Layout2 {
+	if e.Keypad == scoreKpArtic || e.Keypad == scoreKpJazz {
+		return 0, false
+	}
+	if e.Keypad == scoreKpMore {
 		switch slot {
 		case 1:
 			return score.D64, true
@@ -926,13 +933,17 @@ func (e *scoreState) keypadDur(slot int) (score.DurBase, bool) {
 // keypad is a keypad slot pressed.
 func (e *scoreState) keypad(slot int) {
 	// The second layout's 5 and 6 are the grace notes.
-	if e.Layout2 && (slot == 5 || slot == 6) {
+	if e.Keypad == scoreKpMore && (slot == 5 || slot == 6) {
 		e.toggleGrace([]score.Grace{score.Acciaccatura, score.Appoggiatura}[slot-5])
+		return
+	}
+	if m, ok := scoreKeypadMark(e.Keypad, slot); ok {
+		e.keypadToggle(m)
 		return
 	}
 	b, ok := e.keypadDur(slot)
 	if !ok {
-		e.Status = fmt.Sprintf("Keypad %d has nothing on the second layout (F8 goes back)", slot)
+		e.Status = fmt.Sprintf("Keypad %d has nothing on the %s layout", slot, scoreKpNames[e.Keypad])
 		return
 	}
 	e.setDur(b)

@@ -844,6 +844,9 @@ var articulationMarks = map[string]string{
 	"strong-accent": "marc", "tenuto": "ten", "detached-legato": "portato",
 }
 
+// jazzMarks read the jazz slides.
+var jazzMarks = map[string]string{"scoop": "scoop", "plop": "plop", "doit": "doit", "falloff": "fall"}
+
 var ornamentMarks = map[string]string{
 	"trill-mark": "tr", "mordent": "mord", "inverted-mordent": "imord", "turn": "turn",
 	"inverted-turn": "iturn", "delayed-turn": "turn", "shake": "tr",
@@ -973,6 +976,13 @@ func (r *partReader) readNotations(nt *node, n *xnote) {
 				if a.name == "other-articulation" && strings.EqualFold(strings.TrimSpace(a.text), "legato") {
 					add("legato", "")
 				}
+				if m, ok := jazzMarks[a.name]; ok {
+					v := ""
+					if (m == "doit" || m == "fall") && a.attr("line-length") == "long" {
+						v = "long"
+					}
+					add(m, v)
+				}
 			}
 		case "ornaments":
 			r.readOrnaments(k, add)
@@ -1015,6 +1025,8 @@ func (r *partReader) readNotations(nt *node, n *xnote) {
 					add("stopped", "")
 				case "open":
 					add("open", "")
+				case "brass-bend":
+					add("bend", "")
 				case "string":
 					if v := atoiDef(strings.TrimSpace(t.text), 0); v >= 1 && v <= score.MaxStrings {
 						n.str = v

@@ -581,7 +581,9 @@ func TestScoreMarksWindowDraws(t *testing.T) {
 			scoreFrame(away, false)
 			imgui.CloseCurrentPopup()
 		}
-		e.Layout2 = true
+		e.Keypad = scoreKpMore
+		scoreFrame(away, false)
+		e.Keypad = scoreKpJazz
 		scoreFrame(away, false)
 	})
 }
@@ -700,5 +702,80 @@ func TestScoreBarsMoveToAVoice(t *testing.T) {
 	press(t, ctrlAlt(scoreDigitKeys[1]))
 	if e.Voice != 0 || !strings.Contains(e.Status, "Nothing") {
 		t.Errorf("nothing to move: voice %d, %q", e.Voice, e.Status)
+	}
+}
+
+// The keypad's four layouts (mockup screen 7): "/" steps Notes, More,
+// Artic., Jazz and round; F7, F8, F10 and F12 go straight to one (F8 back
+// from the second); on the articulation and jazz layouts the keys put
+// marks on, and the panel's cells show and light them.
+func TestScoreKeypadLayouts(t *testing.T) {
+	e := scoreMarksState(t)
+	for _, want := range []int{scoreKpMore, scoreKpArtic, scoreKpJazz, scoreKpNotes} {
+		press(t, key(sdl.SCANCODE_KP_DIVIDE))
+		if e.Keypad != want {
+			t.Fatalf("/ went to %s, want %s", scoreKpNames[e.Keypad], scoreKpNames[want])
+		}
+	}
+	press(t, key(sdl.SCANCODE_F8))
+	press(t, key(sdl.SCANCODE_F8))
+	if e.Keypad != scoreKpNotes {
+		t.Errorf("F8 twice: %s", scoreKpNames[e.Keypad])
+	}
+	e.selectEvent(edit.Loc{Bar: 1, Event: 0}, -1)
+	dur := e.Dur
+	press(t, key(sdl.SCANCODE_F10))
+	for _, k := range []sdl.Scancode{sdl.SCANCODE_KP_PLUS, sdl.SCANCODE_KP_9, sdl.SCANCODE_KP_1, sdl.SCANCODE_KP_3} {
+		press(t, key(k))
+	}
+	if got := marksOf(e, 1, 0); got != "(acc,staccmo,open,arp)" {
+		t.Errorf("articulations: %q", got)
+	}
+	press(t, key(sdl.SCANCODE_KP_6))
+	if got := marksOf(e, 1, 0); !strings.Contains(got, "ferm") {
+		t.Errorf("keypad 6, the fermata: %q", got)
+	}
+	e.selectEvent(edit.Loc{Bar: 1, Event: 1}, -1)
+	press(t, key(sdl.SCANCODE_F12))
+	for _, k := range []sdl.Scancode{sdl.SCANCODE_KP_7, sdl.SCANCODE_KP_9, sdl.SCANCODE_KP_PLUS} {
+		press(t, key(k))
+	}
+	if got := marksOf(e, 1, 1); got != "(scoop,bend,fall)" {
+		t.Errorf("jazz: %q", got)
+	}
+	// 5, the long fall, makes the fall long; again takes it off.
+	press(t, key(sdl.SCANCODE_KP_5))
+	if got := marksOf(e, 1, 1); got != "(scoop,bend,fall=long)" {
+		t.Errorf("long fall: %q", got)
+	}
+	press(t, key(sdl.SCANCODE_KP_5))
+	if got := marksOf(e, 1, 1); got != "(scoop,bend)" {
+		t.Errorf("long fall off: %q", got)
+	}
+	// The value keys write no values here.
+	if e.Dur != dur {
+		t.Errorf("the duration moved to %v on the mark layouts", e.Dur)
+	}
+	// The panel shows the layout's marks, lit where the note has them.
+	cells := map[string]scoreKpCell{}
+	for _, c := range scoreKeypadCells() {
+		cells[c.key] = c
+	}
+	if c := cells["7"]; c.glyph != "brassScoop" || !c.lit {
+		t.Errorf("jazz 7: %+v", c)
+	}
+	if c := cells["4"]; c.glyph != "brassDoitShort" || c.lit {
+		t.Errorf("jazz 4: %+v", c)
+	}
+	if c := cells["/"]; c.text != "Jazz" {
+		t.Errorf("the / cell: %+v", c)
+	}
+	press(t, key(sdl.SCANCODE_F7))
+	if e.Keypad != scoreKpNotes {
+		t.Errorf("F7: %s", scoreKpNames[e.Keypad])
+	}
+	press(t, key(sdl.SCANCODE_KP_4))
+	if e.Dur.Base != score.Quarter {
+		t.Errorf("back on the first layout keypad 4 is a quarter: %v", e.Dur)
 	}
 }

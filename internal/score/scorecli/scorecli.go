@@ -339,7 +339,8 @@ func inspect(rest []string, out io.Writer) int {
 			}
 		}
 		if counts[i] > 0 {
-			fmt.Fprintf(out, "         %d notes, %s..%s\n", counts[i], score.SpellMIDI(lo[i], 0, 1), score.SpellMIDI(hi[i], 0, 1))
+			low, high := writtenRange(l, s.KeyAt(1).Fifths, lo[i], hi[i])
+			fmt.Fprintf(out, "         %d notes, %s..%s\n", counts[i], low, high)
 		}
 		if n := len(l.Chords); n > 0 {
 			var syms []string
@@ -788,4 +789,33 @@ func chainText(chain []score.FX) string {
 		parts = append(parts, t)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// writtenRange is a line's lowest and highest notes spelled as the score
+// spells them (B♭4 in B♭ major, not A#4): the stored pitches at the played
+// range's ends lo and hi, else those keys spelled in the key.
+func writtenRange(l *score.Line, fifths, lo, hi int) (score.Pitch, score.Pitch) {
+	low, high := score.SpellMIDI(lo, fifths, -1), score.SpellMIDI(hi, fifths, 1)
+	foundLo, foundHi := false, false
+	for _, st := range l.Staves {
+		for _, v := range st.Voices {
+			for _, m := range v.Measures {
+				for _, e := range m.Events {
+					if e.Kind != score.EventChord {
+						continue
+					}
+					for _, n := range e.Notes {
+						k := n.Pitch.MIDI()
+						if k == lo && !foundLo {
+							low, foundLo = n.Pitch, true
+						}
+						if k == hi && !foundHi {
+							high, foundHi = n.Pitch, true
+						}
+					}
+				}
+			}
+		}
+	}
+	return low, high
 }

@@ -83,7 +83,9 @@ func TestScoreWindowDraws(t *testing.T) {
 		uiwin.KeybindHelpVisible = true
 		scoreFrame(away, false)
 		uiwin.KeybindHelpVisible = false
-		scEd.Layout2 = true
+		scEd.Keypad = scoreKpMore
+		scoreFrame(away, false)
+		scEd.Keypad = scoreKpArtic
 		scoreFrame(away, false)
 	})
 }

@@ -86,6 +86,32 @@ func (e *engraver) placeRest(x *ev, chords, placed []*ev, forced bool) {
 	default:
 		y += dir * 2
 	}
+	// A rest where another voice stemmed its way (voices 1 and 3, 2 and
+	// 4) has a stemmed note stands beside that note, right of its stem, as
+	// the voice's own notes would (voiceShift): stacked over the stem it
+	// sat at the stem's tip, into the beam or the flag, and at a different
+	// height at every note. Beside it, only heads it would cover move it.
+	var beside *ev
+	for _, c := range chords {
+		if c.voice != x.voice && c.voice%2 == x.voice%2 && c.hasStem && c.up == up && len(c.notes) > 0 {
+			if beside == nil || c.shift > beside.shift {
+				beside = c
+			}
+		}
+	}
+	x0, x1 := x.restX, x.restX+b.W()
+	if beside != nil {
+		_, r := headSpan(beside)
+		x.restX = beside.shift + r + sameWayGap*beside.size
+		for _, c := range chords {
+			// Past the column's dots (one column for every voice).
+			if c.dots > 0 {
+				end := c.shift + c.dotX + float64(c.dots-1)*dotSpacing*c.size + e.f.Width("augmentationDot")*c.size
+				x.restX = math.Max(x.restX, end+dotGap)
+			}
+		}
+		x0, x1 = x.restX, x.restX+b.W()
+	}
 	// Clear the other voices' heads at this onset, and their stems where
 	// they point the way the rest moves (a third voice's, beside the first).
 	for tries := 0; tries < 16; tries++ {
@@ -96,9 +122,18 @@ func (e *engraver) placeRest(x *ev, chords, placed []*ev, forced bool) {
 				continue
 			}
 			for _, n := range c.notes {
+				if beside != nil {
+					// Beside a stem, a head counts where it is.
+					if hx := c.shift + n.dx; hx > x1+0.1 || hx+c.headW < x0-0.1 {
+						continue
+					}
+				}
 				if n.y+0.5 > top+0.1 && n.y-0.5 < bot-0.1 {
 					clash = true
 				}
+			}
+			if beside != nil {
+				continue // the stems are left of it
 			}
 			if c.hasStem && c.up == up && len(c.notes) > 0 {
 				low, high := c.notes[0].y, c.notes[len(c.notes)-1].y // y down: low is the larger

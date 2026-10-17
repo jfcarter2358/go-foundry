@@ -513,6 +513,16 @@ var (
 		{"acc", "", "articAccentAbove", "Accent", scAccent},
 		{"marc", "", "articMarcatoAbove", "Marcato", scMarcato},
 	}
+	// The jazz articulations, as the keypad's Jazz tab has them.
+	scorePaletteJazz = []scorePaletteMark{
+		{"scoop", "", "brassScoop", "Scoop (slide up into the note)", scNone},
+		{"plop", "", "brassPlop", "Plop (drop into the note)", scNone},
+		{"bend", "", "brassBend", "Bend (dip and back)", scNone},
+		{"doit", "", "brassDoitShort", "Doit (slide up off the note)", scNone},
+		{"doit", "long", "brassDoitMedium", "Long doit", scNone},
+		{"fall", "", "brassFallLipShort", "Fall (drop off the note)", scNone},
+		{"fall", "long", "brassFallLipMedium", "Long fall", scNone},
+	}
 	scorePaletteOrnaments = []scorePaletteMark{
 		{"tr", "", "ornamentTrill", "Trill", scNone},
 		{"mord", "", "ornamentMordent", "Mordent", scNone},
@@ -631,6 +641,8 @@ func scorePalettePanel(winW, winH float32) {
 
 	section("Articulations")
 	scorePaletteGlyphRow("scpa", scorePaletteArticulations, func(m scorePaletteMark) { e.toggleMark(m.Name, m.Value) })
+	section("Jazz")
+	scorePaletteGlyphRow("scpj", scorePaletteJazz, func(m scorePaletteMark) { e.toggleMark(m.Name, m.Value) })
 	section("Ornaments, arpeggios")
 	scorePaletteGlyphRow("scpor", scorePaletteOrnaments, func(m scorePaletteMark) { e.toggleMark(m.Name, m.Value) })
 	section("Tremolo, fermata")
@@ -756,6 +768,14 @@ func scoreMarksMenu() {
 	if imgui.BeginMenu("Articulation") {
 		for _, m := range scorePaletteArticulations {
 			if imgui.MenuItemV(m.Label, km.label(m.Cmd), false, true) {
+				e.toggleMark(m.Name, m.Value)
+			}
+		}
+		imgui.EndMenu()
+	}
+	if imgui.BeginMenu("Jazz") {
+		for _, m := range scorePaletteJazz {
+			if imgui.MenuItem(m.Label + "##scmjz") {
 				e.toggleMark(m.Name, m.Value)
 			}
 		}

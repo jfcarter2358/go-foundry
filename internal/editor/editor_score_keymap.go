@@ -201,6 +201,11 @@ const (
 	// Cross-staff notes (editor_score_tools.go).
 	scCrossUp
 	scCrossDown
+	// The keypad's other layouts (editor_score_marks.go).
+	scLayoutNext
+	scLayoutNotes
+	scLayoutArtic
+	scLayoutJazz
 	scCmdCount
 )
 
@@ -249,7 +254,11 @@ func buildScoreCmdInfos() []scoreCmdInfo {
 	for i, d := range scoreDirectDurs {
 		set(scDur256+scoreCmd(i), "duration_"+d.name, scoreDurLabel(d.base)+" note", "Durations")
 	}
-	set(scLayout, "keypad_layout", "Second keypad layout (64th, 128th, 256th, breve)", "Durations")
+	set(scLayout, "keypad_layout", "Second keypad layout (64th, 128th, 256th, breve) and back", "Durations")
+	set(scLayoutNext, "keypad_layout_next", "Next keypad layout (Notes, More, Artic., Jazz)", "Durations")
+	set(scLayoutNotes, "keypad_layout_notes", "First keypad layout (common notes)", "Durations")
+	set(scLayoutArtic, "keypad_layout_articulations", "Articulations keypad layout", "Expression")
+	set(scLayoutJazz, "keypad_layout_jazz", "Jazz keypad layout (scoop, plop, doit, fall, bend)", "Expression")
 	set(scDot, "dot", "Dot (again: double dot)", "Rhythm")
 	set(scRest, "rest", "Rest", "Rhythm")
 	set(scTie, "tie", "Tie", "Rhythm")
@@ -731,7 +740,13 @@ func scoreSibeliusKeymap() *scoreKeymap {
 	for i := 0; i < 6; i++ {
 		k.bind(scKeypad1+scoreCmd(i), key(scorePadKeys[i+1]), altKey(scoreDigitKeys[i+1]))
 	}
-	k.bind(scLayout, key(sdl.SCANCODE_F8), key(sdl.SCANCODE_KP_DIVIDE))
+	// Sibelius's layouts: F7 the first, F8 the second, F10 the
+	// articulations, F12 the jazz marks; keypad "/" steps through them.
+	k.bind(scLayout, key(sdl.SCANCODE_F8))
+	k.bind(scLayoutNext, key(sdl.SCANCODE_KP_DIVIDE))
+	k.bind(scLayoutNotes, key(sdl.SCANCODE_F7))
+	k.bind(scLayoutArtic, key(sdl.SCANCODE_F10))
+	k.bind(scLayoutJazz, key(sdl.SCANCODE_F12))
 	k.bind(scDot, key(sdl.SCANCODE_KP_PERIOD), altKey(sdl.SCANCODE_PERIOD))
 	k.bind(scRest, key(sdl.SCANCODE_KP_0), altKey(sdl.SCANCODE_0))
 	k.bind(scTie, key(sdl.SCANCODE_KP_ENTER), key(sdl.SCANCODE_T))

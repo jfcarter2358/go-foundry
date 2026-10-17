@@ -531,8 +531,8 @@ func scoreStatusParts() []string {
 		"Duration: " + edit.DurName(e.Dur),
 		fmt.Sprintf("Voice %d", e.Voice+1),
 	}
-	if e.Layout2 {
-		parts = append(parts, "Keypad layout 2")
+	if e.Keypad != scoreKpNotes {
+		parts = append(parts, "Keypad: "+scoreKpNames[e.Keypad])
 	}
 	if e.Armed {
 		parts = append(parts, []string{"Sharp", "Flat", "Natural"}[e.ArmedAcc]+" armed")

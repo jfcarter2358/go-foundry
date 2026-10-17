@@ -132,9 +132,11 @@ func rms(d []float32) float64 {
 // is now followed sample by sample (ramped, not stepped once a block) and
 // its delay bus glides through the rit. instead of jumping; with no lane
 // and a steady tempo it renders exactly as phase 3's code did
-// (TestDemoAtASteadyTempoWithNoLanesIsUnchanged).
+// (TestDemoAtASteadyTempoWithNoLanesIsUnchanged). The final audit lowered
+// its master gain from 0.8 to 0.72 (74ceacc483c638a9 before): at 0.8 the
+// mix peaked at 1.01 and every export warned that it clipped.
 var scoreGolden = map[string]string{
-	"score_demo": "74ceacc483c638a9",
+	"score_demo": "a0a49aac155fb96f",
 }
 
 // The effects rack changes nothing a score does not ask for: the demo at
@@ -153,6 +155,9 @@ func TestDemoAtASteadyTempoWithNoLanesIsUnchanged(t *testing.T) {
 	}
 	s = s.Clone()
 	s.Tempo = s.Tempo[:1]
+	// The master gain phase 3 had (the shipped demo's was lowered from
+	// 0.8 to 0.72 in the final audit so its mix no longer clips).
+	s.Gain = 0.8
 	for _, l := range s.Lines {
 		l.Lanes = nil
 		for _, st := range l.Staves {

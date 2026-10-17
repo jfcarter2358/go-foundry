@@ -7,9 +7,12 @@ package editor
 //
 // Each cell runs the same command its key does (scoreRunCmd), so the panel
 // cannot drift from the keyboard: the duration cells are keypad slots, whose
-// meaning is the keypad layout (the "More" tab is F8's second layout: 64th,
-// 128th, 256th and breve on 1–4, the grace notes on 5 and 6, and the
-// articulations on 7, 8, 9 and +).
+// meaning is the keypad layout. The tabs are the mockup's four: Notes (the
+// common values and accidentals), More (F8's second layout: 64th, 128th,
+// 256th and breve on 1–4, the grace notes on 5 and 6, the common
+// articulations on 7, 8, 9 and +), Artic. (every articulation, the
+// fermata, open/stopped and the arpeggio) and Jazz (scoop, plop, bend,
+// doit and fall, short and long); "/" steps through them.
 
 import (
 	"fmt"
@@ -40,8 +43,41 @@ func scoreKeypadCells() []scoreKpCell {
 	e := scEd
 	cur, isRest, tied := e.shownDur()
 	acc := scoreCurrentAcc()
+	ev := e.event()
+	has := func(name, value string) bool {
+		if ev == nil {
+			return false
+		}
+		for _, m := range ev.Marks {
+			if m.Name == name && m.Value == value {
+				return true
+			}
+		}
+		return false
+	}
+	// A layout's mark on a slot (the articulation and jazz layouts' 1-9
+	// and +, the second layout's 7, 8, 9 and +), lit when the selected
+	// note has it.
+	markOf := func(c scoreKpCell, slot int) (scoreKpCell, bool) {
+		m, ok := scoreKeypadMark(e.Keypad, slot)
+		if !ok {
+			return c, false
+		}
+		c.glyph, c.lit = m.Glyph, has(m.Name, m.Value)
+		return c, true
+	}
 	durCell := func(slot, col, row int) scoreKpCell {
 		c := scoreKpCell{col: col, row: row, w: 1, h: 1, key: fmt.Sprint(slot), cmd: scKeypad1 + scoreCmd(slot-1)}
+		if mc, ok := markOf(c, slot); ok {
+			return mc
+		}
+		// The second layout's 5 and 6 are the grace notes.
+		if e.Keypad == scoreKpMore && (slot == 5 || slot == 6) {
+			k := []score.Grace{score.Acciaccatura, score.Appoggiatura}[slot-5]
+			c.glyph = []string{"graceNoteAcciaccaturaStemUp", "graceNoteAppoggiaturaStemUp"}[slot-5]
+			c.lit = e.Grace == k
+			return c
+		}
 		if b, ok := e.keypadDur(slot); ok {
 			c.glyph = scoreDurIcon(b)
 			c.lit = cur.Base == b
@@ -49,20 +85,14 @@ func scoreKeypadCells() []scoreKpCell {
 		return c
 	}
 	// markCell is one of keypad 7, 8, 9 and +: an accidental or the accent
-	// on the first layout, an articulation on the second; lit when the
-	// selected note has it.
-	ev := e.event()
-	has := func(name string) bool { return ev != nil && ev.Has(name) }
+	// on the first layout, the layout's mark on the others.
 	markCell := func(slot, col, row, h int) scoreKpCell {
 		c := scoreKpCell{col: col, row: row, w: 1, h: h, key: fmt.Sprint(slot), cmd: scKeypad7 + scoreCmd(slot-7)}
 		if slot == 10 {
 			c.key = "+"
 		}
-		if e.Layout2 {
-			name := []string{"stacc", "ten", "staccmo", "marc"}[slot-7]
-			c.glyph = []string{"articStaccatoAbove", "articTenutoAbove", "articStaccatissimoAbove", "articMarcatoAbove"}[slot-7]
-			c.lit = has(name)
-			return c
+		if mc, ok := markOf(c, slot); ok {
+			return mc
 		}
 		switch slot {
 		case 7:
@@ -72,35 +102,38 @@ func scoreKeypadCells() []scoreKpCell {
 		case 9:
 			c.glyph, c.lit = "accidentalFlat", acc == 1
 		default:
-			c.glyph, c.lit = "articAccentAbove", has("acc")
+			c.glyph, c.lit = "articAccentAbove", has("acc", "")
 		}
 		return c
 	}
-	// The second layout's 5 and 6 are the grace notes.
-	graceCell := func(slot, col int) scoreKpCell {
-		if !e.Layout2 {
-			return durCell(slot, col, 2)
-		}
-		k := []score.Grace{score.Acciaccatura, score.Appoggiatura}[slot-5]
-		return scoreKpCell{col: col, row: 2, w: 1, h: 1, key: fmt.Sprint(slot), cmd: scKeypad1 + scoreCmd(slot-1),
-			glyph: []string{"graceNoteAcciaccaturaStemUp", "graceNoteAppoggiaturaStemUp"}[slot-5], lit: e.Grace == k}
-	}
-	layout := "Layout 1"
-	if e.Layout2 {
-		layout = "Layout 2"
-	}
 	return []scoreKpCell{
 		{col: 0, row: 0, w: 1, h: 1, key: "Num", text: "-"},
-		{col: 1, row: 0, w: 1, h: 1, key: "/", text: layout, cmd: scLayout, lit: e.Layout2},
+		{col: 1, row: 0, w: 1, h: 1, key: "/", text: scoreKpNames[e.Keypad], cmd: scLayoutNext, lit: e.Keypad != scoreKpNotes},
 		{col: 2, row: 0, w: 1, h: 1, key: "*", text: fmt.Sprintf("Voice %d", e.Voice+1), cmd: scVoiceCycle},
 		{col: 3, row: 0, w: 1, h: 1, key: "-", text: "Flip", cmd: scFlip},
 		markCell(7, 0, 1, 1), markCell(8, 1, 1, 1), markCell(9, 2, 1, 1), markCell(10, 3, 1, 2),
-		durCell(4, 0, 2), graceCell(5, 1), graceCell(6, 2),
+		durCell(4, 0, 2), durCell(5, 1, 2), durCell(6, 2, 2),
 		durCell(1, 0, 3), durCell(2, 1, 3), durCell(3, 2, 3),
 		{col: 3, row: 3, w: 1, h: 2, key: "Enter", text: "Tie", cmd: scTie, lit: tied},
 		{col: 0, row: 4, w: 2, h: 1, key: "0", glyph: "restQuarter", cmd: scRest, lit: isRest},
 		{col: 2, row: 4, w: 1, h: 1, key: ".", glyph: "augmentationDot", cmd: scDot, lit: cur.Dots > 0},
 	}
+}
+
+// scoreKeypadTip is what a cell's tooltip says: a layout mark's name, else
+// its command's, with the keys.
+func scoreKeypadTip(c scoreKpCell) string {
+	slot := 0
+	switch {
+	case c.cmd >= scKeypad1 && c.cmd < scKeypad1+6:
+		slot = int(c.cmd-scKeypad1) + 1
+	case c.cmd >= scKeypad7 && c.cmd < scKeypad7+4:
+		slot = int(c.cmd-scKeypad7) + 7
+	}
+	if m, ok := scoreKeypadMark(scEd.Keypad, slot); ok {
+		return m.Label + scoreKeysSuffix(c.cmd)
+	}
+	return scoreCmdInfos[c.cmd].Label + scoreKeysSuffix(c.cmd)
 }
 
 // scoreKeypadPanel draws the panel as a floating window over the score.
@@ -116,16 +149,22 @@ func scoreKeypadPanel(winW, winH float32) {
 		imgui.End()
 		return
 	}
-	// The two layouts as tabs.
-	for i, name := range []string{"Notes", "More"} {
+	// The layouts as tabs ("/" steps through them).
+	tips := [scoreKpLayouts]string{
+		"The common notes (F7): 32nd to whole on 1-6, accidentals on 7-9, the accent on +.",
+		"The second layout (F8): 64th, 128th, 256th and breve on 1-4, grace notes on 5 and 6,\nstaccato, tenuto, staccatissimo and marcato on 7, 8, 9 and +.",
+		"Articulations (F10): staccato, tenuto, staccatissimo, accent on 7, 8, 9, +;\nmarcato, portato, fermata on 4-6; open, stopped, arpeggio on 1-3.",
+		"Jazz marks (F12): scoop, plop, bend on 7-9, fall on +;\ndoit, long fall, long doit on 4-6.",
+	}
+	for i, name := range scoreKpNames {
 		if i > 0 {
 			imgui.SameLine()
 		}
-		if editorActiveToggleButtonColor(name+"##sckptab", e.Layout2 == (i == 1), scoreColActive) && e.Layout2 != (i == 1) {
-			scoreRunCmd(scLayout)
+		if editorActiveToggleButtonColor(name+"##sckptab", e.Keypad == i, scoreColActive) && e.Keypad != i {
+			e.setKeypad(i)
 		}
+		editorMenuTooltip(tips[i])
 	}
-	editorMenuTooltip("More is the second layout (F8): 64th, 128th, 256th and breve on 1-4,\ngrace notes on 5 and 6, staccato, tenuto, staccatissimo and marcato on 7, 8, 9 and +.")
 	origin := imgui.CursorPos()
 	dl := imgui.WindowDrawList()
 	style := imgui.CurrentStyle()
@@ -167,7 +206,7 @@ func scoreKeypadPanel(winW, winH float32) {
 			scoreRunCmd(c.cmd)
 		}
 		if c.cmd != scNone && imgui.IsItemHovered() {
-			imgui.SetTooltip(scoreCmdInfos[c.cmd].Label + scoreKeysSuffix(c.cmd))
+			imgui.SetTooltip(scoreKeypadTip(c))
 		}
 	}
 	imgui.SetCursorPos(imgui.Vec2{X: origin.X, Y: origin.Y + gridH + scoreKpGap})

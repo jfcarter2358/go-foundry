@@ -30,6 +30,10 @@ package score
 //	         or more pitches joined by "+" — a chord: "qC4+E4+G4".
 //	marks    optional: "(" names ")" separated by commas: "(p)",
 //	         "(stacc,acc)", "(tech=pizz.)", "(\"dolce\")".
+//	hairpin  optional, before or after the marks: "<" opens a crescendo
+//	         hairpin, ">" a diminuendo — shorthand for "(cresc)" and
+//	         "(dim)", so "h.C5<" is "h.C5(cresc)" (the printer writes the
+//	         mark). Inside parentheses ">" is still an accent.
 //
 // "R" instead of a duration and body is a bar rest: it fills the bar,
 // whatever its meter ("R(ferm)" is allowed).
@@ -372,6 +376,29 @@ func parseEvent(tok string, dur *Duration, haveDur *bool) (Event, int, error) {
 			return e, 0, fmt.Errorf("a grace note must be a note")
 		}
 	}
+	// A hairpin shorthand: "<" opens a crescendo hairpin and ">" a
+	// diminuendo, before the marks or after them: "h.C5<" is h.C5(cresc).
+	// Outside the parentheses neither means anything else (an accent is
+	// "(>)"). The printer writes the marks themselves.
+	pin := ""
+	hairpin := func(c byte) bool {
+		switch c {
+		case '<':
+			pin = "cresc"
+		case '>':
+			pin = "dim"
+		default:
+			return false
+		}
+		return true
+	}
+	end := len(tok)
+	if i < end && hairpin(tok[i]) {
+		i++
+	} else if end > i+1 && tok[i] == '(' && hairpin(tok[end-1]) {
+		end--
+	}
+	tok = tok[:end]
 	if i < len(tok) && tok[i] == '(' {
 		if tok[len(tok)-1] != ')' {
 			return e, len(tok) - 1, fmt.Errorf("text after the marks' \")\"")
@@ -384,7 +411,18 @@ func parseEvent(tok string, dur *Duration, haveDur *bool) (Event, int, error) {
 		i = len(tok)
 	}
 	if i != len(tok) {
+		if pin != "" && (tok[i] == '<' || tok[i] == '>') {
+			return e, i, fmt.Errorf("one hairpin (\"<\" or \">\") to an event")
+		}
 		return e, i, fmt.Errorf("unexpected %q in %q", tok[i:], tok)
+	}
+	if pin != "" {
+		for _, m := range e.Marks {
+			if m.Name == "cresc" || m.Name == "dim" {
+				return e, 0, fmt.Errorf("%q opens two hairpins", tok)
+			}
+		}
+		e.Marks = append(e.Marks, Mark{Name: pin})
 	}
 	return e, 0, nil
 }

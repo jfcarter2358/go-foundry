@@ -254,7 +254,7 @@ func TestScoreDispatch(t *testing.T) {
 	if got := barOf(scEd, 0, 0, 1); got != "hG4+C#5 hr" {
 		t.Errorf("keypad 5 = %q", got)
 	}
-	if scoreDispatch(key(sdl.SCANCODE_F12), false) {
+	if scoreDispatch(key(sdl.SCANCODE_F11), false) {
 		t.Error("an unbound key ran something")
 	}
 }

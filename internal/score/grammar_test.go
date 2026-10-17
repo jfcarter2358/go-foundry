@@ -100,6 +100,28 @@ func TestGrammarMarks(t *testing.T) {
 	}
 }
 
+// "<" and ">" outside the parentheses open a hairpin: SPEC's sketch writes
+// "h.C5<". The printer writes the marks, so the shorthand is read, never
+// written.
+func TestGrammarHairpinShorthand(t *testing.T) {
+	v := mustVoice(t, `| q.Bb4 e.C5 h.D5(p) | q.Eb5< q.D5(mf)> hC5(pp) | qC5(p)< qr< R> | qC5<(>) h_ |`)
+	if got := FormatVoice(v); got != "| q.Bb4 e.C5 h.D5(p)\n| q.Eb5(cresc) q.D5(mf,dim) hC5(pp)\n| qC5(p,cresc) qr(cresc) R(dim)\n| qC5(acc,cresc) h_\n|\n" {
+		t.Errorf("printed:\n%s", got)
+	}
+	for text, want := range map[string]string{
+		"| qC5<< |":       "one hairpin",
+		"| qC5<(p)> |":    "after the marks",
+		"| qC5(cresc)< |": "two hairpins",
+		"| qC5(dim)<  |":  "two hairpins",
+		"| q< |":          "bad pitch",
+		"| qC5(p)x< |":    "after the marks",
+	} {
+		if _, err := ParseVoice(text); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", text, err, want)
+		}
+	}
+}
+
 func TestGrammarErrors(t *testing.T) {
 	cases := map[string]string{
 		"| C4 |":              "no duration",

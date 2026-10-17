@@ -169,3 +169,46 @@ func TestParseKeyAndNames(t *testing.T) {
 		}
 	}
 }
+
+// -o with a path writes that file: it used to be joined under sounds/ as
+// a library name, an absolute path becoming folders inside the library.
+func TestImportToAPath(t *testing.T) {
+	src := ioFixture(t, "musicxml", "sibelius_piano.musicxml")
+	root := scratchProject(t)
+	sounds := filepath.Join(root, "resources", "sounds")
+	dst := filepath.Join(t.TempDir(), "out", "piano.fscore")
+	out, code := run(t, root, "import", src, "-o", dst)
+	if code != 0 || !strings.Contains(out, dst) {
+		t.Fatalf("import to %s (%d):\n%s", dst, code, out)
+	}
+	s, err := score.LoadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Name != "piano" || len(s.Lines) != 1 {
+		t.Errorf("the score: %q, %d lines", s.Name, len(s.Lines))
+	}
+	// Nothing went into the library.
+	filepath.WalkDir(sounds, func(p string, d os.DirEntry, err error) error {
+		if err == nil && strings.HasSuffix(p, ".fscore") {
+			t.Errorf("wrote %s", p)
+		}
+		return nil
+	})
+	// Not over it again without -force.
+	if out, code := run(t, root, "import", src, "-o", dst); code != 1 || !strings.Contains(out, "-force") {
+		t.Errorf("overwrite (%d):\n%s", code, out)
+	}
+	if _, code := run(t, root, "import", src, "-o", dst, "-force"); code != 0 {
+		t.Error("-force to a path failed")
+	}
+	// A path inside sounds/ is that library name.
+	in := filepath.Join(sounds, "sketches", "inside.fscore")
+	if out, code := run(t, root, "import", src, "-o", in); code != 0 || !score.IsScore("sketches/inside") {
+		t.Errorf("a path in the library (%d):\n%s", code, out)
+	}
+	// A library name cannot climb out of sounds/.
+	if out, code := run(t, root, "import", src, "-o", "../escape"); code != 2 {
+		t.Errorf("../escape (%d):\n%s", code, out)
+	}
+}

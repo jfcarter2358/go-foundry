@@ -29,15 +29,19 @@ import (
 
 // Sizes of the system's text, in staff spaces.
 const (
-	tempoTextSize     = 2.0
-	tempoChangeSize   = 1.7
-	metronomeSize     = 1.7
-	rehearsalSize     = 2.0
-	sectionNameSize   = 1.5
-	jumpTextSize      = 1.7
-	endingLabelSize   = 1.4
-	endingHook        = 1.6
-	systemClear       = 0.6 // what is placed here to what is under it
+	tempoTextSize   = 2.0
+	tempoChangeSize = 1.7
+	metronomeSize   = 1.7
+	rehearsalSize   = 2.0
+	sectionNameSize = 1.5
+	jumpTextSize    = 1.7
+	endingLabelSize = 1.4
+	endingHook      = 1.6
+	systemClear     = 0.6 // what is placed here to what is under it
+	// systemClearX is the room kept either side of a tempo mark: ink that
+	// ends just short of the words (an ornament's swash beside "accel.")
+	// still lifts them over it.
+	systemClearX      = 0.5
 	systemLowest      = -1.8
 	metronomeNoteSize = 0.72
 )
@@ -309,7 +313,7 @@ func (e *engraver) drawTempoMark(k *sky, put func(Item) Rect, lowest float64, i 
 	} else {
 		has = false
 	}
-	base := math.Min(k.topIn(x0, math.Max(x0+w+metW, dashEnd), lowest)-systemClear, lowest) - 0.25*size
+	base := math.Min(k.topIn(x0-systemClearX, math.Max(x0+w+metW, dashEnd)+systemClearX, lowest)-systemClear, lowest) - 0.25*size
 	// The metronome note's stem must clear the ink too.
 	if metW > 0 {
 		base = math.Min(base, k.topIn(x0+w, x0+w+metW, lowest)-systemClear-gb.Max.Y*metronomeNoteSize)

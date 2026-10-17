@@ -206,7 +206,7 @@ func TestScoreDurationsAndRhythm(t *testing.T) {
 			t.Errorf("keypad %d = %v", slot, e.Dur)
 		}
 	}
-	e.Layout2 = true
+	e.Keypad = scoreKpMore
 	for slot, want := range map[int]score.DurBase{1: score.D64, 2: score.D128, 3: score.D256, 4: score.Breve} {
 		e.keypad(slot)
 		if e.Dur.Base != want {
@@ -224,7 +224,7 @@ func TestScoreDurationsAndRhythm(t *testing.T) {
 		t.Errorf("layout 2 keypad 6: grace %v", e.Grace)
 	}
 	e.Grace = score.NotGrace
-	e.Layout2 = false
+	e.Keypad = scoreKpNotes
 
 	// In note input a value is the next note's: the note just written keeps
 	// its own (Sibelius: 4 C 3 D is a quarter then an eighth).

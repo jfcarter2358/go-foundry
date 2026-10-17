@@ -114,7 +114,8 @@ func TestTheDemoOnPages(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(names[1], ","); got != "Flute,Horn,Violins,Cello,Piano" {
+	// A transposing line's full name says what it is in.
+	if got := strings.Join(names[1], ","); got != "Flute,Horn in F,Violins,Cello,Piano" {
 		t.Errorf("first system's names %q", got)
 	}
 	_, second := b.Find(b.Pages[0].Systems[len(b.Pages[0].Systems)-1].To + 1)
@@ -724,6 +725,58 @@ func TestHideEmptyStaves(t *testing.T) {
 			if len(sys.List.Staves) != 3 {
 				t.Errorf("hide_empty off: a system of %d staves", len(sys.List.Staves))
 			}
+		}
+	}
+}
+
+// A part for a transposing instrument is headed with its key ("Horn in
+// F"), as is its staff in a written full score; at concert pitch, or an
+// octave away, or already named so, the name alone.
+func TestTransposedPartTitles(t *testing.T) {
+	s := loadFixture(t, "demo")
+	horn := -1
+	for i, l := range s.Lines {
+		if l.Name == "Horn" {
+			horn = i
+		}
+	}
+	if horn < 0 {
+		t.Fatal("no horn in the demo")
+	}
+	title := func(b *Book) string {
+		for _, it := range b.Pages[0].Items {
+			if it.Role == RoleTitle && strings.HasPrefix(it.Text, "Horn") {
+				return it.Text
+			}
+		}
+		return ""
+	}
+	if b := PartBook(s, horn, false); b.Part != "Horn in F" || title(b) != "Horn in F" {
+		t.Errorf("the horn's part: %q, headed %q", b.Part, title(b))
+	}
+	if b := PartBook(s, horn, true); b.Part != "Horn" {
+		t.Errorf("at concert pitch: %q", b.Part)
+	}
+	for _, c := range []struct {
+		name string
+		iv   score.Interval
+		want string
+	}{
+		{"Clarinet", score.Interval{Diatonic: -1, Chromatic: -2}, "Clarinet in B♭"},
+		{"Alto Sax", score.Interval{Diatonic: -5, Chromatic: -9}, "Alto Sax in E♭"},
+		{"Trumpet", score.Interval{Diatonic: -1, Chromatic: -2}, "Trumpet in B♭"},
+		{"Clarinet in A", score.Interval{Diatonic: -2, Chromatic: -3}, "Clarinet in A"},
+		{"Guitar", score.Interval{Diatonic: -7, Chromatic: -12}, "Guitar"},
+		{"Piccolo", score.Interval{Diatonic: 7, Chromatic: 12}, "Piccolo"},
+		{"Violin", score.Interval{}, "Violin"},
+	} {
+		l := score.NewLine(c.name, "", "treble")
+		l.Staves[0].Transpose = c.iv
+		if got := TransposedName(l, false); got != c.want {
+			t.Errorf("%s %s: %q, want %q", c.name, c.iv, got, c.want)
+		}
+		if got := TransposedName(l, true); got != c.name {
+			t.Errorf("%s at concert pitch: %q", c.name, got)
 		}
 	}
 }

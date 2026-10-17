@@ -1338,6 +1338,9 @@ var articulationXML = map[string]string{
 	"marc": "strong-accent", "portato": "detached-legato",
 }
 
+// jazzXML are the jazz slides' articulation elements.
+var jazzXML = map[string]string{"scoop": "scoop", "plop": "plop", "doit": "doit", "fall": "falloff"}
+
 var ornamentXML = map[string]string{
 	"tr": "trill-mark", "mord": "mordent", "imord": "inverted-mordent", "turn": "turn", "iturn": "inverted-turn",
 }
@@ -1848,18 +1851,31 @@ func (p *partWriter) notations(si, vi int, e score.Event, n score.Note, ni int, 
 			})
 		}
 		var arts []string
+		var jazz []score.Mark
 		legato := false
 		for _, mk := range e.Marks {
 			if a, ok := articulationXML[mk.Name]; ok {
 				arts = append(arts, a)
 			}
+			if _, ok := jazzXML[mk.Name]; ok {
+				jazz = append(jazz, mk)
+			}
 			legato = legato || mk.Name == "legato"
 		}
-		if len(arts) > 0 || legato {
+		if len(arts) > 0 || legato || len(jazz) > 0 {
 			add(func() {
 				w.open("articulations")
 				for _, a := range arts {
 					w.empty(a)
+				}
+				// Jazz slides: a long doit or fall says so in its line's
+				// length.
+				for _, mk := range jazz {
+					if mk.Value == "long" {
+						w.empty(jazzXML[mk.Name], attr{"line-length", "long"})
+					} else {
+						w.empty(jazzXML[mk.Name])
+					}
 				}
 				if legato {
 					w.leaf("other-articulation", "legato")
@@ -1874,6 +1890,9 @@ func (p *partWriter) notations(si, vi int, e score.Event, n score.Note, ni int, 
 				tech = append(tech, func() { w.empty("open") })
 			case "stopped":
 				tech = append(tech, func() { w.empty("stopped") })
+			case "bend":
+				// The jazz bend, a dip in the note (not a guitar's <bend>).
+				tech = append(tech, func() { w.empty("brass-bend") })
 			}
 		}
 		if len(tech) > 0 && !rest {

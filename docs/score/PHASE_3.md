@@ -92,7 +92,9 @@ task test-release
 
 The demo's golden hash moved from `4a6f89d0e9c4c939` to `54bff7c5ac84c913`
 because its last bar's fermatas now hold; with the fermatas taken out it
-still renders bit-identical to phase 0 (`TestDemoWithoutFermatasIsUnchanged`).
+still renders bit-identical to phase 0 (then `TestDemoWithoutFermatasIsUnchanged`;
+phase 4 widened it to `TestDemoAtASteadyTempoWithNoLanesIsUnchanged`, the
+demo at one tempo with no lanes and no fermatas).
 
 ### Tests
 
@@ -103,7 +105,7 @@ still renders bit-identical to phase 0 (`TestDemoWithoutFermatasIsUnchanged`).
 | `edit` | `TestDynamicOverrides`, `TestMoveToVoice`, `TestFormMarks`, `TestFormMarksFindTheirPlaceHoweverZeroIsSpelled`, `TestRetranspose`, the expression classifier |
 | `engrave` | `expression_test.go` and the goldens above |
 | `play` (offline renders) | `TestAHeldNoteSwellsUnderAHairpin`, `TestAccentsFallBackAndOverridesHold`, `TestASlideGlides`, `TestMarksPickArticulations`, `TestSwappingReperformsWhatDependsOnTheInstrument`, `TestFormAndFermataPlay`, `TestExpressionRendersWithoutAllocating` |
-| `scorecli` | `TestDemoWithoutFermatasIsUnchanged`, `TestExpressionFixturePlays`, the re-captured golden |
+| `scorecli` | `TestDemoAtASteadyTempoWithNoLanesIsUnchanged` (was `TestDemoWithoutFermatasIsUnchanged`), `TestExpressionFixturePlays`, the re-captured golden |
 | `editor` | `TestScoreExpressionKeys`, `TestScoreExpressionBox`, `TestScoreFormTools`, `TestScoreLaneDragModel`, `TestScoreLaneThroughTheView`, `TestScoreLaneHeardWhilePlaying`, `TestScoreGraceEntryAndSwitches`, `TestScoreMarksWindowDraws`, `TestScoreBarsMoveToAVoice`, `TestScoreSwapTakesTheInstrumentsTransposition`, `TestScoreWriteTempoKeepsTempoText`, `TestScoreGLWindowDraws` (expression shot) |
 
 ## Decisions

@@ -811,6 +811,38 @@ func TestGraceNotes(t *testing.T) {
 	}
 }
 
+// An unbeamed acciaccatura shorter than an eighth is slashed too: Bravura
+// has the slash's anchors only on the eighth's flag, and the 16th's used
+// to come out with none, the same as an appoggiatura.
+func TestShortAcciaccaturasAreSlashed(t *testing.T) {
+	l := Engrave(one(t, "treble", "| /sG5 qA5 ^sG5 qA5 /tG4 qA4 ^tG4 qA4"), Options{})
+	strokes := func(ev int) (n int, box Rect) {
+		box = Rect{Min: Point{X: math.Inf(1), Y: math.Inf(1)}, Max: Point{X: math.Inf(-1), Y: math.Inf(-1)}}
+		for _, it := range l.Items {
+			if it.Ref.Bar == 1 && it.Ref.Event == ev && it.Kind == ItemLine && (it.Role == RoleFlag || it.Role == RoleStem) {
+				n++
+				box.Min.X, box.Min.Y = math.Min(box.Min.X, math.Min(it.P.X, it.Q.X)), math.Min(box.Min.Y, math.Min(it.P.Y, it.Q.Y))
+				box.Max.X, box.Max.Y = math.Max(box.Max.X, math.Max(it.P.X, it.Q.X)), math.Max(box.Max.Y, math.Max(it.P.Y, it.Q.Y))
+			}
+		}
+		return
+	}
+	for _, c := range []struct {
+		acc, app int
+		what     string
+	}{{0, 2, "16th"}, {4, 6, "32nd"}} {
+		na, ba := strokes(c.acc)
+		np, _ := strokes(c.app)
+		if na != np+1 {
+			t.Errorf("%s: acciaccatura %d strokes, appoggiatura %d", c.what, na, np)
+		}
+		// The slash crosses the stem: it reaches either side of it.
+		if !(ba.W() > 0.5) {
+			t.Errorf("%s: the slash spans %g of a space", c.what, ba.W())
+		}
+	}
+}
+
 func TestBoxesMapPointerToMusic(t *testing.T) {
 	l := Engrave(one(t, "treble", "| qC5 qD5 hE5 | wF5"), Options{})
 	sb := l.Staves[0]
@@ -1337,5 +1369,175 @@ func TestCrossStaffNotesSitBesideTheOthers(t *testing.T) {
 	}
 	if f4.Min.X < e4.Max.X-0.05 {
 		t.Errorf("the crossed F4 %v overlaps the treble's E4 %v", f4, e4)
+	}
+}
+
+// Voices stemmed the same way never share a stem: a third voice's notes
+// stand right of the first voice's stem (on one stem they read as one
+// voice's chord), and its rests stand beside the first voice's notes at
+// one height, not stacked over each stem's tip.
+func TestSameWayVoicesStandApart(t *testing.T) {
+	l := Engrave(one(t, "treble", "| qE5 qD5 hC5 | qC5 qD5 qE5 qF5 |", "| wC4 | wE4 |", "| qF4 qG4 hA4 | qr qr qr qr |"), Options{})
+	f := glyph.Bravura()
+	stems := map[[2]int]float64{} // bar, voice → the first event's stem x
+	heads := map[[3]int]Rect{}
+	for i := range l.Items {
+		it := &l.Items[i]
+		if it.Role == RoleStem && it.Kind == ItemLine && it.Ref.Bar == 1 {
+			stems[[2]int{it.Ref.Event, it.Ref.Voice}] = it.P.X
+		}
+		if it.Role == RoleNotehead {
+			heads[[3]int{it.Ref.Bar, it.Ref.Voice, it.Ref.Event}] = itemBounds(f, it)
+		}
+	}
+	for ev := 0; ev < 3; ev++ {
+		v1, ok1 := stems[[2]int{ev, 0}]
+		v3, ok3 := stems[[2]int{ev, 2}]
+		if !ok1 || !ok3 {
+			t.Fatalf("event %d: stems %v", ev, stems)
+		}
+		if v3 < v1+0.5 {
+			t.Errorf("event %d: voice 3's stem at %.2f, voice 1's at %.2f (one stem)", ev, v3, v1)
+		}
+		// Its head clear of voice 1's stem.
+		if h := heads[[3]int{1, 2, ev}]; h.Min.X < v1+0.1 {
+			t.Errorf("event %d: voice 3's head from %.2f, voice 1's stem at %.2f", ev, h.Min.X, v1)
+		}
+	}
+	var ys []float64
+	for i := range l.Items {
+		it := &l.Items[i]
+		if it.Role != RoleRest || it.Ref.Bar != 2 || it.Ref.Voice != 2 {
+			continue
+		}
+		ys = append(ys, it.P.Y)
+		rb := itemBounds(f, it)
+		for j := range l.Items {
+			o := &l.Items[j]
+			if o.Ref.Voice != 0 || o.Ref.Bar != 2 || (o.Role != RoleNotehead && o.Role != RoleStem) {
+				continue
+			}
+			if overlap(rb, itemBounds(f, o), 0.05) {
+				t.Errorf("voice 3's rest %d touches voice 1's %v %d", it.Ref.Event, o.Role, o.Ref.Event)
+			}
+		}
+	}
+	if len(ys) != 4 {
+		t.Fatalf("%d rests", len(ys))
+	}
+	for _, y := range ys[1:] {
+		if y != ys[0] {
+			t.Errorf("voice 3's rests at %v: not one height", ys)
+			break
+		}
+	}
+}
+
+// A tempo mark rises over an ornament that ends just short of its words:
+// in the crowded fixture's bar 3 (a 16th acciaccatura and a trill on A5
+// after a time signature, three voices below) "accel." sat on the trill's
+// line, its last letter in the trill's swash.
+func TestTempoTextClearsAnOrnament(t *testing.T) {
+	l := Engrave(fixture(t, "crowded"), Options{})
+	f := glyph.Bravura()
+	var tempo, orn []Rect
+	for i := range l.Items {
+		it := &l.Items[i]
+		switch {
+		case it.Role == RoleTempo && it.Ref.Bar == 3:
+			tempo = append(tempo, itemBounds(f, it))
+		case it.Role == RoleOrnament && it.Ref.Bar == 3:
+			orn = append(orn, itemBounds(f, it))
+		}
+	}
+	if len(tempo) == 0 || len(orn) == 0 {
+		t.Fatalf("tempo %d, ornaments %d", len(tempo), len(orn))
+	}
+	for _, a := range tempo {
+		for _, b := range orn {
+			// Not over it, and not beside it on its line.
+			grown := Rect{Min: Point{X: b.Min.X - 0.4, Y: b.Min.Y}, Max: Point{X: b.Max.X + 0.4, Y: b.Max.Y}}
+			if overlap(a, grown, 0) {
+				t.Errorf("the tempo mark %v meets the trill %v", a, b)
+			}
+		}
+	}
+}
+
+// Jazz marks stand beside their note: a scoop or a plop left of it and
+// its accidentals, a doit or a fall right of it and its dots, a bend over
+// the stem; none touches the note's own ink, and spacing leaves the room.
+func TestJazzMarks(t *testing.T) {
+	l := Engrave(fixture(t, "jazz"), Options{})
+	f := glyph.Bravura()
+	type evKey struct{ bar, ev int }
+	jazz := map[evKey][]*Item{}
+	own := map[evKey][]Rect{} // heads, accidentals, dots
+	all := []Rect{}
+	stemTop := map[evKey]float64{}
+	for i := range l.Items {
+		it := &l.Items[i]
+		k := evKey{it.Ref.Bar, it.Ref.Event}
+		if _, ok := stemTop[k]; !ok {
+			stemTop[k] = math.Inf(1)
+		}
+		switch {
+		case it.Role == RoleArticulation && strings.HasPrefix(it.Glyph, "brass"):
+			jazz[k] = append(jazz[k], it)
+		case it.Role == RoleNotehead || it.Role == RoleAccidental || it.Role == RoleDot:
+			own[k] = append(own[k], itemBounds(f, it))
+			all = append(all, itemBounds(f, it))
+		case it.Role == RoleStem || it.Role == RoleFlag || it.Role == RoleBeam:
+			all = append(all, itemBounds(f, it))
+			if it.Role == RoleStem {
+				stemTop[k] = math.Min(stemTop[k], itemBounds(f, it).Min.Y)
+			}
+		}
+	}
+	want := map[evKey][]string{
+		{1, 0}: {"brassScoop"}, {1, 1}: {"brassPlop"}, {1, 2}: {"brassDoitShort"}, {1, 3}: {"brassFallLipShort"},
+		{2, 0}: {"brassBend"}, {2, 1}: {"brassFallLipMedium"}, {2, 2}: {"brassDoitMedium"},
+		{3, 0}: {"brassScoop", "brassFallLipShort"}, {3, 2}: {"brassPlop"}, {3, 3}: {"brassScoop", "brassDoitShort"},
+	}
+	for k, names := range want {
+		var got []string
+		for _, it := range jazz[k] {
+			got = append(got, it.Glyph)
+		}
+		sort.Strings(got)
+		sort.Strings(names)
+		if strings.Join(got, ",") != strings.Join(names, ",") {
+			t.Errorf("bar %d event %d: %v, want %v", k.bar, k.ev+1, got, names)
+		}
+		for _, it := range jazz[k] {
+			jb := itemBounds(f, it)
+			for _, r := range all {
+				if overlap(jb, r, 0.05) {
+					t.Errorf("bar %d event %d: %s touches the music at %v", k.bar, k.ev+1, it.Glyph, r)
+				}
+			}
+			var ink Rect
+			for i, r := range own[k] {
+				if i == 0 {
+					ink = r
+				} else {
+					ink = ink.Union(r)
+				}
+			}
+			switch it.Glyph {
+			case "brassScoop", "brassPlop":
+				if jb.Max.X > ink.Min.X {
+					t.Errorf("bar %d event %d: the %s ends at %.2f, right of the note's ink from %.2f", k.bar, k.ev+1, it.Glyph, jb.Max.X, ink.Min.X)
+				}
+			case "brassBend":
+				if top := math.Min(ink.Min.Y, stemTop[k]); jb.Max.Y > top {
+					t.Errorf("bar %d event %d: the bend reaches %.2f, under the note's top at %.2f", k.bar, k.ev+1, jb.Max.Y, top)
+				}
+			default:
+				if jb.Min.X < ink.Max.X {
+					t.Errorf("bar %d event %d: the %s starts at %.2f, inside the note's ink to %.2f", k.bar, k.ev+1, it.Glyph, jb.Min.X, ink.Max.X)
+				}
+			}
+		}
 	}
 }

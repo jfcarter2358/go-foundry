@@ -289,6 +289,21 @@ playback:
   gain over the instrument's own. The Score picks one from a mark or technique
   text; the Tracker from the `@` command. `sustain`, `arco` and `ord.` are the
   instrument's own zones.
+- **Editing them.** An instrument of the song's own (a library one after
+  **Make local copy**, or the copy the Score's **Open in Instrument Editor**
+  opens) has a **Layers & articulations** section in the instrument pane.
+  Pick a zone of the keymap: **Split by velocity** makes it two layers,
+  quiet (0-63) and loud (64-127), to point the loud one at its recording;
+  **Add layer** halves the widest; each layer has its sample, its velocity
+  range, a gain trim and its takes, and **x** gives its range to the layer
+  below (the last one folds back into the zone). **+ take** adds a round-robin
+  take, the next sample slot by default. Under **Articulations**, **Add
+  articulation** offers the common names; each has its name and trigger
+  words (commas between, `pizz., pizzicato`), a gain and a release, `^`/`v`
+  to change its `@` number, and **Its own samples**, which starts it from a
+  copy of the keymap to point each zone (and its layers) at the
+  articulation's recordings. Every change is an undo step; **Save to
+  library** writes the `.finst`.
 - **Playback defaults** say how the instrument is written in notation and how
   its marks play. A kit's `drums` map is its percussion staff in the Score:
   each sound's key, its line or space, its notehead, an articulation it is

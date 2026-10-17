@@ -20,6 +20,14 @@ package interpret
 //     ornament or a tremolo, which strikes as itself); a chromatic or diatonic run
 //     plays every semitone, or every note of the key, between them in that
 //     time.
+//   - jazz articulations, as pitch bends on each note of the chord (a note
+//     a glissando already bends is left to it): a scoop rises from a minor
+//     third below and a plop falls from a major third above into the note
+//     over its first 16th (a third of a shorter note); a doit rises a
+//     fourth and a fall drops a fifth over the last eighth it sounds (half
+//     of a shorter note), `doit=long`/`fall=long` an octave over its last
+//     quarter (two thirds); a bend dips a semitone and comes back over its
+//     first eighth (half of a shorter note).
 //   - ornaments, on a chord's top note: a trill (`tr`) alternates with the
 //     note above about 12 notes a second, starting and ending on the
 //     note; a mordent (`mord`) is note, note below, note in 32nds; an
@@ -67,6 +75,7 @@ func (in *interp) express() {
 		ve := &in.voices[vi]
 		in.lengths(ve)
 		in.glissandi(ve)
+		in.jazz(ve)
 		in.ornaments(ve)
 		in.tremolos(ve)
 		in.arpeggios(ve)
@@ -269,6 +278,86 @@ func (in *interp) glissandi(ve *voiceEvents) {
 			}
 		}
 	}
+}
+
+// jazz bends the notes of chords with jazz articulations: a scoop or a
+// plop into the note, a doit or a fall out of it, a bend in it.
+func (in *interp) jazz(ve *voiceEvents) {
+	for _, x := range ve.evs {
+		if x.e.Kind != score.EventChord {
+			continue
+		}
+		var marks []score.Mark
+		for _, m := range x.e.Marks {
+			switch m.Name {
+			case "scoop", "plop", "doit", "fall", "bend":
+				marks = append(marks, m)
+			}
+		}
+		if len(marks) == 0 {
+			continue
+		}
+		for _, idx := range x.notes {
+			idx = in.resolve(idx)
+			n := &in.notes[idx]
+			if n.drop || n.shaped || len(n.bends) > 0 {
+				continue
+			}
+			in.notes[idx].bends = jazzBends(n.at, n.dur, marks)
+		}
+	}
+}
+
+// jazzBends are the pitch curve jazz marks give a note sounding from at
+// for dur: what comes in at its start, then what goes out at its end.
+func jazzBends(at, dur score.Frac, marks []score.Mark) []bendAt {
+	if dur.Sign() <= 0 {
+		return nil
+	}
+	has := func(name string) (score.Mark, bool) {
+		for _, m := range marks {
+			if m.Name == name {
+				return m, true
+			}
+		}
+		return score.Mark{}, false
+	}
+	var out []bendAt
+	into := score.MinFrac(score.F(1, 16), dur.Div(score.Whole(3)))
+	_, scoop := has("scoop")
+	_, plop := has("plop")
+	_, bend := has("bend")
+	switch {
+	case scoop:
+		out = append(out, bendAt{at, -3}, bendAt{at.Add(into), 0})
+	case plop:
+		out = append(out, bendAt{at, 4}, bendAt{at.Add(into), 0})
+	case bend:
+		half := score.MinFrac(score.F(1, 16), dur.Div(score.Whole(4)))
+		out = append(out, bendAt{at, 0}, bendAt{at.Add(half), -1}, bendAt{at.Add(half.MulInt(2)), 0})
+	}
+	end := at.Add(dur)
+	away := func(m score.Mark, semis float32) {
+		span := score.MinFrac(score.F(1, 8), dur.Div(score.Whole(2)))
+		if m.Value == "long" {
+			span = score.MinFrac(score.F(1, 4), dur.Mul(score.F(2, 3)))
+			semis *= 12 / float32(math.Abs(float64(semis)))
+		}
+		from := end.Sub(span)
+		if len(out) > 0 && from.Less(out[len(out)-1].at) {
+			from = out[len(out)-1].at
+		}
+		if len(out) == 0 || out[len(out)-1].semis != 0 || out[len(out)-1].at.Less(from) {
+			out = append(out, bendAt{from, 0})
+		}
+		out = append(out, bendAt{end, semis})
+	}
+	if m, ok := has("doit"); ok {
+		away(m, 5)
+	} else if m, ok := has("fall"); ok {
+		away(m, -7)
+	}
+	return out
 }
 
 // restrikes reports an event whose marks make it a run of notes (an

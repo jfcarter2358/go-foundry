@@ -520,13 +520,29 @@ func (e *engraver) drawStem(sc *staffCtx, x *ev) {
 			if !x.up {
 				sw, ne = "graceNoteSlashNW", "graceNoteSlashSE"
 			}
+			// Bravura gives the slash's ends only on the eighth's flag. A
+			// shorter grace takes the eighth's slash moved toward the
+			// notehead by the extra flags' height, so it crosses the stem
+			// and the last flag the way the eighth's crosses its one.
 			p, ok1 := e.f.Anchor(fg, sw)
 			q, ok2 := e.f.Anchor(fg, ne)
+			dy := 0.0
+			if !ok1 || !ok2 {
+				f8 := flagGlyph(score.Eighth, x.up)
+				p, ok1 = e.f.Anchor(f8, sw)
+				q, ok2 = e.f.Anchor(f8, ne)
+				b8, _ := e.f.Box(f8)
+				bf, _ := e.f.Box(fg)
+				dy = math.Max(bf.H()-b8.H(), 0) * s
+				if !x.up {
+					dy = -dy
+				}
+			}
 			if ok1 && ok2 {
 				e.add(sc, x, Item{Kind: ItemLine, Role: RoleFlag, Ref: x.ref,
-					P: Point{X: ox + p.X*s, Y: oy + p.Y*s}, Q: Point{X: ox + q.X*s, Y: oy + q.Y*s}, Width: t})
+					P: Point{X: ox + p.X*s, Y: oy + p.Y*s + dy}, Q: Point{X: ox + q.X*s, Y: oy + q.Y*s + dy}, Width: t})
+				slashed = false
 			}
-			slashed = false
 		}
 	}
 	if slashed {

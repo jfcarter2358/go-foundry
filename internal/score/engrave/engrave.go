@@ -354,6 +354,9 @@ type ev struct {
 	bottom, ottava int
 	// arpX is an arpeggio line's x from the column x (arrangeColumn).
 	arpX float64
+	// jazzInX and jazzOutX are where a scoop or plop ends (its right edge)
+	// and a doit or fall starts (its left edge), from the column x.
+	jazzInX, jazzOutX float64
 	// artTop and artBot are the event's ink with its articulations, for
 	// slurs to clear (staff-local).
 	artTop, artBot float64

@@ -112,6 +112,13 @@ const DefaultDynamic = "mf"
 //	vel=96                    the event's notes play at this MIDI velocity
 //	                          (1..127) whatever the dynamics say — the
 //	                          piano roll's velocity lane; nothing prints
+//	scoop, plop               a jazz slide into the note from below, from
+//	                          above (drawn left of it)
+//	doit, fall                a slide up or down out of the note at its end
+//	                          (drawn right of it); doit=long, fall=long go
+//	                          further, over more of the note
+//	bend                      a jazz bend: the pitch dips a semitone and
+//	                          comes back (drawn over the note)
 //	open, stopped             "o" and "+" over the note: a horn's open and
 //	                          stopped notes, a hi-hat open and closed (a
 //	                          drum map can name either, drums.go)
@@ -127,6 +134,10 @@ var markKinds = map[string]MarkKind{
 	"stacc": MarkArticulation, "staccmo": MarkArticulation, "acc": MarkArticulation,
 	"ten": MarkArticulation, "marc": MarkArticulation, "portato": MarkArticulation,
 	"legato": MarkArticulation,
+	// jazz articulations: into the note from below (scoop) or above
+	// (plop), out of it up (doit) or down (fall), a dip in it (bend)
+	"scoop": MarkArticulation, "plop": MarkArticulation, "doit": MarkArticulation,
+	"fall": MarkArticulation, "bend": MarkArticulation,
 	// ornaments
 	"tr": MarkOrnament, "mord": MarkOrnament, "imord": MarkOrnament, "turn": MarkOrnament,
 	"iturn": MarkOrnament, "trem": MarkOrnament, "trem2": MarkOrnament,
@@ -193,6 +204,9 @@ func FermataScale(value string) float64 {
 	}
 	return 2
 }
+
+// JazzMarks are the jazz articulations, in the keypad's order.
+var JazzMarks = []string{"scoop", "plop", "doit", "fall", "bend"}
 
 // FermataKinds are the values a fermata takes ("" aside).
 var FermataKinds = []string{"short", "long", "verylong"}

@@ -935,9 +935,16 @@ func (a *Analysis) line(p *Part, ch Choice, lay notate.Layout, o Options) (*scor
 		clefs = []string{"treble", "bass"}
 	}
 	var transpose score.Interval
-	if pb, ok := gm.Playback(inst); ok && pb.Transposition != 0 && !p.Percussion {
+	pb, havePB := gm.Playback(inst)
+	if havePB && pb.Transposition != 0 && !p.Percussion {
 		d, c := gm.Transposition(pb.Transposition)
 		transpose = score.Interval{Diatonic: d, Chromatic: c}
+	}
+	// A percussion staff has the lines its instrument asks for: a single
+	// drum's one, a kit's five (edit.NewLineFor's rule).
+	lines := 0
+	if havePB && pb.StaffLines >= 1 && pb.StaffLines < 5 {
+		lines = pb.StaffLines
 	}
 	if p.Percussion {
 		// The kit's own keys for its sounds (a drum map other than
@@ -958,7 +965,11 @@ func (a *Analysis) line(p *Part, ch Choice, lay notate.Layout, o Options) (*scor
 		return nil, err
 	}
 	for _, ts := range staves {
-		l.Staves = append(l.Staves, &score.Staff{Clef: ts.Clef, Transpose: transpose, Voices: ts.Voices})
+		st := &score.Staff{Clef: ts.Clef, Transpose: transpose, Voices: ts.Voices}
+		if ts.Clef == "percussion" {
+			st.Lines = lines
+		}
+		l.Staves = append(l.Staves, st)
 	}
 	if lane := a.expressionLane(p, lay, o.Grid.Unit); lane != nil {
 		l.Lanes = append(l.Lanes, *lane)
