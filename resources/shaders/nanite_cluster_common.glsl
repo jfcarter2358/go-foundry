@@ -72,6 +72,12 @@ layout(std430, binding = 13) readonly buffer KindTiles {
 
 uniform uint tileBase;
 uniform uint kindTileCount;
+// liveList: the kind list bound at 13 is this pass's live tiles, liveCount
+// long (render/nanite_live_tiles.go; the range cull only).
+uniform int liveList;
+layout(std430, binding = 18) readonly buffer LiveCount {
+    uint liveCount;
+};
 // A debug view's pass (render/nanite_debug.go): each command's base instance
 // is its slot, not its instance, so the debug program can tell its clusters
 // apart.

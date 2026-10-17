@@ -1,0 +1,9 @@
+version: 1
+name: Organ Combo
+samples: [keys/organ_combo]
+fade_out: 0.12
+polyphony: 4
+playback:
+  range: [A-0, C-8]
+  clef: grand
+description: 'Combo organ: filtered squares, reedy and bright'

@@ -257,10 +257,17 @@ func (t *texBuffer) make(format uint32, data []byte, size int) {
 	t.size = max(size, 16)
 	gl.BindBuffer(gl.TEXTURE_BUFFER, t.buf)
 	var p unsafe.Pointer
-	if len(data) > 0 {
+	if len(data) >= t.size {
 		p = gl.Ptr(data)
 	}
 	gl.BufferData(gl.TEXTURE_BUFFER, t.size, p, gl.STATIC_DRAW)
+	// A buffer made bigger than its data (grown with headroom, as the
+	// terrains' is) takes the data as a sub-upload: BufferData with the
+	// whole size would read past the slice's end, which crashed the native
+	// bench with an access violation (docs/regions/PHASE_6.md).
+	if p == nil && len(data) > 0 {
+		gl.BufferSubData(gl.TEXTURE_BUFFER, 0, len(data), gl.Ptr(data))
+	}
 	gl.BindTexture(gl.TEXTURE_BUFFER, t.tex)
 	gl.TexBuffer(gl.TEXTURE_BUFFER, format, t.buf)
 	gl.BindTexture(gl.TEXTURE_BUFFER, 0)

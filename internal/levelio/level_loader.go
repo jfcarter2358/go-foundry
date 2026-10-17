@@ -6,6 +6,8 @@ import (
 	"foundry/internal/compile"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/score"
+	"foundry/internal/score/play"
 	"foundry/internal/tracker"
 	"foundry/internal/world"
 	"log"
@@ -134,6 +136,30 @@ func InstallPlayerModels(level *world.Level) error {
 	world.PlayerEntity.Models = append([]world.EntityModel(nil), level.Player.Models...)
 	if err := world.PlayerEntity.Load(); err != nil {
 		return fmt.Errorf("player viewmodel load: %w", err)
+	}
+	return InstallPlayerBody(level)
+}
+
+// InstallPlayerBody puts a level's `player: body:` models onto the engine-owned
+// third-person body (world.PlayerBodyEntity), the same unconditional way
+// InstallPlayerModels does the viewmodel: a level with no body gets none.
+// Hidden until the frame loop's camera shows it.
+func InstallPlayerBody(level *world.Level) error {
+	if level == nil {
+		return nil
+	}
+	if world.PlayerBodyEntity == nil {
+		if len(level.Player.Body.Models) == 0 {
+			return nil
+		}
+		world.PlayerBodyEntity = world.NewPlayerBody()
+	}
+	b := world.PlayerBodyEntity
+	b.Delete()
+	b.Visible = false
+	b.Models = append([]world.EntityModel(nil), level.Player.Body.Models...)
+	if err := b.Load(); err != nil {
+		return fmt.Errorf("player body load: %w", err)
 	}
 	return nil
 }
@@ -366,10 +392,27 @@ func loadChunkRange(raw world.RawLevel, level *world.Level, texNeeded map[string
 }
 
 // loadLevelObjects builds everything that sits at the level rather than in a
-// chunk: the spawn, entities, volumes, sprites, emitters, sounds, music and
-// lights. One step rather than several — together they are a fraction of a
-// chunk's cost, and splitting them would buy nothing but seams.
+// chunk: the spawn, entities, volumes, sprites, emitters, scenery, sounds,
+// music and lights.
+//
+// It is three pieces run back to back — the objects before the scenery, the
+// scenery's own loads, the objects after — because a stepped load (LoadJob)
+// runs the middle one a slice at a time: a generated level holds tens of
+// thousands of placements, and loading them as one step froze the window for
+// as long as that took with the bar standing still. The synchronous loader
+// runs the same three in the same order, so there is still one loader.
 func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[string]bool) error {
+	if err := loadLevelObjectsBeforeScenery(raw, level, texNeeded); err != nil {
+		return err
+	}
+	world.LoadSceneryRange(level, world.ChunksByID(level), 0, len(level.Scenery))
+	return loadLevelObjectsAfterScenery(raw, level, texNeeded)
+}
+
+// loadLevelObjectsBeforeScenery is loadLevelObjects up to the scenery: every
+// placement is in the level, with its ID, and marked unloaded, and nothing has
+// loaded a model yet. world.LoadSceneryRange is what loads them.
+func loadLevelObjectsBeforeScenery(raw world.RawLevel, level *world.Level, texNeeded map[string]bool) error {
 	// Chunk and sector IDs are how a script addresses geometry, so they have to
 	// name exactly one thing. Nothing enforced that before scripting existed, and
 	// the editor could mint duplicates, so resolve them here — renaming with a
@@ -381,9 +424,15 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	level.SaveMode = world.SaveModeFromName(raw.SaveMode)
 	level.Gravity = world.CopyFloatPtr(raw.Gravity)
 	level.ViewDistance = raw.ViewDistance
+	level.RainRipples = world.ClampRainRipples(raw.RainRipples)
+	// Lightmaps unless the level asks otherwise (compile/lightmap.go).
+	level.Lightmap = true
 	if raw.Compile != nil {
 		level.LightGrid, level.LightMinGrid = raw.Compile.LightGrid, raw.Compile.LightMinGrid
 		level.NoBake = raw.Compile.Bake == world.BakeNone
+		level.BakeVertex = raw.Compile.Bake == world.BakeVertex
+		level.Lightmap = !level.BakeVertex && !level.NoBake
+		level.LightmapTexel = raw.Compile.LightmapTexel
 	}
 
 	world.ResolveLevelIDCollisions(level.Chunks)
@@ -578,9 +627,16 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// unload_when_disabled is left unloaded, as its chunk is: the chunks are
 	// already built, so SyncPlacementChunks can say which those are, and builds
 	// them when the chunk comes on.
+	//
+	// The IDs are minted against one snapshot of the level's namespace
+	// (world.LevelIDIndex) rather than by UniqueSceneryID per placement,
+	// which rescans every list each time: a generated level holds tens of
+	// thousands of placements, and that was quadratic. The trees below share
+	// the snapshot, so a tree cannot take a placement's ID.
+	ids := world.NewLevelIDIndex(level)
 	for _, rsc := range raw.Scenery {
 		sc := world.SceneryFromRaw(rsc)
-		sc.ID = world.UniqueSceneryID(level, sc.ID)
+		sc.ID = ids.Unique(sc.ID, "scenery")
 		level.Scenery = append(level.Scenery, sc)
 	}
 	sceneryFrom := len(level.Scenery) - len(raw.Scenery)
@@ -592,13 +648,18 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// load: the foliage renderer draws them from the shared templates.
 	for _, rt := range raw.Trees {
 		t := world.TreeFromRaw(rt)
-		t.ID = world.UniqueTreeID(level, t.ID)
+		t.ID = ids.Unique(t.ID, "tree")
 		level.Trees = append(level.Trees, t)
 	}
-	// Which props and trees start out with their chunk, and loading the
-	// props that do (see above).
-	world.SyncPlacementChunks(level, true)
+	// Which props and trees start out with their chunk. The props that do
+	// are loaded by world.LoadSceneryRange, between this and the rest.
+	world.SyncPlacementChunks(level, false)
+	return nil
+}
 
+// loadLevelObjectsAfterScenery is the rest of loadLevelObjects, once the
+// scenery has loaded.
+func loadLevelObjectsAfterScenery(raw world.RawLevel, level *world.Level, texNeeded map[string]bool) error {
 	// Sounds: placed sound sources, with the same ID guarantee.
 	//
 	// A missing or unreadable clip is reported and the sound kept, on exactly
@@ -653,9 +714,12 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 
 	level.Music = world.MusicFromRaw(raw.Music)
 	if level.Music != nil && level.Music.Track != "" {
-		// A song preloads its samples; a recording, its clip.
+		// A song preloads its samples; a score, its instruments; a
+		// recording, its clip.
 		if tracker.IsSong(level.Music.Track) {
 			tracker.Load(level.Music.Track)
+		} else if score.IsScore(level.Music.Track) {
+			play.Preload(level.Music.Track)
 		} else if _, err := audio.ClipFor(level.Music.Track); err != nil {
 			log.Printf("music %q: %v", level.Music.Track, err)
 		}
@@ -667,6 +731,8 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// very first frame of the level or never.
 	level.Sky = world.SkyFromRaw(raw.Sky)
 	level.Fog = world.FogFromRaw(raw.Fog)
+	level.Tonemap = world.TonemapFromRaw(raw.Tonemap)
+	level.Stylize = world.StylizeFromRaw(raw.Stylize)
 
 	// The player's own tuning (player_settings.go). Assigned unconditionally,
 	// including for a level with no `player:` block: this loader fills a Level

@@ -1,0 +1,8 @@
+version: 1
+name: Cello
+samples: [pads/cello]
+fade_out: 0.3
+playback:
+  range: [C-2, A-5]
+  clef: bass
+description: Solo cello, bowed, with gentle vibrato

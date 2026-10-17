@@ -1,0 +1,9 @@
+version: 1
+name: Flute
+samples: [winds/flute]
+fade_out: 0.12
+playback:
+  range: [C-3, C-7]
+  clef: treble
+  gliss: chromatic
+description: 'Flute: pure tone, breath and chiff'

@@ -38,6 +38,34 @@ The command works on a project: `-root` is the directory holding `resources/`,
 and defaults to the current one, so run it from the repository root or a game's
 project directory.
 
+## Lightmaps
+
+The bake puts each surface's direct light — the static lights' and the sun's
+shadow — into **lightmaps**: textures laid over the level's surfaces at half a
+metre a texel. Shadows come out as sharp as the texels, antialiased where an
+edge crosses one, and the surfaces are cut only on the coarse grid, because
+the vertices are left to carry only the smooth part (the ambient and the
+bounce). On level1 that made the compile twice as fast and the level's surfaces
+a third fewer.
+
+The sun's light is not baked into the texels, only its shadow: the renderer
+lights each pixel with the sun on its own normal, so normal maps and smooth
+shading show in sunlight, and inside the live shadows' reach their shadow
+replaces the texel's.
+
+```yaml
+compile:
+  bake: vertex          # the old per-vertex bake, refined at shadow edges
+  lightmap_texel: 0.25  # metres a texel: sharper shadows, four times the memory
+```
+
+The pages are 2048 × 2048 half-float textures, 32 MB each on the GPU. A level
+of a few square kilometres takes three to five. Double-sided and translucent
+faces keep the per-vertex bake. A level whose texels would not fit in sixteen
+pages gets coarser texels automatically.
+
+Compiled files from before lightmaps (version 10) have to be compiled again.
+
 ## Looking at what it made
 
 The numbers say whether your level is sealed. They say nothing about whether it

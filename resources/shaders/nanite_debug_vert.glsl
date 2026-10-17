@@ -14,6 +14,7 @@ struct Instance {
     vec4 sphere;
     uvec4 flags;
     vec4 wind;
+    vec4 draw; // draw distance window (render/nanite_draw_distance.go)
 };
 layout(std430, binding = 0) readonly buffer Instances {
     Instance inst[];

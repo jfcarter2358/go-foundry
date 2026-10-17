@@ -551,7 +551,7 @@ func EditorDrawUI() {
 		editorLevelFileMenu(lvl)
 		editorLevelEditMenu()
 		if currentMode == Mode3D {
-			editorLevelViewMenu()
+			editorLevelViewMenu(lvl)
 		}
 		editorLevelBuildMenu()
 		editorMenuBarShared(editorKindLevel)

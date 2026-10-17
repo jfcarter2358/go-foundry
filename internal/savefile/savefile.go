@@ -139,6 +139,11 @@ type WorldState struct {
 	Sky        *world.Sky
 	Music      *MusicState
 	StepHeight float32
+	// Camera is the player's camera block, which a script may switch during
+	// play (`@level.prop.camera_mode`, `camera_distance`). Gob leaves it zero
+	// in a save written before it existed, and zero is "the level said
+	// nothing" — first person.
+	Camera world.PlayerCamera
 	// Gravity is the level's ambient pull, which a script may have changed
 	// during play (`@level.prop.gravity`). A pointer, as on the level itself:
 	// nil is a level that never set one, and gob writes it as absent rather
@@ -147,6 +152,13 @@ type WorldState struct {
 	// ViewDistance is the level's far plane, which a script may have changed
 	// during play (`@level.prop.view_distance`); 0 is the engine default.
 	ViewDistance float32
+	// RainRipples is the rain on the level's water (`@level.prop.rain_ripples`),
+	// which a script may have changed during play. Absent in older saves:
+	// gob reads it as 0, and the restore keeps the level's own then.
+	RainRipples float32
+	// HasRainRipples says RainRipples was captured (a save from before it
+	// existed restores the level file's value, not 0).
+	HasRainRipples bool
 }
 
 // EntityState is one entity. Entity is the entity itself with everything that
@@ -285,6 +297,10 @@ type MusicState struct {
 	Playing    bool
 	Params     map[string]float32
 	Mutes      map[string]bool
+	// Tick is where a score was (internal/score/play's 960 a quarter, in
+	// playing order); its Section, Playing, Params and Mutes (lines) are
+	// the song's.
+	Tick int64
 }
 
 // ---------- player ----------

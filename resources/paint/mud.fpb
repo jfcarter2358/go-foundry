@@ -1,0 +1,17 @@
+# Mud: wet, trodden mud; the grass gives way. Poly Haven (CC0): brown_mud_02.
+name: Mud
+doc: Wet trodden mud; no grass.
+order: 90
+layers:
+  - {layer: mud, strength: 1}
+  - {layer: path_clear, strength: 0.9}
+recipe:
+  paint:
+    - {name: mud, kind: material}
+    - {name: path_clear, kind: exclude}
+  textures:
+    - {name: mud, id: brown_mud_02, scale: 2}
+  material:
+    - {layer: mud, texture: mud, slots: [wet, ash, snow], fallback: cracked}
+  exclude:
+    - {layer: path_clear, kind: grass_field}

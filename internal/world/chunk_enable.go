@@ -130,15 +130,9 @@ func SyncPlacementChunks(lvl *Level, residency bool) bool {
 			return false, false
 		}
 		if byID == nil {
-			byID = make(map[string]*Chunk, len(lvl.Chunks))
-			for ci := range lvl.Chunks {
-				byID[lvl.Chunks[ci].ID] = &lvl.Chunks[ci]
-			}
+			byID = ChunksByID(lvl)
 		}
-		if ch := byID[id]; ch != nil {
-			return ch.Disabled, !ch.WantsGeometry()
-		}
-		return false, false
+		return PlacementChunkState(byID, id)
 	}
 	changed := false
 	for i := range lvl.Scenery {
@@ -172,6 +166,54 @@ func SyncPlacementChunks(lvl *Level, residency bool) bool {
 		}
 	}
 	return changed
+}
+
+// ChunksByID indexes the level's chunks by ID, for LoadSceneryRange. The
+// pointers are into lvl.Chunks, so the index lasts only until it next grows.
+func ChunksByID(lvl *Level) map[string]*Chunk {
+	byID := make(map[string]*Chunk, len(lvl.Chunks))
+	for ci := range lvl.Chunks {
+		byID[lvl.Chunks[ci].ID] = &lvl.Chunks[ci]
+	}
+	return byID
+}
+
+// PlacementChunkState is whether a placement streaming with chunk id starts
+// switched off, and whether it should hold no geometry: the chunk's Disabled
+// and !WantsGeometry. A placement naming no chunk, or one that does not
+// exist, is on and loaded.
+func PlacementChunkState(byID map[string]*Chunk, id string) (off, unload bool) {
+	if id == "" {
+		return false, false
+	}
+	if ch := byID[id]; ch != nil {
+		return ch.Disabled, !ch.WantsGeometry()
+	}
+	return false, false
+}
+
+// LoadSceneryRange loads the unloaded props in lvl.Scenery[from:to] whose
+// chunk wants geometry — SyncPlacementChunks' residency half, for a range, so
+// a level load can spread a generated level's tens of thousands of placements
+// over frames. byID is ChunksByID(lvl). A model that will not load is logged
+// and the prop kept, as everywhere else.
+func LoadSceneryRange(lvl *Level, byID map[string]*Chunk, from, to int) {
+	if to > len(lvl.Scenery) {
+		to = len(lvl.Scenery)
+	}
+	for i := from; i < to; i++ {
+		s := &lvl.Scenery[i]
+		if !s.Unloaded {
+			continue
+		}
+		if _, unload := PlacementChunkState(byID, s.Chunk); unload {
+			continue
+		}
+		s.Unloaded = false
+		if err := s.Load(); err != nil {
+			log.Printf("%v", err)
+		}
+	}
 }
 
 // SyncChunkGeometryFor is the single-chunk half of SyncChunkGeometry: it

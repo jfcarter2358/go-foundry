@@ -1,0 +1,9 @@
+version: 1
+name: Vibraphone
+samples: [keys/vibraphone]
+fade_out: 0.3
+polyphony: 4
+playback:
+  range: [F-3, F-6]
+  clef: treble
+description: 'Vibraphone: long-ringing metal bar'

@@ -1,0 +1,33 @@
+version: 1
+title: Articulations
+key: [{bar: 1, fifths: 0, mode: major}]
+lines:
+- name: Flute
+  instrument: woodwinds/flute
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qB4(stacc) qC5(stacc) qG4(stacc) qD5(staccmo)
+      | qB4(ten) qE4(ten) qA5(acc) qF4(acc)
+      | qC5(marc) qG4(marc) qD5(portato) qF4(stacc,acc)
+      | eC5(stacc) eD5(stacc) eE5(stacc) eF5(stacc) qG5(ten,acc) qC6(stacc)
+      | qC5(tr) qD5(tr=#) qE5(mord) qF5(imord)
+      | qG5(turn) qA4(iturn) qB4(turn=b/#) qC5(ferm)
+      | hC5(trem=3) qD5(trem=1) eE5(trem=2) eF5(trem=2)
+      | hC5(trem2=3) hE5
+      | wG4+C5+E5(arp) 
+      | hC4+E4+G4+C5(arp=up) hD4+F4+A4+D5(arp=down)
+      | qC5(ferm=short) qD5(ferm=long) qE5(ferm=verylong) qr(ferm)
+      | R(ferm)
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qE5(stacc) qE5(stacc) qE5(acc) qE5(ten)
+      | qG5(stacc) qG5(marc) qG5(ferm) qG5(tr)
+    - |
+      | qC4(stacc) qC4(stacc) qC4(acc) qC4(ten)
+      | qE4(stacc) qE4(marc) qE4(ferm) qE4(tr)

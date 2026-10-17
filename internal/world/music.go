@@ -18,9 +18,17 @@ package world
 // it plays — switch section on a beat, ramp a param, mute a channel. What they
 // asked for is mirrored here (Section, Params, Mutes) so a save game restores
 // the music the player was hearing, not the one the level started with.
+//
+// A score (sounds/<name>.fscore, internal/score) is a third kind, steered
+// exactly as a song is: its rehearsal marks are the sections, its lines the
+// channels, and its params bind to line volumes, pans, sends and filters.
+// Its scheduler (internal/score/play) is the music-bus voice in place of the
+// tracker's. When a song and a score share a name, the song wins.
 
 import (
 	"foundry/internal/audio"
+	"foundry/internal/score"
+	"foundry/internal/score/play"
 	"foundry/internal/tracker"
 )
 
@@ -38,10 +46,10 @@ type Music struct {
 	// ramp in when this one starts.
 	Fade float32
 
-	// Section is the song section to start at (tracker songs only).
+	// Section is the song section (or score rehearsal mark) to start at.
 	Section string
 	// Params are song params as last set — by the level file at start, then
-	// by scripts. Mutes is the channels a script has muted.
+	// by scripts. Mutes is the channels (a score's lines) a script has muted.
 	Params map[string]float32
 	Mutes  map[string]bool
 
@@ -49,10 +57,14 @@ type Music struct {
 	Voice audio.VoiceID
 	// Song is the tracker player when the track is a song. Runtime-only.
 	Song *tracker.Player
-	// Resume starts a song at ResumeOrder/ResumeRow rather than at Section,
-	// for a save game. Runtime-only, consumed by the next start.
+	// Score is the score's player when the track is a score. Runtime-only.
+	Score *play.Player
+	// Resume starts a song at ResumeOrder/ResumeRow (a score at ResumeTick)
+	// rather than at Section, for a save game. Runtime-only, consumed by the
+	// next start.
 	Resume                 bool
 	ResumeOrder, ResumeRow int
+	ResumeTick             int64
 }
 
 // NewMusic returns a track at its own level, looping.
@@ -76,6 +88,10 @@ func MusicUpdate(lvl *Level) {
 	}
 	if tracker.IsSong(m.Track) {
 		startSong(m)
+		return
+	}
+	if score.IsScore(m.Track) {
+		startScore(m)
 		return
 	}
 	m.Voice = audio.Play(audio.PlayOptions{
@@ -112,6 +128,30 @@ func startSong(m *Music) {
 		p.Pause(true)
 	}
 	m.Song, m.Voice = p, id
+	m.Resume = false
+}
+
+// startScore plays a score, as startSong plays a song.
+func startScore(m *Music) {
+	if !audio.Available() {
+		return
+	}
+	p, id, err := play.Play(m.Track, play.PlayOptions{
+		Section: m.Section, Gain: m.Gain, FadeIn: m.Fade, Params: m.Params,
+		Resume: m.Resume, Tick: m.ResumeTick,
+	})
+	if err != nil || id.IsZero() {
+		return
+	}
+	for line, on := range m.Mutes {
+		if on {
+			p.Mute(line, true, 0)
+		}
+	}
+	if musicPaused {
+		p.Pause(true)
+	}
+	m.Score, m.Voice = p, id
 	m.Resume = false
 }
 
@@ -154,10 +194,20 @@ func StopMusic(lvl *Level, fade float32) {
 		lvl.Music.Voice = 0
 	}
 	lvl.Music.Song = nil
+	lvl.Music.Score = nil
 }
 
-// MusicSection names the section the level's song is playing, or "".
+// MusicSection names the section the level's song (or score) is playing,
+// or "".
 func MusicSection(lvl *Level) string {
+	if p := ScorePlayer(lvl); p != nil {
+		pos := p.Position()
+		perf := p.Performance()
+		if pos.Section >= 0 && pos.Section < len(perf.Sections) {
+			return perf.Sections[pos.Section].Name
+		}
+		return ""
+	}
 	if lvl == nil || lvl.Music == nil || lvl.Music.Song == nil {
 		return ""
 	}
@@ -212,17 +262,21 @@ func MusicToRaw(m *Music) *RawMusic {
 
 // ---------- steering a song ----------
 
-// PlaySong switches the level's track to a tracker song starting at section.
-// When that song is already playing it changes section on the next beat
-// instead of restarting, and reports false.
+// PlaySong switches the level's track to a tracker song (or a score)
+// starting at section. When that one is already playing it changes section
+// on the next beat instead of restarting, and reports false.
 func PlaySong(lvl *Level, name, section string, fade float32) bool {
 	if lvl == nil {
 		return false
 	}
-	if m := lvl.Music; m != nil && m.Track == name && !m.Voice.IsZero() && m.Song != nil {
+	if m := lvl.Music; m != nil && m.Track == name && !m.Voice.IsZero() && (m.Song != nil || m.Score != nil) {
 		if section != "" {
 			m.Section = section
-			m.Song.Section(section, tracker.QuantBeat)
+			if m.Song != nil {
+				m.Song.Section(section, tracker.QuantBeat)
+			} else {
+				m.Score.Section(section, tracker.QuantBeat)
+			}
 		}
 		return false
 	}
@@ -245,8 +299,29 @@ func SongPlayer(lvl *Level) *tracker.Player {
 	return lvl.Music.Song
 }
 
+// ScorePlayer is the level's score player, or nil when no score is playing.
+func ScorePlayer(lvl *Level) *play.Player {
+	if lvl == nil || lvl.Music == nil {
+		return nil
+	}
+	return lvl.Music.Score
+}
+
+// MusicSteerable reports whether the level's track is a song or a score
+// that is playing — what the song_ verbs can steer.
+func MusicSteerable(lvl *Level) bool {
+	return SongPlayer(lvl) != nil || ScorePlayer(lvl) != nil
+}
+
 // SetSongSection queues a section change and remembers it for a save.
 func SetSongSection(lvl *Level, name string, q tracker.Quantize) bool {
+	if sp := ScorePlayer(lvl); sp != nil {
+		if sp.Performance().SectionIndex(name) < 0 {
+			return false
+		}
+		lvl.Music.Section = name
+		return sp.Section(name, q)
+	}
 	p := SongPlayer(lvl)
 	if p == nil || p.Song().SectionIndex(name) < 0 {
 		return false
@@ -257,27 +332,45 @@ func SetSongSection(lvl *Level, name string, q tracker.Quantize) bool {
 
 // SetSongParam ramps a song param and remembers it for a save.
 func SetSongParam(lvl *Level, name string, v, secs float32) bool {
-	p := SongPlayer(lvl)
-	if p == nil || p.Song().ParamIndex(name) < 0 {
+	sp, p := ScorePlayer(lvl), SongPlayer(lvl)
+	switch {
+	case sp != nil:
+		if sp.Score().ParamIndex(name) < 0 {
+			return false
+		}
+	case p == nil || p.Song().ParamIndex(name) < 0:
 		return false
 	}
 	if lvl.Music.Params == nil {
 		lvl.Music.Params = map[string]float32{}
 	}
 	lvl.Music.Params[name] = v
+	if sp != nil {
+		return sp.SetParam(name, v, secs)
+	}
 	return p.SetParam(name, v, secs)
 }
 
 // SetSongMute fades a channel out or in and remembers it for a save.
+//
+// For a score, channel is a line, by name or 1-based number.
 func SetSongMute(lvl *Level, channel string, on bool, secs float32) bool {
-	p := SongPlayer(lvl)
-	if p == nil || p.Song().ChannelIndex(channel) < 0 {
+	sp, p := ScorePlayer(lvl), SongPlayer(lvl)
+	switch {
+	case sp != nil:
+		if sp.Score().LineIndex(channel) < 0 {
+			return false
+		}
+	case p == nil || p.Song().ChannelIndex(channel) < 0:
 		return false
 	}
 	if lvl.Music.Mutes == nil {
 		lvl.Music.Mutes = map[string]bool{}
 	}
 	lvl.Music.Mutes[channel] = on
+	if sp != nil {
+		return sp.Mute(channel, on, secs)
+	}
 	return p.Mute(channel, on, secs)
 }
 
@@ -285,12 +378,16 @@ func SetSongMute(lvl *Level, channel string, on bool, secs float32) bool {
 // not send a command a frame.
 var musicPaused bool
 
-// MusicPause freezes or resumes the level's song with the level's hard pause.
+// MusicPause freezes or resumes the level's song (or score) with the level's
+// hard pause.
 func MusicPause(lvl *Level, paused bool) {
 	if paused == musicPaused {
 		return
 	}
 	if p := SongPlayer(lvl); p != nil {
+		p.Pause(paused)
+	}
+	if p := ScorePlayer(lvl); p != nil {
 		p.Pause(paused)
 	}
 	musicPaused = paused

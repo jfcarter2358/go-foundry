@@ -1,0 +1,8 @@
+version: 1
+name: Fx Radio
+samples: [fx/fx_radio]
+fade_out: 0.3
+playback:
+  clef: percussion
+  release: 6
+description: 'Radio static bed: band-limited hiss, crackle, a drifting whine'

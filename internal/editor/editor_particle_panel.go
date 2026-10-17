@@ -550,6 +550,8 @@ func particleMotionSection(l *particle.Layer) {
 		"Strength of a smooth pseudo-random field. What stops\nevery particle moving in a straight line.")
 	particleFloat("Turb freq##pturbf", &l.TurbulenceFreq, 0, 20, "%.2f",
 		"How tightly the field varies in space.")
+	particleFloat("Wind##pwind", &l.Wind, 0, 10, "%.2f",
+		"How readily the level's wind carries the particles: the rate\ntheir sideways speed is pulled toward the wind's. 0 ignores it;\na waterfall's mist drifts downwind at about 1.")
 	particleBool("Local space##plocal", &l.LocalSpace,
 		"Carry live particles when the emitter moves. Off, they are\nreleased into the world and left behind - the difference\nbetween a torch on a ship and the smoke trailing it.")
 }

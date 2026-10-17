@@ -23,6 +23,12 @@ package model
 //   - Primitives in TRIANGLES, TRIANGLE_STRIP or TRIANGLE_FAN mode, indexed
 //     or not. POSITION, NORMAL and TEXCOORD_0, in any component type the
 //     spec allows for them, normalised integers included.
+//   - COLOR_0 (VEC3 or VEC4; float, or normalised unsigned byte or short),
+//     as RGBA8 vertex colours (ImportMesh.Colors). The values are taken as
+//     they are stored: the engine's textures are not linearised either, so a
+//     colour multiplies the albedo the way the generator that wrote it meant
+//     (docs/canyon/PHASE_2.md). A primitive without COLOR_0 in a mesh where
+//     another has it is white.
 //   - Materials: name, base colour factor, the base colour texture's image
 //     (by URI, reduced to the engine's bare texture name, as OBJ's map_Kd is),
 //     and doubleSided.
@@ -31,8 +37,13 @@ package model
 // accessors (refused, not misread), KHR extensions. A primitive with no
 // material gets a default slot.
 //
-// glTF's texture V runs down the image and the engine's up it (OBJ's
-// convention), so V is flipped on the way in.
+// glTF's texture V runs DOWN the image (v = 0 is the top row), and so does
+// the engine's: a 2D texture is uploaded top row first, so v = 0 samples the
+// image's top and +V runs down it (texdoc/bump.go's NormalMapFromHeight says
+// the same of the tangent frame). So UVs are read and written as stored.
+// (Until docs/canyon/PHASE_4.md they were flipped on the way in and out,
+// which mapped every UV island of a scanned asset onto the mirrored part of
+// its texture atlas — a patchwork that only real scans showed.)
 
 import (
 	"bytes"
@@ -60,6 +71,12 @@ type ImportMesh struct {
 	Positions []mgl32.Vec3
 	Normals   []mgl32.Vec3
 	UVs       []mgl32.Vec2
+	// Colors, when set, is one RGBA8 colour per position: the albedo is
+	// multiplied by RGB and A is the vertex's cavity/ambient occlusion
+	// (fragment.glsl's vertexColors). Nil for a mesh without them — every
+	// mesh before docs/canyon/PHASE_2.md — which cooks and draws exactly as
+	// it did. glTF's COLOR_0 on the way in and out.
+	Colors [][4]uint8
 	// Indices is the triangle list, three per triangle.
 	Indices []uint32
 	// TriSlot is each triangle's material slot, an index into Slots.
@@ -244,7 +261,7 @@ func ParseGLTF(data []byte, dir string) (*ImportMesh, error) {
 		out.Slots = append(out.Slots, slot)
 	}
 	defaultSlot := int32(-1)
-	anyNormals, anyUVs := false, false
+	anyNormals, anyUVs, anyColors := false, false, false
 
 	read := func(ai int) (gltfView, error) { return gltfAccessor(&doc, buffers, ai) }
 
@@ -288,6 +305,16 @@ func ParseGLTF(data []byte, dir string) (*ImportMesh, error) {
 						return fmt.Errorf("mesh %d primitive %d TEXCOORD_0: %w", *n.Mesh, pi, err)
 					}
 				}
+				var col gltfView
+				if ca, ok := prim.Attributes["COLOR_0"]; ok {
+					if col, err = read(ca); err != nil {
+						return fmt.Errorf("mesh %d primitive %d COLOR_0: %w", *n.Mesh, pi, err)
+					}
+					if col.comps != 3 && col.comps != 4 {
+						return fmt.Errorf("mesh %d primitive %d COLOR_0: %d components, want 3 or 4", *n.Mesh, pi, col.comps)
+					}
+				}
+				anyColors = anyColors || col.count > 0
 				base := uint32(len(out.Positions))
 				// Every vertex gets a normal and a UV slot, zero where its
 				// primitive has none; whether the mesh had any at all is
@@ -309,9 +336,20 @@ func ParseGLTF(data []byte, dir string) (*ImportMesh, error) {
 					var tc mgl32.Vec2
 					if v < uv.count {
 						q := uv.vec(v, 2)
-						tc = mgl32.Vec2{q[0], 1 - q[1]}
+						tc = mgl32.Vec2{q[0], q[1]}
 					}
 					out.UVs = append(out.UVs, tc)
+					c := [4]uint8{255, 255, 255, 255}
+					if v < col.count {
+						q := col.vec(v, col.comps)
+						if col.comps == 3 {
+							q[3] = 1
+						}
+						for k := 0; k < 4; k++ {
+							c[k] = unitByte(q[k])
+						}
+					}
+					out.Colors = append(out.Colors, c)
 				}
 				var idx []uint32
 				if prim.Indices != nil {
@@ -406,6 +444,9 @@ func ParseGLTF(data []byte, dir string) (*ImportMesh, error) {
 	}
 	if !anyUVs {
 		out.UVs = nil
+	}
+	if !anyColors {
+		out.Colors = nil
 	}
 	if len(out.Indices) == 0 {
 		return nil, fmt.Errorf("no triangles")
@@ -591,6 +632,11 @@ func (v *gltfView) index(i int) uint32 {
 	return uint32(v.comp(i, 0))
 }
 
+// unitByte is a 0..1 value as a byte, rounded and clamped.
+func unitByte(v float32) uint8 {
+	return uint8(min(max(math.Round(float64(v)*255), 0), 255))
+}
+
 // gltfTriangles turns a strip or fan into a triangle list.
 func gltfTriangles(idx []uint32, mode int) []uint32 {
 	switch mode {
@@ -699,6 +745,7 @@ func EncodeGLB(m *ImportMesh) ([]byte, error) {
 		ComponentType int       `json:"componentType"`
 		Count         int       `json:"count"`
 		Type          string    `json:"type"`
+		Normalized    bool      `json:"normalized,omitempty"`
 		Min           []float32 `json:"min,omitempty"`
 		Max           []float32 `json:"max,omitempty"`
 	}
@@ -736,11 +783,20 @@ func EncodeGLB(m *ImportMesh) ([]byte, error) {
 	if len(m.UVs) == n {
 		v := addView(func() {
 			for _, q := range m.UVs {
-				put(mgl32.Vec2{q[0], 1 - q[1]})
+				put(q)
 			}
 		})
 		attrs["TEXCOORD_0"] = len(accs)
 		accs = append(accs, accessor{BufferView: v, ComponentType: gltfFloat, Count: n, Type: "VEC2"})
+	}
+	if len(m.Colors) == n {
+		v := addView(func() {
+			for _, c := range m.Colors {
+				bin.Write(c[:])
+			}
+		})
+		attrs["COLOR_0"] = len(accs)
+		accs = append(accs, accessor{BufferView: v, ComponentType: gltfUnsignedByte, Normalized: true, Count: n, Type: "VEC4"})
 	}
 	type prim struct {
 		Attributes map[string]int `json:"attributes"`

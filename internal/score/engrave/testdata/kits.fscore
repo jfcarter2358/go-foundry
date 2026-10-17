@@ -1,0 +1,23 @@
+version: 1
+title: Drum maps
+lines:
+- name: Drums
+  instrument: percussion/drum_kit
+  staves:
+  - clef: percussion
+    voices:
+    - "| eF#2+C#3 eF#2 eF#2+D2 eA#2 eF#2 eA#2(stopped) eF#2+D2 eF#2(open) | qD#3 qF3 qD#3 qC#3 |"
+    - "| qC2 qr qC2 qr | qC2 qG#2 qC2 qG#2 |"
+- name: Tambourine
+  instrument: drums/tambourine
+  staves:
+  - clef: percussion
+    lines: 1
+    voices:
+    - "| qC4 eC4 eC4 qC4 qr | eC4 eC4 eC4 eC4 hC4 |"
+- name: Triangle
+  instrument: percussion/orchestral_percussion
+  staves:
+  - clef: percussion
+    voices:
+    - "| hA5 qG#5 qA5 | hC2 hD2 |"

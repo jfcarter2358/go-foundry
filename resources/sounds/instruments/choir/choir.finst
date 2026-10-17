@@ -1,0 +1,27 @@
+version: 1
+name: Choir
+samples: [vocal/vox_chant, vocal/vox_ah, pads/pad_choir]
+zones:
+- sample: 0
+  low: C-0
+  high: B-2
+- sample: 1
+  low: C-3
+  high: B-9
+fade_out: 0.45
+polyphony: 4
+articulations:
+- name: ooh
+  triggers: [oo, ooh, bocca chiusa, humming]
+  zones:
+  - sample: 2
+    low: C-0
+    high: B-9
+  fade_out: 0.6
+- name: staccato
+  triggers: [stacc.]
+  fade_out: 0.08
+playback:
+  range: [E-2, C-6]
+  clef: grand
+description: Mixed choir on 'ah', with 'ooh' as an articulation

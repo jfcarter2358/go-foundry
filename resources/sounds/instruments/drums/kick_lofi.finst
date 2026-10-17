@@ -1,0 +1,13 @@
+version: 1
+name: Kick Lofi
+samples: [drums/kick_lofi]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Kick Lofi
+    line: 4
+description: Dull, tape-saturated kick

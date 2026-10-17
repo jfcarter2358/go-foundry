@@ -57,6 +57,11 @@ func RenderViewmodel() {
 	if e == nil || !e.Visible || len(e.Models) == 0 {
 		return
 	}
+	// A third-person camera sees the body (world.PlayerBodyEntity) in the
+	// world instead; hands floating in front of a boom camera would be wrong.
+	if world.PlayerThirdPerson {
+		return
+	}
 
 	// The camera's own view matrix, inverted, is the camera's placement IN
 	// the world: translated to the eye, oriented so local -Z looks the way

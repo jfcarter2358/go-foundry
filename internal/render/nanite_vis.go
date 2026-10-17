@@ -70,6 +70,15 @@ import (
 // NaniteVisBuffer switches the visibility buffer; see the file comment.
 var NaniteVisBuffer = gfx.EnvFlag("FOUNDRY_NANITE_VISBUFFER", true)
 
+// NaniteVisDense numbers only the commands that draw, from one GPU counter
+// the frame's passes share (nanite_vis_number_comp.glsl), instead of
+// reserving a record for every command slot a pass might fill. Reserved by
+// slot, the generated canyon's overview (6,607 placements, 330k tiles)
+// passed the 2^20 records an ID can name in its first pass, so the occlusion
+// pass went the forward way and the compute rasteriser was refused every
+// cluster (docs/canyon/PERF.md). FOUNDRY_NANITE_VIS_DENSE=0: by slot.
+var NaniteVisDense = gfx.EnvFlag("FOUNDRY_NANITE_VIS_DENSE", true)
+
 const (
 	// naniteVisMaxRecords is the most commands a frame can number: the ID's
 	// top 20 bits, less the zero that means "nothing here".
@@ -105,8 +114,11 @@ type visGroup struct {
 	mat *gfx.Material
 	vao uint32
 	// The group's buffers, which the material pass reads the triangle from:
-	// positions and UVs, normals (0: none), baked light (0: none), indices.
+	// positions and UVs, normals (0: none), baked light (0: none), indices,
+	// and vertex colours (0: none; set only for a group whose material has
+	// VertexColors).
 	vbo, nbo, lbo, ebo uint32
+	cbo                uint32
 	baked              bool
 	// instanced: the VAO carries the cull's instance matrices at 7-10 (the
 	// cooked-mesh pool), which the ID draw must not fetch — its base
@@ -121,6 +133,7 @@ type visGroup struct {
 type visBin struct {
 	mat                     *gfx.Material
 	vbo, nbo, lbo, ebo, ins uint32
+	cbo                     uint32
 	baked, shade            bool
 	// drawn: an ID pass drew its group this frame; a bin no pass drew has
 	// no pixels and is not shaded at all.
@@ -136,12 +149,20 @@ type naniteVisPass struct {
 	reset     progUniforms
 	material  progUniforms
 	matSkin   gfx.SkinUniforms
+	// matSkins is each material program's skinning locations (frameUniforms).
+	matSkins map[uint32]*gfx.SkinUniforms
+	// The level, frame key and placement count warmMaterialVariants built for.
+	warmed    *world.Level
+	warmedKey uint32
+	warmedN   int
 	vao       uint32
 	maxBlock  int64
 	// Buffers: the frame's records, the bins' indirect draws and tile
 	// lists, and a stand-in for an absent normal or light buffer.
 	records, binDraws, tileLists, dummy uint32
-	recordCap, binCap, tileListCap      int
+	// next is the dense numbering's counter (NaniteVisDense): one uint.
+	next                           uint32
+	recordCap, binCap, tileListCap int
 	// Framebuffers over the scene target's attachments: the bins (with the
 	// stencil, to test against) and the colour.
 	classifyFBO, colourFBO uint32
@@ -153,6 +174,13 @@ type naniteVisPass struct {
 	// The material program's per-bin locations, resolved once.
 	matLocs                                      gfx.SurfaceLocs
 	matBaked, matHasNormals, matHasLight, matBin int32
+	// The material pass's source and its specialised programs, by key
+	// (nanite_vis_variants.go); generic is the program above, viewed as one.
+	matSrc   string
+	variants map[uint64]*visMatProg
+	generic  *visMatProg
+	// binKeys is each shaded bin's variant key, this frame.
+	binKeys []uint64
 
 	// The frame.
 	active      bool
@@ -207,6 +235,7 @@ func (v *naniteVisPass) build() (err error) {
 		return err
 	}
 	matFrag = giHalfResSource(matFrag) // GI at half resolution (gi_halfres.go)
+	v.matSrc = matFrag
 	prog, err = gfx.CompileProgramFromSources(mustReadShader(biomeShaderPath("nanite_material_vert.glsl")), matFrag)
 	if err != nil {
 		return fmt.Errorf("material pass: %v", err)
@@ -254,6 +283,10 @@ func (v *naniteVisPass) build() (err error) {
 	}
 	gl.GenVertexArrays(1, &v.vao)
 	gl.GenBuffers(1, &v.dummy)
+	gl.GenBuffers(1, &v.next)
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, v.next)
+	gl.BufferData(gl.SHADER_STORAGE_BUFFER, 16, nil, gl.DYNAMIC_COPY)
+	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
 	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, v.dummy)
 	gl.BufferData(gl.SHADER_STORAGE_BUFFER, 64, nil, gl.STATIC_DRAW)
 	gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
@@ -267,6 +300,10 @@ func (v *naniteVisPass) build() (err error) {
 // cull's work their own way).
 func naniteVisBegin() {
 	v := &naniteVis
+	// The frame that just ended asked for so many records: read back a frame
+	// or two later, it decides whether this one hands its overflow to the
+	// forward path (nanite_vis_overflow.go).
+	naniteVisOverflow.note(v.next, v.used && v.ready())
 	v.active = sceneFrameActive() && NaniteVisBuffer && !naniteDebugActive() && naniteCull.ok && v.ready()
 	v.used = false
 	v.recordsUsed = 0
@@ -277,6 +314,13 @@ func naniteVisBegin() {
 	}
 	v.bins = v.bins[:0]
 	clear(v.binBase)
+	if v.active && NaniteVisDense {
+		// The frame's first record.
+		zero := [4]uint32{}
+		gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, v.next)
+		gl.BufferSubData(gl.SHADER_STORAGE_BUFFER, 0, 16, gl.Ptr(&zero[0]))
+		gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0)
+	}
 	if v.active {
 		// The opaque block's stencil rule: whatever wins a pixel's depth
 		// test sets its stencil, an ID draw to 1 and everything else to 0.
@@ -321,7 +365,9 @@ func (v *naniteVisPass) admits(b *cullBatch, groups []visGroup, extra int, warn 
 			return say("tile lists larger than the driver's largest storage block (%d MB)", v.maxBlock>>20)
 		}
 	}
-	if v.recordsUsed+b.visSpan(naniteCull.compactable())+extra > naniteVisMaxRecords {
+	// Dense numbering takes records only for what draws, and drops what
+	// would pass the last one, so there is nothing to reserve.
+	if !NaniteVisDense && v.recordsUsed+b.visSpan(naniteCull.compactable())+extra > naniteVisMaxRecords {
 		return say("more than %d commands", naniteVisMaxRecords)
 	}
 	if !b.visGroupsFit(groups, v.maxBlock) {
@@ -351,13 +397,17 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 		base = len(v.bins)
 		v.binBase[b] = base
 		for _, g := range groups {
-			v.bins = append(v.bins, visBin{mat: g.mat, vbo: g.vbo, nbo: g.nbo, lbo: g.lbo, ebo: g.ebo, ins: b.instBuf,
+			v.bins = append(v.bins, visBin{mat: g.mat, vbo: g.vbo, nbo: g.nbo, lbo: g.lbo, ebo: g.ebo, cbo: g.cbo, ins: b.instBuf,
 				baked: g.baked, shade: frameSurface(g.mat).prepass})
 		}
 	}
 	ProfileBegin("nanite: vis")
 	span := b.visSpan(b.compacted)
-	v.ensureRecords(v.recordsUsed + span + sw)
+	if NaniteVisDense {
+		v.ensureRecords(naniteVisMaxRecords)
+	} else {
+		v.ensureRecords(v.recordsUsed + span + sw)
+	}
 	b.uploadVisPassTable(groups)
 
 	// Number the pass's commands.
@@ -374,6 +424,15 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	gl.Uniform1ui(n.U("groupCount"), uint32(len(b.groups)))
 	gl.Uniform1ui(n.U("recordBase"), uint32(v.recordsUsed))
 	gl.Uniform1ui(n.U("binBase"), uint32(base))
+	gl.Uniform1ui(n.U("dense"), uint32(boolToInt32(NaniteVisDense)))
+	gl.Uniform1ui(n.U("packedCounts"), uint32(boolToInt32(b.compacted)))
+	gl.Uniform1ui(n.U("maxRecords"), naniteVisRecordLimit)
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, v.next)
+	if b.compacted {
+		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, b.countBuf)
+	} else {
+		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, v.dummy)
+	}
 	gl.DispatchCompute(uint32((b.slots+63)/64), 1, 1)
 	// The commands, the records the ID draws read as attributes, and a
 	// later pass's copy of the records when the list grows.
@@ -394,6 +453,9 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	gl.Uniform1i(p.U("blendMask"), gfx.BlendMaskUnit)
 	gl.Uniform1i(p.U("alphaSharpen"), 1)
 	gl.Uniform1i(p.U("coverageDither"), coverageDither())
+	// The draw-distance fades, dithered here (nanite_draw_distance.go).
+	gl.Uniform3f(p.U("drawEye"), gfx.Cam.Position[0], gfx.Cam.Position[1], gfx.Cam.Position[2])
+	gl.Uniform1i(p.U("drawFadeOn"), boolToInt32(DrawDistances && !naniteDebugActive()))
 	gl.Uniform1f(p.U("time"), gfx.MaterialScrollTime)
 	// Never water: a water material is not prepassable, and is drawn the
 	// forward way below.
@@ -443,6 +505,13 @@ func (v *naniteVisPass) drawBatch(b *cullBatch, groups []visGroup) bool {
 	}
 	drawBuffersColour()
 	gl.StencilFunc(gl.ALWAYS, 0, 0xff)
+	// What the frame's records could not number, the forward way, while the
+	// frame is at the records' limit (nanite_vis_overflow.go).
+	if naniteVisOverflow.overflowRisk() {
+		ProfileBegin("nanite: vis overflow")
+		naniteVisOverflow.drawOverflow(b, groups, cmd)
+		ProfileEnd()
+	}
 	gl.UseProgram(gfx.Program)
 	ProfileEnd()
 
@@ -657,6 +726,7 @@ func (b *cullBatch) visGroupsFit(groups []visGroup, maxBlock int64) bool {
 		sig = mix(sig, uint64(b.groups[gi].first)<<32|uint64(b.groups[gi].count))
 		sig = mix(sig, uint64(g.vbo)<<32|uint64(g.ebo))
 		sig = mix(sig, uint64(g.nbo)<<32|uint64(g.lbo))
+		sig = mix(sig, uint64(g.cbo))
 		sig = mix(sig, uint64(boolToInt32(frameSurface(g.mat).prepass)))
 	}
 	if b.visGroupBuf != 0 && sig == b.visGroupSig {
@@ -687,7 +757,7 @@ func (b *cullBatch) visGroupsFit(groups []visGroup, maxBlock int64) bool {
 	}
 	seen := map[uint32]bool{}
 	for _, g := range groups {
-		for _, buf := range []uint32{g.vbo, g.nbo, g.lbo, g.ebo} {
+		for _, buf := range []uint32{g.vbo, g.nbo, g.lbo, g.ebo, g.cbo} {
 			if buf == 0 || seen[buf] {
 				continue
 			}
@@ -782,18 +852,28 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 
 	// 4. Each bin's pixels, shaded: its tiles at its depth, GL_EQUAL.
 	gl.BindFramebuffer(gl.FRAMEBUFFER, v.colourFBO)
+	stylizeMaterialDrawBuffers()
 	gl.Viewport(0, 0, w, h)
 	gl.DepthFunc(gl.EQUAL)
 	gl.DepthMask(false)
-	m := &v.material
-	v.frameUniforms(lvl, frame, now)
-	giHalfResBindTo(m.prog)
-	gl.UseProgram(m.prog)
-	gl.Uniform1i(m.U("visIDs"), naniteVisIDUnit)
-	gl.Uniform1i(m.U("binIDs"), naniteVisBinUnit)
-	gl.Uniform2f(m.U("viewSize"), float32(w), float32(h))
-	gl.Uniform1ui(m.U("tileCap"), uint32(tilesX*tilesY))
-	gl.Uniform1ui(m.U("tilesX"), uint32(tilesX))
+	// A program's frame uniforms, the first time this frame shades with it
+	// (each bin's variant, nanite_vis_variants.go).
+	ready := func(m *visMatProg) {
+		if m.frame == drawFrameNo {
+			gl.UseProgram(m.prog)
+			return
+		}
+		m.frame = drawFrameNo
+		v.frameUniforms(m.prog, lvl, frame, now)
+		giHalfResBindTo(m.prog)
+		gl.UseProgram(m.prog)
+		gl.Uniform1i(m.U("visIDs"), naniteVisIDUnit)
+		gl.Uniform1i(m.U("binIDs"), naniteVisBinUnit)
+		gl.Uniform2f(m.U("viewSize"), float32(w), float32(h))
+		gl.Uniform1f(m.U("derivScale"), upscaleDerivScale())
+		gl.Uniform1ui(m.U("tileCap"), uint32(tilesX*tilesY))
+		gl.Uniform1ui(m.U("tilesX"), uint32(tilesX))
+	}
 	gl.ActiveTexture(gl.TEXTURE0 + naniteVisIDUnit)
 	gl.BindTexture(gl.TEXTURE_2D, scene.visID)
 	gl.ActiveTexture(gl.TEXTURE0 + naniteVisBinUnit)
@@ -816,13 +896,24 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 	// shares with the one before (its material's every uniform and texture,
 	// its flags, its buffers) is not set again.
 	v.order = v.order[:0]
+	frameKey := visFrameKey(lvl, frame)
+	v.warmMaterialVariants(lvl, frameKey)
+	v.binKeys = slices.Grow(v.binKeys[:0], len(v.bins))[:len(v.bins)]
 	for bi := range v.bins {
 		if bn := &v.bins[bi]; bn.shade && bn.drawn {
 			v.order = append(v.order, bi)
+			st := &frameSurface(bn.mat).st
+			v.binKeys[bi] = uint64(visShadeKey(st, bn.baked)|frameKey) | visSplatLayout(st)
 		}
 	}
-	slices.SortStableFunc(v.order, func(a, b int) int { return v.binLess(a, b) })
-	var bound [6]uint32
+	slices.SortStableFunc(v.order, func(a, b int) int {
+		// One program at a time: the variant first.
+		if c := cmp.Compare(v.binKeys[a], v.binKeys[b]); c != 0 {
+			return c
+		}
+		return v.binLess(a, b)
+	})
+	var bound [8]uint32
 	bind := func(i int, buf uint32) {
 		if bound[i] != buf {
 			bound[i] = buf
@@ -835,35 +926,58 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 	appliedOK := false
 	baked, hasNormals, hasLight := int32(-1), int32(-1), int32(-1)
 	gl.ActiveTexture(gl.TEXTURE0)
+	var m *visMatProg
+	keyOpen := false
 	for _, bi := range v.order {
 		bn := &v.bins[bi]
 		st := &frameSurface(bn.mat).st
+		if p := v.materialProgram(v.binKeys[bi]); p != m {
+			// A new program: nothing the last one was sent carries over.
+			if naniteMatProfileKeys {
+				// Each variant's share of the pass, for the F3 profile
+				// and the bench (FOUNDRY_NANITE_MAT_PROFILE=1).
+				if keyOpen {
+					ProfileEnd()
+				}
+				ProfileBegin(fmt.Sprintf("mat %#06x", v.binKeys[bi]&0xffffffff))
+				keyOpen = true
+			}
+			m = p
+			ready(m)
+			appliedOK = false
+			baked, hasNormals, hasLight = -1, -1, -1
+		}
 		if !appliedOK || applied != *st {
-			st.ApplyLocs(&v.matLocs)
+			st.ApplyLocs(&m.locs)
 			gl.ActiveTexture(gl.TEXTURE0)
 			gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[st.Texture])
 			applied, appliedOK = *st, true
 		}
 		if f := boolToInt32(bn.baked); f != baked {
 			baked = f
-			gl.Uniform1i(v.matBaked, f)
+			gl.Uniform1i(m.baked, f)
 		}
 		if f := boolToInt32(bn.nbo != 0); f != hasNormals {
 			hasNormals = f
-			gl.Uniform1i(v.matHasNormals, f)
+			gl.Uniform1i(m.hasNormals, f)
 		}
 		if f := boolToInt32(bn.lbo != 0); f != hasLight {
 			hasLight = f
-			gl.Uniform1i(v.matHasLight, f)
+			gl.Uniform1i(m.hasLight, f)
 		}
-		gl.Uniform1ui(v.matBin, uint32(bi))
+		gl.Uniform1ui(m.binLoc, uint32(bi))
 		bind(0, bn.ins)
 		bind(2, bn.ebo)
 		bind(3, bn.vbo)
 		bind(4, orDummy(bn.nbo, v.dummy))
 		bind(5, orDummy(bn.lbo, v.dummy))
+		// Binding 6 is the tile lists, bound above for every bin.
+		bind(7, orDummy(bn.cbo, v.dummy))
 		gl.DrawArraysIndirect(gl.TRIANGLES, gl.PtrOffset(bi*16))
 		shaded++
+	}
+	if keyOpen {
+		ProfileEnd()
 	}
 	DebugStats.NaniteVisBins = shaded
 	if query != 0 {
@@ -875,7 +989,7 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 		naniteVisShadedPixels = int(n)
 	}
 	gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, 0)
-	for i := uint32(0); i < 7; i++ {
+	for i := uint32(0); i < 8; i++ {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, i, 0)
 	}
 	gl.ActiveTexture(gl.TEXTURE0 + naniteVisIDUnit)
@@ -924,13 +1038,15 @@ func orDummy(buf, dummy uint32) uint32 {
 // not per material: the matrices, the lights, the shadows (the cascades, the
 // clouds, live GI: UploadShadowUniformsTo hands on all three), the point
 // lights' cubes and the fog — the calls the world program's own uploads are.
-func (v *naniteVisPass) frameUniforms(lvl *world.Level, frame ShadowFrame, now float64) {
-	p := v.material.prog
+func (v *naniteVisPass) frameUniforms(p uint32, lvl *world.Level, frame ShadowFrame, now float64) {
 	lights := world.SceneLights(lvl)
 	world.UploadLightsTo(p, lights, false)
-	world.UploadFogTo(p, lvl.Fog, lvl.Volumes, lvl)
+	world.UploadFogTo(p, frameFog(lvl), frameVolumes(lvl), lvl)
+	ambTilesBindTo(p)
 	UploadShadowUniformsTo(p, lvl.Lights, frame)
 	UploadPointShadowUniformsTo(p, lights)
+	// The caustics on a bed under water (water_caustics.go).
+	uploadWaterCausticsTo(p)
 	gl.UseProgram(p)
 	loc := func(name string) int32 { return gfx.UniformLoc(p, name+"\x00") }
 	gl.UniformMatrix4fv(loc("projection"), 1, false, &gfx.Projection[0])
@@ -941,7 +1057,17 @@ func (v *naniteVisPass) frameUniforms(lvl *world.Level, frame ShadowFrame, now f
 	gl.Uniform1i(loc("alphaSharpen"), 0)
 	gl.Uniform1i(loc("coverageDither"), 0)
 	gl.Uniform1i(loc("tex"), 0)
-	gfx.ApplySkinUniforms(&v.matSkin, p, nil)
+	// Each material program its own cache: one shared by the variants looked
+	// both locations up again at every switch of program, every frame.
+	sk := v.matSkins[p]
+	if sk == nil {
+		if v.matSkins == nil {
+			v.matSkins = map[uint32]*gfx.SkinUniforms{}
+		}
+		sk = &gfx.SkinUniforms{}
+		v.matSkins[p] = sk
+	}
+	gfx.ApplySkinUniforms(sk, p, nil)
 	ident := mgl32.Ident4()
 	gl.UniformMatrix4fv(loc("model"), 1, false, &ident[0])
 }
@@ -983,6 +1109,9 @@ func (v *naniteVisPass) ensureFBOs() {
 	}
 	gl.BindFramebuffer(gl.FRAMEBUFFER, v.colourFBO)
 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, scene.colour, 0)
+	// A painted level's normal buffer, or none (stylize.go): the draw set
+	// that writes it is chosen each frame (stylizeMaterialDrawBuffers).
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, scene.stylize, 0)
 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, v.binDepth, 0)
 	gl.DrawBuffer(gl.COLOR_ATTACHMENT0)
 	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {

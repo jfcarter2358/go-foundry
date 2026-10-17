@@ -46,6 +46,15 @@ type Level struct {
 	// static surface is lit live — with GI where the player has it on (render/
 	// gi.go), with the flat ambient where not. See RawCompile.Bake.
 	NoBake bool
+	// Lightmap bakes the direct light into lightmaps (compile/lightmap.go)
+	// rather than per vertex: set on every level read from a file unless its
+	// compile block says `bake: vertex` (BakeVertex, which is what is saved).
+	// LightmapTexel is its texel size in world units, 0 for the compiler's. A
+	// level built in code (a test's) has the per-vertex bake. See
+	// RawCompile.Bake.
+	Lightmap      bool
+	BakeVertex    bool
+	LightmapTexel float32
 	// Volumes are the level's scriptable regions (volume.go).
 	Volumes []Volume
 	// Entities are the level's placed dynamic objects (entity.go). They live on
@@ -85,6 +94,12 @@ type Level struct {
 	// is why they are pointers rather than zero-valued structs.
 	Sky *Sky
 	Fog *Fog
+	// Tonemap is the level's HDR shading and tone curve (tonemap.go), or nil
+	// for LDR shading as every level before it had.
+	Tonemap *Tonemap
+	// Stylize is the level's painted-miniature look (stylize.go), or nil for
+	// none — the look every level before it had.
+	Stylize *Stylize
 	// Player is the level's tuning for the engine-owned player it starts
 	// (player_settings.go). A value rather than a pointer, because there is
 	// always a player and its zero value is the engine's own defaults.
@@ -102,7 +117,11 @@ type Level struct {
 	// engine's default — see RawLevel.ViewDistance. Read through
 	// LevelViewDistance.
 	ViewDistance float32
-	Lights       LightSet
+	// RainRipples is how hard rain is ringing the level's water, 0..1 (the
+	// level's `rain_ripples:` key; `@level.prop.rain_ripples` at runtime):
+	// the water shader's procedural drop rings (water_ripples.go). 0 none.
+	RainRipples float32
+	Lights      LightSet
 	// Static is a compiled level's drawable geometry (static.go), or nil for an
 	// authored one. When it is set, every chunk marked Compiled is drawn from
 	// here instead of from its own brushes.

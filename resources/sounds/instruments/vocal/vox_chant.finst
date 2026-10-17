@@ -1,0 +1,8 @@
+version: 1
+name: Vox Chant
+samples: [vocal/vox_chant]
+fade_out: 0.4
+playback:
+  range: [C-1, C-4]
+  clef: bass
+description: Low chanted 'om', the vowel slowly morphing

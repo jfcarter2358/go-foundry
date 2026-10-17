@@ -1,0 +1,25 @@
+version: 1
+title: Rests
+meter: [{bar: 1, sig: 4/4}, {bar: 5, sig: 4/2}, {bar: 6, sig: 4/4}]
+lines:
+- name: Flute
+  instrument: woodwinds/flute
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | hr qr er sr tr xr yr yr
+      | q.r er h.r qr
+      | wr
+      | R
+      | R
+      | qC5 qD5 qr qE5
+      | hC5 hr
+    - |
+      | 
+      | 
+      | 
+      | 
+      | 
+      | qE4 qr qF4 qr
+      | hr hA4

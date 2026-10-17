@@ -42,8 +42,8 @@ func startupApplyWindow() {
 }
 
 // startupLevel is the level the engine boots with, and the path and directory
-// the editor will save it to.
-func startupLevel() (world.Level, string, string, error) {
+// the editor will save it to. A blank level has no progress to report.
+func startupLevel(progress func(frac float32, detail string)) (world.Level, string, string, error) {
 	// "untitled" is also the start level of the game.yaml a new project is given
 	// (game.DefaultManifest), so keep the two in step.
 	levelsDir := levelio.LevelsDir()

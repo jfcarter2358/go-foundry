@@ -1,0 +1,14 @@
+version: 1
+name: Tambourine
+samples: [drums/tambourine]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Tambourine
+    line: 4
+    head: x
+description: 'Tambourine: jingles and skin'

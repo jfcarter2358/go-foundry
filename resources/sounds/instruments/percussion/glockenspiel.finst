@@ -1,0 +1,16 @@
+version: 1
+name: Glockenspiel
+samples: [keys/glockenspiel]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.6
+polyphony: 6
+playback:
+  range: [G-5, C-8]
+  transposition: 24
+  clef: treble
+  gliss: diatonic
+  release: 2
+description: 'Glockenspiel: sounds two octaves above where it is written'

@@ -1,0 +1,8 @@
+version: 1
+name: Brass Section
+samples: [winds/brass_section]
+fade_out: 0.12
+playback:
+  range: [C-3, C-7]
+  clef: treble
+description: 'Brass section: saws whose filter opens on the attack'

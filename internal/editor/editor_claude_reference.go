@@ -41,6 +41,8 @@ import (
 	"foundry/internal/material"
 	"foundry/internal/model"
 	"foundry/internal/particle"
+	"foundry/internal/procgen"
+	"foundry/internal/score"
 	"foundry/internal/script"
 	"foundry/internal/tracker"
 	"foundry/internal/world"
@@ -98,7 +100,7 @@ func claudeReferenceTools() []claude.Tool {
 			Name: "list_assets",
 			Description: "The names of the assets this project has: textures, materials, models, " +
 				"scripts, entity types, particle effects, AI decision trees, sounds, tracker songs " +
-				"(sounds/*.ftrk), the tracker's sample library (as songs name them) and levels. " +
+				"(sounds/*.ftrk), scores (sounds/*.fscore), the tracker's sample library and instrument library (as songs and scores name them) and levels. " +
 				"A level file names " +
 				"assets by name, not by path, and these are those names.",
 			Schema: map[string]any{
@@ -107,7 +109,7 @@ func claudeReferenceTools() []claude.Tool {
 					"kind": map[string]any{
 						"type": "string",
 						"enum": []any{"textures", "materials", "models", "scripts", "entities",
-							"particles", "ai", "biomes", "sounds", "songs", "samples", "levels", "all"},
+							"particles", "ai", "biomes", "sounds", "songs", "scores", "samples", "instruments", "levels", "all"},
 						"description": "Which kind to list. Defaults to all of them.",
 					},
 					"filter": map[string]any{
@@ -126,6 +128,7 @@ func claudeReferenceTools() []claude.Tool {
 			},
 		},
 		claudeDocsTool(),
+		claudeGeneratorTool(),
 	}
 }
 
@@ -280,6 +283,8 @@ func claudeAssetKinds() []struct {
 		{"biomes", world.BiomesDir, world.BiomeExt},
 		{"sounds", func() string { return fileutil.ResolveAssetPath(audio.SoundsDirName) }, ".wav"},
 		{"levels", levelio.LevelsDir, ".yaml"},
+		{"generators", procgen.GeneratorsDir, procgen.Ext},
+		{"environments", procgen.EnvironmentsDir, procgen.Ext},
 	}
 }
 
@@ -325,8 +330,18 @@ func claudeListAssetsText(kind, filter string) string {
 	if kind == "" || kind == "all" || kind == "songs" {
 		list("songs", tracker.ScanSongNames())
 	}
+	// Scores, the same way: a level's music block or play_music names one
+	// by its path under sounds/.
+	if kind == "" || kind == "all" || kind == "scores" {
+		list("scores", score.ScanScoreNames())
+	}
 	if kind == "" || kind == "all" || kind == "samples" {
 		list("samples", tracker.ScanSampleNames())
+	}
+	// Library instruments (.finst), named by their path under
+	// sounds/instruments/ — what a song slot's ref: names.
+	if kind == "" || kind == "all" || kind == "instruments" {
+		list("instruments", tracker.ScanInstrumentNames())
 	}
 	if total == 0 {
 		if filter != "" {

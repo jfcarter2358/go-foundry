@@ -984,7 +984,13 @@ func deviation(m *Mesh, original, simplified []uint32) float32 {
 			if d2 >= best {
 				continue
 			}
-			best = min(best, pointTriDist2(p, set[i].a, set[i].b, set[i].c))
+			// A triangle with two corners at one point (a quantised sliver)
+			// divides zero by zero: it is no nearer than its neighbours,
+			// and a NaN here would become the whole DAG's error — the LOD
+			// test would never select the mesh (docs/canyon/PHASE_2.md).
+			if d := pointTriDist2(p, set[i].a, set[i].b, set[i].c); !math.IsNaN(d) {
+				best = min(best, d)
+			}
 			if best == 0 {
 				break
 			}

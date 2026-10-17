@@ -1,0 +1,23 @@
+version: 1
+name: Timpani
+samples: [drums/timpani, orchestral/timpani_soft]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+  layers:
+  - sample: 1
+    velocity: [0, 96]
+  - sample: 0
+    velocity: [64, 127]
+fade_out: 1.2
+polyphony: 4
+articulations:
+- name: muted
+  triggers: [secco, muffled, damped, étouffé]
+  fade_out: 0.12
+playback:
+  range: [D-2, C-4]
+  clef: bass
+  release: 3
+description: 'Timpani: tuned kettle drums, soft and hard mallets'

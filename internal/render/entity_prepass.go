@@ -180,5 +180,6 @@ func (pp *entityPrepassProgram) warm(lvl *world.Level) {
 		each(&lvl.Entities[ei])
 	}
 	each(world.PlayerEntity)
+	each(world.PlayerBodyEntity)
 	gl.Disable(gl.SCISSOR_TEST)
 }

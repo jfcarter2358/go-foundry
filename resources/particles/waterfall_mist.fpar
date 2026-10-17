@@ -1,0 +1,79 @@
+# waterfall_mist.fpar — the spray at the foot of a waterfall
+# (docs/terrain-paint/PHASE_W4.md). ground_edit places it across the foot of
+# every fall its rivers make (falls_mist), one emitter per three metres of
+# the falling sheet, its rate scaled by the drop; it is a plain effect, so
+# it can be placed by hand at any other fall too.
+#
+# Two layers, because that is what the foot of a fall throws up: a slow,
+# lit cloud of fine spray that billows out and drifts up (it reads as the
+# white haze over the pool, and lets the sun through), and coarse droplets
+# kicked up and falling back. Seen from the pool the cloud carries most of
+# it; the droplets give it motion close up. particle_mist.png is a soft,
+# slightly lumpy white puff.
+#
+# Phase W5: the cloud drifts downwind (`wind`), and is two-thirds as many,
+# smaller puffs, a little denser each: standing in the plunge pool, the old
+# cloud's full-screen overdraw cost ~20 ms of a 1600x900 frame on the test
+# box (docs/terrain-paint/PHASE_W5.md, "Measured").
+id: waterfall_mist
+seed: 31
+
+layers:
+  - name: spray
+    rate: 11          # phase W5: fewer, smaller puffs (see below)
+    duration: 2
+    loop: true
+    prewarm: true
+    max: 60
+    shape: disc
+    radius: 1.1
+    life_min: 1.8
+    life_max: 3.2
+    speed_min: 0.5
+    speed_max: 1.4
+    size_min: 0.7
+    size_max: 1.3
+    rot_min: -3.14
+    rot_max: 3.14
+    rot_vel_min: -0.3
+    rot_vel_max: 0.3
+    gravity: -0.04    # fine spray rises on the air the fall drags down
+    drag: 1.4
+    turbulence: 0.7
+    turbulence_freq: 0.8
+    wind: 0.8         # drifts downwind (phase W5)
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    tint: {r: 0.95, g: 0.97, b: 1}
+    size_ramp:
+      - {t: 0, v: 0.5}
+      - {t: 1, v: 2.0}
+    alpha_ramp:
+      - {t: 0, v: 0}
+      - {t: 0.2, v: 0.45}
+      - {t: 1, v: 0}
+
+  - name: droplets
+    rate: 22
+    duration: 1
+    loop: true
+    max: 60
+    shape: cone
+    radius: 0.9
+    angle: 40
+    life_min: 0.5
+    life_max: 1
+    speed_min: 1.8
+    speed_max: 3.4
+    size_min: 0.04
+    size_max: 0.08
+    gravity: 1
+    drag: 0.6
+    texture: particle_mist
+    blend: alpha
+    lit: true
+    alpha_ramp:
+      - {t: 0, v: 0.75}
+      - {t: 0.7, v: 0.6}
+      - {t: 1, v: 0}

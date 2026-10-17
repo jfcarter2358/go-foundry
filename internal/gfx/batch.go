@@ -38,6 +38,11 @@ type Material struct {
 	// Baked is whether it carries baked light — a compiled level's static
 	// surfaces, whose static lights are already on their vertices.
 	Baked bool
+	// VertexColors is whether the vertices it draws carry colours (attribute
+	// AttribColor) for the shader to multiply in: a cooked mesh made with
+	// them (docs/canyon/PHASE_2.md). Part of the identity like the rest, so
+	// a coloured mesh and a plain one never share a draw.
+	VertexColors bool
 }
 
 // IsTransparent is Geometry.IsTransparent for a material. Decided at draw time

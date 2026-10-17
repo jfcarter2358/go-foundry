@@ -1,0 +1,13 @@
+version: 1
+name: Snare Rim
+samples: [drums/snare_rim]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Snare Rim
+    line: 4
+description: 'Rim click: short woody tones'

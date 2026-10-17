@@ -1049,10 +1049,15 @@ func trkHexForKey(sc sdl.Scancode) (int, bool) {
 	return 0, false
 }
 
-// trkLetterForKey is the upper-case letter a key types, or 0.
+// trkLetterForKey is the effect letter a key types, or 0: A..Z, and the
+// 2 key for @ (articulation), the one command past the alphabet — @ is
+// Shift+2 on most layouts, and no effect is a digit.
 func trkLetterForKey(sc sdl.Scancode) byte {
 	if sc >= sdl.SCANCODE_A && sc <= sdl.SCANCODE_Z {
 		return byte('A' + int(sc-sdl.SCANCODE_A))
+	}
+	if sc == sdl.SCANCODE_2 {
+		return tracker.FxArticulation
 	}
 	return 0
 }

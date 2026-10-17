@@ -1,0 +1,23 @@
+# water_lake.fmat — a lowland lake with some algae and silt in it: greener and
+# murkier than the default, softer caustics.
+#
+# Phase W3's colour fixes: the absorption is gentler and the deep colour
+# brighter, so the bed fades out over the drop-off instead of a hard dark blob
+# in the middle seen from above; the reflection is tinted warm, so the lake
+# under a blue sky reads green-grey, not saturated blue.
+kind: surface
+texture: water
+doc: 'A temperate lowland lake: green-brown, the bed lost after a few metres.'
+effects:
+  - effect: water
+    absorption: 0.75
+    shallow_color: {r: 0.64, g: 0.78, b: 0.62}
+    scatter_color: {r: 0.1, g: 0.17, b: 0.11}
+    subsurface: 0.4
+    roughness: 0.15
+    refraction: 0.3
+    reflectivity: 0.3
+    reflect_color: {r: 0.92, g: 0.96, b: 0.74}
+    foam: 0.35
+    caustics: 0.6
+    flow_speed: 0.2

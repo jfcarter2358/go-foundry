@@ -118,7 +118,10 @@ type playFlags struct {
 	enable  *string
 	seconds *float64
 	gi      *string
-	view    *string
+	water   *string
+	// lighting is gfx.ApplyLightingSpec's.
+	lighting *string
+	view     *string
 }
 
 func playFlagSet(name, root string, out io.Writer) *playFlags {
@@ -140,6 +143,9 @@ func playFlagSet(name, root string, out io.Writer) *playFlags {
 	p.enable = fs.String("enable", "", "chunks/volumes to switch on before play, comma separated")
 	p.seconds = fs.Float64("seconds", 0, "let the level run this long before the script starts — time for a level's own opening to play out")
 	p.gi = fs.String("gi", "", "live GI tier for the pictures: off, low, medium or high (default: picked by GPU, as a new player's is)")
+	p.water = fs.String("water", "", "water quality for the pictures: low, medium or high (default high)")
+	p.lighting = fs.String("lighting", "", "lighting quality settings for the pictures, comma separated: specular=off, reflections=high, "+
+		"ambient_occlusion=on, bloom, contact_shadows, soft_shadows (default: picked by GPU, as a new player's are)")
 	p.view = fs.String("view", "normal", "the debug view pictures are drawn in: normal, lighting (the light alone, on white surfaces), "+
 		"probes, field, wireframe, or the Nanite cull's clusters, lod or overdraw. A script's `view` command changes it mid-run")
 	return p
@@ -161,6 +167,18 @@ func (p *playFlags) open(out io.Writer, onEvent func(Event)) (*Session, error) {
 			return nil, fmt.Errorf("-gi %q: want off, low, medium or high", *p.gi)
 		}
 		gfx.GIQuality, gfx.GIQualityChosen = q, true
+	}
+	if *p.water != "" {
+		q, ok := gfx.ParseWaterQuality(*p.water)
+		if !ok {
+			return nil, fmt.Errorf("-water %q: want low, medium or high", *p.water)
+		}
+		gfx.WaterQuality = q
+	}
+	if *p.lighting != "" {
+		if err := gfx.ApplyLightingSpec(*p.lighting); err != nil {
+			return nil, fmt.Errorf("-lighting: %w", err)
+		}
 	}
 	note, err := render.SetView(*p.view)
 	if err != nil {

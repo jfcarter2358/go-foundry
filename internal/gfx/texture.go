@@ -3,6 +3,7 @@ package gfx
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/texcompress"
 	"image"
 	"image/draw"
 	// The PNG decoder, registered for image.Decode above. It belongs HERE, in
@@ -33,18 +34,25 @@ var TextureUploadsEnabled = true
 func LoadTexture(name, file string) error {
 	// A decode PrefetchTextures already started is waited for rather than
 	// repeated.
-	rgba, err, ok := takePrefetched(file)
+	rgba, comp, err, ok := takePrefetched(file)
 	if !ok {
 		rgba, err = decodeTextureFile(file)
 	}
 	if err != nil {
 		return err
 	}
+	// The block-compressed chain, when compression is on and the prefetch
+	// did not already make it (texture_compress.go). Headless callers never
+	// upload, so they never encode.
+	if comp == nil && TextureUploadsEnabled {
+		comp = prepareCompressed(file, rgba, TextureCompression)
+	}
 
 	// What the CPU wants to know about it is recorded now, whether the upload
 	// happens now or not.
 	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
 	noteTextureMean(name, rgba)
+	noteTextureOpaque(name, rgba)
 	// What was on disk when this was read, so RescanTextures can tell later
 	// whether the file has moved on. See texture_rescan.go.
 	noteTextureStamp(name, file)
@@ -53,18 +61,20 @@ func LoadTexture(name, file string) error {
 	// model, a retextured sprite — the upload waits for the frame's GL half,
 	// which drains it before anything draws (sim_gl.go).
 	if TextureUploadsEnabled && inSimStep {
-		deferredTextures = append(deferredTextures, deferredTexture{name: name, rgba: rgba})
+		deferredTextures = append(deferredTextures, deferredTexture{name: name, rgba: rgba, comp: comp})
 		deferredTextureNames[name] = true
 		return nil
 	}
-	uploadTexture(name, rgba)
+	uploadTexture(name, rgba, comp)
 	return nil
 }
 
 // uploadTexture is LoadTexture's GPU half: the texture object, its filtering
 // and mipmaps, its entry in Textures, and its normal map. With uploads off it
-// records the name alone.
-func uploadTexture(name string, rgba *image.RGBA) {
+// records the name alone. comp, when not nil, is the texture's block-
+// compressed chain (texture_compress.go), uploaded instead of rgba unless the
+// driver refuses it.
+func uploadTexture(name string, rgba *image.RGBA, comp *texcompress.Texture) {
 	// Everything before this is the decode, which any tool that only wants to
 	// know a texture's size can do; everything here hands it to the GPU. The
 	// split mirrors Geometry.Load's — see TextureUploadsEnabled.
@@ -74,17 +84,12 @@ func uploadTexture(name string, rgba *image.RGBA) {
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, texture)
 		applyWorldTextureFilter()
-		gl.TexImage2D(
-			gl.TEXTURE_2D,
-			0,
-			gl.RGBA,
-			int32(rgba.Rect.Size().X),
-			int32(rgba.Rect.Size().Y),
-			0,
-			gl.RGBA,
-			gl.UNSIGNED_BYTE,
-			gl.Ptr(rgba.Pix))
-		generateWorldMipmaps()
+		// With TextureSkipMips 0 and compression off (the defaults) this is
+		// the plain TexImage2D + glGenerateMipmap upload it always was.
+		skip := textureSkipLevels(rgba.Rect.Dx(), rgba.Rect.Dy())
+		if comp == nil || !uploadCompressed(name, comp, skip) {
+			uploadRGBA8(name, rgba, skip)
+		}
 	}
 
 	Textures[name] = texture
@@ -102,12 +107,17 @@ func uploadTexture(name string, rgba *image.RGBA) {
 	if err := ensureNormalMapLoaded(name); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
+	// Its ARM map is NOT loaded here: only a surface that samples it asks for
+	// it, the first time it is drawn (texture_armmap.go's requestARMMap) —
+	// loaded beside every texture, Poly Haven sets' maps took ~740 MB the
+	// splat and triplanar surfaces never read.
 }
 
 // deferredTexture is one upload LoadTexture left for the frame's GL half.
 type deferredTexture struct {
 	name string
 	rgba *image.RGBA
+	comp *texcompress.Texture
 }
 
 // deferredTextures are the uploads queued during the simulation half of the
@@ -129,9 +139,9 @@ func DrainDeferredTextures() {
 	}
 	for i := range deferredTextures {
 		d := &deferredTextures[i]
-		uploadTexture(d.name, d.rgba)
+		uploadTexture(d.name, d.rgba, d.comp)
 		delete(deferredTextureNames, d.name)
-		d.rgba = nil
+		d.rgba, d.comp = nil, nil
 	}
 	deferredTextures = deferredTextures[:0]
 }
@@ -278,6 +288,10 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 	// is well under the cost of the flatten that produced img in the first
 	// place.
 	generateWorldMipmaps()
+	// Always RGBA8 and always the full size, whatever the file load made of
+	// this name (texture_compress.go): the record says so, which also turns a
+	// BC5 normal map's z rebuild back off (BindNormalMap).
+	noteTextureVRAM(name, rgba8ChainBytes(int(w), int(h)), TextureRGBA8)
 	noteTextureSize(name, w, h)
 	noteTextureMean(name, img)
 	return nil

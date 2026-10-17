@@ -1,0 +1,85 @@
+bench desert_canyon (yaml) — load 9.5s, 1920x1080, AA taa, window MSAA 0x, visibility buffer true, virtual shadow map true, compute raster ""
+
+=== pose flight -218.54,23.19,-73.20,1.150,0.000 -> -180.20,21.30,-46.00,1.145,0.030 -> -100,30,-20,0.6,0.0 -> -31.90,18.90,-24.40,0.000,0.220 -> 60.20,17.66,6.30,-2.440,0.200
+frame  avg 22.59 ms (44.3 fps)  p50 20.36  p95 25.08  p99 71.84  max 274.10
+nanite pages  3374 slots (580 MB) for 3374 pages, 3374 resident; 0 uploaded, 0 evicted, 0 starved so far; longest update 0.56 ms; staging persistent
+textures  1047.2 MB in 72 (0 BC7, 0 BC5), compression false, skip 0 mips
+scene  static 0  brushes 0 in 0 calls  chunks 0  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+sun shadow  virtual in 100% of frames: 1846 pages resident, 15.1 drawn in 4.7 rects, 0.0 starved, 6.4 deferred a frame
+gi  bricks built 307, still waiting 129; probes traced 6048 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                  13.58    274.61     19.88     25.73
+  update                                3.29    265.37      0.02      0.04
+    player input                        0.00      0.00      0.00      0.00
+    player & vehicles                   0.19      0.33      0.00      0.00
+    ai                                  0.00      0.00      0.00      0.00
+    entity update                       0.12      0.30      0.00      0.00
+      props: resolve                    0.03      1.88      0.00      0.00
+      props: rays                       2.89    264.58      0.00      0.00
+      props: particles                  0.00      0.00      0.00      0.00
+      props: index                      0.00      0.00      0.00      0.00
+    frames & waypoints                  0.00      0.00      0.00      0.02
+    emitters                            0.00      0.01      0.00      0.00
+    effects                             0.00      0.00      0.00      0.00
+    decals                              0.00      0.00      0.00      0.00
+    sound                               0.00      0.01      0.00      0.00
+    sky                                 0.00      0.00      0.00      0.00
+    ui tick                             0.00      0.00      0.00      0.00
+    scripts                             2.90    264.98      0.00      0.00
+    debug stats                         0.00      0.00      0.00      0.00
+    drains                              0.05      1.83      0.00      0.00
+  shadows: sun                          5.13      6.61      3.91      8.99
+    vsm                                 5.13      6.60      3.91      8.99
+      compiled                          0.00      0.00      0.00      0.01
+      chunks                            0.00      0.01      0.00      0.01
+      scenery                           0.38      0.53      0.00      0.01
+      nanite: scenery                   2.79      3.85      3.95      8.79
+        nanite: stream                  0.00      0.01      0.00      0.00
+        nanite: cull                    0.08      0.24      3.22      5.93
+          nanite: lod                   0.01      0.02      0.11      0.53
+      entities                          0.00      0.01      0.00      0.01
+  shadows: clouds                       0.00      0.00      0.00      0.00
+  gi                                    1.65      4.06      1.81      2.56
+    gi: field                           1.63      4.03      0.08      0.46
+    gi: probes                          0.02      0.04      1.73      2.44
+  shadows: point                        0.00      0.00      0.00      0.00
+  clear                                 0.00      0.01      0.05      0.42
+  world: compiled                       0.00      0.00      0.00      0.00
+  world: chunks                         0.00      0.00      0.00      0.00
+  terrain                               0.00      0.00      0.00      0.00
+  entities                              0.00      0.01      0.00      0.00
+  scenery                               0.01      0.38      0.00      0.00
+  nanite: scenery                       0.93      2.65      3.07      4.46
+    nanite: cull                        0.02      0.09      1.03      1.72
+      nanite: lod                       0.00      0.00      0.10      0.46
+    nanite: vis                         0.24      0.65      2.03      3.60
+      nanite: sw raster                 0.00      0.01      0.76      1.49
+      nanite: sw resolve                0.00      0.00      0.11      0.49
+  nanite: occlusion                     0.61      0.92      2.15      3.34
+    nanite: hi-z                        0.01      0.01      0.23      0.60
+    nanite: cull                        0.02      0.04      1.13      1.96
+      nanite: lod                       0.00      0.00      0.05      0.40
+    nanite: vis                         0.02      0.06      0.78      1.28
+      nanite: sw raster                 0.00      0.00      0.08      0.42
+      nanite: sw resolve                0.00      0.01      0.08      0.48
+  nanite: material                      0.70      3.54      8.06     10.58
+    nanite: classify                    0.00      0.00      0.09      0.44
+    gi: half res                        0.00      0.01      0.30      0.73
+  foliage                               0.00      0.00      0.00      0.00
+  scatter                               0.00      0.00      0.00      0.00
+  sprites: cutout                       0.00      0.00      0.00      0.00
+  vsm: mark                             0.01      0.02      0.20      0.23
+  decals                                0.00      0.00      0.00      0.00
+  sky                                   0.01      0.01      0.03      0.07
+  transparent                           0.00      0.00      0.00      0.00
+  volumetrics                           0.00      0.00      0.00      0.00
+  sprites: blended                      0.00      0.00      0.00      0.00
+  taa: motion                           0.00      0.00      0.12      0.47
+  viewmodel                             0.00      0.00      0.00      0.00
+  taa: resolve                          0.00      0.00      0.27      0.64
+  taa: output                           0.00      0.00      0.15      0.50
+  ui                                    0.00      0.00      0.00      0.00
+swap                                    0.04      0.19      0.09      0.44
+gpu wait                                8.93     17.24      2.60    253.68
+    nanite: stream                      0.00      0.00      0.00      0.00

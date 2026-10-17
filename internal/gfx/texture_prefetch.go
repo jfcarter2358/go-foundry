@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/texcompress"
 )
 
 // prefetchedTexture is one decode in flight or finished. done closes when rgba
@@ -26,6 +27,9 @@ import (
 type prefetchedTexture struct {
 	done chan struct{}
 	rgba *image.RGBA
+	// comp is the block-compressed chain, when compression was on as the
+	// prefetch started and the texture qualifies (texture_compress.go).
+	comp *texcompress.Texture
 	err  error
 }
 
@@ -65,6 +69,9 @@ func PrefetchTextures(names []string) {
 		}
 	}
 
+	// Read here, on the main thread, and handed to the workers.
+	compress := TextureCompression && TextureUploadsEnabled
+
 	prefetch.Lock()
 	defer prefetch.Unlock()
 	for _, file := range files {
@@ -76,6 +83,9 @@ func PrefetchTextures(names []string) {
 		go func(file string) {
 			decodeSlots <- struct{}{}
 			p.rgba, p.err = decodeTextureFile(file)
+			if p.err == nil {
+				p.comp = prepareCompressed(file, p.rgba, compress)
+			}
 			<-decodeSlots
 			close(p.done)
 		}(file)
@@ -84,16 +94,16 @@ func PrefetchTextures(names []string) {
 
 // takePrefetched hands over file's prefetched decode, waiting for it to finish,
 // and forgets it. ok is false when nothing prefetched that file.
-func takePrefetched(file string) (rgba *image.RGBA, err error, ok bool) {
+func takePrefetched(file string) (rgba *image.RGBA, comp *texcompress.Texture, err error, ok bool) {
 	prefetch.Lock()
 	p, ok := prefetch.files[file]
 	delete(prefetch.files, file)
 	prefetch.Unlock()
 	if !ok {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	<-p.done
-	return p.rgba, p.err, true
+	return p.rgba, p.comp, p.err, true
 }
 
 // DropPrefetchedTextures forgets every decode nobody took — a load that failed

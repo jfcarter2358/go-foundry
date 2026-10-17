@@ -1,0 +1,13 @@
+version: 1
+title: Tuplets
+lines:
+- name: Flute
+  instrument: woodwinds/flute
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | 3{eC5 eD5 eE5} 3{eF4 eG4 eA4} 3{qC5 qD5 qE5}
+      | 5{sC5 sD5 sE5 sF5 sG5} 3{er eA4 eB4} 6{sC4 sE4 sG4 sC5 sE5 sG5} 3{eG5 qA5}
+      | 5:3{eC5 eD5 eE5 eF5 eG5} 3{3{tA4 tB4 tC5} sD5 sE5} qr
+      | 3{hC4 hE4 hG4} 3{qA5 qr qF5}

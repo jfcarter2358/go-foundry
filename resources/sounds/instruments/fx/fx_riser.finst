@@ -1,0 +1,8 @@
+version: 1
+name: Fx Riser
+samples: [fx/fx_riser]
+fade_out: 0.3
+playback:
+  clef: percussion
+  release: 6
+description: Noise and saws rising for two bars at 120 BPM

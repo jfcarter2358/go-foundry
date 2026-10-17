@@ -1,0 +1,126 @@
+version: 1
+name: Orchestral Percussion
+samples: [drums/taiko, drums/snare_acoustic, orchestral/snare_acoustic_rr2, orchestral/snare_acoustic_rr3,
+  drums/crash, drums/ride, fx/fx_impact, drums/tambourine, drums/clave, drums/woodblock,
+  drums/triangle]
+zones:
+- sample: 0
+  low: B-1
+  high: B-1
+  base: C-2
+- sample: 0
+  low: C-2
+  high: C-2
+  base: C-2
+- sample: 1
+  low: D-2
+  high: D-2
+  base: D-2
+  round_robin: [2, 3]
+- sample: 4
+  low: C#3
+  high: C#3
+  base: C#3
+- sample: 5
+  low: D#3
+  high: D#3
+  base: D#3
+- sample: 6
+  low: E-3
+  high: E-3
+  base: E-3
+- sample: 7
+  low: F#3
+  high: F#3
+  base: F#3
+- sample: 4
+  low: A-3
+  high: A-3
+  base: G-3
+- sample: 8
+  low: D#5
+  high: D#5
+  base: D#5
+- sample: 9
+  low: E-5
+  high: E-5
+  base: D-5
+- sample: 9
+  low: F-5
+  high: F-5
+  base: F-5
+- sample: 10
+  low: G#5
+  high: G#5
+  base: A-5
+- sample: 10
+  low: A-5
+  high: A-5
+  base: A-5
+fade_out: 0.08
+polyphony: 8
+articulations:
+- name: choked
+  triggers: [choke, l.v. off, secco]
+  fade_out: 0.03
+playback:
+  clef: percussion
+  release: 4
+  drums:
+  - key: 36
+    name: Bass Drum
+    line: 1
+    shortcut: B
+  - key: 35
+    name: Bass Drum 2
+    line: 0
+  - key: 38
+    name: Snare Drum
+    line: 5
+    shortcut: A
+  - key: 52
+    name: Tam-tam
+    line: 2
+    shortcut: F
+  - key: 77
+    name: Woodblock Low
+    line: 3
+  - key: 76
+    name: Woodblock High
+    line: 4
+    shortcut: E
+  - key: 75
+    name: Claves
+    line: 6
+    head: x
+  - key: 54
+    name: Tambourine
+    line: 7
+    head: x
+    shortcut: D
+  - key: 51
+    name: Suspended Cymbal
+    line: 8
+    head: x
+  - key: 49
+    name: Clash Cymbals
+    line: 10
+    head: x
+    shortcut: C
+  - key: 57
+    name: Clash Cymbals 2
+    line: 12
+    head: x
+  - key: 81
+    name: Triangle
+    line: 11
+    head: triangle
+    articulation: open
+    shortcut: G
+  - key: 80
+    name: Triangle, stopped
+    line: 11
+    head: triangle
+    articulation: stopped
+description: Bass drum, snare, cymbals, triangle, tambourine, woodblock, claves, tam-tam
+  on the General MIDI keys

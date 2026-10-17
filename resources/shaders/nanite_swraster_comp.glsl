@@ -59,6 +59,7 @@ struct Instance {
     vec4 sphere;
     uvec4 flags;
     vec4 wind;
+    vec4 draw; // draw distance window (render/nanite_draw_distance.go)
 };
 layout(std430, binding = 0) readonly buffer Instances {
     Instance inst[];
@@ -117,9 +118,25 @@ shared mat4 mdl;
 shared vec4 wnd;
 shared vec4 sph;
 shared int boxLoX, boxLoY, boxHiX, boxHiY;
+// The cluster's instance's draw-distance fade (render/nanite_draw_distance.go;
+// drawFadeWindow and drawFadeKeeps are spliced in by the Go side), made by
+// the first thread: each pixel it writes is dithered as the ID pass's are.
+uniform vec3 drawEye;
+uniform int drawFadeOn;
+uniform int coverageDither;
+shared vec3 fade;
 uniform uint recordBase;
 uniform uint binBase;
 uniform uint swCap;
+// Dense numbering (nanite_vis_number_comp.glsl): each listed cluster takes
+// the frame's next record from the shared counter rather than recordBase +
+// its place in the list; one past maxRecords is not drawn.
+layout(std430, binding = 4) coherent buffer VisNext {
+    uint visNext;
+};
+uniform uint dense;
+uniform uint maxRecords;
+shared uint swRec;
 
 // orient is twice the signed area of (a, b, p): positive when p is to the
 // left of a->b.
@@ -200,6 +217,9 @@ void rasterise(uint first, int baseVertex, uint ii, uint t, uint id) {
             if (d < 0.0 || d > 1.0) {
                 continue; // the hardware's depth clip
             }
+            if (!drawFadeKeeps(vec2(x, y) + 0.5, coverageDither, fade)) {
+                continue;
+            }
             uint key = 0xffffffffu - floatBitsToUint(d);
             uint pix = uint(y) * uint(viewSize.x) + uint(x);
 #ifdef SW64
@@ -229,12 +249,21 @@ void main() {
     for (uint e = gl_WorkGroupID.x; e < n; e += gl_NumWorkGroups.x) {
         uvec4 a = swEntries[2u * e];
         uvec4 b = swEntries[2u * e + 1u];
-        uint rec = recordBase + e;
         barrier();
+        if (gl_LocalInvocationID.x == 0u) {
+            swRec = dense != 0u ? atomicAdd(visNext, 1u) : recordBase + e;
+        }
+        barrier();
+        uint rec = swRec;
+        if (rec >= maxRecords) {
+            continue; // the same for the whole workgroup: swRec is shared
+        }
         if (gl_LocalInvocationID.x == 0u) {
             records[rec].a = uvec4(a.x, a.z, a.w, binBase + b.x);
             records[rec].b = uvec4(rec + 1u, a.y, 0u, 0u);
             mvp = projection * camera * inst[a.w].model;
+            vec4 dr = inst[a.w].draw;
+            fade = drawFadeOn != 0 ? vec3(drawFadeWindow(distance(drawEye, inst[a.w].model[3].xyz), dr), dr.z) : vec3(0.0, 1.0, 0.0);
             wnd = inst[a.w].wind;
             windy = windReach(inst[a.w].model, wnd) > 0.0;
             if (windy) {

@@ -1,0 +1,8 @@
+version: 1
+name: Bass Pulse
+samples: [bass/bass_pulse]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: 25% pulse with slow pulse-width modulation

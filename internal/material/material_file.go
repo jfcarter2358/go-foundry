@@ -61,8 +61,17 @@ func MaterialsDir() string { return filepath.Join(fileutil.ResourcesPath, Materi
 func MaterialPath(name string) string { return filepath.Join(MaterialsDir(), name+MaterialExt) }
 
 // ScanMaterialFiles lists every material name on disk, sorted — what the
-// pickers and the library iterate.
-func ScanMaterialFiles() []string { return fileutil.ScanFilesByExt(MaterialsDir(), MaterialExt) }
+// pickers and the library iterate. Names, not file names: ScanFilesByExt
+// answers with the extension, and LoadAll and the material editor's list
+// hand each one to MaterialPath, which adds it — so the library used to load
+// nothing (found by docs/canyon/PHASE_5.md's generated materials).
+func ScanMaterialFiles() []string {
+	files := fileutil.ScanFilesByExt(MaterialsDir(), MaterialExt)
+	for i, f := range files {
+		files[i] = strings.TrimSuffix(f, MaterialExt)
+	}
+	return files
+}
 
 // The two keys inside an effect map that are not parameters.
 const (

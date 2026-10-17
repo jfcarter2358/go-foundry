@@ -1,0 +1,9 @@
+version: 1
+name: Chip Wave
+samples: [chip/chip_wave]
+fade_out: 0.02
+interp: nearest
+playback:
+  range: [C-2, C-8]
+  clef: treble
+description: Game Boy 32-step 4-bit wavetable

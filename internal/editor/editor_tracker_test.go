@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/tracker"
 
 	"github.com/veandco/go-sdl2/sdl"
@@ -711,5 +712,66 @@ func TestTrackerShiftSixIsNoteCut(t *testing.T) {
 	trkGridKey(sdl.SCANCODE_6, false, true, false)
 	if got := trkCellAtT(e, 0, 0).Note; got != tracker.NoteCut {
 		t.Fatalf("Shift+6 wrote %s, want ^^^", tracker.NoteName(got))
+	}
+}
+
+// A slot can be pointed at a library instrument, made local again, and an
+// embedded instrument saved into the library; each is one undo step.
+func TestTrackerLibraryInstruments(t *testing.T) {
+	dir := t.TempDir()
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = dir
+	tracker.ReloadSongs()
+	trkInstrNames = nil
+	t.Cleanup(func() { fileutil.ResourcesPath = prev; tracker.ReloadSongs(); trkInstrNames = nil })
+
+	lib := tracker.NewInstrument("Library Piano", "keys/piano")
+	lib.Articulations = []tracker.Articulation{{Name: "staccato", FadeOut: 0.05, VolEnv: tracker.EnvelopeOff()}}
+	if err := tracker.SaveInstrument("keys/test_piano", lib); err != nil {
+		t.Fatal(err)
+	}
+	e := trkTestState()
+	e.Song.Instruments = append(e.Song.Instruments, tracker.NewInstrument("Instrument 3", ""))
+	if err := e.setInstrumentLibrary(3, "keys/test_piano"); err != nil {
+		t.Fatal(err)
+	}
+	in := e.Song.Instruments[2]
+	if in.Ref != "keys/test_piano" || in.Name != "Library Piano" || len(in.Articulations) != 1 {
+		t.Fatalf("slot after picking the library instrument: %+v", in)
+	}
+	if err := e.setInstrumentLibrary(1, "keys/test_piano"); err != nil || e.Song.Instruments[0].Name != "A" {
+		t.Fatalf("a named slot keeps its name: %q %v", e.Song.Instruments[0].Name, err)
+	}
+	if err := e.setInstrumentLibrary(2, "keys/missing"); err == nil || e.Song.Instruments[1].Ref != "" {
+		t.Fatal("a missing library instrument should be refused and change nothing")
+	}
+	b, _ := tracker.Marshal(e.Song)
+	if !strings.Contains(string(b), "ref: keys/test_piano") {
+		t.Fatalf("song does not save the ref:\n%s", b)
+	}
+	e.embedInstrument(3)
+	if in.Ref != "" || len(in.Samples) != 1 {
+		t.Fatalf("embedded: %+v", in)
+	}
+	if !e.undoStep() || e.Song.Instruments[2].Ref != "keys/test_piano" {
+		t.Fatal("undo should put the library slot back")
+	}
+	e.embedInstrument(3)
+	e.Song.Instruments[2].Volume = 0.5
+	if err := e.saveInstrumentToLibrary(3, "quiet_piano"); err != nil {
+		t.Fatal(err)
+	}
+	if e.Song.Instruments[2].Ref != "custom/quiet_piano" {
+		t.Fatalf("saved slot plays %q", e.Song.Instruments[2].Ref)
+	}
+	back, err := tracker.LoadInstrument("custom/quiet_piano")
+	if err != nil || back.Volume != 0.5 || back.Category != "custom" {
+		t.Fatalf("saved instrument: %+v %v", back, err)
+	}
+	if err := e.saveInstrumentToLibrary(3, "../escape"); err == nil {
+		t.Fatal("a name that leaves the library should be refused")
+	}
+	if trkLetterForKey(sdl.SCANCODE_2) != tracker.FxArticulation {
+		t.Fatal("2 types the articulation command in the effect column")
 	}
 }

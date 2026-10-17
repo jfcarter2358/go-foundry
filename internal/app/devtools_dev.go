@@ -27,10 +27,13 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/nanitecook"
 	"foundry/internal/pack"
+	"foundry/internal/polyhaven/phcli"
 	"foundry/internal/preview"
+	"foundry/internal/procgen/gencli"
 	"foundry/internal/project"
 	"foundry/internal/release"
 	"foundry/internal/render"
+	"foundry/internal/score/scorecli"
 	"foundry/internal/sim"
 	"foundry/internal/tracker/trackercli"
 	"foundry/internal/uiwin"
@@ -89,8 +92,13 @@ func devWireframe() bool {
 //   - `nanite cook/inspect/sample` cooks a dense mesh (glTF, OBJ, .fmdl) into
 //     a Nanite mesh (.fnm, internal/nanite; the cook is internal/nanitecook)
 //     and reports on one.
-//   - `tracker list/inspect/check/render/samples/new/gen-samples` works on
-//     the music tracker's songs (sounds/*.ftrk) and its sample library.
+//   - `tracker list/inspect/check/render/samples/instruments/new/gen-samples/
+//     gen-instruments` works on the music tracker's songs (sounds/*.ftrk),
+//     its sample library and its instrument library (sounds/instruments/).
+//   - `score list/inspect/check/render/play/fmt/import/export-midi` works on
+//     the Score editor's notated scores (sounds/*.fscore): render one to a
+//     WAV offline, play it on the audio device, rewrite files in canonical
+//     form, import a MIDI or MusicXML file as one, export one as MIDI.
 //   - `bench` is not a command at all: it fills FOUNDRY_BENCH and lets the
 //     engine boot, because the benchmark measures the real frame in the real
 //     window and there is nothing headless about it.
@@ -125,8 +133,14 @@ func devRunCommand(args []string) (exitCode int, ran bool) {
 		return preview.ModelMain(commandProject(), args[1:], os.Stdout), true
 	case nanitecook.Command:
 		return nanitecook.Main(commandProject(), args[1:], os.Stdout), true
+	case gencli.Command:
+		return gencli.Main(commandProject(), args[1:], os.Stdout), true
+	case phcli.Command:
+		return phcli.Main(commandProject(), args[1:], os.Stdout), true
 	case trackercli.Command:
 		return trackercli.Main(commandProject(), args[1:], os.Stdout), true
+	case scorecli.Command:
+		return scorecli.Main(commandProject(), args[1:], os.Stdout), true
 	case "bench":
 		// Not handled here: FOUNDRY_BENCH is read during boot (bench.go), so
 		// this sets it and reports "no command ran", which lets the engine start

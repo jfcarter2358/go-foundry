@@ -1,0 +1,9 @@
+version: 1
+name: Bass Upright
+samples: [bass/bass_upright]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+  tuning: bass
+description: 'Upright bass: round pluck through a wooden body'

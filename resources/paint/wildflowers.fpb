@@ -1,0 +1,37 @@
+# Wildflowers: dandelions, periwinkle and sorrel (Poly Haven has no clover
+# scan; wood sorrel is the nearest) in drifts over short grass.
+# Poly Haven (CC0): dandelion_01, periwinkle_plant, shrub_sorrel_01, grass_medium_01.
+name: Wildflowers
+doc: Drifts of dandelion, periwinkle and sorrel over short grass.
+order: 30
+layers:
+  - {layer: wildflowers, strength: 1}
+recipe:
+  paint:
+    - {name: wildflowers, kind: density}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_grass
+      params:
+        assets: [{id: grass_medium_01}]
+        thin_foliage: true
+    - stage: polyhaven_plants
+      id: cover_flowers
+      params:
+        assets: [{id: dandelion_01}, {id: periwinkle_plant}, {id: shrub_sorrel_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: wildflowers, plants: cover_flowers, pieces: dandelion, density: 0.8, scale: [2, 3], slope: [0, 35],
+             cluster: 0.5, cluster_scale: 8, max_triangles: 600, paint: wildflowers, range: 0.8, shadows: false}
+          - {name: wildflower_periwinkle, plants: cover_flowers, pieces: periwinkle, density: 0.5, scale: [0.8, 1.2],
+             slope: [0, 35], cluster: 0.5, cluster_scale: 9, max_triangles: 600, paint: wildflowers, range: 0.8,
+             shadows: false}
+          - {name: wildflower_clover, plants: cover_flowers, pieces: sorrel, density: 3, scale: [2, 3.2], slope: [0, 35],
+             cluster: 0.4, cluster_scale: 6, max_triangles: 300, paint: wildflowers, range: 0.35, shadows: false}
+          - {name: wildflower_grass, plants: cover_grass, pieces: mid short, density: 1.5, scale: [2.5, 4],
+             slope: [0, 35], cluster: 0, max_triangles: 300, paint: wildflowers}

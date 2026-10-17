@@ -36,6 +36,13 @@ package nanitecook
 //     quantised and put under a tree for the mesh mode, and split into convex
 //     hulls for the hulls mode. The settings are folded into the source hash,
 //     so a project that changes them (game.yaml's nanite block) re-cooks.
+//
+// A source with vertex colours (model.ImportMesh.Colors — a generated rock,
+// a glTF with COLOR_0; docs/canyon/PHASE_2.md) carries them through every
+// step: welded as part of the record, weighed by the simplification beside
+// the normals and UVs (ColorWeight), kept in the fallback pool and written in
+// the pages (format 5). A source without them cooks exactly as before.
+//
 //  7. PAGE it (nanite.Mesh.BuildPages, Phase 3): the clusters packed into
 //     fixed-size pages by the group that consumes them, each cluster's
 //     vertices bit-packed on the quantisation grid. The pool the mesh keeps
@@ -77,6 +84,23 @@ type Options struct {
 	// as moving the surface a fiftieth of the radius. 0 takes the defaults;
 	// < 0 ignores the attribute.
 	NormalWeight, UVWeight float32
+	// AttrRadiusCap, when > 0, caps the radius those weights are scaled by,
+	// in metres. The weights were tuned on a metre-sized rock, and scaled by
+	// the radius they make a big mesh's normal and UV error grow with its
+	// SIZE, not its shape: a 20 m scanned cliff's every simplification was
+	// costed about a metre of error by its bumpy normals alone, so the LOD
+	// test kept it at full detail out to the better part of a kilometre
+	// (docs/canyon/PERF.md). Capped, a big mesh's attributes cost what they
+	// cost on a mesh the size the weights were chosen on, and its LOD is
+	// decided by how far its surface moves. 0 (the default): as before, so
+	// every cook made without it keeps its hash and its bytes.
+	AttrRadiusCap float32
+	// ColorWeight weighs the vertex colours (RGBA, 0..1) the same way, for a
+	// mesh that has them; 0 takes DefaultColorWeight, < 0 ignores them. Not
+	// in the hash: it changes nothing for a mesh without colours, and a mesh
+	// with them hashes its colours (and every cook made since they existed
+	// has used the default).
+	ColorWeight float32
 	// GroupSize is the DAG's clusters per group; 0 takes the default.
 	GroupSize int
 	// PositionBits, UVBits and NormalBits are the quantisation's
@@ -86,11 +110,33 @@ type Options struct {
 	// meshcollide's defaults. ProjectOptions fills them from game.yaml.
 	Collision meshcollide.Settings
 
+	// LockBorder locks every vertex on the mesh's OPEN boundary — an edge
+	// only one triangle uses — so no level of the DAG moves or removes it.
+	// Two tiles cut from one surface share their border vertices exactly,
+	// and with both borders locked every LOD of one meets every LOD of the
+	// other: no cracks. Off (the default) only the positions two slots share
+	// are locked, as before. See lock.go.
+	LockBorder bool
+	// LockRect, when set, also locks every vertex lying on the edge of this
+	// XZ rectangle (MinX, MinZ, MaxX, MaxZ), within LockRectTolerance. It is
+	// the closed-tile version of LockBorder: a terrain tile closed with
+	// skirts and a bottom has no open boundary, but its top surface's rim
+	// still sits exactly on the tile's rectangle.
+	LockRect *[4]float32
+	// LockRectTolerance is LockRect's distance tolerance; 0 is 1e-4.
+	LockRectTolerance float32
+
 	// serial cooks on the calling goroutine alone: the slots one at a
 	// time, each DAG unfanned (cluster.DAGOptions.Serial). Set by a caller
 	// already cooking several files side by side (cookAll). It changes how
 	// long a cook takes, never what it makes, so it is not in the hash.
 	serial bool
+	// Serial is serial for callers outside this package (procgen/meshout's
+	// CookOptions.Serial), with the same guarantee: never in the hash, never
+	// in the bytes. Measured on a generator cooking 64 tiles from its own
+	// worker pool it was slower, not lighter (docs/canyon/PHASE_0.md), so a
+	// caller should measure before setting it.
+	Serial bool
 }
 
 // parallelCook cooks side by side what can be: a mesh's slots (cookSource)
@@ -126,6 +172,10 @@ func ProjectOptions() Options {
 const (
 	DefaultNormalWeight = 0.2
 	DefaultUVWeight     = 0.1
+	// DefaultColorWeight: a colour (or cavity) step of 0.1 costs what moving
+	// the surface a hundredth of the radius does — the cavity is what shows a
+	// rock's cracks once the LOD has closed them, so it holds them a while.
+	DefaultColorWeight = 0.1
 )
 
 // DefaultSDFCell is the distance grid's target cell: a little coarser than
@@ -231,6 +281,13 @@ func fromImport(m *model.ImportMesh) *source {
 		}
 		soup.Normals = append(soup.Normals, nn[0], nn[1], nn[2])
 	}
+	if len(m.Colors) == n && n > 0 {
+		soup.Colors = make([]float32, 0, len(idx)*4)
+		for _, v := range idx {
+			c := m.Colors[v]
+			soup.Colors = append(soup.Colors, float32(c[0])/255, float32(c[1])/255, float32(c[2])/255, float32(c[3])/255)
+		}
+	}
 	src := &source{pool: gfx.WeldCorners(soup), triSlot: append([]int32(nil), m.TriSlot...), files: m.Files}
 	for _, s := range m.Slots {
 		src.slots = append(src.slots, nanite.Slot{Name: s.Name, Texture: s.Texture, Smooth: true,
@@ -289,6 +346,11 @@ func HashSource(files []string, opt Options) ([32]byte, error) {
 		binary.LittleEndian.PutUint32(b[:4], math.Float32bits(f))
 		h.Write(b[:4])
 	}
+	// The border locks change the DAG, so they are hashed — but only when
+	// set, so every cook made before they existed keeps its hash.
+	hashLocks(h, opt)
+	hashQuantBits(h, opt)
+	hashAttrRadiusCap(h, opt)
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
@@ -346,6 +408,10 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 	qverts := quant.Quantize(pool.Vertices, pool.Normals)
 
 	m := &nanite.Mesh{Vertices: pool.Vertices, Normals: pool.Normals, Triangles: nt, Quant: quant}
+	if len(pool.Colors) == pool.VertexCount()*4 && pool.VertexCount() > 0 {
+		m.HasColors = true
+		m.Colors = packColors(pool.Colors)
+	}
 
 	// Triangles by slot, in source order within each.
 	order := make([]int, nt)
@@ -354,14 +420,30 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 	}
 	sort.SliceStable(order, func(a, b int) bool { return src.triSlot[order[a]] < src.triSlot[order[b]] })
 
-	// The simplifier's view of the pool: position, UV and normal per vertex.
+	// The simplifier's view of the pool: position, UV and normal per vertex
+	// (and the colour, for a mesh with colours).
 	nv := pool.VertexCount()
-	attrs := make([]float32, 0, nv*8)
+	stride := 8
+	if m.HasColors {
+		stride = 12
+	}
+	attrs := make([]float32, 0, nv*stride)
 	for v := 0; v < nv; v++ {
 		attrs = append(attrs, pool.Vertices[5*v:5*v+5]...)
 		attrs = append(attrs, pool.Normals[3*v:3*v+3]...)
+		if m.HasColors {
+			attrs = append(attrs, colorFloats(m.Colors[v])...)
+		}
 	}
 	weights := attrWeights(pool, opt)
+	if m.HasColors {
+		cw := opt.ColorWeight
+		if cw == 0 {
+			cw = DefaultColorWeight
+		}
+		cw = max(cw, 0) * weights[0] / max(uvWeightOf(opt), 1e-9)
+		weights = append(weights, cw, cw, cw, cw)
+	}
 
 	// A position two slots share is locked: each slot simplifies alone, and
 	// they must still meet.
@@ -381,6 +463,9 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 		}
 	}
 	locked := func(v uint32) bool { return sharedPos[key(v)] }
+	if extra := borderLocks(pool, opt); extra != nil {
+		locked = func(v uint32) bool { return extra[v] || sharedPos[key(v)] }
+	}
 
 	// Each slot's DAG. The slots simplify alone (that is what the locks
 	// above are for) and read only the pool, so they are built side by side
@@ -399,12 +484,13 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 		sizes[si] = len(idxs[si]) / 3
 	}
 	dags := make([]cluster.DAG, len(src.slots))
-	cluster.BuildJobs(sizes, parallelCook && !opt.serial, func(si int, inner bool) {
+	serial := opt.serial || opt.Serial
+	cluster.BuildJobs(sizes, parallelCook && !serial, func(si int, inner bool) {
 		if len(idxs[si]) == 0 {
 			return
 		}
-		dags[si] = cluster.BuildDAG(cluster.Mesh{Positions: attrs, Stride: 8, Indices: idxs[si]}, cluster.DAGOptions{
-			Cluster: opt.Cluster, GroupSize: opt.GroupSize, AttrWeights: weights, Locked: locked, Serial: opt.serial || !inner})
+		dags[si] = cluster.BuildDAG(cluster.Mesh{Positions: attrs, Stride: stride, Indices: idxs[si]}, cluster.DAGOptions{
+			Cluster: opt.Cluster, GroupSize: opt.GroupSize, AttrWeights: weights, Locked: locked, Serial: serial || !inner})
 	})
 
 	m.Indices = make([]uint32, 0, nt*3*2)
@@ -468,6 +554,9 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 			remap[ix] = nix
 			m.FallbackVertices = append(m.FallbackVertices, pool.Vertices[5*ix:5*ix+5]...)
 			m.FallbackNormals = append(m.FallbackNormals, pool.Normals[3*ix:3*ix+3]...)
+			if m.HasColors {
+				m.FallbackColors = append(m.FallbackColors, m.Colors[ix])
+			}
 		}
 		m.Fallback[i] = nix
 	}
@@ -541,6 +630,34 @@ func cookCollision(m *nanite.Mesh, s meshcollide.Settings) (*meshcollide.Data, e
 	return meshcollide.Build(meshcollide.Input{Positions: m.Vertices, Stride: 5, Indices: idx, TriTags: tags, TagNames: names}, s)
 }
 
+// packColors is RGBA rows of 0..1 floats as RGBA8 words, R in the low byte.
+func packColors(c []float32) []uint32 {
+	out := make([]uint32, len(c)/4)
+	for v := range out {
+		var w uint32
+		for k := 0; k < 4; k++ {
+			w |= uint32(min(max(math.Round(float64(c[4*v+k])*255), 0), 255)) << (8 * k)
+		}
+		out[v] = w
+	}
+	return out
+}
+
+// colorFloats is an RGBA8 word as four 0..1 floats.
+func colorFloats(w uint32) []float32 {
+	return []float32{float32(w&0xff) / 255, float32(w>>8&0xff) / 255, float32(w>>16&0xff) / 255, float32(w>>24) / 255}
+}
+
+// uvWeightOf is the UV weight attrWeights scales by the radius (so the colour
+// weight can be scaled the same way from its first entry).
+func uvWeightOf(opt Options) float32 {
+	uw := opt.UVWeight
+	if uw == 0 {
+		uw = DefaultUVWeight
+	}
+	return max(uw, 0)
+}
+
 // attrWeights is the simplification's weights for the pool's U, V and the
 // normal's three floats, from opt and the mesh's size.
 func attrWeights(pool *gfx.IndexedMesh, opt Options) []float32 {
@@ -564,6 +681,9 @@ func attrWeights(pool *gfx.IndexedMesh, opt Options) []float32 {
 		hi = mgl32.Vec3{max(hi[0], p[0]), max(hi[1], p[1]), max(hi[2], p[2])}
 	}
 	r := hi.Sub(lo).Len() / 2
+	if opt.AttrRadiusCap > 0 {
+		r = min(r, opt.AttrRadiusCap)
+	}
 	return []float32{uw * r, uw * r, nw * r, nw * r, nw * r}
 }
 
@@ -614,12 +734,22 @@ func UpToDate(source, out string) (bool, error) {
 // UpToDateWith is UpToDate for a cook with opt.
 func UpToDateWith(source, out string, opt Options) (bool, error) {
 	v, have, err := nanite.ReadHeader(out)
-	if err != nil || v != nanite.FileVersion {
+	if err != nil || v < nanite.MinFileVersion || v > nanite.FileVersion {
 		return false, err
 	}
-	files, err := sourceFiles(source)
+	files, colored, err := sourceFilesColored(source)
 	if err != nil {
 		return false, err
+	}
+	// A source with colours cooks to format 5, one without to 4: a format-4
+	// cook of a coloured glTF was made before colours were read, and is stale.
+	if want := uint32(nanite.FileVersionPlain); colored {
+		want = nanite.FileVersion
+		if v != want {
+			return false, nil
+		}
+	} else if v != want {
+		return false, nil
 	}
 	want, err := HashSource(files, opt)
 	if err != nil {
@@ -630,12 +760,19 @@ func UpToDateWith(source, out string, opt Options) (bool, error) {
 
 // sourceFiles is every file a cook of source reads, without cooking it.
 func sourceFiles(source string) ([]string, error) {
+	files, _, err := sourceFilesColored(source)
+	return files, err
+}
+
+// sourceFilesColored is sourceFiles, and whether the source has vertex
+// colours (only a glTF can).
+func sourceFilesColored(source string) ([]string, bool, error) {
 	if model.IsGLTFPath(source) {
 		m, err := model.LoadGLTF(source)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return m.Files, nil
+		return m.Files, len(m.Colors) > 0, nil
 	}
 	files := []string{source}
 	if strings.EqualFold(filepath.Ext(source), model.ObjExt) {
@@ -643,7 +780,7 @@ func sourceFiles(source string) ([]string, error) {
 			files = append(files, mtl)
 		}
 	}
-	return files, nil
+	return files, false, nil
 }
 
 // IsSourcePath reports whether path is a mesh a cook reads.

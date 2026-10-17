@@ -24,7 +24,7 @@ var ForceWireframe bool
 
 // viewNames are the views, in the order they are listed. "normal" is GI's
 // "off": a view name, not a GI setting.
-var viewNames = []string{"normal", "lighting", "probes", "field", "wireframe", "clusters", "lod", "overdraw"}
+var viewNames = []string{"normal", "lighting", "probes", "field", "specular", "mirror", "ao", "wireframe", "clusters", "lod", "overdraw"}
 
 // ViewNames lists the names SetView takes.
 func ViewNames() []string { return append([]string(nil), viewNames...) }

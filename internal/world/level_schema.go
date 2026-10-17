@@ -36,6 +36,12 @@ type RawVolume struct {
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
 	// Cloud fills the region with volumetric cloud. See Volume.Cloud.
 	Cloud *RawVolumeCloud `yaml:"cloud,omitempty"`
+	// Ambient cuts the sky's ambient light inside the region — a cave, a
+	// slot canyon — for frames without live GI. See Volume.Ambient.
+	Ambient *RawVolumeAmbient `yaml:"ambient,omitempty"`
+	// Reflection captures the region's own environment for what reflects
+	// inside it: a room's walls instead of the sky. See Volume.Reflection.
+	Reflection *RawVolumeReflection `yaml:"reflection,omitempty"`
 	// Gravity replaces the level's ambient pull inside the region, in units per
 	// second squared: 0 for a zero-g chamber, a negative number to throw things
 	// at the ceiling. Absent leaves gravity alone, which is every volume
@@ -54,6 +60,13 @@ type RawVolume struct {
 	// Context marks the region as a named place to describe to an assistant,
 	// and changes nothing about what the volume does. See Volume.Context.
 	Context *RawVolumeContext `yaml:"context,omitempty"`
+	// Region makes the volume an environment region a level generation doc
+	// grows (volume_region.go). Authoring data only: nothing renders or
+	// collides with it at play time. See Volume.Region.
+	Region *RawVolumeRegion `yaml:"region,omitempty"`
+	// Grass makes the volume a grass field: one terrain tile's instanced
+	// Poly Haven grass (volume_grass.go). See Volume.Grass.
+	Grass *RawVolumeGrass `yaml:"grass,omitempty"`
 }
 
 // RawVolumeContext is the context block (volume_context.go).
@@ -160,6 +173,10 @@ type RawVolumeFog struct {
 // ordinary cloud casts, and the key only needs writing for the one that does
 // not.
 type RawCloudLook struct {
+	// Preset names a look to start from instead of the defaults (fair,
+	// dust_haze; world.CloudLookPreset); the keys beside it override it. A
+	// save writes every number, so the name is read but not written back.
+	Preset     string    `yaml:"preset,omitempty"`
 	Color      *RawColor `yaml:"color,omitempty"`
 	Coverage   *float32  `yaml:"coverage,omitempty"`
 	Density    *float32  `yaml:"density,omitempty"`
@@ -307,6 +324,10 @@ type RawScenery struct {
 	// Materials overrides a cooked Nanite mesh's (.fnm) material slots, slot
 	// name to texture: `materials: {stone: granite, moss: snow}`.
 	Materials map[string]string `yaml:"materials,omitempty"`
+	// Material is a .fmat every slot of a cooked mesh wears
+	// (docs/guide/28-materials.md): `material: canyon_rock`. A slot whose
+	// Materials entry names a material wears that one instead. Absent: none.
+	Material string `yaml:"material,omitempty"`
 	// Collision is how a cooked Nanite mesh collides: auto (absent), box,
 	// hulls, mesh or none. Any other model collides as its box.
 	Collision string `yaml:"collision,omitempty"`
@@ -316,6 +337,14 @@ type RawScenery struct {
 	// Chunk is the chunk this placement streams with: switched off (and
 	// unloaded, for an unload_when_disabled chunk) along with it. Absent: always in.
 	Chunk string `yaml:"chunk,omitempty"`
+	// DrawDistance is how far from the camera it is drawn, in metres, fading out over the last tenth. Absent: no limit.
+	DrawDistance float32 `yaml:"draw_distance,omitempty"`
+	// ShadowDistance is how far from the camera it casts a shadow, in metres. Absent: as far as it is drawn.
+	ShadowDistance float32 `yaml:"shadow_distance,omitempty"`
+	// Impostor is a cooked .fnm of cards baked from the mesh (a generator writes it), drawn instead of the mesh beyond impostor_distance. Absent: none.
+	Impostor string `yaml:"impostor,omitempty"`
+	// ImpostorDistance is where the mesh hands over to its impostor, cross-faded over the last tenth before it.
+	ImpostorDistance float32 `yaml:"impostor_distance,omitempty"`
 }
 
 // RawSceneryWind is a placement's wind (world.SceneryWind).
@@ -825,10 +854,12 @@ type RawMusic struct {
 	Loop  *bool    `yaml:"loop,omitempty"` // default true
 	// Fade is the crossfade in seconds when a script switches track.
 	Fade float32 `yaml:"fade,omitempty"`
-	// Section is where a tracker song (sounds/<track>.ftrk) starts. Ignored
-	// for a recording.
+	// Section is where a tracker song (sounds/<track>.ftrk) or a score
+	// (sounds/<track>.fscore, by rehearsal mark) starts. Ignored for a
+	// recording.
 	Section string `yaml:"section,omitempty"`
-	// Params sets a tracker song's params (0..1) before it starts.
+	// Params sets a tracker song's or a score's params (0..1) before it
+	// starts.
 	Params map[string]float32 `yaml:"params,omitempty"`
 }
 
@@ -844,17 +875,23 @@ type RawCompile struct {
 	// edge crosses a face.
 	LightMinGrid float32 `yaml:"light_min_grid,omitempty"`
 	// Bake is what the light stage does: "" or "full" bakes every static
-	// light, its ambient and its bounce into the surfaces; "none" skips the
-	// bake, so the level is lit live (GI and every light) in a release build
-	// as it is in the editor. Every light then counts against the live
+	// light, its ambient and its bounce into the surfaces, the direct light
+	// into lightmaps (sharp shadows) and the rest per vertex; "vertex" bakes
+	// it all per vertex on a refined grid, as before lightmaps; "none" skips
+	// the bake, so the level is lit live (GI and every light) in a release
+	// build as it is in the editor. Every light then counts against the live
 	// lighting limits (4 directional, 8 point).
 	Bake string `yaml:"bake,omitempty"`
+	// LightmapTexel is the lightmaps' texel size in world units: smaller is
+	// sharper shadows and more memory. Default 0.5.
+	LightmapTexel float32 `yaml:"lightmap_texel,omitempty"`
 }
 
 // The values RawCompile.Bake takes.
 const (
-	BakeFull = "full"
-	BakeNone = "none"
+	BakeFull   = "full"
+	BakeVertex = "vertex"
+	BakeNone   = "none"
 )
 
 type RawLevel struct {
@@ -936,6 +973,13 @@ type RawLevel struct {
 	// every level authored before this looking exactly as it did.
 	Sky *RawSky `yaml:"sky,omitempty"`
 	Fog *RawFog `yaml:"fog,omitempty"`
+	// Tonemap opts the level into HDR shading with a filmic tone curve
+	// (tonemap.go). Absent: LDR, as every level before it.
+	Tonemap *RawTonemap `yaml:"tonemap,omitempty"`
+	// Stylize gives the level a painted-miniature look (stylize.go;
+	// experimental): cool shadows, warm light, highlighted edges, washed
+	// recesses and dry-brushed detail. Absent: drawn as every level before it.
+	Stylize *RawStylize `yaml:"stylize,omitempty"`
 	// Player is this level's tuning for the body it starts (player_settings.go).
 	// A pointer for the reason Sky and Fog are: the player is engine-owned, so
 	// a level that never wanted to say anything about it writes no block at all
@@ -951,8 +995,12 @@ type RawLevel struct {
 	// the projection's far plane. Absent (or 0) is the engine's 1000; a large
 	// outdoor level raises it so distant terrain is not clipped away. Longer
 	// costs depth precision at range, so raise it only as far as needed.
-	ViewDistance float32   `yaml:"view_distance,omitempty"`
-	Lights       RawLights `yaml:"lights"`
+	ViewDistance float32 `yaml:"view_distance,omitempty"`
+	// RainRipples is how hard rain rings the level's water surfaces, 0..1:
+	// procedural drop rings drawn by the water shader (phase W5). Absent or
+	// 0 is none. A script changes it with `@level.prop.rain_ripples`.
+	RainRipples float32   `yaml:"rain_ripples,omitempty"`
+	Lights      RawLights `yaml:"lights"`
 }
 
 // RawPlayer is the level's `player:` block — see PlayerSettings.
@@ -993,6 +1041,14 @@ type RawPlayer struct {
 	// MaxFallSpeed is the terminal speed the player falls at, in units per
 	// second. Absent (or 0) is the engine's 30.
 	MaxFallSpeed *float32 `yaml:"max_fall_speed,omitempty"`
+	// Camera is how the player sees: first_person (the default, the eye) or
+	// third_person (a boom behind and over the shoulder, pulled in by walls).
+	// See world/player_view.go. Absent is first person, as every level was.
+	Camera *RawPlayerCamera `yaml:"camera,omitempty"`
+	// Body is what a third-person camera sees of the player: model
+	// attachments like an entity type's `models:`, origin at the feet, plus
+	// the locomotion clips its motion picks between. Absent is no body.
+	Body *RawPlayerBody `yaml:"body,omitempty"`
 }
 
 // RawSky is the level's sky (sky.go).
@@ -1029,7 +1085,7 @@ type RawSky struct {
 // exists because someone added fog, and `fog: {}` meaning no fog would be a
 // trap. Same reasoning as RawGlobalLight.Disabled.
 type RawFog struct {
-	Mode     string `yaml:"mode,omitempty"` // linear (default) | exp | exp2
+	Mode     string `yaml:"mode,omitempty"` // linear (default) | exp | exp2 | none (no distance fade: the atmosphere alone)
 	Disabled bool   `yaml:"disabled,omitempty"`
 
 	Color   *RawColor `yaml:"color,omitempty"`
@@ -1040,4 +1096,42 @@ type RawFog struct {
 	MaxOpacity *float32 `yaml:"max_opacity,omitempty"` // default 1
 	SkyBlend   *float32 `yaml:"sky_blend,omitempty"`
 	SkyFalloff *float32 `yaml:"sky_falloff,omitempty"`
+
+	// The atmosphere (world/fog_atmosphere.go). Each block is off when absent.
+	Height      *RawFogHeight `yaml:"height,omitempty"`       // exponential height fog lying in the low ground
+	Aerial      *RawFogAerial `yaml:"aerial,omitempty"`       // aerial perspective: haze thickening with range, bluish at distance
+	Sun         *RawFogSun    `yaml:"sun,omitempty"`          // the sun's forward-scattering glow through the haze
+	SkyHaze     *float32      `yaml:"sky_haze,omitempty"`     // share of the atmosphere the sky takes, 0 to 1; default 1
+	SkyDistance *float32      `yaml:"sky_distance,omitempty"` // metres a sky ray's atmosphere is integrated over; default 20000
+	// Shafts is the shadowed sunlight in dusty air near the camera: light
+	// shafts through a canyon's slot or a cave mouth (world/fog_shafts.go).
+	// Off when absent.
+	Shafts *RawFogShafts `yaml:"shafts,omitempty"`
+}
+
+// RawFogHeight is a fog block's height fog.
+type RawFogHeight struct {
+	Disabled bool      `yaml:"disabled,omitempty"`
+	Density  *float32  `yaml:"density,omitempty"` // extinction per metre at the base; default 0.02
+	Base     float32   `yaml:"base,omitempty"`    // world height the density is measured at
+	Falloff  *float32  `yaml:"falloff,omitempty"` // per metre: thins by e every 1/falloff metres up; default 0.1
+	Color    *RawColor `yaml:"color,omitempty"`   // default the fog's colour
+}
+
+// RawFogAerial is a fog block's aerial perspective.
+type RawFogAerial struct {
+	Disabled    bool      `yaml:"disabled,omitempty"`
+	Distance    *float32  `yaml:"distance,omitempty"`     // metres over which the haze takes 63% of what is behind it; default 2500
+	Color       *RawColor `yaml:"color,omitempty"`        // the haze's colour at range; default the fog's colour
+	Tint        *RawColor `yaml:"tint,omitempty"`         // per-channel extinction weights, blue above red for Rayleigh's tint; default (0.8, 1, 1.25)
+	ScaleHeight *float32  `yaml:"scale_height,omitempty"` // metres up over which the haze thins by e; default 1200
+	Base        float32   `yaml:"base,omitempty"`         // world height the distance is measured at
+}
+
+// RawFogSun is a fog block's sun in-scattering.
+type RawFogSun struct {
+	Disabled   bool      `yaml:"disabled,omitempty"`
+	Strength   *float32  `yaml:"strength,omitempty"`   // how far the lobe moves the sun's light toward looking into it; default 0.05
+	Anisotropy *float32  `yaml:"anisotropy,omitempty"` // Henyey-Greenstein g: 0 even, toward 1 only toward the sun; default 0.7
+	Color      *RawColor `yaml:"color,omitempty"`      // multiplies the sun's colour; default white
 }

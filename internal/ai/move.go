@@ -184,6 +184,12 @@ func steer(lvl *world.Level, e *world.Entity, spec *world.AISpec, feet, target m
 		speedScale = 1
 	}
 	speed := spec.Speed * speedScale
+	// Soft ground (sand, snow) drags at a walker's stride: the speed it asks
+	// for, not the one it has, so the drag is the same at any acceleration
+	// (world.WalkerDrag, from the sim's footsteps).
+	if e.HasGravity() {
+		speed *= 1 - world.WalkerDrag(e.ID)
+	}
 	if last && spec.Accel > 0 {
 		// Arrive rather than overshoot: slow down over the distance it takes to
 		// stop from full speed.

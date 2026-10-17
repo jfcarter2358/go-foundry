@@ -1,0 +1,14 @@
+version: 1
+name: Hat Closed Tight
+samples: [drums/hat_closed_tight]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Hat Closed Tight
+    line: 4
+    head: x
+description: Very short, bright closed hat, 20 ms

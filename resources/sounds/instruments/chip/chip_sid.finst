@@ -1,0 +1,9 @@
+version: 1
+name: Chip Sid
+samples: [chip/chip_sid]
+fade_out: 0.02
+interp: nearest
+playback:
+  range: [C-2, C-8]
+  clef: treble
+description: 'SID: pulse and saw ANDed through a 12 dB filter'

@@ -14,14 +14,13 @@ func TestAnUnsetParameterReadsItsKindsDefault(t *testing.T) {
 	if !s.HasWater {
 		t.Fatal("a bare water effect should resolve as water")
 	}
-	// The defaults must be gfx.DefaultWaterParams' to the digit, or a water
-	// sector ported to a material would change appearance.
-	if s.Water.WaveAmplitude != 0.06 || s.Water.WaveLength != 3 ||
-		s.Water.WaveSpeed != 0.35 || s.Water.Reflectivity != 0.45 {
-		t.Errorf("water defaults drifted: %+v", s.Water)
+	// The defaults are DefaultWater's to the digit (gfx.DefaultWaterParams
+	// copies the same value), so a bare effect and a water sector agree.
+	if s.Water != DefaultWater() {
+		t.Errorf("water defaults drifted: %+v, want %+v", s.Water, DefaultWater())
 	}
-	if s.Water.ReflectColor != (mgl32.Vec3{0.55, 0.72, 0.92}) {
-		t.Errorf("reflect colour = %v", s.Water.ReflectColor)
+	if s.Water.WaveAmplitude != 0.03 || s.Water.WaveLength != 4 || s.Water.WaveSpeed != 0.3 {
+		t.Errorf("the swell's defaults moved: %+v", s.Water)
 	}
 }
 
@@ -77,7 +76,7 @@ func TestRoundTripKeepsWhatWasChangedAndDropsWhatWasNot(t *testing.T) {
 	d.AddEffect(KindUnlit)
 	e := d.AddEffect(KindWater)
 	e.Set("wave_speed", FloatValue(1.5))
-	e.Set("wave_length", FloatValue(3)) // equal to the default
+	e.Set("wave_length", FloatValue(DefaultWater().WaveLength)) // equal to the default
 
 	data, err := EncodeMaterial(d)
 	if err != nil {
@@ -100,7 +99,7 @@ func TestRoundTripKeepsWhatWasChangedAndDropsWhatWasNot(t *testing.T) {
 		t.Errorf("header did not round-trip: %+v", back)
 	}
 	s := ResolveSurfaceDoc(back)
-	if !s.Unlit || !s.HasWater || s.Water.WaveSpeed != 1.5 || s.Water.WaveLength != 3 {
+	if !s.Unlit || !s.HasWater || s.Water.WaveSpeed != 1.5 || s.Water.WaveLength != DefaultWater().WaveLength {
 		t.Errorf("round trip changed the surface: %+v", s)
 	}
 }

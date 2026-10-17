@@ -135,8 +135,9 @@ func TestGLTFNodesStripsAndNormalisedUVs(t *testing.T) {
 	if p.Sub(mgl32.Vec3{0, 5, -2}).Len() > 1e-5 {
 		t.Fatalf("vertex 1 at %v, want (0, 5, -2)", p)
 	}
-	// UV (0, 65535) normalised is (0, 1) in glTF, (0, 0) once flipped.
-	if m.UVs[0].Sub(mgl32.Vec2{0, 0}).Len() > 1e-6 || m.UVs[2].Sub(mgl32.Vec2{0, 1}).Len() > 1e-6 {
+	// UV (0, 65535) normalised is (0, 1), taken as stored (the engine's V
+	// runs down the image, as glTF's does).
+	if m.UVs[0].Sub(mgl32.Vec2{0, 1}).Len() > 1e-6 || m.UVs[2].Sub(mgl32.Vec2{0, 0}).Len() > 1e-6 {
 		t.Fatalf("uvs %v", m.UVs)
 	}
 	// The strip's second triangle is wound (2, 1, 3) to keep the facing.

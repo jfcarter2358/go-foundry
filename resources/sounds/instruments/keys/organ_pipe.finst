@@ -1,0 +1,9 @@
+version: 1
+name: Organ Pipe
+samples: [keys/organ_pipe]
+fade_out: 0.12
+polyphony: 4
+playback:
+  range: [A-0, C-8]
+  clef: grand
+description: 'Pipe organ: principal plus mixture, with chiff'

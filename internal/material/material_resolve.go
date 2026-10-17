@@ -30,6 +30,13 @@ import (
 
 // ---------- surfaces ----------
 
+// The specular a surface with no pbr effect is shaded with: a rough
+// dielectric. specular.glsl's PBR_DEFAULT_ROUGHNESS and PBR_DEFAULT_SPECULAR.
+const (
+	DefaultPBRRoughness = 0.7
+	DefaultPBRSpecular  = 0.5
+)
+
 // Water mirrors gfx.WaterParams. Declared here rather than imported because
 // internal/gfx imports this package and not the other way round — the same
 // reason gfx.BillboardMode is not in internal/world.
@@ -39,6 +46,20 @@ type Water struct {
 	WaveSpeed     float32
 	Reflectivity  float32
 	ReflectColor  mgl32.Vec3
+	// The W1 look (material_kinds_water.go says what each one does).
+	Absorption, Subsurface, Roughness, Refraction float32
+	ShallowColor, ScatterColor                    mgl32.Vec3
+	Foam, ShoreFade, FlowSpeed                    float32
+	FlowDirection                                 mgl32.Vec2
+	DetailScale, DetailStrength                   float32
+	Swell, SwellLength, Caustics, SSR             float32
+	// FlowMap (phase W3): how strongly a surface's vertex colours steer
+	// its ripples and foam as a flow map (a river ribbon's); 0 off.
+	FlowMap float32
+	// Falls (phase W4): shade the surface as FALLING water — a waterfall's
+	// sheet — at this strength (0 off); FallsSpeed how fast its streaks
+	// run down it, m/s.
+	Falls, FallsSpeed float32
 }
 
 // Surface is a DomainSurface material resolved: what a brush face, a compiled
@@ -81,6 +102,18 @@ type Surface struct {
 
 	HasSmooth   bool
 	SmoothAngle float32
+
+	// HasPBR is the presence of the pbr effect: Roughness, Metallic and
+	// Specular are its factors, ARM the map it named ("" for the texture's own
+	// <name>_arm).
+	HasPBR    bool
+	Roughness float32
+	Metallic  float32
+	Specular  float32
+	ARM       string
+
+	// Fx is the terrain and rock effects (material_resolve_fx.go).
+	Fx SurfaceFx
 }
 
 // ResolveSurface reads the named material as a surface. The second result is
@@ -129,17 +162,17 @@ func ResolveSurfaceDoc(d *Doc) Surface {
 	}
 	if e := d.Effect(KindWater); e != nil {
 		s.HasWater = true
-		s.Water = Water{
-			WaveAmplitude: e.Float("wave_amplitude"),
-			WaveLength:    e.Float("wave_length"),
-			WaveSpeed:     e.Float("wave_speed"),
-			Reflectivity:  e.Float("reflectivity"),
-			ReflectColor:  e.Color("reflect_color"),
-		}
+		s.Water = resolveWater(e)
 	}
 	if e := d.Effect(KindSmooth); e != nil {
 		s.HasSmooth, s.SmoothAngle = true, e.Float("angle")
 	}
+	if e := d.Effect(KindPBR); e != nil {
+		s.HasPBR = true
+		s.Roughness, s.Metallic, s.Specular = e.Float("roughness"), e.Float("metallic"), e.Float("specular")
+		s.ARM = e.Texture("arm")
+	}
+	resolveSurfaceFx(d, &s)
 	return s
 }
 

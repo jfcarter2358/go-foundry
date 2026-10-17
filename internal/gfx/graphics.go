@@ -93,6 +93,14 @@ var (
 // its tint onto the one drawn after it.
 var TintBiasUniform int32 = -1
 
+// VertexColorsUniform gates the per-vertex colour (attribute AttribColor,
+// vertex.glsl's vertColor): when set, the albedo is multiplied by its RGB and
+// its A is the surface's cavity/ambient occlusion (fragment.glsl). Only a mesh
+// that carries colours sets it — a generated rock (docs/canyon/PHASE_2.md) —
+// through SurfaceState.Apply, which writes it on every draw; zero, what GL
+// gives an unwritten uniform, is every surface the engine had before.
+var VertexColorsUniform int32 = -1
+
 // SurfaceBlendUniform tells the fragment stage how the framebuffer blend will
 // combine what it produces — see SurfaceBlend and fragment.glsl. Zero, which is
 // what GL gives an unwritten uniform, is the ordinary case, so nothing that does

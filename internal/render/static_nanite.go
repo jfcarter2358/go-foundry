@@ -512,7 +512,7 @@ func (g *staticGPU) drawShadow(s *world.StaticGeometry, sb *staticBatches, prog 
 			start = slot
 		}
 		for gi, grp := range sb.groups {
-			if grp.batch.Alpha < 0.05 || grp.clusterCount == 0 || s.HiddenFor(grp.key.chunk, grp.coveredBy) {
+			if !batchCastsShadow(&grp.batch.Material) || grp.clusterCount == 0 || s.HiddenFor(grp.key.chunk, grp.coveredBy) {
 				continue
 			}
 			if grp.pool != pool {

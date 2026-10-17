@@ -1,0 +1,26 @@
+# The .fscore sketch in docs/score/SPEC.md, with its bars made to fit 4/4
+# and bus b's "..." filled in: every key it shows reads, the hairpin
+# shorthand "hC5<" included.
+name: hangar_theme
+title: Hangar Theme
+composer: ""
+tempo: [{bar: 1, bpm: 92, text: "Andante"}]
+meter: [{bar: 1, sig: 4/4}]           # additive: "3+2+2/8"
+key:   [{bar: 1, fifths: -2, mode: major}]
+sections: [{name: intro, bar: 1}, {name: theme, bar: 2}]   # = rehearsal marks
+params: [{name: intensity, default: 0}]
+lines:
+  - name: Violin I
+    instrument: strings/violin_section
+    volume: 0.8
+    pan: -0.3
+    inserts: [{fx: eq, low: -2}]
+    sends: {a: 0.3, b: 0}
+    staves:
+      - clef: treble
+        voices:
+          - "| q.Bb4 eC5 hD5(p) | qEb5 qD5 hC5< | wBb4(f) |"
+    lanes:
+      volume: [{at: 2:1, to: 2:3, value: 0.6}]
+buses: {a: {fx: [{fx: reverb, size: 0.7}], return: 0.25}, b: {fx: [{fx: delay}]}}
+master: [{fx: compressor, threshold: -12}]

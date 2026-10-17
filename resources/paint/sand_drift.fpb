@@ -1,0 +1,17 @@
+# Sand drift: wind-blown sand over the ground. Poly Haven (CC0): sand_02.
+name: Sand drift
+doc: Wind-blown sand lying over the ground; the grass thins.
+order: 140
+layers:
+  - {layer: sand_drift, strength: 1}
+  - {layer: grass_clear, strength: 0.6}
+recipe:
+  paint:
+    - {name: sand_drift, kind: material}
+    - {name: grass_clear, kind: exclude}
+  textures:
+    - {name: sand_drift, id: sand_02, scale: 3}
+  material:
+    - {layer: sand_drift, texture: sand_drift, slots: [ash, snow, wet], fallback: sand}
+  exclude:
+    - {layer: grass_clear, kind: grass_field, except: [cover]}

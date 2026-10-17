@@ -230,6 +230,48 @@ are drawn into it by a compute rasteriser rather than the hardware's, which is
 faster for triangles of a pixel or two and draws the same picture. A slot whose
 texture has any transparent texel is always left to the hardware.
 
+### Draw distance and impostors
+
+A placement can say how far from the camera it is drawn. Four optional keys,
+all absent by default (drawn at every distance, as before):
+
+```yaml
+- id: fir_00012
+  model: models/polyhaven/fir_tree_01/fir_tree_01_a_lod0_c50000.fnm
+  position: {x: 512, y: 3.1, z: -480}
+  draw_distance: 1300        # metres; fades out over the last tenth
+  shadow_distance: 780       # how far it casts (absent: as far as drawn)
+  impostor: models/polyhaven/fir_tree_01/fir_tree_01_a_lod0_c50000_imp.fnm
+  impostor_distance: 300     # where the mesh hands over to the impostor
+```
+
+- **The fade.** A placement does not pop out at its draw distance: over the
+  last tenth before it, its pixels dissolve with a screen-space dither offset
+  by a number of the placement's own (a hash of its position), which TAA
+  smooths into a fade. Neighbours fade at their own pace, never as a wave
+  front. Where a pixel dither is not possible — shadows, the forward path
+  without the visibility buffer, the classic path — each placement is cut
+  whole at its own distance inside that last tenth instead.
+- **The impostor** is a cooked mesh of nine textured cards (eight vertical,
+  back to back in four planes, and one through the crown) baked from the
+  placement's mesh: what a generator writes for scanned trees (see
+  [Generators](33-generators.md#draw-distances-and-impostors)). Beyond
+  `impostor_distance` the cards are drawn instead of the mesh, out to
+  `draw_distance`; in the tenth before `impostor_distance` the two dither
+  complementary halves of the same pixels, so the hand-over shows no gap and
+  no double. The cards are drawn by the same GPU cull, visibility buffer and
+  material pass as the mesh — lit, shadowed and fogged by the same code — with
+  a baked normal map, and cast shadows. A missing impostor file is a warning
+  in `foundry check`; the mesh is then drawn all the way out.
+- **Shadows** stop at `shadow_distance` (each placement at its own distance
+  in the last tenth); the virtual shadow map redraws the pages of a caster
+  that crosses it.
+
+Distances are measured from the camera to the placement's position. Only
+cooked meshes drawn by the GPU cull take impostors; a classic model honours
+`draw_distance` and `shadow_distance` only. `FOUNDRY_DRAW_DISTANCE=0` ignores
+all four keys, for an A/B comparison.
+
 ### Streaming and the memory budget
 
 A cooked mesh's geometry stays in its file until it is needed. When the level

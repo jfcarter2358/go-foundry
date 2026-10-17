@@ -211,6 +211,10 @@ func KeybindHelpRenderInWindow(uw *UIWindow) {
 	if !KeybindHelpVisibleIn(uw.ID) {
 		return
 	}
+	if uw.HelpOverlay != nil {
+		uw.HelpOverlay(keybindHelpArriving(uw.ID))
+		return
+	}
 	keybindHelpRender(uw.ID, float32(uw.W), float32(uw.H))
 }
 

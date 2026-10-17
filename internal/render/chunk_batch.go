@@ -499,7 +499,7 @@ func shadowChunkBrushes(lvl *world.Level, ch *world.Chunk, chunkModel mgl32.Mat4
 		moved := !brush.AtRest()
 		for _, ref := range cb.byBrush[bi] {
 			g := cb.groups[ref.group]
-			if g.batch.Alpha < 0.05 {
+			if !batchCastsShadow(&g.batch.Material) {
 				continue
 			}
 			if moved {

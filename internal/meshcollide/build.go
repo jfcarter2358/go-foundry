@@ -177,7 +177,14 @@ func Build(in Input, s Settings) (*Data, error) {
 		d.Tags = append(d.Tags, tags[t])
 	}
 
-	// The hulls.
+	// The hulls — unless the mesh was cooked to collide as itself
+	// (Settings.Mode mesh): then nothing would ever ask for them, and on a
+	// big dense surface (a procedural terrain tile) the decomposition was
+	// the cook's largest cost, ~40% of its time. A placement that still asks
+	// for hulls falls back to its box (Resolve).
+	if s.Mode == ModeMesh {
+		return d, d.Validate()
+	}
 	dec := Decompose(deq, tris, s)
 	d.Hulls, d.HullCapHit, d.VertCapped, d.VertCapError, d.Concavity = dec.Hulls, dec.CapHit, dec.VertCapped, dec.CapError, dec.Concavity
 	return d, d.Validate()

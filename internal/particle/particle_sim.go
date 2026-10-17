@@ -318,6 +318,12 @@ func (s *System) integrate(dt float32) {
 		if l.TurbulenceAmp != 0 {
 			acc = acc.Add(turbulence(p.Pos, p.Seed, l.TurbulenceFreq).Mul(l.TurbulenceAmp))
 		}
+		if l.Wind != 0 {
+			// Carried by the wind (particle_wind.go): the horizontal
+			// velocity pulled toward the wind's.
+			w := windVelocity()
+			acc = acc.Add(mgl32.Vec3{(w.X() - p.Vel.X()) * l.Wind, 0, (w.Z() - p.Vel.Z()) * l.Wind})
+		}
 
 		p.Vel = p.Vel.Add(acc.Mul(dt))
 

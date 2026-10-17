@@ -241,8 +241,12 @@ The global ambient light has no switch. It is always baked.
 
 One light gets its shadow on baked geometry live, the same as in the editor:
 the **baked sun**, which is the first directional light that is static, casts
-shadows and is on. The bake stores sunlight per vertex, so its shadow edges
-blur across about a grid step. A crate's shadow would wash out next to a face
+shadows and is on. A level compiled with **lightmaps** (the default; see
+[Compiling levels](23-compiling-levels.md#lightmaps)) bakes the sun's shadow
+per texel: the renderer lights each pixel with the sun itself, on its own
+normal, and takes the shadow from the texel past the live shadows' reach. A
+level compiled with `bake: vertex` stores sunlight per vertex, so its shadow
+edges blur across about a grid step. A crate's shadow would wash out next to a face
 its own angle turns dark. So each baked vertex also remembers how much of the
 sun it received. Within the shadow range (300 units from the camera), the
 renderer swaps that share for the sun shadowed by the live shadow maps. Those
@@ -329,3 +333,105 @@ belonging to geometry that is not compiled either, like a hangar that flies away
 #streetlights.prop.color = <1.0, 0.8, 0.5>
 @sun.prop.pitch = -20.0
 ```
+
+## Lighting quality
+
+On top of the lights themselves, every lit surface gets the following. Each is a
+**player** setting in `graphics.yaml` (and the script properties of the same
+name, the console's `lighting` command, and the editor's **View > Lighting
+Quality** menu, so the viewport shows what a player would), and each draws
+exactly the picture there was before it when off. Discrete NVIDIA and AMD cards
+get them all; an integrated GPU gets reflections from the sky only and no
+screen-space AO or contact shadows, until the player chooses.
+
+| Setting | What it does |
+| --- | --- |
+| `specular` | A highlight from every light, by the surface's roughness and metalness |
+| `reflections` | `off`, `low` (the sky and reflection volumes), `high` (plus screen-space reflections) |
+| `ambient_occlusion` | Darkens the ambient light and reflections in creases and where things touch |
+| `contact_shadows` | Short sun shadows under small things the shadow map is too coarse for |
+| `soft_shadows` | Sun shadows sharp at the caster's foot, widening with height |
+| `bloom` | Glow round bright light, in HDR |
+| `light_shafts` | `high` (the level's march, the default), `low` (half its steps) or `off`; a level still has to ask for shafts |
+
+Measured on a GTX 1070 at 1920×1080 (level2 at its spawn, live lights, GI
+off): 11.4 ms of GPU with all of them off, 14.8 ms with all of them on — still
+67 fps. Ambient occlusion and contact shadows are 0.5 ms, bloom 0.2 ms,
+metering the exposure 0.02 ms, and the rest — about 2 ms — is the extra shading
+in the surfaces themselves: every light's highlight, the reflection and the AO
+read. Screen-space reflections add almost nothing where little is smooth.
+
+### Specular and materials
+
+A surface's highlight depends on its material: a **`pbr`** effect (see
+[Materials](28-materials.md)) gives it a roughness, a metalness and a specular
+level. Without one it is a rough non-metal, whose highlight is a faint sheen.
+A texture with an **ARM map** beside it — `<name>_arm.png`, ambient occlusion
+in red, roughness in green, metal in blue, as Poly Haven ships them and the
+Poly Haven importer writes them — is specular-mapped per texel without
+anything else to set.
+
+### Reflections
+
+Everything reflects its surroundings, by its roughness: a mirror sharply, rough
+stone as a faint sheen of the sky. Out of doors that is the sky; under a roof
+it is the light the GI probes see in the reflected direction, so a corridor
+does not mirror a blue sky. Where GI is off, the reflection of the sky is
+dimmed by the ambient light the surface receives (an ambient volume's cut
+included).
+
+A **reflection volume** gives a room its own reflection: tick **Captures its
+own reflection** in a volume's panel (`reflection:` in the level file). Its
+surroundings are captured from its centre — traced through the GI distance
+field, so the walls appear as lit right now, a light switching on included —
+and projected onto its box, so reflections slide across the floor as the eye
+moves. Size the box to the room's walls and leave it unrotated. It needs live
+GI on to capture; without, the volume reflects the sky like the rest.
+
+```yaml
+volumes:
+- id: hall_refl
+  position: {x: 0, y: 2, z: 0}
+  half: {x: 8, y: 2, z: 12}
+  reflection:
+    intensity: 1    # scales what is reflected
+    fade: 1         # metres in from the walls the volume's reflection takes over
+```
+
+At `high`, smooth surfaces (roughness under 0.5) also reflect what is on screen:
+the last frame's picture, marched along the reflection, which shows what is
+actually there — a soldier, a lit window — where the screen has it.
+
+The debug views `specular` and `mirror` (console `view`, `foundry play -view`)
+show the highlights and reflections alone, and every surface as a perfect
+mirror.
+
+### Ambient occlusion and contact shadows
+
+The ambient light (and its reflection) is darkened where little of the sky or
+the room can reach: creases, the foot of a wall, under a crate. It is worked
+out from the frame's depth (screen-space, about a metre around each point) and,
+with live GI on, from GI's distance field (up to a metre and a half), so
+something just off screen still darkens what is beside it. It never darkens the
+direct light — a sunlit crease stays sunlit.
+
+Contact shadows march a short way toward the sun through the frame's depth, for
+the small shadows of things touching the ground — a boot, a cable, a pebble —
+that the sun's shadow map has too few texels for. They fade out past 20 metres.
+
+Both are drawn in the frame's TAA pass (the default anti-aliasing); with MSAA
+or no anti-aliasing they are off. The debug view `ao` shows them: grey for the
+occlusion, red where a contact shadow falls.
+
+### Soft shadows
+
+The sun is a disc, not a point. Its shadows are sharp where the caster meets
+the ground and widen with the caster's height, as real ones do: a pole's shadow
+is crisp at its foot and soft at its top. This applies to the sun's virtual
+shadow map, which is what the sun casts into near the camera.
+
+### Leaves and grass in the sun
+
+Thin, two-sided surfaces — leaves, blades, foliage cards — glow when seen
+against the sun, with the light they let through, tinted their own colour.
+

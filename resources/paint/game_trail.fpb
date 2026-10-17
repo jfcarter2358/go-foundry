@@ -1,0 +1,28 @@
+# Game trail: a stroke becomes a faint, narrow footpath spline in the
+# ground_edit (half the brush's diameter wide): no flatten, no stones, no
+# ford, just a line of wear - the grass thinner and shorter, a little earth
+# showing through. docs/guide/36-terrain-paint.md "Paths".
+# Poly Haven (CC0): dirt_floor.
+name: Game trail
+doc: A faint, narrow line of wear - thinner, shorter grass and a little bare earth; no stones, no flatten.
+order: 115
+path:
+  style: game_trail
+  width_scale: 0.5
+  simplify: 0.3
+  flatten: false
+  shape: {wear: 0.6, edge: 0.5, edge_size: 1.2}
+recipe:
+  textures:
+    - {name: path_dirt, id: dirt_floor, scale: 2.5}
+  material:
+    - {mask: path_wear, texture: path_dirt, slots: [wet, ash, snow], fallback: cracked, strength: 0.35}
+    - {mask: path_game_trail, texture: path_dirt, slots: [wet, ash, snow], fallback: cracked, strength: 0.7}
+  exclude:
+    - {mask: path_wear, kind: grass_field, shrink: 0.6}
+    - {mask: path_clear, kind: scatter}
+  stages:
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source

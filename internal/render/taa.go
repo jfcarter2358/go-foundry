@@ -103,7 +103,14 @@ func halton(i, b int) float32 {
 // taaJitter is frame n's jitter for a w by h target, in normalised device
 // units: Halton(2,3) point n mod taaJitterSamples, centred on the pixel.
 func taaJitter(n uint32, w, h int32) mgl32.Vec2 {
-	i := int(n%taaJitterSamples) + 1
+	return taaJitterN(n, w, h, taaJitterSamples)
+}
+
+// taaJitterN is taaJitter over a sequence of samples points: an upsampling
+// frame (render scale below 1) spreads more of them, so every output pixel
+// is visited by samples near its centre.
+func taaJitterN(n uint32, w, h int32, samples int) mgl32.Vec2 {
+	i := int(n%uint32(max(samples, 1))) + 1
 	px, py := halton(i, 2)-0.5, halton(i, 3)-0.5
 	return mgl32.Vec2{2 * px / float32(max(w, 1)), 2 * py / float32(max(h, 1))}
 }
@@ -119,7 +126,11 @@ type taaState struct {
 	object    progUniforms
 	objSkin   gfx.SkinUniforms
 
-	w, h         int32
+	w, h int32
+	// rw, rh: the size the world is drawn at — w, h but under a render
+	// scale (gfx/render_scale.go), when the resolve upsamples into the
+	// output-sized history. The motion is at this size.
+	rw, rh       int32
 	history      [2]uint32
 	historyFBO   [2]uint32
 	cur          int
@@ -135,7 +146,11 @@ type taaState struct {
 	// The frame being drawn: whether it is a scene-target frame at all
 	// (active) and whether TAA runs in it (on); the caller's target it ends
 	// in; the unjittered projection and view-projections.
-	active, on     bool
+	active, on bool
+	// editorDepth: the frame is the editor's view, whose overlays are drawn
+	// into the caller's target after it and depth-tested there, so the
+	// output pass writes the scene's depth into it too.
+	editorDepth    bool
 	final          FrameTarget
 	baseProjection mgl32.Mat4
 	jitter         mgl32.Vec2
@@ -215,24 +230,39 @@ func (t *taaState) build() (err error) {
 	return nil
 }
 
-// ensure sizes the history and motion targets, forgetting the history when
-// they change.
-func (t *taaState) ensure(w, h int32) {
+// ensure sizes the history (w by h, the output's size) and the motion (rw
+// by rh, the size the world is drawn at), forgetting the history when its
+// size changes. A render scale's change keeps it: it is the output's.
+func (t *taaState) ensure(w, h, rw, rh int32) {
 	if t.history[0] != 0 && t.w == w && t.h == h {
+		if t.rw != rw || t.rh != rh {
+			if t.motion != 0 {
+				gl.DeleteTextures(1, &t.motion)
+				gl.DeleteFramebuffers(1, &t.motionFBO)
+			}
+			t.rw, t.rh = rw, rh
+			t.motion, t.motionFBO = colorTarget(gl.RG16F, gl.RG, rw, rh)
+			gl.BindTexture(gl.TEXTURE_2D, 0)
+		}
 		return
 	}
 	t.release()
 	t.w, t.h = w, h
+	t.rw, t.rh = rw, rh
 	for i := range t.history {
 		t.history[i], t.historyFBO[i] = colorTarget(gl.RGBA16F, gl.RGBA, w, h)
 		gl.BindTexture(gl.TEXTURE_2D, t.history[i])
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 	}
-	t.motion, t.motionFBO = colorTarget(gl.RG16F, gl.RG, w, h)
+	t.motion, t.motionFBO = colorTarget(gl.RG16F, gl.RG, rw, rh)
 	gl.BindTexture(gl.TEXTURE_2D, 0)
 	t.historyValid = false
 }
+
+// upscaling reports whether this frame's world is drawn smaller than its
+// output.
+func (t *taaState) upscaling() bool { return t.rw != t.w || t.rh != t.h }
 
 func (t *taaState) release() {
 	for i := range t.history {
@@ -269,8 +299,12 @@ func ForgetTAAHistory() { taa.historyValid = false }
 // TAA is the mode, the frame is not the editor's own view (whose overlays
 // and wireframe draw straight into the window), and the scene target and the
 // TAA programs exist.
+//
+// The editor's filled view takes it too while EditorSceneFrame is on
+// (editor_scene_frame.go); its overlays then read the world's depth from
+// the window, written there by the output pass (editorDepth).
 func sceneFrameWanted(o WorldDraw) bool {
-	return gfx.AntiAliasMode == gfx.AAModeTAA && !o.Editor && !o.Wireframe && taa.ready()
+	return gfx.AntiAliasMode == gfx.AAModeTAA && (!o.Editor || EditorSceneFrame) && !o.Wireframe && taa.ready()
 }
 
 // sceneFrameBegin makes the scene target the frame's target, after
@@ -278,6 +312,10 @@ func sceneFrameWanted(o WorldDraw) bool {
 // when the frame takes the forward path.
 func sceneFrameBegin(o WorldDraw) bool {
 	taa.active = false
+	// HDR shading needs the RGBA16F scene target (gfx/hdr.go): only a frame
+	// drawn into it may, and world.PackFog reads this when it fills the
+	// scene block for the frame.
+	gfx.HDRFrame = false
 	if !sceneFrameWanted(o) {
 		// A frame drawn the other way (the editor's view between two
 		// stretches of play) leaves the history describing nothing.
@@ -286,15 +324,22 @@ func sceneFrameBegin(o WorldDraw) bool {
 	}
 	final := FrameTarget{FBO: boundFramebuffer(), Viewport: boundViewport()}
 	w, h := final.Viewport[2], final.Viewport[3]
-	if !scene.ensure(w, h) {
+	on := AntiAliasEnabled && TAAResolve
+	// The render scale (gfx/render_scale.go, dynres.go): only a frame the
+	// resolve runs in can be upsampled, and never the editor's view.
+	rw, rh := scaledSize(w, h, frameRenderScale(o, on))
+	if !scene.ensure(rw, rh) {
 		return false
 	}
-	taa.ensure(w, h)
+	taa.ensure(w, h, rw, rh)
 	taa.active, taa.final = true, final
-	taa.on = AntiAliasEnabled && TAAResolve
-	drawTarget.set, drawTarget.t = true, FrameTarget{FBO: scene.fbo, Viewport: [4]int32{0, 0, w, h}}
+	taa.editorDepth = o.Editor
+	gfx.HDRFrame = true
+	taa.on = on
+	dynResBegin()
+	drawTarget.set, drawTarget.t = true, FrameTarget{FBO: scene.fbo, Viewport: [4]int32{0, 0, rw, rh}}
 	gl.BindFramebuffer(gl.FRAMEBUFFER, scene.fbo)
-	gl.Viewport(0, 0, w, h)
+	gl.Viewport(0, 0, rw, rh)
 	drawBuffersColour()
 	taa.draws = taa.draws[:0]
 	return true
@@ -343,7 +388,7 @@ func taaBeginJitter(lvl *world.Level) {
 		return
 	}
 	taa.frame++
-	taa.jitter = taaJitter(taa.frame, taa.w, taa.h)
+	taa.jitter = taaJitterN(taa.frame, taa.rw, taa.rh, taaJitterPhases(taa.rw, taa.w))
 	gfx.ProjectionJitter = taa.jitter
 	gfx.Projection = gfx.JitterProjection(base, taa.jitter)
 	gl.UseProgram(gfx.Program)
@@ -476,7 +521,7 @@ func taaMotionPass() {
 	// The camera's motion and the dilation, into taa.motion.
 	v := &t.velocity
 	gl.BindFramebuffer(gl.FRAMEBUFFER, t.motionFBO)
-	gl.Viewport(0, 0, t.w, t.h)
+	gl.Viewport(0, 0, t.rw, t.rh)
 	gl.Disable(gl.DEPTH_TEST)
 	gl.DepthMask(false)
 	gl.UseProgram(v.prog)
@@ -489,7 +534,7 @@ func taaMotionPass() {
 	gl.UniformMatrix4fv(v.U("invViewProj"), 1, false, &t.invJitVP[0])
 	gl.UniformMatrix4fv(v.U("viewProj"), 1, false, &t.viewProj[0])
 	gl.UniformMatrix4fv(v.U("prevViewProj"), 1, false, &t.prevViewProj[0])
-	gl.Uniform2i(v.U("size"), t.w, t.h)
+	gl.Uniform2i(v.U("size"), t.rw, t.rh)
 	gl.BindVertexArray(t.vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, 3)
 	gl.BindTexture(gl.TEXTURE_2D, 0)
@@ -499,7 +544,7 @@ func taaMotionPass() {
 	gl.Enable(gl.DEPTH_TEST)
 	gl.DepthMask(true)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, scene.fbo)
-	gl.Viewport(0, 0, t.w, t.h)
+	gl.Viewport(0, 0, t.rw, t.rh)
 	gl.UseProgram(gfx.Program)
 }
 
@@ -559,11 +604,12 @@ func taaViewmodelMotion() {
 // sceneFrameEnd resolves the scene target into the caller's target and
 // hands the frame back to it: the TAA resolve and the sharpened output, or
 // (TAA off) the frame as drawn. Restores the unjittered projection.
-func sceneFrameEnd() {
+func sceneFrameEnd(lvl *world.Level, now float64) {
 	if !taa.active {
 		return
 	}
 	t := &taa
+	jp := t.jitter // the resolve's, before taaEndJitter forgets it
 	taaEndJitter()
 	ProfileBegin("taa: resolve")
 	gl.Disable(gl.DEPTH_TEST)
@@ -589,12 +635,34 @@ func sceneFrameEnd() {
 		gl.Uniform1i(r.U("historyValid"), boolToInt32(t.historyValid))
 		gl.Uniform2f(r.U("size"), float32(t.w), float32(t.h))
 		gl.Uniform1f(r.U("blendCurrent"), taaBlendCurrent)
+		// The upsampling resolve (taa_resolve_frag.glsl's resolveUpscaled):
+		// the world's size and this frame's jitter in its pixels.
+		gl.Uniform1i(r.U("upscale"), boolToInt32(t.upscaling()))
+		gl.Uniform2f(r.U("renderSize"), float32(t.rw), float32(t.rh))
+		gl.Uniform2f(r.U("jitterPx"), jp[0]*float32(t.rw)*0.5, jp[1]*float32(t.rh)*0.5)
 		gl.DrawArrays(gl.TRIANGLES, 0, 3)
 		t.cur = next
 		t.historyValid = true
 		src = t.history[next]
 	}
 	ProfileEnd()
+	dynResEnd()
+
+	// The HDR frame's glow and its metering for the eye's adaptation
+	// (bloom.go, exposure.go), from the resolved picture before the curve.
+	hdr := gfx.Scene.Block.HdrMode != 0
+	var bloomTex uint32
+	if hdr {
+		if gfx.Bloom {
+			bloomTex = runBloom(src, t.w, t.h)
+		}
+		ProfileBegin("exposure")
+		meterExposure(src, lvl, now)
+		ProfileEnd()
+		gl.BindVertexArray(t.vao)
+		gl.Disable(gl.DEPTH_TEST)
+		gl.DepthMask(false)
+	}
 
 	ProfileBegin("taa: output")
 	op := &t.output
@@ -606,13 +674,50 @@ func sceneFrameEnd() {
 	gl.BindTexture(gl.TEXTURE_2D, src)
 	gl.Uniform1i(op.U("src"), 0)
 	sharpen := gfx.TAASharpen
+	if t.upscaling() {
+		sharpen = upscaleSharpen(sharpen, float32(t.rw)/float32(t.w))
+	}
 	if !t.on {
 		sharpen = 0
 	}
 	gl.Uniform1f(op.U("sharpen"), sharpen)
 	gl.Uniform2i(op.U("size"), t.w, t.h)
 	gl.Uniform2i(op.U("origin"), f.Viewport[0], f.Viewport[1])
+	// The tone curve, when the frame shaded in HDR (gfx/hdr.go): the scene
+	// block says so, as world.PackFog wrote it for this frame.
+	gl.Uniform1i(op.U("tonemap"), boolToInt32(hdr))
+	// And the glow, mixed in before it (bloom.go).
+	gl.Uniform1i(op.U("bloomOn"), boolToInt32(bloomTex != 0))
+	if bloomTex != 0 {
+		gl.ActiveTexture(gl.TEXTURE2)
+		gl.BindTexture(gl.TEXTURE_2D, bloomTex)
+		gl.Uniform1i(op.U("bloomTex"), 2)
+		gl.Uniform1f(op.U("bloomStrength"), BloomStrength)
+		gl.Uniform1f(op.U("bloomScale"), 1/float32(bloom.levels))
+		gl.ActiveTexture(gl.TEXTURE0)
+	}
+	gl.Uniform1f(op.U("exposure"), gfx.Scene.Block.HdrExposure)
+	// The eye's adaptation, on the GPU (exposure.go), for a level that meters.
+	_, _, auto := world.LevelHDR(lvl)
+	bindExposureTo(op, hdr && auto)
+	// The editor's view: the scene's depth into the caller's depth buffer
+	// as well (editor_scene_frame.go). A depth write needs the test on;
+	// ALWAYS makes it a copy.
+	gl.Uniform1i(op.U("writeDepth"), boolToInt32(t.editorDepth))
+	if t.editorDepth {
+		gl.ActiveTexture(gl.TEXTURE1)
+		gl.BindTexture(gl.TEXTURE_2D, scene.depth)
+		gl.Uniform1i(op.U("depthSrc"), 1)
+		gl.Enable(gl.DEPTH_TEST)
+		gl.DepthFunc(gl.ALWAYS)
+		gl.DepthMask(true)
+	}
 	gl.DrawArrays(gl.TRIANGLES, 0, 3)
+	if t.editorDepth {
+		gl.DepthFunc(gl.LEQUAL)
+		gl.Disable(gl.DEPTH_TEST)
+		gl.DepthMask(false)
+	}
 	ProfileEnd()
 
 	for u := uint32(0); u < 3; u++ {
@@ -628,5 +733,6 @@ func sceneFrameEnd() {
 	t.prevViewProj, t.prevValid = t.viewProj, true
 	t.prevCam, t.prevProjection = gfx.Cam.Position, t.baseProjection
 	t.active = false
+	gfx.HDRFrame = false
 	drawTarget.t = f
 }

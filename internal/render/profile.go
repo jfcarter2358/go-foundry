@@ -25,11 +25,18 @@ package render
 
 import (
 	"github.com/go-gl/gl/v4.3-core/gl"
+	"log"
 )
 
 // ProfileEnabled turns the profiler on. The F3 overlay and the benchmark turn
 // it on; nothing else pays for it.
 var ProfileEnabled bool
+
+// ProfileSlowMs, when above 0, logs every section whose CPU or GPU time in
+// one frame passes it (the bench's slow=; docs/adventure/PHASE_F.md): which
+// pass a hitch was, frame by frame, where the report's maxima only say that
+// one happened.
+var ProfileSlowMs float64
 
 // profileRing is how many frames' queries are kept in flight. Drivers queue up
 // to three frames, so four means a slot is always finished by the time it is
@@ -110,6 +117,9 @@ func ProfileFrameBegin() {
 		s.cpuMs += (ms - s.cpuMs) * profileSmoothing
 		s.sumCPU += ms
 		s.nCPU++
+		if ProfileSlowMs > 0 && ms > ProfileSlowMs {
+			log.Printf("profile: frame %d %q (depth %d) %.1f ms CPU", prof.frame, s.name, s.depth, ms)
+		}
 		if ms > s.maxCPU {
 			s.maxCPU = ms
 		}
@@ -141,6 +151,9 @@ func ProfileFrameBegin() {
 		s.gpuMs += (ms - s.gpuMs) * profileSmoothing
 		s.sumGPU += ms
 		s.nGPU++
+		if ProfileSlowMs > 0 && ms > ProfileSlowMs {
+			log.Printf("profile: frame %d %q (depth %d) %.1f ms GPU", prof.frame-profileRing, s.name, s.depth, ms)
+		}
 		if ms > s.maxGPU {
 			s.maxGPU = ms
 		}

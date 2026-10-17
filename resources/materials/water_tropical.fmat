@@ -1,0 +1,17 @@
+# water_tropical.fmat — clear, warm, shallow sea water: the bed shows through
+# metres of it, tinted turquoise, with bright caustics and a lively foam line.
+kind: surface
+texture: water
+doc: 'Clear tropical shallows: turquoise over sand, strong caustics.'
+effects:
+  - effect: water
+    absorption: 0.22
+    shallow_color: {r: 0.42, g: 0.9, b: 0.86}
+    scatter_color: {r: 0.015, g: 0.17, b: 0.2}
+    subsurface: 0.8
+    roughness: 0.05
+    refraction: 0.4
+    foam: 0.7
+    caustics: 1.5
+    flow_speed: 0.2
+    wave_amplitude: 0.05

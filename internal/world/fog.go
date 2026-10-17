@@ -40,6 +40,10 @@ const (
 	// FogExp2 is the same with the exponent squared — clearer up close and
 	// thickening faster once it starts. Reads as a fog bank.
 	FogExp2 FogMode = 3
+	// FogNone is no distance fade at all: a fog block that is there for its
+	// atmosphere (fog_atmosphere.go) — height fog, aerial perspective, the
+	// sun's glow — and nothing else.
+	FogNone FogMode = 4
 )
 
 // FogModeName and FogModeFromName are the YAML spelling of a mode.
@@ -53,6 +57,8 @@ func FogModeName(m FogMode) string {
 		return "exp"
 	case FogExp2:
 		return "exp2"
+	case FogNone:
+		return "none"
 	default:
 		return "linear"
 	}
@@ -67,13 +73,15 @@ func FogModeFromName(s string) FogMode {
 		return FogExp
 	case "exp2":
 		return FogExp2
+	case "none":
+		return FogNone
 	default:
 		return FogLinear
 	}
 }
 
 // FogModeNames is every mode in the order the editor offers them.
-var FogModeNames = []string{"linear", "exp", "exp2"}
+var FogModeNames = []string{"linear", "exp", "exp2", "none"}
 
 // Fog is a level's distance fog.
 type Fog struct {
@@ -102,6 +110,19 @@ type Fog struct {
 	// was added to hide. See sky_frag.glsl.
 	SkyBlend   float32
 	SkyFalloff float32
+
+	// The atmosphere (fog_atmosphere.go): height fog, aerial perspective and
+	// the sun's in-scattering, each off unless the level asks for it, and the
+	// share of it the sky takes, integrated out to SkyDistance along a sky ray.
+	Height      FogHeight
+	Aerial      FogAerial
+	Sun         FogSun
+	SkyHaze     float32
+	SkyDistance float32
+
+	// Shafts is the marched, shadowed in-scattering near the eye
+	// (fog_shafts.go): light shafts. Off unless the block asks.
+	Shafts FogShafts
 }
 
 // Fog defaults, and the range each field is clamped to. FogDefaultEnd is well
@@ -121,17 +142,29 @@ const (
 // DefaultFog is a switched-on fog an author can see immediately: a pale
 // blue-grey haze that thins the far half of the default view distance.
 func DefaultFog() Fog {
-	return Fog{
-		Enabled:    true,
-		Mode:       FogLinear,
-		Color:      mgl32.Vec3{0.62, 0.68, 0.76},
-		Start:      FogDefaultStart,
-		End:        FogDefaultEnd,
-		Density:    FogDefaultDensity,
-		MaxOpacity: 1,
-		SkyBlend:   FogDefaultSkyBlend,
-		SkyFalloff: FogDefaultSkyFalloff,
+	c := mgl32.Vec3{0.62, 0.68, 0.76}
+	f := Fog{
+		Enabled:     true,
+		Mode:        FogLinear,
+		Color:       c,
+		Start:       FogDefaultStart,
+		End:         FogDefaultEnd,
+		Density:     FogDefaultDensity,
+		MaxOpacity:  1,
+		SkyBlend:    FogDefaultSkyBlend,
+		SkyFalloff:  FogDefaultSkyFalloff,
+		Height:      DefaultFogHeight(c),
+		Aerial:      DefaultFogAerial(c),
+		Sun:         DefaultFogSun(),
+		SkyHaze:     FogDefaultSkyHaze,
+		SkyDistance: FogDefaultSkyDistance,
+		Shafts:      DefaultFogShafts(),
 	}
+	// The atmosphere is there to switch on, not on: a new fog is the
+	// distance fog it always was.
+	f.Height.Enabled, f.Aerial.Enabled, f.Sun.Enabled = false, false, false
+	f.Shafts.Enabled = false
+	return f
 }
 
 // Clamp puts every field back inside the range fog.glsl assumes.
@@ -143,7 +176,7 @@ func (f *Fog) Clamp() {
 	if f == nil {
 		return
 	}
-	if f.Mode < FogLinear || f.Mode > FogExp2 {
+	if f.Mode < FogLinear || f.Mode > FogNone {
 		f.Mode = FogLinear
 	}
 	f.Start = clampF(f.Start, 0, FogMaxDistance)
@@ -158,6 +191,8 @@ func (f *Fog) Clamp() {
 	for i := 0; i < 3; i++ {
 		f.Color[i] = clampF(f.Color[i], 0, 1)
 	}
+	f.clampAtmosphere()
+	f.Shafts.Clamp()
 }
 
 // EffectiveMode is the mode actually uploaded — the off value while the fog is
@@ -211,6 +246,8 @@ func FogFromRaw(r *RawFog) *Fog {
 	if r.SkyFalloff != nil {
 		f.SkyFalloff = *r.SkyFalloff
 	}
+	f.atmosphereFromRaw(r)
+	f.shaftsFromRaw(r)
 	f.Clamp()
 	return &f
 }
@@ -227,7 +264,7 @@ func FogToRaw(f *Fog) *RawFog {
 	c.Clamp()
 	end, density, maxOp := c.End, c.Density, c.MaxOpacity
 	skyBlend, skyFalloff := c.SkyBlend, c.SkyFalloff
-	return &RawFog{
+	r := &RawFog{
 		Mode:       FogModeName(c.Mode),
 		Disabled:   !c.Enabled,
 		Color:      &RawColor{R: c.Color.X(), G: c.Color.Y(), B: c.Color.Z()},
@@ -238,6 +275,9 @@ func FogToRaw(f *Fog) *RawFog {
 		SkyBlend:   &skyBlend,
 		SkyFalloff: &skyFalloff,
 	}
+	c.atmosphereToRaw(r)
+	c.shaftsToRaw(r)
+	return r
 }
 
 // ---------- GPU ----------
@@ -285,9 +325,13 @@ func UploadFogTo(prog uint32, f *Fog, vols []Volume, lvl *Level) {
 // full of fog banks.
 func PackFog(b *gfx.SceneBlock, f *Fog, vols []Volume, lvl *Level, camPos mgl32.Vec3) {
 	PackFogVolumes(b, vols, lvl)
+	PackAmbientVolumes(b, vols, lvl, camPos)
 
 	b.FogMode = int32(f.EffectiveMode())
 	b.FogCamPos = camPos
+	packAtmosphere(b, f, lvl)
+	packTonemap(b, lvl)
+	packStylize(b, lvl)
 	if f == nil {
 		b.FogColor, b.FogStart, b.FogEnd, b.FogDensity, b.FogMaxOpacity = [3]float32{}, 0, 0, 0, 0
 		return

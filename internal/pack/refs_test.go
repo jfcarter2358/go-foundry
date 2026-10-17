@@ -400,3 +400,63 @@ func TestTrackerSongPullsInItsSamples(t *testing.T) {
 		t.Error("an unplayed library sample was kept")
 	}
 }
+
+// A song slot names a library instrument by its path under the instrument
+// library, and the instrument names its samples: the .finst and every sample
+// it plays ship; an instrument no song names does not.
+func TestTrackerSongPullsInLibraryInstruments(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":       "font: title\n",
+		"ui/loading.fui":     "id: loading\n",
+		"ui/pause.fui":       "id: pause\n",
+		"levels/start.yaml":  "music:\n  track: combat\n",
+		"sounds/combat.ftrk": "version: 1\nbpm: 120\ninstruments:\n  - name: Violins\n    ref: strings/violin_section\n",
+		"sounds/instruments/strings/violin_section.finst": "version: 1\nname: Violins\nsamples: [orchestral/vln_sus_soft_g3, pads/strings_pizz]\n",
+		"sounds/instruments/brass/tuba.finst":             "version: 1\nname: Tuba\nsamples: [orchestral/tuba_c2]\n",
+		"sounds/samples/orchestral/vln_sus_soft_g3.wav":   "RIFF",
+		"sounds/samples/orchestral/vln_sus_soft_g3.fsmp":  "base_note: G-3\n",
+		"sounds/samples/pads/strings_pizz.wav":            "RIFF",
+		"sounds/samples/orchestral/tuba_c2.wav":           "RIFF",
+	})
+	keep := keepSet(t, root, game.Manifest{StartLevel: "start"})
+	for _, want := range []string{"sounds/instruments/strings/violin_section.finst", "sounds/samples/orchestral/vln_sus_soft_g3.wav",
+		"sounds/samples/orchestral/vln_sus_soft_g3.fsmp", "sounds/samples/pads/strings_pizz.wav"} {
+		if !keep[want] {
+			t.Errorf("%s was pruned", want)
+		}
+	}
+	for _, unwanted := range []string{"sounds/instruments/brass/tuba.finst", "sounds/samples/orchestral/tuba_c2.wav"} {
+		if keep[unwanted] {
+			t.Errorf("%s was kept though no song plays it", unwanted)
+		}
+	}
+}
+
+// A score's lines name library instruments: the .fscore, the instruments
+// its lines play and their samples ship; an instrument it does not name
+// does not.
+func TestScorePullsInItsInstruments(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":      "font: title\n",
+		"ui/loading.fui":    "id: loading\n",
+		"ui/pause.fui":      "id: pause\n",
+		"levels/start.yaml": "music:\n  track: hangar_theme\n",
+		"sounds/hangar_theme.fscore": "version: 1\nbars: 1\nlines:\n  - name: Violins\n    instrument: strings/violin_section\n" +
+			"    staves: [{clef: treble, voices: [\"| wG4 |\"]}]\n",
+		"sounds/instruments/strings/violin_section.finst": "version: 1\nname: Violins\nsamples: [orchestral/vln_sus_soft_g3]\n",
+		"sounds/instruments/brass/tuba.finst":             "version: 1\nname: Tuba\nsamples: [orchestral/tuba_c2]\n",
+		"sounds/samples/orchestral/vln_sus_soft_g3.wav":   "RIFF",
+		"sounds/samples/orchestral/tuba_c2.wav":           "RIFF",
+	})
+	keep := keepSet(t, root, game.Manifest{StartLevel: "start"})
+	for _, want := range []string{"sounds/hangar_theme.fscore", "sounds/instruments/strings/violin_section.finst", "sounds/samples/orchestral/vln_sus_soft_g3.wav"} {
+		if !keep[want] {
+			t.Errorf("%s was pruned", want)
+		}
+	}
+	for _, unwanted := range []string{"sounds/instruments/brass/tuba.finst", "sounds/samples/orchestral/tuba_c2.wav"} {
+		if keep[unwanted] {
+			t.Errorf("%s was kept though the score does not play it", unwanted)
+		}
+	}
+}

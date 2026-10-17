@@ -57,6 +57,7 @@ func LoadCompiledLevel(path string) (world.Level, error) {
 	}
 	job.waitForRead()
 	for !job.Step() {
+		job.waitForCooked()
 		job.waitForStatic()
 	}
 	if err := job.Err(); err != nil {
@@ -232,6 +233,7 @@ func beginStatic(c *CompiledLevel, level *world.Level) {
 			Surfaces: make([]world.StaticSurface, len(c.Faces)),
 		}
 	}
+	level.Static.Lightmaps = lightmapPages(c)
 }
 
 // buildStaticSurface builds compiled surface i into its slot.
@@ -279,6 +281,12 @@ func buildStaticSurface(c *CompiledLevel, static *world.StaticGeometry, i int) e
 	g.CPUOnly = true
 	g.VertexLight = bakedLightRows(f, f.Light, f.BackLight, f.Indirect, f.BackIndirect, len(verts))
 	g.VertexLightSmooth = bakedLightRows(f, f.SmoothLight, f.SmoothBackLight, f.SmoothIndirect, f.SmoothBackIndirect, len(verts))
+	// A lightmapped face reads its direct light from its chart instead
+	// (compile/lightmap.go): its rows carry where, and the indirect part.
+	if len(c.Lightmaps) > 0 && f.Lightmap.Page >= 0 && int(f.Lightmap.Page) < len(c.Lightmaps) {
+		lightmapRows(f, g.VertexLight)
+		lightmapRows(f, g.VertexLightSmooth)
+	}
 	// The face's own smoothed normals, interpolated from its source face
 	// (compile/smooth.go). A flat face has none, and shades from the facet
 	// the way a flat face would anyway.
@@ -390,6 +398,34 @@ func bakedLightRows(f *compile.Face, front, back, indFront, indBack []mgl32.Vec3
 // bakedLightRow is the floats in one of bakedLightRows' rows: gfx.LightStride.
 const bakedLightRow = 7
 
+// Lightmapped rows' fourth float, which a per-vertex row uses for the sun's
+// share (0..1, or -1): fragment.glsl reads anything at or below
+// LightmapRowFlag+0.5 as "the first three floats are a lightmap texel, page
+// and all", and LightmapRowNoSun as "and the baked sun was kept out of this
+// chunk" (bake_exclude).
+const (
+	LightmapRowFlag  = -2
+	LightmapRowNoSun = -3
+)
+
+// lightmapRows turns a lightmapped face's per-vertex rows (bakedLightRows)
+// into lightmap rows: the vertex's place in its page (u, v), the page, the
+// flag — and the indirect part left where it was. A single-sided face only
+// (compile.lightmapped), so its rows are its points in order.
+func lightmapRows(f *compile.Face, rows [][]float32) {
+	for i, row := range rows {
+		if i >= len(f.Points) {
+			break
+		}
+		u, v := f.Lightmap.UV(f.Points[i])
+		flag := float32(LightmapRowFlag)
+		if row[3] < -0.5 {
+			flag = LightmapRowNoSun
+		}
+		row[0], row[1], row[2], row[3] = u, v, float32(f.Lightmap.Page), flag
+	}
+}
+
 // compiledNormalRows lays a face's per-point normals out per vertex of its mesh
 // — the far side of a double-sided face, whose vertices follow the near
 // side's, facing the other way. Nil for a flat face.
@@ -407,6 +443,19 @@ func compiledNormalRows(ns []mgl32.Vec3, points, n int) [][]float32 {
 		row := flat[3*i : 3*i+3 : 3*i+3]
 		row[0], row[1], row[2] = v.X(), v.Y(), v.Z()
 		out[i] = row
+	}
+	return out
+}
+
+// lightmapPages is the compiled level's lightmap pages as the world carries
+// them (world.StaticGeometry.Lightmaps).
+func lightmapPages(c *CompiledLevel) []world.LightmapPage {
+	if len(c.Lightmaps) == 0 {
+		return nil
+	}
+	out := make([]world.LightmapPage, len(c.Lightmaps))
+	for i, p := range c.Lightmaps {
+		out[i] = world.LightmapPage{Size: p.Size, Texels: p.Texels}
 	}
 	return out
 }

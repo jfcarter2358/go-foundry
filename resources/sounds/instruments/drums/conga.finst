@@ -1,0 +1,13 @@
+version: 1
+name: Conga
+samples: [drums/conga]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Conga
+    line: 4
+description: Open conga tone with a slap

@@ -66,25 +66,33 @@ func (m *mixer) render(dst []float32, frames int) {
 		listener = BasisFrom(mgl32.Vec3{}, mgl32.Vec3{1, 0, 0}, mgl32.Vec3{0, 1, 0})
 	}
 
+	// Under water the effects bus mixes into the muffle's own buffer, to be
+	// low-passed into out after the loop (audio_muffle.go); the music bus
+	// always goes straight to out.
+	fx := out
+	if b := m.muffle.begin(frames, m.rate); b != nil {
+		fx = b
+	}
 	for i := range m.voices {
 		v := &m.voices[i]
 		if !v.active {
 			continue
 		}
-		bus := effectsGain
+		bus, dst := effectsGain, fx
 		if v.bus == BusMusic {
-			bus = musicGain
+			bus, dst = musicGain, out
 		}
 		var finished bool
 		if v.gen != nil {
-			finished = m.mixGenerator(v, out, frames, bus)
+			finished = m.mixGenerator(v, dst, frames, bus)
 		} else {
-			finished = m.mixVoice(v, out, frames, listener, listenerVel, bus)
+			finished = m.mixVoice(v, dst, frames, listener, listenerVel, bus)
 		}
 		if finished {
 			m.freeVoice(i)
 		}
 	}
+	m.muffle.end(out, m.rate)
 
 	m.limit(out)
 

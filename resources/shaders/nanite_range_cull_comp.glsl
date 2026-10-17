@@ -26,7 +26,9 @@ layout(local_size_x = 64) in;
 
 void main() {
     uint n = tileBase + gl_GlobalInvocationID.x;
-    if (n >= kindTileCount) {
+    // Over the live list (render/nanite_live_tiles.go) the bound is its
+    // length, which only the GPU knows.
+    if (n >= (liveList != 0 ? liveCount : kindTileCount)) {
         return;
     }
     uint ti = kindTiles[n];

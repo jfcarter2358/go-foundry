@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<!-- One part, the basics: keys, meters (4/4, 3/4, 6/8), dots, a chord,
+     a tie over the bar line, rests, a whole-bar rest in 3/4, articulations,
+     a fermata, a metronome mark with its text, dynamics. -->
+<score-partwise version="4.0">
+  <work><work-title>Simple Tune</work-title></work>
+  <identification>
+    <creator type="composer">A. Writer</creator>
+    <encoding><software>hand-made</software></encoding>
+  </identification>
+  <part-list>
+    <score-part id="P1">
+      <part-name>Flute</part-name>
+      <score-instrument id="P1-I1"><instrument-name>Flute</instrument-name></score-instrument>
+      <midi-instrument id="P1-I1"><midi-channel>1</midi-channel><midi-program>74</midi-program></midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>4</divisions>
+        <key><fifths>1</fifths><mode>major</mode></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <direction placement="above">
+        <direction-type><words>Allegretto</words></direction-type>
+        <direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>96</per-minute></metronome></direction-type>
+        <sound tempo="96"/>
+      </direction>
+      <direction placement="below">
+        <direction-type><dynamics><mf/></dynamics></direction-type>
+      </direction>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>3</duration><voice>1</voice><type>eighth</type><dot/></note>
+      <note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>16th</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>8</duration><tie type="start"/><voice>1</voice><type>half</type><notations><tied type="start"/></notations></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><tie type="stop"/><voice>1</voice><type>quarter</type><notations><tied type="stop"/></notations></note>
+      <note><rest/><duration>4</duration><voice>1</voice><type>quarter</type></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>8</duration><voice>1</voice><type>half</type></note>
+      <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>8</duration><voice>1</voice><type>half</type></note>
+      <note><chord/><pitch><step>C</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>half</type></note>
+    </measure>
+    <measure number="3">
+      <attributes>
+        <key><fifths>-1</fifths><mode>major</mode></key>
+        <time><beats>3</beats><beat-type>4</beat-type></time>
+      </attributes>
+      <direction><direction-type><dynamics><p/></dynamics></direction-type></direction>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type></note>
+      <note><pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type><notations><articulations><staccato/></articulations></notations></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type><notations><articulations><accent/><tenuto/></articulations></notations></note>
+    </measure>
+    <measure number="4">
+      <note><rest measure="yes"/><duration>12</duration><voice>1</voice></note>
+    </measure>
+    <measure number="5">
+      <attributes><time><beats>6</beats><beat-type>8</beat-type></time></attributes>
+      <note><pitch><step>D</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><type>eighth</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><type>eighth</type></note>
+      <note><pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>eighth</type></note>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>6</duration><voice>1</voice><type>quarter</type><dot/><notations><fermata type="upright"/></notations></note>
+      <barline location="right"><bar-style>light-heavy</bar-style></barline>
+    </measure>
+  </part>
+</score-partwise>

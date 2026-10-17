@@ -94,22 +94,20 @@ void main() {
     // is a lighting fiction with no matching geometry in the depth map, and
     // feeding it to the slope-scaled bias would ask for a bias that suits a
     // surface the shadow map never saw.
-    vec3 lighting = biomeLighting(vWorldPos, bumpN, vViewDepth, receiveShadows != 0, false);
-    vec3 color = giDebugAlbedo(albedo) * ao * clamp(lighting, 0.0, 1.0);
-
-    // Blinn-Phong glint per directional light, on top of the diffuse result —
-    // the highlight that reads as wet or crystalline stone as the camera moves.
-    vec3 viewDir = normalize(camPos - vWorldPos);
-    for (int i = 0; i < numDirLights; i++) {
-        vec3 ldir = -normalize(dirLightDir[i]);
-        vec3 halfV = normalize(viewDir + ldir);
-        float spec = pow(max(dot(bumpN, halfV), 0.0), 24.0) * 0.15;
-        color += dirLightColor[i] * dirLightBrightness[i] * spec;
-    }
+    // The highlight that reads as wet or crystalline stone as the camera
+    // moves: GGX at a stone's roughness, a little shinier than the default
+    // (specular.glsl), dimmed in the crevices with the diffuse.
+    PBRSurface ps = pbrSurface(vWorldPos, bumpN, 0.55, 0.0, 0.6, albedo);
+    vec3 spec = vec3(0.0);
+    vec3 lighting = biomeLightingSpec(vWorldPos, bumpN, vViewDepth, receiveShadows != 0, false, ps, spec);
+    spec += pbrEnvSpecular(ps, vWorldPos, bumpN, biomeAmbientRef, ao);
+    // Scene units, as fragment.glsl shades (gfx/hdr.go): the light clamped at
+    // hdrLightMax — 1 in LDR, so unchanged there — and the fog the scene's.
+    vec3 color = giDebugAlbedo(albedo) * ao * clamp(lighting, 0.0, hdrLightMax()) + clamp(spec * ao, 0.0, hdrLightMax());
 
     // After the specular, so a distant rock's glint fades with the rock rather
     // than surviving it. See fog.glsl.
-    color = applyFog(color, vWorldPos);
+    color = applyFogScene(color, vWorldPos);
 
     outputColor = vec4(color, 1.0);
 }

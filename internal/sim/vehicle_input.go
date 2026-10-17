@@ -121,11 +121,21 @@ func PlacePlayerCamera(lvl *world.Level) {
 	// Riding in a frame puts the camera in that frame's space, with its own up
 	// vector; on foot this falls through.
 	if SeatedCamera(lvl) {
+		world.PlayerThirdPerson = false
 		return
 	}
+	// A level asking for a third-person camera gets the boom
+	// (third_person.go); the look angles are the same either way.
+	if c := lvl.Player.Camera.Effective(); c.ThirdPerson() {
+		placeThirdPerson(lvl, c)
+		return
+	}
+	world.PlayerThirdPerson = false
+	boomState.ok = false
 	gfx.Cam.Up = gfx.WorldUp
 	gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
-	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.PlayerEyeHeight(), 0})
+	// Less the boots sunk into sand or snow (footsteps.go).
+	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.PlayerEyeHeight() - world.PlayerGroundSink, 0})
 	gfx.RebuildCamMatrix()
 }
 

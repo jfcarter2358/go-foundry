@@ -31,6 +31,7 @@ import (
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
+	"foundry/internal/score/play"
 	"foundry/internal/tracker"
 	"foundry/internal/ui"
 	"foundry/internal/world"
@@ -103,8 +104,15 @@ type ScriptRuntime struct {
 	cache *refCache
 	host  *levelHost
 
-	// songEvents is reused each frame to drain the level song's events.
-	songEvents []tracker.Event
+	// songEvents and scoreEvents are reused each frame to drain the level
+	// song's (or score's) events.
+	songEvents  []tracker.Event
+	scoreEvents []play.Event
+	// scoreBarTick is the tick of the last bar a score posted whose
+	// downbeat has not been drained yet, plus one (0: none): the scheduler
+	// posts a bar and then its beat from the mixer goroutine, and a frame's
+	// drain can fall between the two.
+	scoreBarTick int64
 
 	// units is one entry per distinct script path, shared by every object that
 	// names it — a hundred barrels of one type parse their script once.

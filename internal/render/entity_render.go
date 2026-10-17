@@ -80,8 +80,8 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 		return
 	}
 	list := entityDraws[:0]
-	for ei := range lvl.Entities {
-		e := &lvl.Entities[ei]
+	for ei, n := 0, drawnEntityCount(lvl); ei < n; ei++ {
+		e := drawnEntity(lvl, ei)
 		frame := lvl.Frames.FrameFor(e)
 		if !e.Visible || !EntityInFrustumOf(frame, e, cull) {
 			continue
@@ -136,12 +136,13 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 // that once and leaves it (renderSceneShadow), so an entity's matrix left in
 // place would drag every wall drawn afterwards along with it.
 func RenderEntitiesShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
-	if lvl == nil || len(lvl.Entities) == 0 {
+	n := drawnEntityCount(lvl)
+	if n == 0 {
 		return
 	}
 	drewAny := false
-	for ei := range lvl.Entities {
-		e := &lvl.Entities[ei]
+	for ei := 0; ei < n; ei++ {
+		e := drawnEntity(lvl, ei)
 		frame := lvl.Frames.FrameFor(e)
 		if !e.Visible || !EntityInFrustumOf(frame, e, cull) {
 			continue

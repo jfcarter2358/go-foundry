@@ -34,6 +34,12 @@ float coverageNoise(vec2 p, int frame) {
 }
 
 flat in uint visCmd;
+// The instance's draw-distance fade (render/nanite_draw_distance.go): the
+// band [x, y) of the noise its pixels keep, and its hash in z, which offsets
+// the noise so neighbouring instances do not dissolve in step. A mesh fading
+// out keeps the noise below the fade, its impostor fading in the noise at or
+// above it — the same number — so between them every pixel is drawn once.
+flat in vec3 visFade;
 in vec2 fragTexCoord;
 in vec3 fragWorldPos;
 in vec3 fragNormal;
@@ -48,6 +54,12 @@ float alphaCutoffLevel() {
 }
 
 void main() {
+    if (visFade.x > 0.0 || visFade.y < 1.0) {
+        float n = fract(coverageNoise(gl_FragCoord.xy, coverageDither) + visFade.z);
+        if (n < visFade.x || n >= visFade.y) {
+            discard;
+        }
+    }
     vec2 uv = fragTexCoord;
     float a = 1.0;
     if (normalColor == 0) {

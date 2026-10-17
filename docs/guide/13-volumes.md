@@ -177,6 +177,83 @@ Unlike every other block on this page, this one does nothing in the game. It is
 authoring metadata: the volume is not a trigger, draws nothing, and the level
 behaves exactly as it would without it.
 
+## Environment regions
+
+A volume with a **region** block marks part of a generated world as one
+environment — "this stretch is desert canyon, that one savannah". The level's
+world generator (`resources/generators/<level>_world.fgen`, see
+[Generators](33-generators.md#world-generation-environment-regions)) grows
+every region's environment in one pass, blended across a transition band.
+Nothing about play changes: a region is authoring data, never drawn or
+collided with in the game.
+
+Tick **This volume is an environment region** in the volume's
+**Environment Region** group. The footprint starts as the box's rectangle; then:
+
+- **Environment**: the preset grown there — the built-ins `desert_canyon` and
+  `savannah`, or any `resources/environments/<name>.fgen`.
+- **Generator**: optionally a different `.fgen` to grow instead of the preset.
+- **Priority**: where regions overlap, the higher wins; equal priorities share
+  the band evenly.
+- **Transition (m)**: the blend band's width, centred on the footprint's edge
+  (default 150).
+- **Anchor**: where the preset's own coordinates (its canyon paths) are
+  measured from, relative to the volume; off is the footprint's centroid.
+
+**Shaping the footprint.** Select the region; every footprint point shows a
+handle at the volume's height, and the outline is drawn in the environment's
+colour. Drag a handle to move the point (one undo step per drag),
+**Ctrl+click** near an edge to add a point there, **right-click** a handle to
+delete it (a footprint keeps 3). Concave outlines are fine; crossing edges
+are refused when the world generator runs. The move gizmo carries the whole
+region, and the scale gizmo (or the Shape group's X/Z) scales the footprint —
+the box is always fitted to it.
+
+**Open World Generator** in the group (or the Generator's **File > Generate
+World for <level>…**) makes the level's world generator the first time and
+opens it.
+
+**Forbidden neighbours.** The group also lists any neighbouring region whose
+environment the adjacency table forbids next to this one (desert beside
+tundra, say), checked in the background as regions move, with **Insert
+<env> region**: one click adds a region of the table's suggested environment
+between them (one undo step). See [Environment regions](35-regions.md#4-adjacency-which-environments-may-touch).
+
+```yaml
+volumes:
+  - id: canyon_west
+    position: [-300, 40, 0]
+    half: [300, 25, 300]         # kept fitted to the footprint
+    region:
+      environment: desert_canyon
+      priority: 0
+      transition: 200
+      footprint: [[-300, -300], [300, -300], [300, 300], [-300, 300]]   # relative to position
+```
+
+## Grass fields
+
+A volume with a `grass:` block is one terrain tile's **Poly Haven grass**,
+drawn by the grass instancer. A generator's `grass_field` stage places them
+(one per tile, its box the tile and the tallest clump on it); you do not
+author them by hand.
+
+```yaml
+- id: gen.my_world.r_main_sward.grass_3_4
+  position: {x: -128, y: 6, z: 64}
+  half: {x: 64, y: 9, z: 64}
+  grass:
+    file: generated/my_world/r_main_sward/grass_3_4.fgrass
+    chunk: auto
+```
+
+`file` is the field (resources-relative). `chunk` streams it with a chunk's
+switch: `auto` takes the chunk whose footprint holds the volume, a chunk ID
+names one, empty is always in. A grass volume is not a trigger, nothing
+collides with it, and a level without one draws exactly as before. See the
+Generators guide's `grass_field` stage for what is in the file and how it
+draws.
+
 ## Fog volumes
 
 A volume may be full of fog or full of cloud — the things a volume can be that
@@ -190,6 +267,39 @@ The short version: open the volume's **Fog** group, set a colour and a density.
 Density is per world unit travelled *inside* the region, so the same number means
 the same thing on a doorway and on a ravine. It still fires `:enter:` and
 `:exit:`, which is usually the event you want when there is fog to be in.
+
+## Ambient volumes (dark interiors)
+
+The level's ambient light is a sky that is the same everywhere. Live GI finds
+out by itself that a cave's floor cannot see it; with GI off
+(`gi_quality: off`) a cave is lit like the desert outside, and only what was
+baked with vertex AO darkens. An **ambient** volume says so instead: inside it
+the sky light every lit surface takes — walls, terrain, Nanite scenery, rocks,
+characters, scatter, sprites — is multiplied down, and the sky-lit haze along
+the part of the view inside it is dimmed too.
+
+```yaml
+volumes:
+- id: cave_dark
+  shape: box
+  position: {x: 86.5, y: 7, z: 0}
+  half: {x: 17.5, y: 11, z: 14}
+  ambient:
+    sky: 0.08      # multiplier for surfaces facing up (deep inside)
+    ground: 0.12   # for surfaces facing down — roofs, overhangs (default: = sky)
+    fade: 2.5      # metres in from the volume's faces over which it eases in
+    fog: 1         # share of the cut the haze inside takes, 0..1
+    dust: 0.03     # extra light-shaft density inside, per metre
+```
+
+The cut eases in over `fade` metres **inside** the volume's faces, so make the
+volume enclose the cave's rock — its floor, walls and roof at least `fade` deep
+inside it — and put the face where the darkening should start at the mouth: a
+cave darkens as you walk in rather than at a line. Overlapping volumes take the
+darkest. Eight are in effect at once, the nearest the camera. The sun is not
+touched (its shadow does that); point lights are not touched. With GI on the
+probes see the walls already, and the volume still scales the share of the sky
+GI leaves. Editor: the volume's **Ambient (dark interior)** group.
 
 ## Tags, attributes, parameters
 
@@ -208,3 +318,9 @@ volumes:
 The Script section of the panel lists every parameter the attached script
 declares, one row each, with a picker over the level's IDs for a `ref`. See
 [Scripting](18-scripting.md).
+
+## Reflection volumes
+
+A volume with **Captures its own reflection** ticked (`reflection:`) gives the
+shiny surfaces inside it the room's reflection instead of the sky's. See
+[Lighting](07-lighting.md#reflections).

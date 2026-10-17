@@ -1,0 +1,9 @@
+smooth_lighting: true
+foliage_distance: 0.6
+foliage_shadows: true
+nanite_lod_error: 1
+nanite_stream_pool_mb: 1024
+gi_quality: "off"
+taa_sharpen: 0.25
+texture_compression: true
+render_scale: 0.75

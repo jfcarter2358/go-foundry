@@ -1,0 +1,59 @@
+# Forest floor: a leaf-litter splat, cut-out leaf cards lying on it, fallen
+# branches bedded in, a few ferns and a fallen log now and then, and the
+# document's own grass thinned. docs/guide/36-terrain-paint.md "Brush presets".
+# Poly Haven (CC0): forest_leaves_04, dry_branches_medium_01, fern_02,
+# dead_tree_trunk, tree_stump_01.
+name: Forest floor
+doc: Leaf litter with cut-out leaves on it, fallen twigs, a few ferns and the odd log; thins the grass.
+order: 10
+layers:
+  - {layer: forest_litter, strength: 1}
+  - {layer: forest_twigs, strength: 0.6}
+  - {layer: forest_ferns, strength: 0.3}
+  - {layer: grass_clear, strength: 0.5}
+recipe:
+  paint:
+    - {name: forest_litter, kind: material}
+    - {name: forest_twigs, kind: density}
+    - {name: forest_ferns, kind: density}
+    - {name: grass_clear, kind: exclude}
+  textures:
+    - {name: forest_litter, id: forest_leaves_04, scale: 2.5}
+  material:
+    - {layer: forest_litter, texture: forest_litter, slots: [ash, snow, wet], fallback: cracked}
+  exclude:
+    - {layer: grass_clear, kind: grass_field, except: [cover]}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_forest
+      params:
+        assets: [{id: dry_branches_medium_01}, {id: fern_02}]
+        thin_foliage: true
+    - stage: polyhaven_rocks
+      id: cover_logs_src
+      params:
+        assets: [{id: dead_tree_trunk}, {id: tree_stump_01}]
+        back: none
+    - stage: scatter
+      id: cover_logs
+      params:
+        terrain: $terrain
+        rules:
+          - {name: forest_logs, rocks: cover_logs_src, density: 0.08, scale: [0.8, 1.1], slope: [0, 25],
+             cluster: 0, align: 1, tilt: 4, sink: 0.08, paint: forest_twigs, paint_band: [0.3, 0.6]}
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: cover_logs
+        rules:
+          - {name: forest_litter, card_textures: $textures, card: forest_litter, card_cut: 0.6, card_tiles: 2,
+             density: 2.2, scale: [1, 1.5], slope: [0, 45], cluster: 0, edge_shrink: 0.3,
+             paint: forest_litter, range: 0.45, shadows: false, tint_a: [0.85, 0.82, 0.8], tint_b: [0.95, 0.92, 0.86],
+             tint_scale: 6, tint_jitter: 0.1}
+          - {name: forest_twigs, plants: cover_forest, pieces: dry_branches, orient: ground, wind: false, sink: 0.25,
+             tilt_jitter: 6, density: 1, scale: [0.6, 1.1], slope: [0, 45], cluster: 0,
+             max_triangles: 300, paint: forest_twigs, range: 0.6, edge_shrink: 0.2}
+          - {name: forest_ferns, plants: cover_forest, pieces: fern, density: 0.8, scale: [0.9, 1.6],
+             slope: [0, 40], cluster: 0.3, cluster_scale: 12, max_triangles: 600, paint: forest_ferns,
+             wind_bend: 0.12, wind_flutter: 0.02}

@@ -1,0 +1,9 @@
+version: 1
+name: Chip Pulse 25
+samples: [chip/chip_pulse_25]
+fade_out: 0.02
+interp: nearest
+playback:
+  range: [C-2, C-8]
+  clef: treble
+description: 'NES pulse at 25% duty: the classic lead'

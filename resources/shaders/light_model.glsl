@@ -12,6 +12,7 @@
 // lightWrap and ambientHemisphere — ride in the scene block with the rest of
 // the lights (world.UploadLightsTo).
 #include "scene_block.glsl"
+#include "amb_tiles.glsl"
 
 // Wrapped Lambert: how much of a light a surface at cosine ndl to it takes. At
 // lightWrap 0 it is max(N.L, 0), the hard terminator; above that the light
@@ -24,6 +25,123 @@ float lightWrapTerm(float ndl) {
 // facing the ground, averaging to the colour itself.
 vec3 ambientAt(vec3 ambient, vec3 n) {
     return ambient * (1.0 + 0.5 * clamp(ambientHemisphere, 0.0, 1.0) * n.y);
+}
+
+// ---------- Stylized light (world/stylize.go; experimental) ----------
+//
+// A level's painted-miniature look bends the light a surface takes before its
+// colour multiplies it: what falls into shadow turns toward a cool hue and is
+// lifted off black by a little light of that hue, and what is brightly lit
+// warms. Every pass that sums a surface's light calls this on the sum —
+// fragment.glsl's main and biome_light.glsl's biomeLightingSpec — so the
+// walls, the cooked meshes, the terrain and everything that grows on it bend
+// the same way. styRamp.w is 0 in a block nothing wrote (every level without
+// a `stylize:` block): the light comes back untouched.
+//
+// The two points are on the light as it will be SHOWN — the scene's units
+// times the HDR exposure — so moving the exposure does not move the ramp.
+// The tints keep the light's luminance (the hue divided by its own), so they
+// turn the colour without darkening or brightening it; only the fill adds.
+float styLuma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 stylizeLight(vec3 light) {
+    if (styRamp.w == 0.0) {
+        return light;
+    }
+    float e = hdrMode != 0 ? hdrExposure : 1.0;
+    float lum = styLuma(light) * e;
+    float lit = smoothstep(styRamp.x, styRamp.y, lum);
+    float shade = 1.0 - lit;
+    float warm = smoothstep(0.5 * (styRamp.x + styRamp.y), styRamp.y, lum);
+    vec3 cool = styShadow.rgb / max(styLuma(styShadow.rgb), 1e-3);
+    vec3 hot = styHighlight.rgb / max(styLuma(styHighlight.rgb), 1e-3);
+    vec3 l = light * mix(vec3(1.0), cool, shade * styShadow.a);
+    l *= mix(vec3(1.0), hot, warm * styHighlight.a);
+    return l + styShadow.rgb * (styRamp.z * shade / e);
+}
+
+// The stylize pass's per-pixel record (render/stylize.go): what an opaque
+// surface leaves in the scene target's normal buffer for the paint effects
+// to read. x and y the geometric and the shading (bumped) normals, octahedral
+// in two halves each; z the fragment's distance along the view axis, which
+// the pass compares with the depth buffer to tell a surface still in front
+// from one something drawn later (foliage, a sprite) has covered; w how much
+// of the paint it takes (0..255) with bit 8 set, so a cleared texel (0) is
+// "no surface".
+vec2 styOct(vec3 n) {
+    n /= abs(n.x) + abs(n.y) + abs(n.z) + 1e-8;
+    if (n.z < 0.0) {
+        n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return n.xy;
+}
+
+uvec4 stylizePack(vec3 geoNormal, vec3 shadingNormal, float viewDepth, float weight) {
+    return uvec4(packHalf2x16(styOct(geoNormal)), packHalf2x16(styOct(shadingNormal)),
+                 floatBitsToUint(viewDepth), uint(clamp(weight, 0.0, 1.0) * 255.0 + 0.5) | 0x100u);
+}
+
+// ---------- Ambient volumes (world/volume_ambient.go) ----------
+//
+// Regions the sky's light does not reach — a cave, a slot canyon — for the
+// frames live GI is not there to find that out. Inside one the sky term above
+// is multiplied by its sky factor (surfaces facing up) or ground factor
+// (facing down), eased in over its fade from the walls. The darkest volume a
+// point is in wins.
+
+// ambVolInside is how far inside ambient volume i the point p is, in metres
+// (<= 0 outside): the shape's own normalised space, scaled back by its half
+// extents. Mirrors world.shapeInsideDepth.
+float ambVolInside(int i, vec3 p) {
+    vec3 q = ambVolBasis[i] * (p - ambVolCenter[i].xyz);
+    vec3 h = ambVolHalf[i].xyz;
+    int shape = int(ambVolCenter[i].w + 0.5);
+    if (shape == 1) {
+        return (1.0 - length(q)) * min(h.x, min(h.y, h.z));
+    }
+    if (shape == 2) {
+        return min((1.0 - length(q.xz)) * min(h.x, h.z), (1.0 - abs(q.y)) * h.y);
+    }
+    vec3 d = (1.0 - abs(q)) * h;
+    return min(d.x, min(d.y, d.z));
+}
+
+// ambVolWeight is how fully volume i's cut applies at p: 0 outside, 1 a fade
+// or more inside.
+float ambVolWeight(int i, vec3 p) {
+    float inside = ambVolInside(i, p);
+    if (inside <= 0.0) {
+        return 0.0;
+    }
+    float fade = ambVolHalf[i].w;
+    return fade > 0.0 ? clamp(inside / fade, 0.0, 1.0) : 1.0;
+}
+
+// ambientVolumeFactor is the multiplier on the sky light at p for a surface
+// of normal n: 1 outside every ambient volume.
+float ambientVolumeFactor(vec3 p, vec3 n) {
+    float f = 1.0;
+    if (numAmbVolumes <= 0) {
+        return f;
+    }
+    // Only the volumes p's screen tile can see (amb_tiles.glsl).
+    uint seen = ambVolMaskAt(p);
+    for (int i = 0; i < MAX_AMBIENT_VOLUMES; ++i) {
+        if (i >= numAmbVolumes) {
+            break;
+        }
+        if ((seen & (1u << uint(i))) == 0u) {
+            continue;
+        }
+        float w = ambVolWeight(i, p);
+        if (w > 0.0) {
+            float k = mix(ambVolParams[i].y, ambVolParams[i].x, clamp(0.5 + 0.5 * n.y, 0.0, 1.0));
+            f = min(f, mix(1.0, k, w));
+        }
+    }
+    return f;
 }
 
 // ---------- Live global illumination (render/gi.go) ----------
@@ -124,7 +242,17 @@ float giCascadeCover(int c, vec3 p) {
     return clamp(min(d.x, min(d.y, d.z)) - 1.0, 0.0, 1.0);
 }
 
-vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
+// giSampleCascade is cascade c's light at p facing n, seen along v — and
+// found, how much of it the probes really gave: 1 where at least one probe
+// passed the tests below, 0 where every one of the eight was buried or
+// refused. The caller (giIrradiance) counts a cascade's cover only as far as
+// found says, so a cell with no usable probe is answered by the next cascade
+// out, or the flat ambient — never by a confident zero. That zero, at full
+// cover and an ambient floor of 0, was the black patches on big cooked rocks
+// (docs/canyon/PHASE_6.md): on a rugged scan, every probe of a coarse
+// cascade's cell sat within half a spacing of SOME bump whose plane put the
+// point behind it.
+vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v, out float found) {
     float s = giCascade[c].w;
     // Off the surface, toward the viewer and along the normal, so a probe the
     // point sits exactly level with does not see it as half buried.
@@ -156,7 +284,16 @@ vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
         // floor the point stands on, behind the wall it is lit in front of.
         // Its visibility moments are least to be trusted there (see
         // gi_probe_update_comp.glsl), and the surface is between them.
-        if (dot(plane.xyz, plane.xyz) > 0.25 && dot(bp - probe, plane.xyz) < -plane.w) {
+        //
+        // Only when the point's own surface faces away from the probe's —
+        // the top of the floor the probe is under, the far face of the wall:
+        // that is the case the plane is for, a thin thing with the probe on
+        // its back. A point facing the same way as the probe's surface is on
+        // another part of the same side, round a bump of a rugged rock, and
+        // the plane through that bump says nothing about whether the probe
+        // can see it — the visibility test below does.
+        if (dot(plane.xyz, plane.xyz) > 0.25 && dot(bp - probe, plane.xyz) < -plane.w
+            && dot(n, plane.xyz) < 0.0) {
             continue;
         }
         vec3 tri = mix(1.0 - a, a, vec3(off));
@@ -190,6 +327,7 @@ vec3 giSampleCascade(int c, vec3 p, vec3 n, vec3 v) {
         sum += irr * w;
         wsum += w;
     }
+    found = wsum > 0.0 ? 1.0 : 0.0;
     return wsum > 0.0 ? sum / wsum : vec3(0.0);
 }
 
@@ -245,7 +383,12 @@ vec3 giIrradiance(vec3 p, vec3 n, out float cover) {
         if (w <= 0.0) {
             continue;
         }
-        total += giSampleCascade(c, p, n, v) * w;
+        float found;
+        vec3 irr = giSampleCascade(c, p, n, v, found);
+        // A cascade with no usable probe round p gives nothing and claims
+        // nothing: what it would have covered falls to the next one out.
+        w *= found;
+        total += irr * w;
         left -= w;
         if (left <= 0.0) {
             break;
@@ -348,7 +491,7 @@ vec3 giDebugAlbedo(vec3 albedo) {
 }
 
 vec3 ambientLight(vec3 ambient, vec3 p, vec3 n) {
-    vec3 sky = ambientAt(ambient, n);
+    vec3 sky = ambientAt(ambient, n) * ambientVolumeFactor(p, n);
     if (giEnabled == 0) {
         return sky;
     }

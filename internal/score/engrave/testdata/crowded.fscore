@@ -1,0 +1,67 @@
+# The final audit's crowded score: four voices, tuplets down to 256ths,
+# additive and compound meters, graces, ornaments under tempo text.
+version: 1
+title: Crowded
+bars: 6
+tempo: [{bar: 1, bpm: 100, text: Allegro}, {bar: 3, text: accel.}, {bar: 5, bpm: 140}]
+meter: [{bar: 1, sig: 4/4}, {bar: 2, sig: 3+2+2/8}, {bar: 3, sig: 6/8}, {bar: 4, sig: 4/4},
+  {bar: 5, sig: 4/4}, {bar: 6, sig: 4/4}]
+key: [{bar: 1, fifths: 3, mode: major}, {bar: 4, fifths: -4, mode: minor}]
+repeats: [{start: 5, end: 6}]
+voltas: [{start: 6, end: 6, passes: [1]}]
+playback: {swing: {amount: 0.62, unit: 8}, humanize: {timing: 8, velocity: 0.06, seed: 1}}
+lines:
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | 3{e.C5 sD5 3{sE5 sF5 sG5}} q..A5 sB5 zC6 zD6 zE6 zF6 zG6 zA6 zB6 zC7 yD6 yE6 xF6 xG6 e_ t_ x_
+      | qC#5(cresc) eD5 eE5(hairpin_end) q.F#5(f)
+      | /sG5 q.A5(tr) e.B5(stacc) sC6 eD6(ff)
+      | qEb5(gliss) qBb5 qAb4+C5+Eb5(arp) q_
+      | qC5(8va) qD5 qE5 qF5(ottava_end)
+      | wG5(ferm)
+      |
+    - |
+      | wC4+E4+G4
+      | q.G4 eA4 qB4 eC5
+      | q.E4 q.G4
+      | hC4(cresc=text) hDb4(hairpin_end)
+      | hC4 hD4
+      | wE4
+      |
+    - |
+      | qr qr qr qr
+      | R
+      | R
+      | qF4 qF4 qF4 qF4
+      | R
+      | R
+      |
+    - |
+      | wA3
+      | R
+      | R
+      | wC4
+      | R
+      | R
+      |
+  - clef: bass
+    voices:
+    - |
+      | wC3(ped)
+      | q.C3 q.D3(ped_end) eE3
+      | q.E3(trem=3) q.F3
+      | hC3(trem2=2) hG3
+      | wC3
+      | wC2
+      |
+buses:
+  a:
+    fx: [{fx: reverb, size: 0.6, damping: 0.4, width: 1}]
+    return: 1
+  b:
+    fx: [{fx: delay, beats: 0.75, feedback: 0.35, tone: 0.6, ping_pong: 1}]
+    return: 1

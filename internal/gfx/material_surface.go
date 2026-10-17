@@ -64,6 +64,16 @@ type SurfaceState struct {
 	// Blend is how the framebuffer blend will combine the fragment, which the
 	// shading stage needs told — see SurfaceBlend.
 	Blend SurfaceBlend
+	// VertexColors is whether the mesh carries per-vertex colours for the
+	// shader to multiply in (VertexColorsUniform). It is the mesh's, never a
+	// material's: a mesh without the attribute must never have it set.
+	VertexColors bool
+	// Fx is the terrain and rock effects (material_fx.go): only ever a
+	// material's, and the zero value — none — for everything else.
+	Fx material.SurfaceFx
+	// PBR is the specular's inputs (material_pbr.go): DefaultPBR unless a
+	// material's pbr effect says otherwise.
+	PBR PBRParams
 }
 
 // identityUV is what UVScale means "unchanged".
@@ -104,20 +114,19 @@ func (s *SurfaceState) overlay(m material.Surface) {
 		s.UVRotation += mgl32.DegToRad(m.UVRotation)
 	}
 	if m.HasWater {
-		s.Water = WaterParams{
-			Enabled:       true,
-			WaveAmplitude: m.Water.WaveAmplitude,
-			WaveLength:    m.Water.WaveLength,
-			WaveSpeed:     m.Water.WaveSpeed,
-			Reflectivity:  m.Water.Reflectivity,
-			ReflectColor:  m.Water.ReflectColor,
-		}
+		s.Water = WaterParams{Enabled: true, Water: m.Water}
 	}
 	if m.HasSmooth {
 		s.Smooth = true
 		if m.SmoothAngle > 0 {
 			s.SmoothAngle = m.SmoothAngle
 		}
+	}
+	if m.Fx.Any() {
+		s.Fx = m.Fx
+	}
+	if m.HasPBR {
+		s.PBR = pbrFromMaterial(m)
 	}
 }
 
@@ -177,10 +186,13 @@ func (g *Geometry) SurfaceState() SurfaceState {
 		Normals:      len(g.Normals) > 0,
 		Tint:         g.Tint,
 		Blend:        g.Blend,
+		VertexColors: len(g.colors) > 0,
+		PBR:          DefaultPBR(),
 	}
 	if m, ok := material.ResolveSurface(g.MaterialName); ok {
 		s.overlay(m)
 	}
+	s.finishWater()
 	return s
 }
 
@@ -199,10 +211,13 @@ func (m *Material) SurfaceState() SurfaceState {
 		UVScale:      identityUV,
 		Smooth:       m.Smooth,
 		Normals:      m.Normals,
+		VertexColors: m.VertexColors,
+		PBR:          DefaultPBR(),
 	}
 	if res, ok := material.ResolveSurface(m.MaterialName); ok {
 		s.overlay(res)
 	}
+	s.finishWater()
 	return s
 }
 
@@ -233,12 +248,20 @@ func (s *SurfaceState) UnlitFlag() int32 {
 	return 0
 }
 
+// VertexColorsFlag is the shader's `vertexColors`.
+func (s *SurfaceState) VertexColorsFlag() int32 {
+	if s.VertexColors {
+		return 1
+	}
+	return 0
+}
+
 // IsTransparent routes the surface into the sorted, back-to-front blended pass
 // rather than the opaque one — Geometry.IsTransparent's rule, asked of the
 // state a material has already had its say in, so that a material's `unlit` or
 // its alpha sends the surface to the right pass.
 func (s *SurfaceState) IsTransparent() bool {
-	return s.Unlit || (s.Alpha > 0 && s.Alpha < 1.0) || textureHasAlpha[s.Texture]
+	return s.Unlit || s.Water.Enabled || (s.Alpha > 0 && s.Alpha < 1.0) || textureHasAlpha[s.Texture]
 }
 
 // Apply pushes everything in the state that is a uniform. Every field is
@@ -258,9 +281,13 @@ func (s *SurfaceState) Apply() {
 	gl.Uniform1f(AlphaCutoffBiasUniform, s.CutoffBias)
 	applyTintUniform(TintBiasUniform, s.Tint)
 	gl.Uniform1i(SurfaceBlendUniform, int32(s.Blend))
+	gl.Uniform1i(VertexColorsUniform, s.VertexColorsFlag())
 	applyWaterUniforms(&s.Water)
 	applyBlendUniforms(s.BlendTexture, s.BlendMask)
 	BindNormalMap(s.NormalMap, HasNormalMapUniform, NormalMapUniform)
+	bindWaterTexturesGlobal(&s.Water)
+	applySurfaceFx(&s.Fx, s.Texture, programFxLocs())
+	applyPBR(s.PBR, s.Texture, &s.Fx, programPBRLocs())
 }
 
 // ApplyUVUniforms sets the three texture-coordinate uniforms together.
@@ -335,6 +362,10 @@ type SurfaceLocs struct {
 	isWater, waveAmp, waveLen, waveSpeed, reflectivity     int32
 	reflectColor, hasBlend, blendTex, blendMask            int32
 	hasNormalMap, normalMap                                int32
+	vertexColors                                           int32
+	fx                                                     FxLocs
+	water                                                  WaterLocs
+	pbr                                                    PBRLocs
 }
 
 // NewSurfaceLocs resolves prog's SurfaceLocs.
@@ -348,6 +379,10 @@ func NewSurfaceLocs(prog uint32) SurfaceLocs {
 		waveSpeed: loc("waveSpeed\x00"), reflectivity: loc("reflectivity\x00"), reflectColor: loc("reflectColor\x00"),
 		hasBlend: loc("hasBlend\x00"), blendTex: loc("blendTex\x00"), blendMask: loc("blendMask\x00"),
 		hasNormalMap: loc("hasNormalMap\x00"), normalMap: loc("normalMap\x00"),
+		vertexColors: loc("vertexColors\x00"),
+		fx:           NewFxLocs(prog),
+		water:        NewWaterLocs(prog),
+		pbr:          NewPBRLocs(prog),
 	}
 }
 
@@ -364,18 +399,9 @@ func (s *SurfaceState) ApplyLocs(l *SurfaceLocs) {
 	gl.Uniform1f(l.cutoff, s.CutoffBias)
 	applyTintUniform(l.tint, s.Tint)
 	gl.Uniform1i(l.blend, int32(s.Blend))
+	gl.Uniform1i(l.vertexColors, s.VertexColorsFlag())
 
-	if !s.Water.Enabled {
-		gl.Uniform1i(l.isWater, 0)
-	} else {
-		gl.Uniform1i(l.isWater, 1)
-		gl.Uniform1f(l.waveAmp, s.Water.WaveAmplitude)
-		gl.Uniform1f(l.waveLen, s.Water.WaveLength)
-		gl.Uniform1f(l.waveSpeed, s.Water.WaveSpeed)
-		gl.Uniform1f(l.reflectivity, s.Water.Reflectivity)
-		gl.Uniform3f(l.reflectColor,
-			s.Water.ReflectColor.X(), s.Water.ReflectColor.Y(), s.Water.ReflectColor.Z())
-	}
+	applyWaterLocs(&l.water, &s.Water)
 
 	if s.BlendTexture == "" || s.BlendMask == "" {
 		gl.Uniform1i(l.hasBlend, 0)
@@ -391,6 +417,9 @@ func (s *SurfaceState) ApplyLocs(l *SurfaceLocs) {
 	}
 
 	BindNormalMap(s.NormalMap, l.hasNormalMap, l.normalMap)
+	bindWaterTextures(&l.water, &s.Water)
+	applySurfaceFx(&s.Fx, s.Texture, &l.fx)
+	applyPBR(s.PBR, s.Texture, &s.Fx, &l.pbr)
 }
 
 // DrawThroughProgram draws the geometry with its material applied, through a
@@ -414,4 +443,25 @@ func (g *Geometry) DrawThroughProgram(prog uint32, model mgl32.Mat4) {
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 	gl.Uniform1i(UniformLoc(prog, "tex\x00"), 0)
 	g.DrawTriangles()
+}
+
+// DrawInstancedThroughProgram is DrawThroughProgram for count instances
+// starting at first of the matrix buffer AttachInstanceMatrices gave this
+// geometry's VAO, each placed by its own matrix (the program's `instanced`
+// path; the model uniform is not read). The Generator editor's scatter
+// preview draws thousands of rocks as one proxy this way.
+func (g *Geometry) DrawInstancedThroughProgram(prog uint32, first, count int) {
+	if len(g.Vertices) == 0 || g.Vao == 0 || count <= 0 {
+		return
+	}
+	st := g.SurfaceState()
+	gl.UseProgram(prog)
+	st.ApplyTo(prog)
+	gl.Uniform1i(UniformLoc(prog, "instanced\x00"), 1)
+	gl.BindVertexArray(g.Vao)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
+	gl.Uniform1i(UniformLoc(prog, "tex\x00"), 0)
+	g.DrawTrianglesInstanced(first, count)
+	gl.Uniform1i(UniformLoc(prog, "instanced\x00"), 0)
 }

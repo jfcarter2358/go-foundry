@@ -1,0 +1,8 @@
+version: 1
+name: Tom Floor
+samples: [drums/tom_floor]
+polyphony: 4
+playback:
+  clef: bass
+  release: 3
+description: 'Floor tom: lower and longer'

@@ -51,6 +51,9 @@ var upward = map[string][]string{
 	// noise3d builds the volumetric passes' noise volumes. Pure arithmetic, and
 	// held below gfx so the tiling it promises is testable with no GL context.
 	"noise3d": {"gfx", "world", "particle", "render", "collision", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	// mididev reads MIDI keyboards for the Score editor: a device layer
+	// (ALSA, WinMM) under the editor and nothing else.
+	"mididev": {"gfx", "world", "render", "score", "tracker", "audio", "editor", "app", "uiwin", "ui"},
 	// audio sits at particle's level: clips, a voice pool and a software
 	// mixer, with no idea what a level is. Its entry is stricter than
 	// particle's by one name — it must not reach gfx either. The listener is
@@ -101,6 +104,10 @@ var upward = map[string][]string{
 	"meshsdf":     {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
 	"nanite":      {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin"},
 	"nanitecook":  {"world", "levelio", "render", "editor", "app", "uiwin"},
+	// impostor bakes a cooked mesh's far cards on the CPU (docs/regions/
+	// PRESETS_5.md): beside the cook, below everything that draws or places
+	// one — a generator stage bakes them headless.
+	"impostor": {"nanitecook", "world", "levelio", "render", "editor", "app", "uiwin", "procgen"},
 	// glext is GL extension detection and the readback wrappers that work
 	// round a driver (glext/readback.go): above the GL binding, below
 	// everything that draws.
@@ -117,6 +124,56 @@ var upward = map[string][]string{
 	// that starts it.
 	"release": {"editor", "app", "uiwin"},
 	"editor":  {"app"},
+	// procgen is the procedural generators' core — the .fgen document, the
+	// stage registry and the run engine — and is pure CPU, below the world
+	// and everything that draws: a stage's mesh output (procgen/meshout,
+	// which cooks through nanitecook and so reaches gfx) and its level
+	// splice (procgen/genlevel, which needs world's schema) live beside it,
+	// and the core reaches neither. noise is below even that.
+	"procgen":       {"gfx", "model", "nanitecook", "world", "levelio", "render", "editor", "app", "uiwin"},
+	"procgen/noise": {"gfx", "model", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/terrain is the heightfield generator behind the terrain stage
+	// and what later stages read its products through: pure computation,
+	// so it stays below the engine as noise does (a scatter stage importing
+	// it must not drag gfx in).
+	"procgen/terrain": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/regions (environment regions: footprints, blend weights, the
+	// adjacency table) is pure computation the core hands out as weight
+	// functions and genlevel and the stages share: below both, as terrain is.
+	"procgen/regions": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/sdf (signed-distance modelling and its mesher) and
+	// procgen/rocks (the rock generator on it) are pure computation too:
+	// the rocks stage turns their meshes into ImportMeshes and cooks them.
+	"procgen/sdf":   {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	"procgen/rocks": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/cave (the cave stage's void, rock, cut and sky bake) is pure
+	// computation on sdf and a terrain grid.
+	"procgen/cave": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/ruins (the ruins stage's architecture library, layout and site
+	// field) is pure computation on sdf and noise.
+	"procgen/ruins": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/place (scatter, cliff walls, vegetation patches) reads a
+	// terrain and rock variants and answers instances: pure computation,
+	// the placement stages make level placements of them.
+	"procgen/place": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// procgen/paint (the generators' paint layers: sparse world tiles,
+	// sampling, strokes, their PNGs and hashes) is pure computation the
+	// core declares and the stages and the editor read: below procgen.
+	"procgen/paint": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// polyhaven is the Poly Haven API client (listings, cached md5-verified
+	// downloads, thumbnails): pure Go over net/http. The importer
+	// (polyhaven/phimport) cooks, so it may reach gfx through nanitecook;
+	// the client and its catalog must not, so the editor's browser and a
+	// headless tool share it.
+	"polyhaven": {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
+	// texcompress (the BC7/BC5 encoders and their disk cache) is pure CPU
+	// under gfx, which uploads what it makes.
+	"texcompress": {"gfx", "world", "render", "editor", "app", "uiwin"},
+	// grassfield is the Poly Haven grass instancer's files (the .fgk kit and
+	// the per-tile .fgrass fields) and the distance rules the renderer and
+	// its tests share: pure CPU, written by a procgen stage and read by
+	// render, so below both and below the world.
+	"grassfield": {"gfx", "model", "nanite", "nanitecook", "world", "render", "editor", "app", "uiwin", "procgen"},
 }
 
 func TestPackagesDoNotDependUpward(t *testing.T) {
@@ -138,5 +195,45 @@ func TestPackagesDoNotDependUpward(t *testing.T) {
 				t.Errorf("internal/%s depends on internal/%s — the split runs the other way", pkg, bad)
 			}
 		}
+	}
+}
+
+// The release game runtime plays scores (the model, the interpreter and
+// the scheduler: a level's music) and links none of the Score editor's own
+// code — the engraver and its font, the editing commands, the importers and
+// exporters, the CLI, and the loader of the OGG and MP3 encoders
+// (score/io/audioenc, which opens libvorbisenc and LAME at run time: the
+// game must never carry them). The release build is `-tags release` over
+// cmd/foundry.
+func TestTheReleaseLinksOnlyScorePlayback(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", "-tags", "release", "foundry/cmd/foundry").Output()
+	if err != nil {
+		t.Fatalf("go list -deps -tags release foundry/cmd/foundry: %v", err)
+	}
+	allowed := map[string]bool{"score": true, "score/interpret": true, "score/play": true}
+	plays := false
+	for _, line := range strings.Split(string(out), "\n") {
+		name, ok := strings.CutPrefix(strings.TrimSpace(line), "foundry/internal/")
+		if !ok {
+			continue
+		}
+		if name == "editor" || strings.HasPrefix(name, "editor/") {
+			t.Errorf("the release build links internal/%s", name)
+		}
+		if name == "mididev" {
+			t.Error("the release build links internal/mididev: MIDI keyboards are the Score editor's alone")
+		}
+		if name == "score" || strings.HasPrefix(name, "score/") {
+			if !allowed[name] {
+				t.Errorf("the release build links internal/%s: only score playback belongs in the runtime", name)
+			}
+			if name == "score/io/audioenc" {
+				t.Error("the release build links the codec loader: libvorbisenc and LAME are the editor's alone")
+			}
+			plays = plays || name == "score/play"
+		}
+	}
+	if !plays {
+		t.Error("the release build does not link internal/score/play: a level's score would not play")
 	}
 }

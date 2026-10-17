@@ -389,3 +389,61 @@ func TestInsertAndDeleteChannel(t *testing.T) {
 		t.Fatal("the last channel was deleted")
 	}
 }
+
+// genStinger plays a constant level for n frames: any generator, as a
+// score's player is, mixed over a song by StingerGenerator.
+type genStinger struct {
+	level float32
+	n     int
+}
+
+func (g *genStinger) Render(dst []float32, frames, rate int) bool {
+	for i := 0; i < frames; i++ {
+		v := float32(0)
+		if i < g.n {
+			v = g.level
+		}
+		dst[i*2], dst[i*2+1] = v, v
+	}
+	g.n = max(g.n-frames, 0)
+	return g.n > 0
+}
+
+func TestStingerGenerator(t *testing.T) {
+	s := testSong(t, "... .. .. ... ...\n")
+	s.Reverb.Return, s.Delay.Return = 0, 0
+	run := func(q Quantize, at int) (first int, g *genStinger) {
+		p := NewPlayer(s.Clone())
+		p.Start("")
+		g = &genStinger{level: 0.5, n: 4800}
+		buf := make([]float32, 480*2)
+		first = -1
+		for k := 0; k < 200; k++ {
+			if k == at && !p.StingerGenerator(g, q) {
+				t.Fatal("StingerGenerator refused")
+			}
+			p.Render(buf, 480, testRate)
+			for i := 0; i < 480 && first < 0; i++ {
+				if buf[i*2] != 0 {
+					first = k*480 + i
+				}
+			}
+		}
+		return first, g
+	}
+	if first, g := run(QuantNow, 3); first != 3*480 || g.n != 0 {
+		t.Errorf("now: first sound at frame %d (want %d), %d frames left", first, 3*480, g.n)
+	}
+	// On a beat: after the request, and within a tick and a block of the
+	// next beat — the sequencer reaches a row on its previous row's last
+	// tick and mixes stingers from the start of that block, as it always
+	// has for a song stinger.
+	beat := int(float64(testRate) * 60 / float64(s.BPM))
+	first, _ := run(QuantBeat, 5)
+	if first < 5*480 || first > beat || beat-first > 1500 {
+		t.Errorf("beat: first sound at frame %d, want just before frame %d", first, beat)
+	}
+	if p := NewPlayer(s); p.StingerGenerator(nil, QuantNow) {
+		t.Error("a nil stinger was accepted")
+	}
+}

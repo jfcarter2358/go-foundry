@@ -103,7 +103,8 @@ vec3 nfVoxelShade(uvec4 vox, vec3 world, vec3 eye, vec3 row0, vec3 row1, vec3 ro
     base = giDebugAlbedo(base);
     tone = giDebug == 1 ? 1.0 : tone;
     grey = giDebug == 1 ? 1.0 : grey;
-    vec3 col = base * tone * grey * clamp(lighting, 0.0, 1.2);
+    // Scene units (gfx/hdr.go): hdrLightMax is 1 in LDR.
+    vec3 col = base * tone * grey * clamp(lighting, 0.0, 1.2 * hdrLightMax());
     if (thin) {
         vec3 V = normalize(eye - world);
         for (int i = 0; i < numDirLights; i++) {
@@ -112,6 +113,6 @@ vec3 nfVoxelShade(uvec4 vox, vec3 world, vec3 eye, vec3 row0, vec3 row1, vec3 ro
             col += base * grey * dirLightColor[i] * dirLightBrightness[i] * through * 0.3 * tone * thinShare;
         }
     }
-    return applyFog(col, world);
+    return applyFogScene(col, world);
 }
 #endif

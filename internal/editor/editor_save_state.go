@@ -283,6 +283,12 @@ func openEditors() []openEditor {
 	if TrackerEditorOpen() {
 		out = append(out, openEditor{"Tracker", trackerEditorDirty, trkSaveCurrent})
 	}
+	if ScoreEditorOpen() {
+		out = append(out, openEditor{"Score", scoreEditorDirty, scoreSaveCurrent})
+	}
+	if GeneratorEditorOpen() {
+		out = append(out, openEditor{"Generator", generatorEditorDirty, genSaveCurrent})
+	}
 	if ScriptEditorOpen() {
 		out = append(out, openEditor{"Script", scriptEditorDirty, scriptSaveAllTabs})
 	}

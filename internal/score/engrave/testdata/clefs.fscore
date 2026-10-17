@@ -1,0 +1,12 @@
+version: 1
+title: Clefs
+lines:
+- {name: a, instrument: keys/grand_piano, staves: [{clef: treble, voices: ["| qC4 qG4 qD5 qA5"]}]}
+- {name: b, instrument: keys/grand_piano, staves: [{clef: bass, voices: ["| qE2 qB2 qF3 qC4"]}]}
+- {name: c, instrument: keys/grand_piano, staves: [{clef: alto, voices: ["| qC4 qG4 qB3 qD3"]}]}
+- {name: d, instrument: keys/grand_piano, staves: [{clef: tenor, voices: ["| qC4 qA3 qD4 qF4"]}]}
+- {name: e, instrument: keys/grand_piano, staves: [{clef: treble_8vb, voices: ["| qC3 qG3 qD4 qA4"]}]}
+- {name: f, instrument: keys/grand_piano, staves: [{clef: treble_8va, voices: ["| qC5 qG5 qD6 qA6"]}]}
+- {name: g, instrument: keys/grand_piano, staves: [{clef: bass_8vb, voices: ["| qE1 qB1 qF2 qC3"]}]}
+- {name: h, instrument: keys/grand_piano, staves: [{clef: bass_8va, voices: ["| qE3 qB3 qF4 qC5"]}]}
+- {name: i, instrument: percussion/drum_kit, staves: [{clef: percussion, voices: ["| qC5 qF4 qC5 qF4"]}]}

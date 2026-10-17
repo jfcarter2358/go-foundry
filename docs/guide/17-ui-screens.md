@@ -291,7 +291,9 @@ and writes it back on `:change:`. The engine persists the mouse settings, the
 key bindings, the volume (`@level.prop.master_volume`), Smooth Lighting
 (`@level.prop.smooth_lighting`, a toggle), live GI (`@level.prop.gi_quality`,
 one of `"off"`, `"low"`, `"medium"`, `"high"`; see
-[Lighting](07-lighting.md#live-gi)) and the foliage settings
+[Lighting](07-lighting.md#live-gi)), the water quality
+(`@level.prop.water_quality`, one of `"low"`, `"medium"`, `"high"`, the default;
+see [Materials](28-materials.md#water)) and the foliage settings
 (`@level.prop.foliage_distance`, 0.25 to 2, and `@level.prop.foliage_shadows`,
 a toggle), the Nanite detail threshold (`@level.prop.nanite_lod_error`,
 0.25 to 8 pixels, 1 by default: how far a cooked mesh's simplified detail may

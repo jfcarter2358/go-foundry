@@ -46,7 +46,8 @@ import (
 )
 
 // visVaryings are vertex.glsl's outputs, which are fragment.glsl's inputs.
-var visVaryings = []string{"fragTexCoord", "fragWorldPos", "fragNormal", "fragViewDepth", "fragBakedLight", "fragBakedIndirect"}
+var visVaryings = []string{"fragTexCoord", "fragWorldPos", "fragNormal", "fragViewDepth", "fragBakedLight", "fragBakedIndirect",
+	"fragVertColor"}
 
 var (
 	reVersion      = regexp.MustCompile(`(?m)^\s*#version[^\n]*\n`)
@@ -89,11 +90,18 @@ struct VisInstance {
     vec4 sphere;
     uvec4 flags;
     vec4 wind;
+    vec4 draw;
 };
 layout(std430, binding = 0) readonly buffer VisInstances {
     VisInstance visInstances[];
 };
-flat out uint visCmd;`)
+flat out uint visCmd;
+// The instance's draw-distance fade (render/nanite_draw_distance.go): the
+// noise band [x, y) of the pixels it keeps, and its hash in z.
+flat out vec3 visFade;
+uniform vec3 drawEye;
+uniform int drawFadeOn;
+`+drawFadeWindowGLSL+``)
 	src = reMain.ReplaceAllString(src, "void nvVertexMain()")
 	return src + `
 
@@ -103,6 +111,8 @@ void main() {
     instanceWind = visInstances[visRecA.z].wind;
     nvVertexMain();
     visCmd = visRecB.x;
+    vec4 dr = visInstances[visRecA.z].draw;
+    visFade = drawFadeOn != 0 ? vec3(drawFadeWindow(distance(drawEye, instanceModel[3].xyz), dr), dr.z) : vec3(0.0, 1.0, 0.0);
 }
 `, nil
 }
@@ -159,6 +169,15 @@ func materialFragmentPart(fragSrc string) (string, error) {
 	// The blend pair is optional (a file without blending is still fine).
 	src = strings.ReplaceAll(src, "texture(blendTex,", "nvTexture(blendTex,")
 	src = strings.ReplaceAll(src, "texture(blendMask,", "nvTexture(blendMask,")
+	// And the ARM map (specular.glsl's inputs; gfx/texture_armmap.go).
+	src = strings.ReplaceAll(src, "texture(armMap,", "nvTexture(armMap,")
+	// NV_MATERIAL_PASS lets fragment.glsl leave out what the material pass
+	// should not compile (an #ifndef block), should it ever need to.
+	if v := reVersion.FindStringIndex(src); v != nil {
+		src = src[:v[1]] + "#define NV_MATERIAL_PASS 1\n" + src[v[1]:]
+	} else {
+		src = "#define NV_MATERIAL_PASS 1\n" + src
+	}
 	if strings.Contains(src, "dFdx(") || strings.Contains(src, "dFdy(") {
 		return "", fmt.Errorf("fragment.glsl: a screen-space derivative the material pass does not reconstruct")
 	}

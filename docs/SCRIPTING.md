@@ -529,7 +529,7 @@ editor's reference panel. The core surface:
 | light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `gravity` `player_control` `player_gravity` `player_fly` `camera_fov` `viewmodel_fov` `view_distance` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `pad_sensitivity_x` `pad_sensitivity_y` `pad_invert_y` `pad_dead_zone` `pad_look_curve` `pad_vibration` `pad_hold_time` `aim_assist` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `gi_quality` `foliage_distance` `foliage_shadows` `nanite_lod_error` `nanite_stream_pool_mb` `anti_aliasing` `taa_sharpen` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` `camera_detached` `camera_position` `camera_yaw` `camera_pitch` `camera_roll` `cursor` · read-only: `load_progress` `load_stage` `dev_build` `input_device` `gamepad_type` `gamepad_connected` `camera_direction` `camera_orbit_distance` `look_delta` `cursor_position` `cursor_free` `cursor_over_ui` |
+| level | `step_height` `gravity` `player_control` `player_gravity` `player_fly` `camera_fov` `viewmodel_fov` `view_distance` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `pad_sensitivity_x` `pad_sensitivity_y` `pad_invert_y` `pad_dead_zone` `pad_look_curve` `pad_vibration` `pad_hold_time` `aim_assist` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `gi_quality` `water_quality` `rain_ripples` `foliage_distance` `foliage_shadows` `nanite_lod_error` `nanite_stream_pool_mb` `anti_aliasing` `taa_sharpen` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` `camera_detached` `camera_position` `camera_yaw` `camera_pitch` `camera_roll` `cursor` · read-only: `load_progress` `load_stage` `dev_build` `input_device` `gamepad_type` `gamepad_connected` `camera_direction` `camera_orbit_distance` `look_delta` `cursor_position` `cursor_free` `cursor_over_ui` |
 
 ### Moving a brush
 
@@ -2030,6 +2030,42 @@ while the keyboard stays with the screen: a build menu over a level the player
 is still placing things in, a tactical pause over one they are still giving
 orders in. The events arrive under a pausing screen too — only
 `@level.prop.paused` stops them.
+
+### Water
+
+`water_at(place)` asks about the water at a vec or an object's position
+(docs/guide/37-water.md). It answers `null` where no water surface lies over
+or under the point at all, and otherwise a dict:
+
+| Key | Type | What it is |
+| --- | --- | --- |
+| `under` | `bool` | The point is below the surface — by at most 40 units, so a cave far under a lake is not in the lake. |
+| `depth` | number | How far below the surface the point is; negative above it. |
+| `surface` | number | The still surface's height at the point's x and z (the waves ride a few centimetres either side). |
+| `flow` | `vec` | The current, units a second along x and z (y is 0): a generated river's flow; zero on still water. |
+| `material` | `string` | The material the water wears (`water_river`, `water_lake`, …). |
+
+```
+def on_tick(:tick:, dt float) -> null
+    w = water_at(@self)
+    if w != null and w["under"]
+        impulse(@self, w["flow"] * dt)   -- drift with the river
+    end
+end
+```
+
+Every kind of water answers: a generator's ponds, lakes, marshes and rivers
+(the query is built from the meshes they draw with, so a release build answers
+too) and a brush face wearing a water material. A waterfall's falling sheet is
+not a surface and is left out. Where surfaces overlap in plan, the one just
+above the point answers. Asking costs one grid cell's triangle tests, so every
+entity can ask every tick.
+
+Wading, splashes and the rings on the surface need no script: the engine makes
+them for the player and every falling entity, and a `hitscan` that crosses
+water splashes it on the way (the shot carries on to what it hits).
+`@level.prop.rain_ripples` (0 to 1, the level's `rain_ripples:`) rings every
+water surface with rain; it is written onto the level, so a save keeps it.
 
 ### Particles
 

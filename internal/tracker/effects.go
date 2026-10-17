@@ -39,6 +39,9 @@ const (
 	FxParam       byte = 'H' // xy: set song param x to y/15
 	FxMarker      byte = 'E' // xx: fire marker event xx
 	FxReverse     byte = 'I' // 01 plays the sample backwards, 00 forwards
+	// FxArticulation is the one command past the alphabet: every letter is
+	// taken, and @ reads as "at", as in "play at pizzicato".
+	FxArticulation byte = '@' // xx: articulation xx of the instrument, 00 its default
 )
 
 // EffectInfo describes one command for the editor.
@@ -71,6 +74,7 @@ var Effects = []EffectInfo{
 	{FxSendB, "Delay send", "Echo", "Set how much of the channel goes to the delay, 00..FF.", false, "Space"},
 	{FxOffset, "Sample offset", "Offset", "Start the sample xx/256 of the way through.", false, "Sample"},
 	{FxReverse, "Reverse", "Reverse", "01 plays the sample backwards, 00 forwards again.", false, "Sample"},
+	{FxArticulation, "Articulation", "Artic", "Play the instrument's articulation xx from this row's note on: 00 is its default, 01 the first in its list (staccato, pizzicato, ...). Holds until changed or the instrument changes.", false, "Sample"},
 	{FxCutoff, "Filter cutoff", "Cutoff", "Set the channel's low-pass: 00 is dark, FF fully open.", false, "Filter"},
 	{FxResonance, "Filter resonance", "Reso", "Set the filter's resonance, 00..FF.", false, "Filter"},
 	{FxCutoffSlide, "Cutoff slide", "CutSlide", "Open the filter by x or close it by y every tick.", true, "Filter"},

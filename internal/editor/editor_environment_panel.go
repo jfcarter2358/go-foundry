@@ -38,6 +38,7 @@ func editorEnvironmentSection(lvl *world.Level) {
 	editorSkyGroup(lvl)
 	editorFogGroup(lvl)
 	editorViewDistanceGroup(lvl)
+	editorStylizeGroup(lvl)
 }
 
 // ---------- View distance ----------
@@ -329,5 +330,95 @@ func editorFogBody(lvl *world.Level) {
 		editorTextMutedWrapped("Add a sky to blend the fog into the horizon.")
 	}
 
+	editorFogAtmosphere(f)
 	f.Clamp()
+}
+
+// editorFogAtmosphere draws the atmosphere (world/fog_atmosphere.go): height
+// fog, aerial perspective and the sun's glow, each behind its own switch, and
+// the sky's share of them. A generator's environment stage writes the same
+// fields; a rerun puts its own back.
+func editorFogAtmosphere(f *world.Fog) {
+	imgui.Separator()
+	imgui.Text("Atmosphere")
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The air itself, integrated along each view ray: height fog in the low ground,\n" +
+			"haze that thickens and turns bluish with range, and the sun's glow through it.\n" +
+			"Set the mode to none above to have only these.")
+	}
+	toggle := func(label string, on *bool) bool {
+		v := *on
+		if imgui.Checkbox(label, &v) {
+			EditorPushUndo()
+			*on = v
+		}
+		return *on
+	}
+	if toggle("Height fog##fogh", &f.Height.Enabled) {
+		editorDragFloatStep("Density##fogh_d", &f.Height.Density, 0, 1, "%.4f", 0.0005)
+		editorDragFloatStep("Base height##fogh_b", &f.Height.Base, -1000, 1000, "%.1f", 0.5)
+		editorDragFloatStep("Falloff##fogh_f", &f.Height.Falloff, 0.0001, 10, "%.3f", 0.005)
+		editorSkyColor("Colour##fogh_c", &f.Height.Color)
+	}
+	if toggle("Aerial perspective##foga", &f.Aerial.Enabled) {
+		editorDragFloatStep("Distance##foga_d", &f.Aerial.Distance, world.FogAerialMinDistance, 100000, "%.0f", 10)
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("How far the haze takes 63% of what is behind it.")
+		}
+		editorSkyColor("Colour##foga_c", &f.Aerial.Color)
+		editorDragFloatStep("Scale height##foga_h", &f.Aerial.ScaleHeight, 1, 100000, "%.0f", 10)
+		editorDragFloatStep("Base height##foga_b", &f.Aerial.Base, -1000, 1000, "%.1f", 0.5)
+		tint := [3]float32{f.Aerial.Tint[0], f.Aerial.Tint[1], f.Aerial.Tint[2]}
+		if imgui.DragFloat3V("Tint##foga_t", &tint, 0.01, 0, 8, "%.2f", 0) {
+			f.Aerial.Tint = mgl32.Vec3{tint[0], tint[1], tint[2]}
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Per-channel extinction. Blue above red is Rayleigh's: far rock goes bluish.")
+		}
+	}
+	if toggle("Sun glow##fogs", &f.Sun.Enabled) {
+		editorDragFloatStep("Strength##fogs_s", &f.Sun.Strength, 0, 16, "%.3f", 0.005)
+		editorDragFloatStep("Anisotropy##fogs_g", &f.Sun.Anisotropy, -0.95, 0.95, "%.2f", 0.01)
+	}
+	if f.Height.Enabled || f.Aerial.Enabled || f.Sun.Enabled {
+		editorDragFloatStep("Sky haze##fog_sh", &f.SkyHaze, 0, 1, "%.2f", 0.05)
+	}
+	editorFogShafts(f, toggle)
+}
+
+// editorFogShafts draws the light shafts (world/fog_shafts.go): the marched,
+// shadowed sunlight in dusty air near the eye.
+func editorFogShafts(f *world.Fog, toggle func(string, *bool) bool) {
+	on := toggle("Light shafts##fogsh", &f.Shafts.Enabled)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Sunlight scattered by dust near the eye, shadowed: beams through a slot\n" +
+			"canyon's gaps and a cave mouth. Marched every frame (FOUNDRY_SHAFTS=0 turns it off).\n" +
+			"Ambient volumes' dust adds to it inside them.")
+	}
+	if !on {
+		return
+	}
+	s := &f.Shafts
+	editorDragFloatStep("Density##fogsh_d", &s.Density, 0, 1, "%.4f", 0.0005)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Extinction per metre at the base height: 0.01 takes 63% over 100 m.")
+	}
+	editorDragFloatStep("Distance##fogsh_r", &s.Distance, 1, 2000, "%.0f", 5)
+	steps := int32(s.Steps)
+	if imgui.SliderInt("Steps##fogsh_n", &steps, world.FogShaftsMinSteps, world.FogShaftsMaxSteps) {
+		EditorPushUndo()
+		s.Steps = int(steps)
+	}
+	editorSkyColor("Tint##fogsh_c", &s.Color)
+	editorDragFloatStep("Base height##fogsh_b", &s.Base, -1000, 1000, "%.1f", 0.5)
+	editorDragFloatStep("Falloff##fogsh_f", &s.Falloff, 0, 10, "%.3f", 0.005)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The dust thins by e every 1/falloff metres above the base. 0 is uniform.")
+	}
+	editorDragFloatStep("Anisotropy##fogsh_g", &s.Anisotropy, -0.95, 0.95, "%.2f", 0.01)
+	editorDragFloatStep("Strength##fogsh_s", &s.Strength, 0, 16, "%.2f", 0.05)
+	editorDragFloatStep("Ambient##fogsh_a", &s.Ambient, 0, 4, "%.2f", 0.05)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How much sky light the dust scatters, so shaded dust is not black smoke.")
+	}
 }

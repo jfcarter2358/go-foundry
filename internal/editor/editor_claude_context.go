@@ -39,6 +39,14 @@ func claudePrimer() string {
 skeletons/ (.fskl — the armature and animation clips a model links, shared between
 models), textures/ (.png and .ftex), entities/ (.yaml type definitions),
 particles/ (.fpar), ui/ (.fui screens), sounds/. game.yaml is the project's manifest.
+generators/ (.fgen) are procedural generator documents (the generator_stages tool has
+their schema); run one with ` + "`foundry gen run <name>`" + `, which writes generated/<name>/
+and replaces the gen.<name>.* entries in its target level.
+environments/ (.fgen) are environment presets a level's region volumes (a volume's region: block)
+grow; a level's world generator is generators/<level>_world.fgen (` + "`foundry gen world <level>`" + `).
+Poly Haven (CC0) scans are imported with `+"`foundry polyhaven import <id>`"+` (search: `+"`foundry polyhaven search`"+`)
+into models/polyhaven/<id>/ (cooked .fnm, provenance polyhaven.yaml) and textures/ph_<id>*.png;
+the generator stages polyhaven_rocks/polyhaven_plants/polyhaven_textures do the same inside a run.
 
 Reference:
   docs/guide/        the authoring guide, one chapter per subsystem. The docs tool

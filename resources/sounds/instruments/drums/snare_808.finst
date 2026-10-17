@@ -1,0 +1,13 @@
+version: 1
+name: Snare 808
+samples: [drums/snare_808]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Snare 808
+    line: 4
+description: 'Classic 808 snare: two tones and hissy snap'

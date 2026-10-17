@@ -1,0 +1,15 @@
+version: 1
+name: Marimba
+samples: [keys/marimba]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.3
+polyphony: 6
+playback:
+  range: [C-2, C-7]
+  clef: grand
+  gliss: diatonic
+  release: 1
+description: 'Marimba: tuned wooden bars over resonators'

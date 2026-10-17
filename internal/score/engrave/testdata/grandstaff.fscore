@@ -1,0 +1,17 @@
+version: 1
+title: Grand staff
+meter: [{bar: 1, sig: 3/4}]
+key: [{bar: 1, fifths: -1}, {bar: 3, fifths: 2}]
+lines:
+- name: Violin
+  instrument: strings/violin_section
+  staves:
+  - clef: treble
+    voices: ["| h.A5 | qF5 qE5 qD5 | h.F#5 | R"]
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices: ["| qF4+A4+C5 qr qF4+A4+C5 | qG4+Bb4 qr qA4+C5 | h.A4+D5+F#5 | R"]
+  - clef: bass
+    voices: ["| h.F2+F3 | qBb2 qC3 qF2 | h.D2+D3 | R"]

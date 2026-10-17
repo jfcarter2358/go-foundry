@@ -151,9 +151,10 @@ func TestWaterMaterialMatchesTheEngineDefaults(t *testing.T) {
 	if !s.HasWater {
 		t.Fatal("water.fmat does not resolve as water")
 	}
-	if s.Water.WaveAmplitude != 0.06 || s.Water.WaveLength != 3 ||
-		s.Water.WaveSpeed != 0.35 || s.Water.Reflectivity != 0.45 {
-		t.Errorf("water.fmat no longer matches gfx.DefaultWaterParams: %+v", s.Water)
+	// Since W1 (docs/terrain-paint/PHASE_W1.md) both sides read one value,
+	// DefaultWater; water.fmat spells it out.
+	if s.Water != DefaultWater() {
+		t.Errorf("water.fmat no longer matches DefaultWater: %+v", s.Water)
 	}
 }
 

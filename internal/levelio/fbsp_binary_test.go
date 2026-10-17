@@ -242,9 +242,11 @@ func TestTheColumnarFormatCoversEveryField(t *testing.T) {
 	want := map[reflect.Type][]string{
 		reflect.TypeOf(compile.Face{}): {"Alpha", "BackIndirect", "BackLight", "BackSunShare", "BlendMask",
 			"BlendTexture", "Brush", "Chunk", "CoveredBy", "Detail", "DoubleSided", "FaceIdx", "Indirect",
-			"Light", "NoDraw", "Plane", "Points", "Smooth", "SmoothAngle", "SmoothBackIndirect",
+			"Light", "Lightmap", "NoDraw", "Plane", "Points", "Smooth", "SmoothAngle", "SmoothBackIndirect",
 			"SmoothBackLight", "SmoothCorner", "SmoothIndirect", "SmoothLight", "SmoothPoly", "SunShare",
 			"Texture", "UVMap", "UVMapped", "UVOffset", "UVOrigin", "UVRotation", "UVScale"},
+		reflect.TypeOf(compile.LightmapChart{}):    {"H", "Origin", "Page", "Texel", "U", "V", "W", "X", "Y"},
+		reflect.TypeOf(compile.LightmapPage{}):     {"Size", "Texels"},
 		reflect.TypeOf(world.UVMap{}):              {"U", "V"},
 		reflect.TypeOf(bsp.Plane{}):                {"D", "N"},
 		reflect.TypeOf(bsp.Tree{}):                 {"Hi", "Leaves", "Lo", "Nodes", "Root"},
@@ -253,7 +255,7 @@ func TestTheColumnarFormatCoversEveryField(t *testing.T) {
 		reflect.TypeOf(bsp.PVS{}):                  {"Bits", "Leaves", "RowBytes"},
 		reflect.TypeOf(world.StaticClusterGroup{}): {"Clusters", "DAG", "Key", "Order", "Sig"},
 		reflect.TypeOf(world.StaticGroupDAG{}):     {"BaseOrder", "ClusterLeaf", "Clusters", "Indices", "Leaves", "Levels", "Nodes"},
-		reflect.TypeOf(CompiledLevel{}):            {"Chunks", "Clusters", "Faces", "PVS", "Raw", "Stats", "Tree", "Version"},
+		reflect.TypeOf(CompiledLevel{}):            {"Chunks", "Clusters", "Faces", "Lightmaps", "PVS", "Raw", "Stats", "Tree", "Version"},
 	}
 	for tp, fields := range want {
 		if got := exportedFields(tp); !reflect.DeepEqual(got, fields) {

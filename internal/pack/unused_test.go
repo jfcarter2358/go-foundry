@@ -188,3 +188,41 @@ func TestUnusedCommandPrintsTheReport(t *testing.T) {
 		t.Errorf("output:\n%s", out.String())
 	}
 }
+
+// Music a script switches to is reached through the script: a score named
+// by play_music, its instruments and their samples are live, and so is a
+// stinger score named by song_stinger and a recording; an instrument and a
+// score nothing names are not.
+func TestUnusedFollowsScoresAndTheirInstruments(t *testing.T) {
+	root := unusedTree(t, map[string]string{
+		"levels/start.yaml": "chunks:\n  - floor: {texture: grass}\nscripts: [counter, music]\n",
+		"scripts/music.flang": `
+def on_go(:go:) -> null
+    play_music("battle")
+    song_stinger("stings/victory", "bar")
+end
+`,
+		"sounds/battle.fscore":                        "version: 1\nbars: 1\nlines:\n  - {name: Horns, instrument: brass/horn_section, staves: [{clef: treble, voices: [\"| wG4 |\"]}]}\n",
+		"sounds/stings/victory.fscore":                "version: 1\nbars: 1\nlines:\n  - {name: Bell, instrument: perc/bell, staves: [{clef: treble, voices: [\"| wC5 |\"]}]}\n",
+		"sounds/old_theme.fscore":                     "version: 1\nbars: 1\nlines:\n  - {name: Tuba, instrument: brass/tuba, staves: [{clef: bass, voices: [\"| wC2 |\"]}]}\n",
+		"sounds/instruments/brass/horn_section.finst": "version: 1\nname: Horns\nsamples: [orchestral/horn_f3]\n",
+		"sounds/instruments/perc/bell.finst":          "version: 1\nname: Bell\nsamples: [perc/bell_c5]\n",
+		"sounds/instruments/brass/tuba.finst":         "version: 1\nname: Tuba\nsamples: [orchestral/tuba_c2]\n",
+		"sounds/samples/orchestral/horn_f3.wav":       "RIFF",
+		"sounds/samples/orchestral/horn_f3.fsmp":      "base_note: F-3\n",
+		"sounds/samples/perc/bell_c5.wav":             "RIFF",
+		"sounds/samples/orchestral/tuba_c2.wav":       "RIFF",
+	})
+	r, err := FindUnused(UnusedOptions{Src: root, AllLevels: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"sounds/instruments/brass/tuba.finst",
+		"sounds/old_theme.fscore",
+		"sounds/samples/orchestral/tuba_c2.wav",
+	}
+	if got := unusedPaths(t, r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unused = %v, want %v", got, want)
+	}
+}

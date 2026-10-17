@@ -31,6 +31,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/game"
+	"foundry/internal/material"
 	"foundry/internal/nanite"
 )
 
@@ -52,14 +53,17 @@ var textExts = map[string]bool{
 	".fpar": true, // particle effects
 	".fai":  true, // AI decision trees, which name the animations and effects
 	//                their nodes play, and the tags they send to
-	".fmat":  true, // materials, which name the textures their effects use
-	".fbio":  true, // terrain biomes, which name their ground textures
-	".fmdl":  true, // models, which name the skeleton they are rigged to
-	".fskl":  true, // skeletons, whose clips name nothing but are scanned for consistency
-	".flang": true,
-	".ftrk":  true, // tracker songs, which name their library samples
-	".obj":   true, // model source, names its .mtl
-	".mtl":   true, // and that names its textures
+	".fmat":   true, // materials, which name the textures their effects use
+	".fbio":   true, // terrain biomes, which name their ground textures
+	".fmdl":   true, // models, which name the skeleton they are rigged to
+	".fskl":   true, // skeletons, whose clips name nothing but are scanned for consistency
+	".flang":  true,
+	".ftrk":   true, // tracker songs, which name their library samples and instruments
+	".finst":  true, // library instruments, which name their samples
+	".fscore": true, // notated scores, which name their library instruments
+	".fgen":   true, // procedural generators, which name textures and their level
+	".obj":    true, // model source, names its .mtl
+	".mtl":    true, // and that names its textures
 }
 
 // indexAssets builds the reference index over the given content directories.
@@ -129,12 +133,30 @@ func referenceNames(slash string) []string {
 	if rel, ok := strings.CutPrefix(slash, trackerSamplesDir); ok {
 		names = append(names, rel, strings.TrimSuffix(rel, filepath.Ext(rel)))
 	}
+	// A library instrument is named the same way, relative to its library:
+	// a song slot's `ref: strings/violin_section` is
+	// sounds/instruments/strings/violin_section.finst.
+	if rel, ok := strings.CutPrefix(slash, trackerInstrumentsDir); ok {
+		names = append(names, rel, strings.TrimSuffix(rel, filepath.Ext(rel)))
+	}
 	// A normal map is never named by content: the engine derives its name from
 	// the albedo's and loads it alongside (gfx.ensureNormalMapLoaded). So it
 	// answers to the albedo's names too — otherwise every texture's relief
 	// would be pruned out of a release for looking unreferenced.
 	if base := strings.TrimSuffix(stem, fileutil.NormalMapSuffix); base != stem {
 		names = append(names, base, dir+"/"+base, base+filepath.Ext(base))
+	}
+	// An ARM map likewise (gfx/texture_armmap.go: AO, roughness, metal).
+	if base := strings.TrimSuffix(stem, fileutil.ARMMapSuffix); base != stem {
+		names = append(names, base, dir+"/"+base)
+	}
+	// A splat layer's height and AO maps are the same: the material names the
+	// albedo and the engine finds <name>_height and <name>_ao beside it
+	// (gfx.SplatArraysFor, docs/canyon/PHASE_5.md).
+	for _, suf := range []string{"_height", "_ao"} {
+		if base := strings.TrimSuffix(stem, suf); base != stem && dir == fileutil.TexturesDirName {
+			names = append(names, base, dir+"/"+base)
+		}
 	}
 	// A cubemap face is named by its set's base: `sky_cubemap = "dusk"` in a
 	// script, or the editor's base-name field, becomes dusk_px, dusk_nx, ...
@@ -152,8 +174,12 @@ func referenceNames(slash string) []string {
 // same reason as LevelSourceExt: this tool does not depend on the engine.
 var cubemapFaceSuffixes = []string{"_px", "_nx", "_py", "_ny", "_pz", "_nz"}
 
-// trackerSamplesDir mirrors tracker.SamplesDir under the content root.
-const trackerSamplesDir = "sounds/samples/"
+// trackerSamplesDir and trackerInstrumentsDir mirror tracker.SamplesDir and
+// tracker.InstrumentsDir under the content root.
+const (
+	trackerSamplesDir     = "sounds/samples/"
+	trackerInstrumentsDir = "sounds/instruments/"
+)
 
 // manifestRoots is what a game reaches before any content says anything.
 //
@@ -226,6 +252,20 @@ func reachable(src string, idx assetIndex, roots []string) map[string]bool {
 			continue
 		}
 
+		// The grass instancer's files are binary too (internal/grassfield): a
+		// field names its kit, a kit its clumps' textures.
+		if names := grassRefs(filepath.Join(src, filepath.FromSlash(path))); names != nil {
+			for _, n := range names {
+				for hit := range idx[n] {
+					if !keep[hit] {
+						keep[hit] = true
+						frontier = append(frontier, hit)
+					}
+				}
+			}
+			continue
+		}
+
 		if !textExts[strings.ToLower(filepath.Ext(path))] {
 			continue
 		}
@@ -238,6 +278,19 @@ func reachable(src string, idx assetIndex, roots []string) map[string]bool {
 				if !keep[hit] {
 					keep[hit] = true
 					frontier = append(frontier, hit)
+				}
+			}
+		}
+		// A material with a soft-ground layer (sand, snow) needs its kind's
+		// step sound and puff, which the game names from Go
+		// (material.SoftStepAsset), not the material.
+		if strings.EqualFold(filepath.Ext(path), ".fmat") {
+			for _, k := range material.SoftKindsIn(string(data)) {
+				for hit := range idx[material.SoftStepAsset(k)] {
+					if !keep[hit] {
+						keep[hit] = true
+						frontier = append(frontier, hit)
+					}
 				}
 			}
 		}

@@ -88,7 +88,8 @@ void main() {
         // underneath, so a blade and the ground it stands on agree.
         vec3 lightPos = worldPos + vec3(0.0, BIOME_FOLIAGE_SHADOW_LIFT, 0.0);
         vec3 lighting = biomeLighting(lightPos, worldNormal, vViewDepth, receiveShadows != 0, true);
-        vColor = giDebugAlbedo(bBaseColor) * clamp(lighting, 0.0, 1.0) * bAO;
+        // Scene units (gfx/hdr.go): hdrLightMax is 1 in LDR.
+        vColor = giDebugAlbedo(bBaseColor) * clamp(lighting, 0.0, hdrLightMax()) * bAO;
         vBaseColor = vec3(0.0);
     }
 

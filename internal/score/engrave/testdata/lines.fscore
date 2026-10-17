@@ -1,0 +1,23 @@
+version: 1
+title: Lines
+lines:
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qC6(8va) qD6 qE6 qF6
+      | qG6 qA6 hC7(ottava_end)
+      | qC5 qD5 qE5 qF5
+      | qC3(8vb) qD3 qE3 qF3(ottava_end)
+      | wC5
+  - clef: bass
+    clefs: [{at: "3:3", clef: treble}, {at: "5", clef: bass}]
+    voices:
+    - |
+      | qC3(ped) qE3 qG3 qC4
+      | qC3(ped) qE3 qG3 qC4(ped_end)
+      | qC3(ped) qE3 qG4 qC5
+      | qE4 qG4(ped) qB4 qC5(ped_end)
+      | wC3(15mb)

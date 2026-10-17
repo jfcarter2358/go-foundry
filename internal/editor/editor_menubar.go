@@ -56,6 +56,9 @@ const (
 	editorKindUI
 	editorKindAI
 	editorKindTracker
+	editorKindScore
+	editorKindGenerator
+	editorKindPolyHaven
 )
 
 // editorSwitchTarget is one entry of the switcher strip.
@@ -103,6 +106,16 @@ func editorSwitchTargets() []editorSwitchTarget {
 		{editorKindTracker, "Tracker", TrackerEditorOpen, OpenTrackerEditorWindow,
 			"Compose music (.ftrk) — patterns, instruments and samples, with\n" +
 				"sections and params a script can steer. Play one with play_music."},
+		{editorKindScore, "Score", ScoreEditorOpen, OpenScoreEditorWindow,
+			"Write music in notation (.fscore) — staves, chords, voices, tuplets,\n" +
+				"entered the way Sibelius or MuseScore enters them, played through\n" +
+				"the same instruments as the Tracker."},
+		{editorKindGenerator, "Generator", GeneratorEditorOpen, OpenGeneratorEditorWindow,
+			"Procedural generators (generators/*.fgen) — stages that build terrain,\n" +
+				"rocks and scatter, previewed live and run into a level's scenery."},
+		{editorKindPolyHaven, "Poly Haven", PolyHavenBrowserOpen, OpenPolyHavenBrowser,
+			"Browse and import Poly Haven's CC0 scans — rocks, cliffs, plants and\n" +
+				"ground textures — into models/polyhaven/ and textures/ph_*."},
 	}
 }
 

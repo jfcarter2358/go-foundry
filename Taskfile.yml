@@ -78,6 +78,12 @@ vars:
     -runtime {{.EDITOR_RUNTIMES}}/foundry-release-linux-amd64
     -runtime {{.EDITOR_RUNTIMES}}/foundry-setup-windows-amd64.exe
     -runtime resources/SDL2.dll
+  # The Score editor's OGG Vorbis and MP3 encoders, for the install's codecs/
+  # (docs/score/CODECS.md): the Windows ones are fetched by `task
+  # codecs-windows`; a Linux install uses the system's unless CODECS_LINUX
+  # names a folder of .so files to carry.
+  CODECS_WINDOWS: '{{.CODECS_WINDOWS | default (printf "%s/codecs/windows-amd64" .BUILD_DIR)}}'
+  CODECS_LINUX: '{{.CODECS_LINUX | default ""}}'
 
 tasks:
   default:
@@ -253,6 +259,19 @@ tasks:
     cmds:
       - echo "{{.EDITOR_VERSION}}"
 
+  codecs-windows:
+    desc: Fetch the OGG Vorbis and MP3 encoder DLLs the Windows editor carries.
+    summary: |
+      MSYS2's mingw64 builds of libogg, libvorbis, libvorbisenc and LAME's
+      libmp3lame, pinned in packaging/codecs/fetch-windows.sh, with their
+      licences. The editor loads them at run time for its OGG and MP3 exports;
+      nothing links against them and no game carries them.
+    status:
+      - test -f {{.CODECS_WINDOWS}}/libmp3lame-0.dll
+      - test -f {{.CODECS_WINDOWS}}/libvorbisenc-2.dll
+    cmds:
+      - sh packaging/codecs/fetch-windows.sh {{.CODECS_WINDOWS}}
+
   editor-runtimes:
     desc: Build the release runtimes the editor distribution carries.
     run: when_changed
@@ -266,7 +285,7 @@ tasks:
       The Windows editor: a console program, as `task windows` builds it — the
       console is where a crash says what happened, and the git and go processes
       the editor starts would each flash one up under a windowsgui parent.
-    deps: [editor-runtimes]
+    deps: [editor-runtimes, codecs-windows]
     cmds:
       - >-
         GOOS=windows GOARCH=amd64 CGO_ENABLED=1
@@ -275,6 +294,7 @@ tasks:
       - >-
         {{.EDITOR_PACK}} -goos windows -exe {{.BUILD_DIR}}/foundry-editor-windows.exe
         -lib resources/SDL2.dll -setup-stub {{.EDITOR_RUNTIMES}}/foundry-setup-windows-amd64.exe
+        -codecs {{.CODECS_WINDOWS}}
         -stage {{.BUILD_DIR}}/editor-windows
 
   dist-editor-linux:
@@ -282,7 +302,7 @@ tasks:
     deps: [editor-runtimes]
     cmds:
       - GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -o {{.BUILD_DIR}}/foundry-editor-linux ./cmd/foundry
-      - '{{.EDITOR_PACK}} -goos linux -exe {{.BUILD_DIR}}/foundry-editor-linux -stage {{.BUILD_DIR}}/editor-linux'
+      - '{{.EDITOR_PACK}} -goos linux -exe {{.BUILD_DIR}}/foundry-editor-linux {{if .CODECS_LINUX}}-codecs {{.CODECS_LINUX}}{{end}} -stage {{.BUILD_DIR}}/editor-linux'
 
   # ==========================================================================
   # Releases and installers

@@ -63,6 +63,10 @@ type BSPTree struct {
 	// the renderer is concerned — there are just more of them.
 	Faces []Face
 
+	// Lightmaps are the pages a lightmapped bake made (lightmap.go), which
+	// faces' Lightmap charts index; nil from a per-vertex bake.
+	Lightmaps []LightmapPage
+
 	// reachedVia is how the void fill reached each cell, kept so that a leak
 	// can be traced back to the opening it came in through. Set by
 	// MarkOutside; nil until it has run.

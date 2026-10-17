@@ -1,0 +1,9 @@
+version: 1
+name: Chip Triangle
+samples: [chip/chip_triangle]
+fade_out: 0.02
+interp: nearest
+playback:
+  range: [C-2, C-8]
+  clef: treble
+description: 'NES triangle: 4-bit staircase bass'

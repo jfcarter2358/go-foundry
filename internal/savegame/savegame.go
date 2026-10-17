@@ -82,8 +82,12 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 	ws := savefile.WorldState{
 		GlobalLight:  lvl.Lights.Global,
 		StepHeight:   lvl.Player.StepHeight,
+		Camera:       lvl.Player.Camera,
 		Gravity:      world.CopyFloatPtr(lvl.Gravity),
 		ViewDistance: lvl.ViewDistance,
+
+		RainRipples:    lvl.RainRipples,
+		HasRainRipples: true,
 	}
 	for i := range lvl.Entities {
 		ws.Entities = append(ws.Entities, captureEntity(&lvl.Entities[i]))
@@ -142,6 +146,13 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 		if m.Song != nil {
 			pos := m.Song.Position()
 			ms.Order, ms.Row, ms.Playing = pos.Order, pos.Row, pos.Playing
+			if s := world.MusicSection(lvl); s != "" {
+				ms.Section = s
+			}
+		}
+		if m.Score != nil {
+			pos := m.Score.Position()
+			ms.Tick, ms.Playing = pos.Tick, pos.Playing
 			if s := world.MusicSection(lvl); s != "" {
 				ms.Section = s
 			}
@@ -391,11 +402,19 @@ func applyWorld(lvl *world.Level, ws *savefile.WorldState) {
 	if m := ws.Music; m != nil {
 		lvl.Music = &world.Music{Track: m.Track, Gain: m.Gain, Loop: m.Loop, Fade: m.Fade,
 			Section: m.Section, Params: m.Params, Mutes: m.Mutes,
-			Resume: m.Playing, ResumeOrder: m.Order, ResumeRow: m.Row}
+			Resume: m.Playing, ResumeOrder: m.Order, ResumeRow: m.Row, ResumeTick: m.Tick}
 	}
 	lvl.Player.StepHeight = ws.StepHeight
+	// A save from before the camera was saved has none; the level's own
+	// stands rather than being reset to first person.
+	if ws.Camera != (world.PlayerCamera{}) {
+		lvl.Player.Camera = ws.Camera
+	}
 	lvl.Gravity = world.CopyFloatPtr(ws.Gravity)
 	lvl.ViewDistance = ws.ViewDistance
+	if ws.HasRainRipples {
+		lvl.RainRipples = ws.RainRipples
+	}
 }
 
 // applyEntities takes out what was destroyed, makes again what was spawned,

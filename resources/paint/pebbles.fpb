@@ -1,0 +1,36 @@
+# Pebbles: a pebble splat and many small mossy stones half bedded in it.
+# Poly Haven (CC0): pebbles, rock_moss_set_02, stone_01.
+name: Pebbles
+doc: A pebbly ground with stones of a hand's size half buried in it.
+order: 80
+layers:
+  - {layer: pebbles, strength: 1}
+  - {layer: grass_clear, strength: 0.6}
+recipe:
+  paint:
+    - {name: pebbles, kind: material}
+    - {name: grass_clear, kind: exclude}
+  textures:
+    - {name: pebbles, id: pebbles, scale: 1.5}
+  material:
+    - {layer: pebbles, texture: pebbles, slots: [ash, snow, wet], fallback: gravel}
+  exclude:
+    - {layer: grass_clear, kind: grass_field, except: [cover]}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_stones
+      params:
+        assets: [{id: stone_01}, {id: rock_moss_set_02}]
+        thin_foliage: false
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: pebbles, plants: cover_stones, pieces: stone_01, tint_a: [0.7, 0.68, 0.66], tint_b: [0.85, 0.82, 0.78], orient: ground, wind: false, sink: 0.35,
+             tilt_jitter: 20, density: 6, scale: [0.6, 1.8], slope: [0, 50], cluster: 0, max_triangles: 300,
+             paint: pebbles, paint_band: [0.2, 0.9], range: 0.35, shadows: true}
+          - {name: pebble_stones, plants: cover_stones, pieces: rock_moss, orient: ground, wind: false, sink: 0.4,
+             tilt_jitter: 15, density: 0.8, scale: [0.06, 0.16], slope: [0, 50], cluster: 0, max_triangles: 300,
+             paint: pebbles, paint_band: [0.3, 1], range: 0.45, shadows: true}

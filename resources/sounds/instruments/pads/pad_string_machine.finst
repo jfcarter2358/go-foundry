@@ -1,0 +1,8 @@
+version: 1
+name: Pad String Machine
+samples: [pads/pad_string_machine]
+fade_out: 0.9
+playback:
+  range: [C-2, C-7]
+  clef: treble
+description: '70s string machine: twelve saws and an ensemble chorus'

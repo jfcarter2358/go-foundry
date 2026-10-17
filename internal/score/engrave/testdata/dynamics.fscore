@@ -1,0 +1,31 @@
+version: 1
+title: Dynamics
+lines:
+- name: Violin
+  instrument: strings/violin_section
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qC5(p) qD5 qE5(cresc) qF5
+      | qG5(hairpin_end) qA5(f) qG5(dim) qF5(hairpin_end)
+      | hE5(mp) hD5(cresc=text)
+      | qC5 qD5 qE5 qF5(hairpin_end)
+      | qG5(ff) qr qC4(sfz) qr
+      | qE4(fp) qr hG4(pp,expr=dolce)
+      | qA4(dim=text) qB4 qC5 qD5
+      | wE5(ppp)
+- name: Cello
+  instrument: strings/cello_section
+  staves:
+  - clef: bass
+    voices:
+    - |
+      | wC2(mf,tech=pizz.)
+      | hC3(sfp,cresc) hE3(hairpin_end)
+      | hC4(f,tech=arco) hB3(dim)
+      | hA3 hG3(niente)
+      | qF3(rfz) qE3(sffz) qD3(fz) qC3(rf)
+      | wG2(mp,"sul tasto")
+      | qC3(sf) qD3(pppp) qE3(ffff) qF3(fff)
+      | wC3(mp)

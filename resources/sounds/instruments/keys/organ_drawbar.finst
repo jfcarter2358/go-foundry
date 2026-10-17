@@ -1,0 +1,9 @@
+version: 1
+name: Organ Drawbar
+samples: [keys/organ_drawbar]
+fade_out: 0.12
+polyphony: 4
+playback:
+  range: [A-0, C-8]
+  clef: grand
+description: Tonewheel organ with rotary speaker

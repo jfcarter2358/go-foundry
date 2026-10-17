@@ -1,0 +1,16 @@
+version: 1
+name: Analog Bass
+samples: [bass/bass_moog]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.08
+articulations:
+- name: staccato
+  triggers: [stacc.]
+  fade_out: 0.03
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: Two detuned saws into a ladder filter

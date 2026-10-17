@@ -1,0 +1,9 @@
+version: 1
+name: Epiano Tine
+samples: [keys/epiano_tine]
+fade_out: 0.3
+polyphony: 4
+playback:
+  range: [A-0, C-8]
+  clef: grand
+description: 'Tine electric piano: bell attack, warm body'

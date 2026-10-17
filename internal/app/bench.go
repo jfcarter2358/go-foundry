@@ -33,10 +33,27 @@ package app
 //	menus     answer: a modal screen that comes up is answered with its
 //	          initial_focus, as `foundry play` does, so a level that opens on
 //	          a menu is measured playing rather than paused behind it
+//	editor    1: measure the editor's own 3D view of the level instead of
+//	          play — the level is installed under the editor, which stays
+//	          open, so its forward path, overlays and ImGui frame are what is
+//	          timed (docs/canyon/PERF.md)
+//	cursor    free: leave the pointer free for the scripts. By default a play
+//	          bench shows them a captured one, as play with a mouse-look
+//	          camera does: the bench frees the OS mouse so as not to grab
+//	          the desktop, and a free pointer is a world pick a frame for
+//	          the pointer events (docs/adventure/PHASE_F.md)
+//	slow      ms: log each profiled section slower than this in one frame
+//	          (which pass a hitch was; render.ProfileSlowMs)
 //	fly       1: the poses are waypoints of ONE flight — warm up at the first,
 //	          then fly through them, evenly in time, over the measured
 //	          frames — reported as one pose. What streaming (Nanite Phase 3,
 //	          docs/nanite/PHASE_3.md) is measured with: a view that moves.
+//
+//	A pose may end in @px,py,pz: the player is held there too (and moved
+//	along a flight with the camera), for a level whose scripts stream its
+//	areas by where the player is (adventure's level.flang;
+//	docs/adventure/PHASE_F.md). Without it the player stays where the game
+//	put them.
 
 import (
 	"fmt"
@@ -70,6 +87,9 @@ type benchPose struct {
 	spawn      bool
 	eye        mgl32.Vec3
 	yaw, pitch float32
+	// player, when hasPlayer, is where the player is held (pose@px,py,pz).
+	player    mgl32.Vec3
+	hasPlayer bool
 }
 
 type benchConfig struct {
@@ -83,6 +103,11 @@ type benchConfig struct {
 	cpuprof  string
 	shots    string
 	answer   bool
+	// editor measures the editor's view rather than play (editor=1).
+	editor bool
+	// freeCursor leaves the scripts a free pointer (cursor=free); by
+	// default a play bench pins it captured, as a third-person game holds it.
+	freeCursor bool
 	// path is the flight's waypoints (fly=1); poses is then the one flight.
 	path []benchPose
 }
@@ -100,12 +125,17 @@ var bench struct {
 	prof   *os.File
 	// answered is the modal screens menus=answer has clicked through.
 	answered map[string]bool
+	// shotTime is what saving the pose's picture took (shots=), taken off
+	// the frame it fell in: a bench's own PNG encode is not the game's.
+	shotTime time.Duration
 }
 
 // benchCounts is the overlay's scene counters, summed over the measured frames.
 type benchCounts struct {
 	staticDrawn, brushCalls, brushes, chunks, sprites, particles, spriteDraws, volumeDraws, scenery int
 	pointShadows, pointShadowRenders                                                                int
+	// scaleSum, scaleMin: the render scale over the measured frames.
+	scaleSum, scaleMin float64
 	// The sun's virtual shadow map (Phase 5): frames it ran in, pages
 	// resident, drawn, rectangles drawn, requests starved.
 	vsmFrames, vsmPages, vsmDrawn, vsmRects, vsmStarved, vsmDeferred int
@@ -143,9 +173,18 @@ func benchParse() (benchConfig, bool, error) {
 			c.shots = v
 		case "menus":
 			c.answer = v == "answer"
+		case "editor":
+			c.editor = v == "1"
 		case "fly":
 			if v == "1" {
 				c.path = []benchPose{} // filled from the poses below
+			}
+		case "cursor":
+			c.freeCursor = v == "free"
+		case "slow":
+			// Log each profile section slower than this many ms in a frame.
+			if ms, err := strconv.ParseFloat(v, 64); err == nil {
+				render.ProfileSlowMs = ms
 			}
 		case "gi_debug":
 			m, ok := render.ParseGIDebugMode(v)
@@ -172,6 +211,26 @@ func benchParse() (benchConfig, bool, error) {
 					c.poses = append(c.poses, benchPose{label: "spawn", spawn: true})
 					continue
 				}
+				var pl mgl32.Vec3
+				hasPl := false
+				if at := strings.Index(p, "@"); at >= 0 {
+					pf := strings.Split(p[at+1:], ",")
+					if len(pf) != 3 {
+						return c, true, fmt.Errorf("pose %q: want @px,py,pz after the pose", p)
+					}
+					for i := range pf {
+						x, err := strconv.ParseFloat(strings.TrimSpace(pf[i]), 32)
+						if err != nil {
+							return c, true, fmt.Errorf("pose %q: %v", p, err)
+						}
+						pl[i] = float32(x)
+					}
+					hasPl = true
+				}
+				lbl := p
+				if at := strings.Index(p, "@"); at >= 0 {
+					p = p[:at]
+				}
 				f := strings.Split(p, ",")
 				if len(f) != 5 {
 					return c, true, fmt.Errorf("pose %q: want x,y,z,yaw,pitch", p)
@@ -184,7 +243,8 @@ func benchParse() (benchConfig, bool, error) {
 					}
 					n[i] = float32(x)
 				}
-				c.poses = append(c.poses, benchPose{label: p, eye: mgl32.Vec3{n[0], n[1], n[2]}, yaw: n[3], pitch: n[4]})
+				c.poses = append(c.poses, benchPose{label: lbl, eye: mgl32.Vec3{n[0], n[1], n[2]}, yaw: n[3], pitch: n[4],
+					player: pl, hasPlayer: hasPl})
 			}
 		default:
 			return c, true, fmt.Errorf("unknown key %q", k)
@@ -232,7 +292,10 @@ func benchConfigure() {
 	// A benchmark measures the game, not the editor: a TAA run gets the
 	// window a release build makes, without samples nothing would use
 	// (render.KeepWindowMSAA). Before the window is created.
-	render.KeepWindowMSAA = false
+	// The editor's view (editor=1) keeps the samples, as the editor does.
+	if !cfg.editor {
+		render.KeepWindowMSAA = false
+	}
 }
 
 // benchStart loads the level and puts the engine into play on it. Called once,
@@ -262,11 +325,21 @@ func benchStart(level *world.Level) {
 		log.Fatalf("bench: loading %s: %v", name, err)
 	}
 	installLevel(level, &built)
-	if devActive() {
+	if cfg.editor {
+		// The editor's own view: open it if the build started in play, and
+		// let it forget any selection naming the level just replaced.
+		if !devActive() {
+			devToggle()
+		}
+		devAdoptLoadedLevel()
+	} else if devActive() {
 		devToggle() // into play, as tilde would
 	}
 	// The anti-aliasing mode (Phase 4): TAA draws into a scene target of its
 	// own, with the visibility buffer; MSAA into the window's samples.
+	if cfg.editor {
+		fmt.Fprintf(&bench.report, "EDITOR VIEW (editor=1)\n")
+	}
 	fmt.Fprintf(&bench.report, "bench %s (%s) — load %.1fs, %dx%d, AA %s, window MSAA %dx, visibility buffer %v, virtual shadow map %v, compute raster %q\n",
 		name, map[bool]string{true: "compiled", false: "yaml"}[cfg.compiled],
 		time.Since(t0).Seconds(), platform.WinWidth, platform.WinHeight, gfx.AntiAliasMode, render.AntiAliasGrantedSamples,
@@ -275,6 +348,9 @@ func benchStart(level *world.Level) {
 	platform.VSyncEnabled = false
 	platform.ApplyVSync()
 	gfx.SetMouseLock(false)
+	if !cfg.editor && !cfg.freeCursor {
+		hooks.PinCursor(hooks.CursorState{Free: false})
+	}
 	render.ProfileEnabled = true
 	bench.last = time.Now()
 }
@@ -303,6 +379,11 @@ func benchPlaceCamera() {
 	if p.spawn {
 		return
 	}
+	if p.hasPlayer && world.PlayerEntity != nil {
+		world.PlayerEntity.Frame, world.PlayerEntity.Seat = "", ""
+		world.PlayerEntity.Position = p.player
+		world.PlayerEntity.Velocity = mgl32.Vec3{}
+	}
 	gfx.Cam.Position = p.eye
 	gfx.Cam.Yaw, gfx.Cam.Pitch = p.yaw, p.pitch
 	gfx.Cam.Direction = gfx.DirectionFromAngles(p.yaw, p.pitch)
@@ -321,7 +402,8 @@ func benchFlightPose(path []benchPose, f, frames int) benchPose {
 	a, b := path[i], path[i+1]
 	u := min(t-float32(i), 1)
 	lerp := func(x, y float32) float32 { return x + (y-x)*u }
-	return benchPose{eye: a.eye.Add(b.eye.Sub(a.eye).Mul(u)), yaw: lerp(a.yaw, b.yaw), pitch: lerp(a.pitch, b.pitch)}
+	return benchPose{eye: a.eye.Add(b.eye.Sub(a.eye).Mul(u)), yaw: lerp(a.yaw, b.yaw), pitch: lerp(a.pitch, b.pitch),
+		player: a.player.Add(b.player.Sub(a.player).Mul(u)), hasPlayer: a.hasPlayer && b.hasPlayer}
 }
 
 // benchEndFrame counts the frame just finished and moves on to the next pose,
@@ -331,8 +413,8 @@ func benchEndFrame() {
 		return
 	}
 	now := time.Now()
-	dt := float64(now.Sub(bench.last).Nanoseconds()) / 1e6
-	bench.last = now
+	dt := float64((now.Sub(bench.last) - bench.shotTime).Nanoseconds()) / 1e6
+	bench.last, bench.shotTime = now, 0
 	bench.frame++
 
 	cfg := &bench.cfg
@@ -385,6 +467,13 @@ func benchEndFrame() {
 		c.giBuilt += g.BricksBuilt
 		c.giPending += g.BricksPending
 		c.giTraced += g.ProbesTraced
+		// The render scale (render/dynres.go), for dynamic resolution's
+		// mean and least.
+		rs := float64(render.CurrentRenderScale())
+		c.scaleSum += rs
+		if c.scaleMin == 0 || rs < c.scaleMin {
+			c.scaleMin = rs
+		}
 	}
 	if bench.frame < cfg.warm+cfg.frames {
 		return
@@ -424,6 +513,10 @@ func benchWritePose() {
 	fmt.Fprintf(r, "\n=== pose %s\n", p.label)
 	fmt.Fprintf(r, "frame  avg %.2f ms (%.1f fps)  p50 %.2f  p95 %.2f  p99 %.2f  max %.2f\n",
 		avg, 1000/avg, pct(0.5), pct(0.95), pct(0.99), ft[len(ft)-1])
+	if c := &bench.counts; c.scaleSum > 0 && (c.scaleMin < 0.999 || gfx.DynamicResolution) {
+		fmt.Fprintf(r, "render scale  mean %.3f  min %.2f (dynamic %v, target %.1f ms)\n",
+			c.scaleSum/n, c.scaleMin, gfx.DynamicResolution, gfx.DynamicResolutionTargetMs)
+	}
 	if st := render.DebugNaniteStream(); st.Slots > 0 {
 		// The page pool's run so far (Phase 3): its size against the level's
 		// pages, what moved, and the longest a frame's streaming took on the
@@ -431,6 +524,24 @@ func benchWritePose() {
 		fmt.Fprintf(r, "nanite pages  %d slots (%.0f MB) for %d pages, %d resident; %d uploaded, %d evicted, %d starved so far; longest update %.2f ms; staging %s\n",
 			st.Slots, float64(st.PoolBytes)/(1<<20), st.Pages, st.Resident, st.TotalUploaded, st.TotalEvicted, st.TotalStarved,
 			float64(st.MaxUpdateTime.Microseconds())/1000, map[bool]string{true: "persistent", false: "glBufferSubData"}[st.Persistent])
+	}
+	// The grass instancer's last frame (render/grass_field.go), when the
+	// level has grass fields.
+	if gs := render.GrassFieldsLastStats(); gs.Resident > 0 {
+		fmt.Fprintf(r, "grass  %d fields resident, %d drawn, %d cells, %d commands, %d instances, %.2f M triangles\n",
+			gs.Resident, gs.Drawn, gs.Cells, gs.Commands, gs.Instances, float64(gs.Triangles)/1e6)
+	}
+	// World textures' VRAM (gfx.TextureVRAM; docs/canyon/PHASE_4.md), with
+	// the compression and skip-mips settings it was measured under.
+	if tv := gfx.TextureVRAM(); tv.Count > 0 {
+		fmt.Fprintf(r, "textures  %.1f MB in %d (%d BC7, %d BC5), compression %v, skip %d mips\n",
+			float64(tv.Bytes)/(1<<20), tv.Count, tv.BC7, tv.BC5, gfx.TextureCompression, gfx.TextureSkipMips)
+		// Each texture, once (the first pose): what the total is made of.
+		if bench.pose == 0 {
+			for _, t := range gfx.TextureVRAMEach() {
+				fmt.Fprintf(r, "  texture %7.1f MB  %s\n", float64(t.Bytes)/(1<<20), t.Name)
+			}
+		}
 	}
 	c := bench.counts
 	per := func(v int) float64 { return float64(v) / n }
@@ -469,12 +580,33 @@ func benchCaptureShot() {
 	if bench.frame+1 != bench.cfg.warm+bench.cfg.frames {
 		return
 	}
+	t0 := time.Now()
+	defer func() { bench.shotTime = time.Since(t0) }()
 	w, h := int(platform.WinWidth), int(platform.WinHeight)
 	px := make([]uint8, w*h*4)
 	gl.BindFramebuffer(gl.READ_FRAMEBUFFER, 0)
 	gl.ReadBuffer(gl.BACK)
 	gl.PixelStorei(gl.PACK_ALIGNMENT, 1)
+	// A multisampled window (the editor's view, editor=1) reads back black on
+	// the 1070: resolve it into a plain renderbuffer first.
+	var fbo, rb uint32
+	if render.AntiAliasGrantedSamples > 0 {
+		gl.GenRenderbuffers(1, &rb)
+		gl.BindRenderbuffer(gl.RENDERBUFFER, rb)
+		gl.RenderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, int32(w), int32(h))
+		gl.GenFramebuffers(1, &fbo)
+		gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, fbo)
+		gl.FramebufferRenderbuffer(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, rb)
+		gl.BlitFramebuffer(0, 0, int32(w), int32(h), 0, 0, int32(w), int32(h), gl.COLOR_BUFFER_BIT, gl.NEAREST)
+		gl.BindFramebuffer(gl.READ_FRAMEBUFFER, fbo)
+		gl.ReadBuffer(gl.COLOR_ATTACHMENT0)
+	}
 	glext.ReadPixels(0, 0, int32(w), int32(h), gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(px))
+	if fbo != 0 {
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+		gl.DeleteFramebuffers(1, &fbo)
+		gl.DeleteRenderbuffers(1, &rb)
+	}
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		// GL's rows run bottom-up.

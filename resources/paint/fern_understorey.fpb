@@ -1,0 +1,37 @@
+# Fern understorey: ferns and low shrubs under trees.
+# Poly Haven (CC0): fern_02, shrub_04.
+name: Fern understorey
+doc: Ferns with low shrubs between them.
+order: 50
+layers:
+  - {layer: ferns, strength: 1}
+  - {layer: grass_clear, strength: 0.3}
+recipe:
+  paint:
+    - {name: ferns, kind: density}
+    - {name: grass_clear, kind: exclude}
+  exclude:
+    - {layer: grass_clear, kind: grass_field, except: [cover]}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_forest
+      params:
+        assets: [{id: dry_branches_medium_01}, {id: fern_02}]
+        thin_foliage: true
+    - stage: polyhaven_plants
+      id: cover_shrubs
+      params:
+        assets: [{id: shrub_04}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: understorey_ferns, plants: cover_forest, pieces: fern, density: 1.4, scale: [0.8, 1.5],
+             slope: [0, 40], cluster: 0.3, cluster_scale: 10, max_triangles: 900, paint: ferns,
+             wind_bend: 0.12, wind_flutter: 0.02}
+          - {name: understorey_shrubs, plants: cover_shrubs, density: 0.12, scale: [0.6, 1], slope: [0, 35],
+             cluster: 0.4, cluster_scale: 14, max_triangles: 1500, paint: ferns, paint_band: [0.4, 1],
+             wind_bend: 0.08, wind_flutter: 0.02}

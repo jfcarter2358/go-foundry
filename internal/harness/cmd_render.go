@@ -229,6 +229,9 @@ func renderViewmodel(root string, args []string, out io.Writer) int {
 		fmt.Fprintln(out, err)
 		return 1
 	}
+	// The project's materials and the textures only they reach, as the game
+	// loads them (app.Run): a level wearing them draws as it does there.
+	gfx.LoadMaterials()
 
 	// A real load, with the uploads ON: the arms have to reach the GPU.
 	lvl, err := levelio.LoadLevel(levelio.LevelPath(*level))

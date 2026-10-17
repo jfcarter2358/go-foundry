@@ -1,0 +1,8 @@
+version: 1
+name: Tom Mid
+samples: [drums/tom_mid]
+polyphony: 4
+playback:
+  clef: bass
+  release: 3
+description: 'Mid tom: membrane modes and stick attack'

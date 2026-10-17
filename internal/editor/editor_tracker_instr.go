@@ -12,6 +12,12 @@ package editor
 // Deleting an instrument renumbers the pattern cells that name the ones
 // after it (deleteInstrument), so a song never ends up with notes that
 // silently changed sound.
+//
+// A slot can instead play an instrument from the shared library
+// (sounds/instruments/*.finst, picked in the Library combo). Such a slot is
+// read-only here — it plays what the file says, the same in every song and
+// score that names it — until "Make local copy" embeds it, and an embedded
+// instrument can be saved to the library for others to use.
 
 import (
 	"fmt"
@@ -35,6 +41,19 @@ func trkLibrarySamples() []string {
 		}
 	}
 	return trkSampleNames
+}
+
+// trkInstrNames caches the instrument library listing for the Library combo.
+var trkInstrNames []string
+
+func trkLibraryInstruments() []string {
+	if trkInstrNames == nil {
+		trkInstrNames = tracker.ScanInstrumentNames()
+		if trkInstrNames == nil {
+			trkInstrNames = []string{}
+		}
+	}
+	return trkInstrNames
 }
 
 // trkInstrument is the current instrument, or nil.
@@ -140,19 +159,26 @@ func trkInstrumentList() {
 				trkRenamingInstr = -1
 			}
 		} else {
-			missing := ""
+			missing, lib := "", ""
 			if len(in.Samples) == 0 || in.Loaded(0) == nil {
 				missing = "  (silent)"
 			}
-			if imgui.SelectableV(fmt.Sprintf("%02X  %s%s", n, in.Name, missing), n == trkEd.Instr, 0, imgui.Vec2{}) {
+			if in.Ref != "" {
+				lib = "  [" + in.Ref + "]"
+			}
+			if imgui.SelectableV(fmt.Sprintf("%02X  %s%s%s", n, in.Name, lib, missing), n == trkEd.Instr, 0, imgui.Vec2{}) {
 				trkSelectInstrument(n)
 			}
 			if imgui.IsItemHovered() && imgui.IsMouseDoubleClicked(0) {
 				trkRenamingInstr, trkInstrRename = n, in.Name
 			}
 			if imgui.IsItemHovered() {
-				if missing != "" {
+				if missing != "" && in.Ref != "" {
+					imgui.SetTooltip("Library instrument " + in.Ref + " did not load\nDouble-click to rename")
+				} else if missing != "" {
 					imgui.SetTooltip("No sample loaded: " + strings.Join(in.Samples, ", ") + "\nDouble-click to rename")
+				} else if in.Ref != "" {
+					imgui.SetTooltip("Plays library instrument " + in.Ref + "\nDouble-click to rename")
 				} else {
 					imgui.SetTooltip("Double-click to rename")
 				}
@@ -223,6 +249,187 @@ func (t *trackerState) deleteInstrument(n int) {
 	t.touch()
 }
 
+// ---------- library instruments ----------
+
+// trkDefaultInstrName is how addInstrument names a new slot; a slot still
+// called that takes the library instrument's own name when it is set.
+func trkDefaultInstrName(name string) bool {
+	var n int
+	_, err := fmt.Sscanf(name, "Instrument %d", &n)
+	return name == "" || err == nil && fmt.Sprintf("Instrument %d", n) == name
+}
+
+// setInstrumentLibrary makes slot n (1-based) play library instrument name;
+// "" makes it the song's own again, keeping what it played (embedInstrument).
+func (t *trackerState) setInstrumentLibrary(n int, name string) error {
+	in := t.Song.Instrument(uint8(max(0, n)))
+	if in == nil {
+		return fmt.Errorf("no instrument %d", n)
+	}
+	if name == "" {
+		t.embedInstrument(n)
+		return nil
+	}
+	if name == in.Ref {
+		return nil
+	}
+	lib, err := tracker.LoadInstrument(name)
+	if err != nil {
+		return err
+	}
+	t.pushUndo("")
+	keep := in.Name
+	if trkDefaultInstrName(keep) {
+		keep = lib.Name
+	}
+	if err := in.UseLibrary(name); err != nil {
+		return err
+	}
+	in.Name = keep
+	t.touch()
+	return nil
+}
+
+// embedInstrument copies a library slot into the song, so it can be edited
+// without touching the library.
+func (t *trackerState) embedInstrument(n int) {
+	in := t.Song.Instrument(uint8(max(0, n)))
+	if in == nil || in.Ref == "" {
+		return
+	}
+	t.pushUndo("")
+	in.Embed()
+	t.touch()
+}
+
+// saveInstrumentToLibrary writes slot n into the library as name
+// ("category/name"), and the slot then plays the saved file.
+func (t *trackerState) saveInstrumentToLibrary(n int, name string) error {
+	in := t.Song.Instrument(uint8(max(0, n)))
+	if in == nil {
+		return fmt.Errorf("no instrument %d", n)
+	}
+	name = strings.Trim(strings.TrimSpace(strings.TrimSuffix(name, tracker.InstrumentExt)), "/")
+	if name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, `\:`) {
+		return fmt.Errorf("name the instrument as category/name")
+	}
+	if !strings.Contains(name, "/") {
+		name = "custom/" + name
+	}
+	if err := tracker.SaveInstrument(name, in); err != nil {
+		return err
+	}
+	trkInstrNames = nil
+	t.pushUndo("")
+	in.Ref = name
+	t.touch()
+	return nil
+}
+
+var (
+	trkLibSaveName string
+	trkLibStatus   string
+)
+
+// trkInstrLibrary is the Library row: which library instrument the slot
+// plays, if any, and what a library slot is.
+func trkInstrLibrary(in *tracker.Instrument) {
+	preview := "(this song's own)"
+	if in.Ref != "" {
+		preview = in.Ref
+	}
+	imgui.SetNextItemWidth(-60)
+	if imguibackend.BeginCombo("Library##trkinlib", preview) {
+		if imguibackend.SelectableV("(this song's own)", in.Ref == "", 0, imgui.Vec2{}) && in.Ref != "" {
+			trkEd.embedInstrument(trkEd.Instr)
+		}
+		for _, name := range trkLibraryInstruments() {
+			if imguibackend.SelectableV(name, name == in.Ref, 0, imgui.Vec2{}) && name != in.Ref {
+				if err := trkEd.setInstrumentLibrary(trkEd.Instr, name); err != nil {
+					trkEd.Status = err.Error()
+				} else {
+					trkEd.Status = "Instrument plays " + name
+					trkAuditionInstrument(trkEd.Instr)
+				}
+			}
+		}
+		imguibackend.EndCombo()
+	}
+	editorMenuTooltip("Play an instrument from the shared library (sounds/instruments/).\nIt sounds the same in every song and score that uses it.")
+	if in.Ref == "" {
+		imgui.SetNextItemWidth(-110)
+		imgui.InputTextWithHint("##trklibsave", "category/name", &trkLibSaveName)
+		imgui.SameLine()
+		imguibackend.EditorPushDisabled(strings.TrimSpace(trkLibSaveName) == "")
+		if trkSmallButton("Save to library##trklibsavebtn") {
+			if err := trkEd.saveInstrumentToLibrary(trkEd.Instr, trkLibSaveName); err != nil {
+				trkLibStatus = err.Error()
+			} else {
+				trkLibStatus, trkLibSaveName = "Saved as "+in.Ref, ""
+			}
+		}
+		imguibackend.EditorPopDisabled()
+		editorMenuTooltip("Write this instrument to sounds/instruments/<category>/<name>.finst\nand have this slot play the saved file.")
+		if trkLibStatus != "" {
+			editorTextMuted(trkLibStatus)
+		}
+		return
+	}
+	if in.Description != "" {
+		editorTextMutedWrapped(in.Description)
+	}
+	if trkSmallButton("Make local copy##trkinembed") {
+		trkEd.embedInstrument(trkEd.Instr)
+	}
+	editorMenuTooltip("Copy the library instrument into this song so it can be edited\nhere. The library file is not changed.")
+	trkInstrInfo(in)
+}
+
+// trkInstrInfo shows what a library instrument carries beyond a Tracker
+// instrument: its articulations (the @ command's numbers), velocity layers,
+// round robin and notation defaults.
+func trkInstrInfo(in *tracker.Instrument) {
+	layers, rr := 0, 0
+	for _, z := range in.Zones {
+		layers = max(layers, len(z.Layers))
+		rr = max(rr, len(z.RoundRobin)+1)
+		for _, l := range z.Layers {
+			rr = max(rr, len(l.RoundRobin)+1)
+		}
+	}
+	editorTextMuted(fmt.Sprintf("%d samples, %d zones", len(in.Samples), len(in.Zones)))
+	if layers > 1 {
+		editorTextMuted(fmt.Sprintf("%d velocity layers (the volume column picks one)", layers))
+	}
+	if rr > 1 {
+		editorTextMuted(fmt.Sprintf("round robin of %d takes", rr))
+	}
+	if len(in.Articulations) > 0 {
+		editorTextMuted("@00 default")
+		for i, a := range in.Articulations {
+			line := fmt.Sprintf("@%02X %s", i+1, a.Name)
+			if len(a.Triggers) > 0 {
+				line += "  (" + strings.Join(a.Triggers, ", ") + ")"
+			}
+			editorTextMuted(line)
+		}
+	}
+	pb := in.Playback
+	var parts []string
+	if pb.Low != 0 || pb.High != 0 {
+		parts = append(parts, "range "+tracker.NoteName(max(pb.Low, tracker.NoteMin))+".."+tracker.NoteName(max(pb.High, pb.Low)))
+	}
+	if pb.Clef != "" {
+		parts = append(parts, pb.Clef+" clef")
+	}
+	if pb.Transposition != 0 {
+		parts = append(parts, fmt.Sprintf("sounds %+d st from written", pb.Transposition))
+	}
+	if len(parts) > 0 {
+		editorTextMutedWrapped(strings.Join(parts, ", "))
+	}
+}
+
 // ---------- the editor ----------
 
 func trkInstrumentEditor(in *tracker.Instrument) {
@@ -238,6 +445,21 @@ func trkInstrumentEditor(in *tracker.Instrument) {
 		trkRenameInstrument(trkInstrNameFor, trkInstrNameBuf)
 	}
 	editorMenuTooltip("The instrument's name. Enter or clicking away keeps it; Escape cancels.")
+	trkInstrLibrary(in)
+	if in.Ref != "" {
+		// A library slot plays its file; edits here would be lost on the
+		// next resolve, so there is nothing to edit until it is embedded.
+		return
+	}
+	// Velocity layers, round robin and articulations, edited
+	// (editor_tracker_layers.go); open when the instrument has any.
+	flags := imgui.TreeNodeFlags(0)
+	if len(in.Articulations) > 0 || trkHasLayers(in) {
+		flags = imgui.TreeNodeFlagsDefaultOpen
+	}
+	if imgui.CollapsingHeaderV("Layers & articulations##trkinarts", flags) {
+		trkLayersSection(in)
+	}
 	if imgui.CollapsingHeaderV("Samples & keymap##trkinsamp", imgui.TreeNodeFlagsDefaultOpen) {
 		trkInstrSamples(in)
 		trkKeymap(in)
@@ -332,13 +554,8 @@ func trkInstrSamples(in *tracker.Instrument) {
 		imgui.SameLine()
 		if trkSmallButton("x") {
 			trkEd.pushUndo("")
-			in.Samples = append(in.Samples[:i], in.Samples[i+1:]...)
-			// Zones pointing past the removed slot move down with it.
-			for z := range in.Zones {
-				if in.Zones[z].Sample > i {
-					in.Zones[z].Sample--
-				}
-			}
+			// Zones, layers and articulations past the slot move down with it.
+			in.RemoveSample(i)
 			in.Resolve(tracker.SampleFor)
 			trkEd.touch()
 			imgui.PopID()
@@ -351,6 +568,15 @@ func trkInstrSamples(in *tracker.Instrument) {
 		in.Samples = append(in.Samples, "")
 		trkEd.touch()
 	}
+}
+
+func trkHasLayers(in *tracker.Instrument) bool {
+	for _, z := range in.Zones {
+		if len(z.Layers) > 0 || len(z.RoundRobin) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- keymap ----------
@@ -463,7 +689,14 @@ func trkKeymap(in *tracker.Instrument) {
 			imguibackend.EndCombo()
 		}
 		imgui.SameLine()
-		imgui.Text(tracker.NoteName(z.Low) + " .. " + tracker.NoteName(z.High))
+		span := tracker.NoteName(z.Low) + " .. " + tracker.NoteName(z.High)
+		if len(z.Layers) > 0 {
+			span += fmt.Sprintf("  %d layers", len(z.Layers))
+		}
+		if len(z.RoundRobin) > 0 {
+			span += fmt.Sprintf("  rr %d", len(z.RoundRobin)+1)
+		}
+		imgui.Text(span)
 		imgui.SameLine()
 		if trkSmallButton("x") {
 			trkEd.pushUndo("")

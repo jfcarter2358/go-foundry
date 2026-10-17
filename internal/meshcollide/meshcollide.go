@@ -107,6 +107,8 @@ type Settings struct {
 	// AutoSize is the largest extent, in metres, at which auto picks hulls.
 	AutoSize float32
 	// Mode is the mesh's own choice; auto unless the cook was told otherwise.
+	// Mode mesh also skips the convex decomposition (build.go): such a mesh
+	// has no hulls to offer.
 	Mode Mode
 }
 

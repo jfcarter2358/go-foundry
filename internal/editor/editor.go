@@ -704,6 +704,12 @@ func EditorHandleEvent(event sdl.Event) bool {
 			break
 		}
 
+		// The generator's paint brush in 3D takes its own undo, redo and
+		// [ ] first while it is here (editor_generator_paint3d.go).
+		if !imgui.CurrentIO().WantCaptureKeyboard() && genPaint3DHandleKey(t.Keysym.Scancode, sdl.GetModState()) {
+			return true
+		}
+
 		// Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) — undo/redo.
 		if !imgui.CurrentIO().WantCaptureKeyboard() {
 			mods := sdl.GetModState()
@@ -924,7 +930,10 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
 			if Editor.Mode == Mode3D {
-				if t.Button == sdl.ButtonRight {
+				if t.Button == sdl.ButtonRight && editorRegionRightClick(t.X, t.Y) {
+					// Deleted a region's footprint point (editor_volume_region.go):
+					// no turn, no context menu.
+				} else if t.Button == sdl.ButtonRight {
 					// Right-drag turns the camera; a right-click that does not
 					// drag opens the context menu instead, which is what
 					// editor3DContextPressed is watching for.
@@ -965,6 +974,13 @@ func EditorHandleEvent(event sdl.Event) bool {
 			editorGizmoMouseMove(t.X, t.Y)
 			return true
 		}
+		// A region footprint point being dragged, or the handle highlight.
+		if Editor.Mode == Mode3D {
+			editorRegionMouseMove(t.X, t.Y)
+			if editorRegionDragging() {
+				return true
+			}
+		}
 		if Editor.Mode == Mode3D && (Editor.MouseDragging3D || Editor.MiddleDragging3D) {
 			dx := t.X - Editor.LastDragX
 			dy := t.Y - Editor.LastDragY
@@ -983,6 +999,9 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 
 	case sdl.MouseWheelEvent:
+		if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureMouse() && genPaint3DWheel(t.Y) {
+			return true // Ctrl+wheel: the paint brush's strength
+		}
 		if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureMouse() {
 			editorCamZoom(t.Y)
 			return true
@@ -1043,6 +1062,9 @@ func EditorRender() {
 		// The terrain tool finds the ground under the cursor and carries
 		// its stroke on, before the overlays draw its ring there.
 		editorTerrainFrame(float32(dt))
+		// The generator's paint brush, on the same terms
+		// (editor_generator_paint3d.go).
+		genPaint3DFrame()
 	}
 
 	// --- 3D gizmos (drawn on top of world, depth-tested) ---
@@ -1056,6 +1078,9 @@ func EditorRender() {
 	// is where the work got to.
 	editorStepLevelLoad()
 	editorStepCompile()
+	// A painted stroke's live rerun, with the Generator window shut too
+	// (editor_generator_paint_live.go).
+	genPaintLiveStep()
 
 	// --- ImGui UI ---
 	imguibackend.ImGuiNewFrame(dt)
@@ -1289,10 +1314,17 @@ func editorEndViewportDrag(button sdl.Button) bool {
 			editorGizmoMouseUp()
 			return true
 		}
+		if editorRegionDragging() {
+			editorRegionEndDrag()
+			return true
+		}
 		// A terrain stroke ends wherever the button comes up, the panel
 		// included, or it would go on painting after the author let go.
 		if terrainTool.stroking {
 			editorTerrainEndStroke()
+			return true
+		}
+		if genPaint3DEnd() {
 			return true
 		}
 		if editorTerrainVolumeDragging() {

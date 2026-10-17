@@ -96,7 +96,7 @@ func FindUnused(o UnusedOptions) (UnusedReport, error) {
 	r.Scanned = len(all)
 	unused := map[string]int{} // path -> index in r.Unused
 	for _, path := range all {
-		if keep[path] || alwaysKeep(path) || editorOwned[path] {
+		if keep[path] || alwaysKeep(path) || editorOwned[path] || generatorOwned(path) {
 			continue
 		}
 		var size int64
@@ -141,6 +141,21 @@ func FindUnused(o UnusedOptions) (UnusedReport, error) {
 // they are still not the author's to delete.
 var editorOwned = map[string]bool{
 	"textures/palette.pal": true, // the texture editor's palette (texture.palettePath)
+}
+
+// generatorOwned reports a file under generated/: a procedural generator's
+// output, which its generator rebuilds and prunes itself (a rerun replaces a
+// stage's files; a stage removed from the document takes its files with it).
+// What nothing names there is the generator's working state — heightmaps,
+// masks, its manifest — and not the author's to delete from this list.
+//
+// The Poly Haven imports (docs/canyon/PHASE_4.md) are kept the same way:
+// models/polyhaven/<id>/ holds the source glTF and every cooked variant
+// with its provenance, and textures/ph_<id>_{arm,rough,ao,height}.png wait
+// for the material phase — none named by a level yet, all the import's.
+func generatorOwned(slash string) bool {
+	return strings.HasPrefix(slash, "generated/") || strings.HasPrefix(slash, "models/polyhaven/") ||
+		strings.HasPrefix(slash, "textures/polyhaven/") || strings.HasPrefix(slash, "textures/ph_")
 }
 
 // contentFiles is every file in the content directories, slash-separated and

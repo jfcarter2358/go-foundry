@@ -1,0 +1,18 @@
+version: 1
+title: Meters
+meter: [{bar: 1, sig: C}, {bar: 2, sig: 3/4}, {bar: 3, sig: 6/8}, {bar: 4, sig: 3+2+2/8}, {bar: 5, sig: C|}, {bar: 6, sig: 5/8}, {bar: 7, sig: 12/8}, {bar: 8, sig: 7/8}]
+lines:
+- name: Flute
+  instrument: woodwinds/flute
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | eG4 eA4 eB4 eC5 qD5 qE5
+      | eC5 eD5 eE5 eF5 eG5 eA5
+      | eG4 eA4 eB4 eC5 eD5 eE5
+      | eG4 eA4 eB4 eC5 eD5 eE5 eF5
+      | eG4 eA4 eB4 eC5 hD5
+      | eC5 eD5 eE5 eF5 eG5
+      | q.C5 eD5 eE5 eF5 q.G5 sA5 sG5 sF5 sE5 sD5 sC5
+      | eC5 eD5 eE5 eF5 eG5 eA5 eB5

@@ -227,7 +227,8 @@ func (s *naniteSWRaster) build(mode int) (err error) {
 		head += "#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_NV_gpu_shader5 : enable\n" +
 			"#extension GL_NV_shader_atomic_int64 : require\n#define SW64\n"
 	}
-	rsrc, werr := gfx.InjectWind(head + mustReadShader(biomeShaderPath("nanite_swraster_comp.glsl")))
+	// The draw-distance fade's two functions (nanite_draw_distance.go).
+	rsrc, werr := gfx.InjectWind(head + drawFadeWindowGLSL + drawFadeKeepsGLSL + mustReadShader(biomeShaderPath("nanite_swraster_comp.glsl")))
 	if werr != nil {
 		return fmt.Errorf("raster: %v", werr)
 	}
@@ -342,6 +343,12 @@ func textureOpaque(name string) bool {
 	if v, ok := textureOpaqueCache[tex]; ok {
 		return v
 	}
+	// Known from the decoded image (gfx/texture_opaque.go): a block-
+	// compressed upload's readback is not exact.
+	if v, ok := gfx.TextureFullyOpaque(name); ok {
+		textureOpaqueCache[tex] = v
+		return v
+	}
 	var w, h int32
 	gl.BindTexture(gl.TEXTURE_2D, tex)
 	gl.GetTexLevelParameteriv(gl.TEXTURE_2D, 0, gl.TEXTURE_WIDTH, &w)
@@ -444,13 +451,23 @@ func (b *cullBatch) admitSW(groups []visGroup) {
 	if b.swGroups == nil || !naniteVisActive() || !naniteSW.on() {
 		return
 	}
+	// A frame at the records' limit lists nothing: a listed cluster past the
+	// last record is lost, a hardware command past it is drawn the forward
+	// way (nanite_vis_overflow.go).
+	if naniteVisOverflow.overflowRisk() {
+		return
+	}
 	for i := 1; i < len(groups); i++ {
 		if groups[i].vbo != groups[0].vbo || groups[i].ebo != groups[0].ebo {
 			return
 		}
 	}
 	v := &naniteVis
-	cap := min(b.swClusterCount(), naniteSWListMax, naniteVisMaxRecords-v.recordsUsed-b.visSpan(naniteCull.compactable()))
+	room := naniteVisMaxRecords - v.recordsUsed - b.visSpan(naniteCull.compactable())
+	if NaniteVisDense {
+		room = naniteVisMaxRecords // records are taken as clusters draw
+	}
+	cap := min(b.swClusterCount(), naniteSWListMax, room)
 	if cap <= 0 || !v.admits(b, groups, cap, false) {
 		return
 	}
@@ -474,6 +491,12 @@ func (s *naniteSWRaster) rasterBatch(b *cullBatch, g *visGroup, recordBase, binB
 	gl.Uniform1ui(p.U("recordBase"), uint32(recordBase))
 	gl.Uniform1ui(p.U("binBase"), uint32(binBase))
 	gl.Uniform1ui(p.U("swCap"), uint32(listCap))
+	gl.Uniform1ui(p.U("dense"), uint32(boolToInt32(NaniteVisDense)))
+	gl.Uniform1ui(p.U("maxRecords"), naniteVisRecordLimit)
+	gl.Uniform3f(p.U("drawEye"), gfx.Cam.Position[0], gfx.Cam.Position[1], gfx.Cam.Position[2])
+	gl.Uniform1i(p.U("drawFadeOn"), boolToInt32(DrawDistances && !naniteDebugActive()))
+	gl.Uniform1i(p.U("coverageDither"), coverageDither())
+	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, naniteVis.next)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, b.instBuf)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, naniteVis.records)
 	gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 2, g.ebo)
@@ -519,7 +542,7 @@ func (s *naniteSWRaster) rasterBatch(b *cullBatch, g *visGroup, recordBase, binB
 	// The words it cleared, before the next batch's raster writes them; the
 	// records, before the material pass reads them.
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
-	for _, i := range []uint32{0, 1, 2, 3, 5, 6, 7, 16} {
+	for _, i := range []uint32{0, 1, 2, 3, 4, 5, 6, 7, 16} {
 		gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, i, 0)
 	}
 	ProfileEnd()

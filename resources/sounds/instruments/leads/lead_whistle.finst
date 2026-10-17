@@ -1,0 +1,11 @@
+version: 1
+name: Lead Whistle
+samples: [leads/lead_whistle]
+fade_out: 0.12
+vibrato_rate: 5.5
+vibrato_depth: 0.12
+vibrato_delay: 0.35
+playback:
+  range: [C-3, C-7]
+  clef: treble
+description: Breathy whistled sine

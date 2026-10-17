@@ -1,0 +1,13 @@
+version: 1
+name: Kick 909
+samples: [drums/kick_909]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Kick 909
+    line: 4
+description: Punchy, clicky kick with a short body

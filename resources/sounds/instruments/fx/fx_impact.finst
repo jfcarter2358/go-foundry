@@ -1,0 +1,8 @@
+version: 1
+name: Fx Impact
+samples: [fx/fx_impact]
+fade_out: 0.3
+playback:
+  clef: percussion
+  release: 6
+description: 'Cinematic hit: sub drop, burst, metal and a long tail'

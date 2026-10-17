@@ -1,0 +1,14 @@
+version: 1
+name: Crash
+samples: [drums/crash]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Crash
+    line: 4
+    head: x
+description: 'Crash cymbal: dense partials and a noise bloom'

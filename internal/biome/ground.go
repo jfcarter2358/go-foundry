@@ -19,7 +19,9 @@ package biome
 // render path, where the only question being asked is a geometric one; and the
 // general cast reports entities, volumes, scenery and blocking rules that a
 // blade of grass has no opinion about. What scatter needs is narrower and
-// cheaper: the highest brush surface below a point, and its normal.
+// cheaper: the highest brush surface below a point, and its normal. (And,
+// since the procedural terrain, the highest mesh-collision scenery surface:
+// see ground_scenery.go.)
 //
 // # The surface IS the plane
 //
@@ -85,6 +87,9 @@ func SurfaceUnder(lvl *world.Level, frame string, wx, topY, wz, maxDrop float32)
 // and not to be kept across frames: an edit afterwards is not seen.
 type GroundQuery struct {
 	chunks []groundChunk
+	// scenery is the mesh-collision placements, for a world-frame query
+	// (ground_scenery.go).
+	scenery []groundScenery
 }
 
 type groundChunk struct {
@@ -225,6 +230,9 @@ func NewGroundQuery(lvl *world.Level, frame string) *GroundQuery {
 		}
 		q.chunks = append(q.chunks, gc)
 	}
+	if frame == "" {
+		q.addScenery(lvl)
+	}
 	return q
 }
 
@@ -336,6 +344,12 @@ func (q *GroundQuery) SurfaceUnder(wx, topY, wz, maxDrop float32) Surface {
 				gone += h.T + past
 				o = o.Add(localDir.Mul(h.T + past))
 			}
+		}
+	}
+	// Mesh-collision scenery: generated terrain tiles, big rocks.
+	if len(q.scenery) > 0 {
+		if t, n, ok := q.sceneryUnder(origin, bestT); ok && t < bestT {
+			best = Surface{Height: topY - t, Normal: n, Found: true}
 		}
 	}
 	return best

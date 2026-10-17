@@ -62,7 +62,10 @@ uniform int groundLayer[8];
 uniform float groundScale[8];
 uniform float groundWalls[8];
 
-out vec4 outputColor;
+layout(location = 0) out vec4 outputColor;
+// The stylize pass's record (light_model.glsl's stylizePack): as
+// fragment.glsl's, written only where a painted level binds the buffer.
+layout(location = 1) out uvec4 outputStylize;
 
 float tHash(vec2 p) {
     p = fract(p * vec2(0.1031, 0.1030));
@@ -233,8 +236,15 @@ void main() {
     // and the ground shadows itself in fine stripes that alias into rings.
     vec3 geoN = gl_FrontFacing ? faceNormal : -faceNormal;
     vec3 shadowAt = vWorldPos + geoN * (0.03 + vViewDepth * 0.0025);
-    vec3 lighting = biomeLighting(shadowAt, normal, vViewDepth, receiveShadows != 0, false);
-    vec3 color = giDebugAlbedo(albedo) * clamp(lighting, 0.0, 1.0);
-    color = applyFog(color, vWorldPos);
+    // Earth and rock: a rough dielectric (specular.glsl). The view vector is
+    // the surface's own, not the lifted shadow point's.
+    PBRSurface ps = pbrSurface(vWorldPos, normal, 0.8, 0.0, 0.5, albedo);
+    vec3 spec = vec3(0.0);
+    vec3 lighting = biomeLightingSpec(shadowAt, normal, vViewDepth, receiveShadows != 0, false, ps, spec);
+    spec += pbrEnvSpecular(ps, vWorldPos, normal, biomeAmbientRef, 1.0);
+    // Scene units, as fragment.glsl shades (gfx/hdr.go; 1 in LDR).
+    vec3 color = giDebugAlbedo(albedo) * clamp(lighting, 0.0, hdrLightMax()) + clamp(spec, 0.0, hdrLightMax());
+    color = applyFogScene(color, vWorldPos);
     outputColor = vec4(color, 1.0);
+    outputStylize = styRamp.w == 0.0 ? uvec4(0u) : stylizePack(normal, normal, vViewDepth, 1.0);
 }

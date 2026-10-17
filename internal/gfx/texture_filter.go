@@ -35,6 +35,8 @@ package gfx
 
 import (
 	"log"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/go-gl/gl/v4.3-core/gl"
@@ -64,6 +66,9 @@ var anisotropySupported bool
 // uploaded — LoadTexture/UpdateTextureFromRGBA read TextureAnisotropy at
 // upload time and never revisit it.
 func InitTextureFiltering() {
+	// The compression formats' availability, logged beside the filtering
+	// (texture_compress.go).
+	defer probeTextureCompression()
 	anisotropySupported = hasGLExtension("GL_EXT_texture_filter_anisotropic")
 	if !anisotropySupported {
 		log.Printf("texture filtering: mipmaps on, anisotropic filtering unavailable (no GL_EXT_texture_filter_anisotropic)")
@@ -78,6 +83,11 @@ func InitTextureFiltering() {
 		max = 1
 	}
 	TextureAnisotropy = min(max, TextureAnisotropyCap)
+	// FOUNDRY_TEXTURE_ANISOTROPY lowers it, for an A/B of its cost
+	// (docs/canyon/PERF.md).
+	if v, err := strconv.ParseFloat(os.Getenv("FOUNDRY_TEXTURE_ANISOTROPY"), 32); err == nil && v >= 1 {
+		TextureAnisotropy = min(TextureAnisotropy, float32(v))
+	}
 	log.Printf("texture filtering: mipmaps on, anisotropic %.0fx (driver max %.0fx)", TextureAnisotropy, max)
 }
 

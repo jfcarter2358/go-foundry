@@ -1,0 +1,18 @@
+version: 1
+name: Church Organ
+samples: [keys/organ_pipe]
+zones:
+- sample: 0
+  low: C-0
+  high: B-9
+fade_out: 0.18
+polyphony: 6
+articulations:
+- name: staccato
+  triggers: [stacc.]
+  fade_out: 0.06
+playback:
+  range: [C-1, C-8]
+  clef: grand
+  gliss: chromatic
+description: 'Pipe organ: principal and mixture, with chiff'

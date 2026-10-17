@@ -1,0 +1,22 @@
+version: 1
+title: Ties
+lines:
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | hG4~ qG4 qD5~
+      | qD5 hC4+E4+G4~ qC4+E4+G4
+      | h.F5+A5~ qF5+A5~
+      | wF5+A5
+      | q.B4~ eB4 hC6~
+      | qC6 qE4~ hE4
+    - |
+      | 
+      | 
+      | 
+      | 
+      | 
+      | qC4~ qC4 hC4

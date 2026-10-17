@@ -1,0 +1,23 @@
+# Dense grass: a thick, tall sward. Poly Haven (CC0): grass_medium_01.
+name: Dense grass
+doc: A thick tall sward, waist high at full strength.
+order: 40
+layers:
+  - {layer: dense_grass, strength: 1}
+recipe:
+  paint:
+    - {name: dense_grass, kind: density}
+  stages:
+    - stage: polyhaven_plants
+      id: cover_grass
+      params:
+        assets: [{id: grass_medium_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: dense_grass, plants: cover_grass, density: 6, scale: [4.5, 7], slope: [0, 35], cluster: 0,
+             max_triangles: 400, paint: dense_grass, edge_shrink: 0.6}

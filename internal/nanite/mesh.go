@@ -15,13 +15,20 @@
 // up front is only the small part: the clusters' bounds and errors, the LOD
 // tree, the page table, the fallback mesh, the distance field and the hulls.
 //
-// # The file (format 4)
+// # The file (format 4, or 5 with vertex colours)
 //
 //	header   "FNM\x00", the format version, the source hash (40 bytes)
 //	length   the metadata's length (8 bytes)
 //	metadata the Mesh, its geometry left out, gob-encoded and flate-compressed
 //	data     every page's packed bytes, one after another (Page.Offset), then
 //	         the collision's mesh part (CollisionOffset), flate-compressed
+//
+// Format 5 is format 4 with optional per-vertex colours (Mesh.HasColors): an
+// RGBA8 colour a vertex in the pages and in the fallback pool, which the
+// renderer multiplies into the albedo and reads as cavity (fragment.glsl's
+// vertexColors; docs/canyon/PHASE_2.md). A mesh without colours is still
+// WRITTEN as format 4, byte for byte what it was before colours existed, and
+// both formats are read.
 //
 // Read loads the header and the metadata only, and keeps the path: a page is
 // read when it is asked for (LoadPage), by one ReadAt. Decode, for a mesh in
@@ -79,15 +86,28 @@ import (
 // Ext is a cooked Nanite mesh's extension.
 const Ext = ".fnm"
 
-// FileVersion is the cooked format's version, in every file's header. A file
-// of another version is refused and must be re-cooked. 2: the cluster DAG.
-// 3: collision. 4: quantised, paged geometry (Phase 3).
-const FileVersion = 4
+// FileVersion is the newest cooked format, in a file's header. A file older
+// than MinFileVersion (or newer than this) is refused and must be re-cooked.
+// 2: the cluster DAG. 3: collision. 4: quantised, paged geometry (Phase 3).
+// 5: optional vertex colours (docs/canyon/PHASE_2.md) — written only by a
+// mesh that has them (Mesh.Version); every other mesh is written as 4.
+const FileVersion = 5
+
+// MinFileVersion is the oldest format Read takes: 4 and 5 differ only by the
+// colours a format-4 file cannot have.
+const MinFileVersion = 4
+
+// FileVersionPlain is the format a mesh without colours is written in.
+const FileVersionPlain = 4
 
 // CookVersion is folded into every source hash, so a change to how a cook is
 // made — not just to what is stored — re-cooks every mesh. Bump it whenever
 // the same source would now cook differently.
-const CookVersion = 5
+//
+// 6: glTF UVs are taken as stored (model_gltf.go; docs/canyon/PHASE_4.md)
+// rather than flipped — the same .gltf bytes now cook to different UVs, so
+// every cook of one must be redone.
+const CookVersion = 6
 
 const magic = "FNM\x00"
 
@@ -152,6 +172,15 @@ type Mesh struct {
 	Indices  []uint32
 	Clusters []Cluster
 
+	// HasColors says the mesh carries a colour a vertex (format 5): Colors
+	// beside Vertices (one RGBA8 word a vertex, R in the low byte —
+	// unpackUnorm4x8's order), decoded from the pages like the rest of the
+	// pool, and FallbackColors beside FallbackVertices. RGB multiplies the
+	// albedo; A is the vertex's cavity/ambient occlusion.
+	HasColors      bool
+	Colors         []uint32
+	FallbackColors []uint32
+
 	// Quant is how the geometry is quantised (quant.go); Pages is the
 	// geometry in pages (pages.go), PoolVertices their vertices together.
 	Quant        Quant
@@ -205,6 +234,8 @@ type Mesh struct {
 	path      string
 	dataOff   int64
 	dataPages uint64
+	// version is the format the file was read from (0: not read from one).
+	version uint32
 	// flatMu guards Flat's filling of the pool on a shared mesh.
 	flatMu sync.Mutex
 }
@@ -249,6 +280,9 @@ func (m *Mesh) Validate() error {
 		nv := len(m.Vertices) / 5
 		if len(m.Vertices)%5 != 0 || len(m.Normals) != nv*3 {
 			return fmt.Errorf("vertex pool ragged: %d floats, %d normal floats", len(m.Vertices), len(m.Normals))
+		}
+		if m.HasColors && len(m.Colors) != nv {
+			return fmt.Errorf("vertex pool ragged: %d colours for %d vertices", len(m.Colors), nv)
 		}
 		if len(m.Indices)%3 != 0 || len(m.Indices)/3 != m.StoredTriangles() {
 			return fmt.Errorf("pool holds %d indices for clusters of %d triangles", len(m.Indices), m.StoredTriangles())
@@ -297,6 +331,9 @@ func (m *Mesh) Validate() error {
 	if len(m.FallbackVertices)%5 != 0 || len(m.FallbackNormals) != fnv*3 {
 		return fmt.Errorf("fallback pool ragged")
 	}
+	if m.HasColors && len(m.FallbackColors) != fnv {
+		return fmt.Errorf("fallback pool has %d colours for %d vertices", len(m.FallbackColors), fnv)
+	}
 	for i, ix := range m.Fallback {
 		if int(ix) >= fnv {
 			return fmt.Errorf("fallback index %d is %d, past the %d-vertex fallback pool", i, ix, fnv)
@@ -334,6 +371,14 @@ func (m *Mesh) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Version is the format the mesh is written in: 5 with colours, else 4.
+func (m *Mesh) Version() uint32 {
+	if m.HasColors {
+		return FileVersion
+	}
+	return FileVersionPlain
 }
 
 // SlotIndex is the slot named name, or -1.
@@ -422,10 +467,10 @@ func (m *Mesh) Encode(w io.Writer) error {
 	}
 	// The geometry is in the pages, never in the metadata.
 	m.flatMu.Lock()
-	v, n, ix := m.Vertices, m.Normals, m.Indices
-	m.Vertices, m.Normals, m.Indices = nil, nil, nil
+	v, n, ix, col := m.Vertices, m.Normals, m.Indices, m.Colors
+	m.Vertices, m.Normals, m.Indices, m.Colors = nil, nil, nil, nil
 	err = gob.NewEncoder(zw).Encode(m)
-	m.Vertices, m.Normals, m.Indices = v, n, ix
+	m.Vertices, m.Normals, m.Indices, m.Colors = v, n, ix, col
 	m.flatMu.Unlock()
 	if stripped {
 		m.Collision.Restore(part)
@@ -438,7 +483,7 @@ func (m *Mesh) Encode(w io.Writer) error {
 	}
 	var hdr [prefixSize]byte
 	copy(hdr[:4], magic)
-	binary.LittleEndian.PutUint32(hdr[4:], FileVersion)
+	binary.LittleEndian.PutUint32(hdr[4:], m.Version())
 	copy(hdr[8:], m.SourceHash[:])
 	binary.LittleEndian.PutUint64(hdr[headerSize:], uint64(meta.Len()))
 	for _, b := range [][]byte{hdr[:], meta.Bytes(), data} {
@@ -472,6 +517,18 @@ func (m *Mesh) Write(path string) error {
 	return fileutil.WriteFileAtomic(path, buf.Bytes())
 }
 
+// WriteNoBackup saves the mesh to path atomically, like Write, but keeps no
+// .bak of the file it replaces: a generator's cooked meshes are rebuilt on
+// demand, and a backup of every recooked tile would double its output
+// folder on each rerun (docs/regions/PRESETS_3.md).
+func (m *Mesh) WriteNoBackup(path string) error {
+	var buf bytes.Buffer
+	if err := m.Encode(&buf); err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomicNoBackup(path, buf.Bytes())
+}
+
 // readPrefix reads and checks a file's header and metadata.
 func readPrefix(r io.Reader) (*Mesh, int64, error) {
 	var hdr [prefixSize]byte
@@ -481,8 +538,9 @@ func readPrefix(r io.Reader) (*Mesh, int64, error) {
 	if string(hdr[:4]) != magic {
 		return nil, 0, fmt.Errorf("not a cooked Nanite mesh")
 	}
-	if v := binary.LittleEndian.Uint32(hdr[4:]); v != FileVersion {
-		return nil, 0, fmt.Errorf("cooked by format version %d; this build reads %d — re-cook it (foundry nanite cook)", v, FileVersion)
+	v := binary.LittleEndian.Uint32(hdr[4:])
+	if v < MinFileVersion || v > FileVersion {
+		return nil, 0, fmt.Errorf("cooked by format version %d; this build reads %d to %d — re-cook it (foundry nanite cook)", v, MinFileVersion, FileVersion)
 	}
 	metaLen := binary.LittleEndian.Uint64(hdr[headerSize:])
 	if metaLen > 1<<31 {
@@ -495,6 +553,10 @@ func readPrefix(r io.Reader) (*Mesh, int64, error) {
 	if !bytes.Equal(m.SourceHash[:], hdr[8:headerSize]) {
 		return nil, 0, fmt.Errorf("cooked mesh header and body disagree")
 	}
+	if m.HasColors && v < FileVersion {
+		return nil, 0, fmt.Errorf("cooked mesh is damaged: colours in a format %d file", v)
+	}
+	m.version = v
 	m.dataPages = m.PageBytes()
 	return &m, prefixSize + int64(metaLen), nil
 }
@@ -591,7 +653,7 @@ func (m *Mesh) readData(off uint64, size uint32) ([]byte, error) {
 	if _, err := f.ReadAt(hdr[:], 0); err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(hdr[8:], m.SourceHash[:]) || binary.LittleEndian.Uint32(hdr[4:]) != FileVersion {
+	if !bytes.Equal(hdr[8:], m.SourceHash[:]) || binary.LittleEndian.Uint32(hdr[4:]) != m.version {
 		return nil, fmt.Errorf("%s was re-cooked since it was loaded", filepath.Base(m.path))
 	}
 	out := make([]byte, size)
@@ -625,7 +687,7 @@ func (m *Mesh) Flat() error {
 		return nil
 	}
 	var verts, normals []float32
-	var idx []uint32
+	var idx, colors []uint32
 	for pi := range m.Pages {
 		d, err := m.LoadPage(pi)
 		if err != nil {
@@ -637,11 +699,15 @@ func (m *Mesh) Flat() error {
 		}
 		verts = append(verts, d.Vertices...)
 		normals = append(normals, d.Normals...)
+		colors = append(colors, d.Colors...)
 	}
 	if idx == nil {
 		idx = []uint32{}
 	}
 	m.Vertices, m.Normals, m.Indices = verts, normals, idx
+	if m.HasColors {
+		m.Colors = colors
+	}
 	return nil
 }
 

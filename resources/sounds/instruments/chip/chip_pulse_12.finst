@@ -1,0 +1,9 @@
+version: 1
+name: Chip Pulse 12
+samples: [chip/chip_pulse_12]
+fade_out: 0.02
+interp: nearest
+playback:
+  range: [C-2, C-8]
+  clef: treble
+description: 'NES pulse at 12.5% duty: thin and nasal'

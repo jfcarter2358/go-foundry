@@ -36,6 +36,7 @@ var worldVerbs = []string{
 	"hitscan", "pick", "bone_position", "recoil", "look_at",
 	"camera_detach", "camera_attach", "camera_move_to", "camera_turn_to", "camera_roll_to",
 	"camera_look_at", "camera_orbit", "camera_zoom", "screen_ray", "world_to_screen",
+	"water_at",
 	"play", "stop", "play_sound", "play_sound_at", "play_music", "stop_music",
 	"play_song", "song_section", "song_param", "song_mute", "song_tempo", "song_stinger", "song_position", "play_note",
 	"attach", "detach",

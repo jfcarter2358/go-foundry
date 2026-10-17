@@ -169,7 +169,32 @@ func (in *sceneryInstancer) gpuInstance(i int) sceneryGPUInstance {
 	if b.ok {
 		ok = 1
 	}
-	return sceneryGPUInstance{Model: in.mats[i], Lo: b.lo.Vec4(ok), Hi: b.hi.Vec4(0)}
+	// The draw-distance cuts ride the two w's (classicDrawCuts).
+	camCut, shadowCut := classicDrawCuts(&in.lvl.Scenery[i])
+	ok = -(1 + shadowCut)
+	if b.ok {
+		ok = 1 + shadowCut
+	}
+	return sceneryGPUInstance{Model: in.mats[i], Lo: b.lo.Vec4(ok), Hi: b.hi.Vec4(camCut)}
+}
+
+// classicDrawCuts are a classic placement's per-instance cuts
+// (world/scenery_draw.go): the distance it stops being drawn at, and the one
+// it stops casting at, its hash already in them; 0 for none. The record
+// carries them in hi.w and, offset by one, in lo.w (whose sign is "has a
+// box"), which scenery_cull_comp.glsl tests from drawEye.
+func classicDrawCuts(s *world.Scenery) (camCut, shadowCut float32) {
+	if !DrawDistances {
+		return 0, 0
+	}
+	k := 1 - world.DrawFadeBand + world.DrawFadeBand*s.DrawHash()
+	if w := s.MeshWindow(); w.To > 0 {
+		camCut = w.To * k
+	}
+	if w := s.MeshShadowWindow(); w.To > 0 {
+		shadowCut = w.To * k
+	}
+	return camCut, shadowCut
 }
 
 // buildGPU makes the tables for the current grouping: the members' groups,
@@ -286,6 +311,8 @@ func (in *sceneryInstancer) gpuCull(cull *Frustum, shadows bool) uint32 {
 		}
 	}
 	gl.Uniform4fv(p.U("planes"), 6, &planes[0][0])
+	gl.Uniform3f(p.U("drawEye"), gfx.Cam.Position[0], gfx.Cam.Position[1], gfx.Cam.Position[2])
+	gl.Uniform1i(p.U("shadowPass"), boolToInt32(shadows))
 	gl.DispatchCompute(uint32(blocks), 1, 1)
 	gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT)
 	common(&sceneryCull.blocks)
@@ -398,7 +425,7 @@ func renderSceneryShadowGPU(in *sceneryInstancer, lvl *world.Level, prog uint32,
 	for gi := range in.groups {
 		g := &in.groups[gi]
 		geo := &lvl.Scenery[g.rep].Submeshes[g.sub]
-		if geo.Alpha < 0.05 {
+		if !geo.CastsShadow() {
 			continue
 		}
 		c := geo.ShadowCaster()

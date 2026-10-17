@@ -22,7 +22,9 @@ import (
 const Rate = 48000
 
 // Main runs `gen-samples [-out dir] [-only name,...] [-list]` and returns an
-// exit code.
+// exit code. -only also takes a variant's name (variants.go); the variants
+// as a whole are written by gen-instruments, beside the instruments that
+// play them.
 func Main(args []string, out io.Writer) int {
 	fs := flag.NewFlagSet("gen-samples", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -53,8 +55,11 @@ func Main(args []string, out io.Writer) int {
 				continue
 			}
 			r := ByName(name)
+			if v := VariantByName(name); r == nil && v != nil {
+				r = v.recipe()
+			}
 			if r == nil {
-				fmt.Fprintf(out, "gen-samples: no recipe %q (try -list)\n", name)
+				fmt.Fprintf(out, "gen-samples: no recipe or variant %q (try -list)\n", name)
 				return 1
 			}
 			todo = append(todo, r)

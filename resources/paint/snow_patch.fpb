@@ -1,0 +1,17 @@
+# Snow patch: lying snow where painted (not a snow line). Poly Haven (CC0): snow_02.
+name: Snow patch
+doc: Lying snow where you paint it; grass and cover under it are gone.
+order: 130
+layers:
+  - {layer: snow_patch, strength: 1}
+  - {layer: path_clear, strength: 1}
+recipe:
+  paint:
+    - {name: snow_patch, kind: material}
+    - {name: path_clear, kind: exclude}
+  textures:
+    - {name: snow_patch, id: snow_02, scale: 3}
+  material:
+    - {layer: snow_patch, texture: snow_patch, slots: [snow, ash, wet], fallback: sand}
+  exclude:
+    - {layer: path_clear, kind: grass_field}

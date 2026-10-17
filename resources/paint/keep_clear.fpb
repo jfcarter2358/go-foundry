@@ -1,0 +1,14 @@
+# Keep clear: nothing grows or lies here — no grass, no cover, no rocks.
+# (Pond, lake and marsh presets: pond.fpb, lake.fpb, marsh.fpb; river and
+# stream come with phase W3.)
+name: Keep clear
+doc: Nothing grows or lies here — no grass, no ground cover, no scattered rocks.
+order: 200
+layers:
+  - {layer: keep_clear, strength: 1}
+recipe:
+  paint:
+    - {name: keep_clear, kind: exclude}
+  exclude:
+    - {layer: keep_clear, kind: grass_field}
+    - {layer: keep_clear, kind: scatter}

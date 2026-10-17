@@ -1,0 +1,35 @@
+# Dirt trail: a stroke becomes a footpath spline in the ground_edit: worn
+# earth on a flattened bed with a ragged edge, grass worn away toward the
+# middle and thinner and shorter either side, large rocks and logs kept off;
+# a ford of stepping stones where it crosses a river.
+# docs/guide/36-terrain-paint.md "Paths".
+# Poly Haven (CC0): dirt_floor, rock_moss_set_02 (the ford's stones).
+name: Dirt trail
+doc: Worn earth along the stroke on a flattened bed, a ragged edge, the grass worn away; stepping stones across water.
+order: 100
+path:
+  style: dirt_trail
+  width_scale: 1
+  simplify: 0.3
+  flatten: true
+  shape: {blend: 1.0, wear: 1.4, edge: 0.4}
+recipe:
+  textures:
+    - {name: path_dirt, id: dirt_floor, scale: 2.5}
+  material:
+    - {mask: path_wear, texture: path_dirt, slots: [wet, ash, snow], fallback: cracked, strength: 0.35}
+    - {mask: path_dirt_trail, texture: path_dirt, slots: [wet, ash, snow], fallback: cracked}
+  exclude:
+    - {mask: path_wear, kind: grass_field, shrink: 0.6}
+    - {mask: path_clear, kind: scatter}
+  stages:
+    - stage: polyhaven_rocks
+      id: path_rocks_src
+      params:
+        assets: [{id: rock_moss_set_02}]
+        back: none
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source
+        path_rocks: path_rocks_src

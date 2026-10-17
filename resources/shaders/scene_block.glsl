@@ -38,6 +38,10 @@
 #define MAX_POINT_LIGHTS 8
 #define SHADOW_CASCADES  3
 #define MAX_FOG_VOLUMES  8
+// Must match world.MaxAmbientVolumes (and gfx.SceneMaxAmbientVolumes).
+#define MAX_AMBIENT_VOLUMES 8
+// Must match gfx.SceneMaxReflVolumes (render/envmap.go's cube array layers).
+#define MAX_REFL_VOLUMES 8
 
 layout(std140, binding = 0) uniform SceneBlock {
     // ---- lights (world.UploadLightsTo) ----
@@ -108,6 +112,74 @@ layout(std140, binding = 0) uniform SceneBlock {
     vec3  fogVolColor[MAX_FOG_VOLUMES];
     float fogVolDensity[MAX_FOG_VOLUMES];    // per world unit travelled inside
     float fogVolMaxOpacity[MAX_FOG_VOLUMES];
+
+    // ---- atmosphere (world.PackFog; fog.glsl's fogAtmosSegment) ----
+    // Height fog, aerial perspective and the sun's in-scattering, all off
+    // while fogAtmos is 0 — which is every level that does not ask for them.
+    vec3  fogAerialColor;     // the haze's colour at range
+    float fogAerialDensity;   // extinction per metre at fogAerialBase; 0 = no aerial perspective
+    vec3  fogAerialTint;      // per-channel extinction weights: blue above red is Rayleigh's tint
+    float fogAerialBase;      // the height fogAerialDensity is measured at
+    vec3  fogHeightColor;
+    float fogHeightDensity;   // extinction per metre at fogHeightBase; 0 = no height fog
+    vec3  fogSunDir;          // unit, toward the sun
+    float fogHeightBase;
+    vec3  fogSunColor;        // the lobe's colour and strength; 0 = no in-scattering
+    float fogHeightFalloff;   // per metre: density falls by e every 1/falloff metres up
+    float fogAerialFalloff;   // the same for the aerial haze (1 / its scale height)
+    float fogSunG;            // the lobe's Henyey-Greenstein anisotropy
+    float fogSkyHaze;         // how much of the atmosphere the sky takes, 0..1
+    float fogSkyDistance;     // how far along a sky ray the atmosphere is integrated
+    int   fogAtmos;           // 1 when any term above is on
+
+    // ---- HDR (gfx/hdr.go; world.Tonemap) ----
+    // 1 when the frame shades in high dynamic range: a level that asked
+    // (`tonemap:`) in a frame drawn into the RGBA16F scene target. Then lit
+    // surfaces keep light above 1 and display-referred colours (the sky, the
+    // fog's colours, other passes' output) are carried into the scene's units
+    // by fog.glsl's hdrFromDisplay; taa_output_frag.glsl applies the curve.
+    int   hdrMode;
+    float hdrExposure;
+
+    // ---- ambient volumes (world.PackAmbientVolumes; light_model.glsl) ----
+    // Regions whose sky light is cut down — a cave, a slot canyon, a room —
+    // for the frames GI is not there to find it out: ambientLight scales
+    // its sky term by them, and fog.glsl the haze lit by that sky.
+    int   numAmbVolumes;
+    mat3  ambVolBasis[MAX_AMBIENT_VOLUMES];  // world offset -> normalized shape space
+    vec4  ambVolCenter[MAX_AMBIENT_VOLUMES]; // xyz centre, w shape (world.VolumeShape)
+    vec4  ambVolHalf[MAX_AMBIENT_VOLUMES];   // xyz half extents, w fade (metres)
+    vec4  ambVolParams[MAX_AMBIENT_VOLUMES]; // x sky, y ground, z fog, w dust
+
+    // ---- lighting quality (gfx/lighting_settings.go; docs/lighting/PLAN.md) ----
+    // Each 0 in a block nothing wrote, which is the lighting before them.
+    int   specularOn;       // GGX specular from the direct lights (specular.glsl)
+    int   envOn;            // image-based specular: 1 the sky's cube is bound
+    int   ssaoOn;           // last frame's screen-space AO is bound (ao.glsl)
+    int   contactShadowsOn; // the sun's contact shadow rides the AO texture
+    // The view-projection the bound AO texture was made with: a fragment's
+    // place in it is its world position through this (ao.glsl).
+    mat4  ssaoPrevViewProj;
+    float envMaxMip;        // the env cube's last mip, the roughest lobe
+    float envIntensity;     // scales the image-based specular
+    float ssaoStrength;     // 0..1, how much of the screen AO is applied
+    int   sdfAOOn;          // occlusion from the GI distance field
+    int   numReflVolumes;
+    int   softShadowsOn;    // PCSS on the cascades (fragment.glsl)
+    float sunAngularRadius; // radians: the penumbra the soft shadows widen to
+    int   envGINormalize;   // scale reflections by the GI probes' light
+    vec4  reflVolCenter[MAX_REFL_VOLUMES]; // xyz the capture point, w its cube layer
+    vec4  reflVolMin[MAX_REFL_VOLUMES];    // xyz the box's low corner, w fade (metres)
+    vec4  reflVolMax[MAX_REFL_VOLUMES];    // xyz the high corner, w intensity
+    // Each point light's cube in the shadow cube-map array, -1 for none
+    // (point_shadow.glsl; render.packPointShadows).
+    int   pointShadowCube[MAX_POINT_LIGHTS];
+
+    // ---- stylized light ramp (world.Stylize; light_model.glsl's
+    // stylizeLight). All zero — off — in a block nothing wrote.
+    vec4  styShadow;    // rgb the hue shadow turns toward, a how far (0..1)
+    vec4  styHighlight; // rgb the hue bright light warms toward, a how far
+    vec4  styRamp;      // x shadow point, y light point, z shadow fill, w 1 = on
 };
 
 #endif

@@ -798,12 +798,13 @@ func trackerMenus() {
 		}
 		if imgui.MenuItem("Reload Samples") {
 			tracker.ReloadSamples()
-			trkSampleNames = nil
+			tracker.ReloadInstruments()
+			trkSampleNames, trkInstrNames = nil, nil
 			trkSampleWork = nil
 			trkSyncPlayer(true)
-			trkEd.Status = "Samples reloaded"
+			trkEd.Status = "Samples and instruments reloaded"
 		}
-		editorMenuTooltip("Read every sample from disk again — after editing one\nin another program.")
+		editorMenuTooltip("Read every sample and library instrument from disk\nagain — after editing one in another program.")
 		editorCloseWindowItem(CloseTrackerEditorWindow)
 		imgui.EndMenu()
 	}

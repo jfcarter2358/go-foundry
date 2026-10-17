@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 )
@@ -66,15 +67,57 @@ type rawEnv struct {
 }
 
 type rawZone struct {
-	Sample int    `yaml:"sample"`
-	Low    string `yaml:"low"`
-	High   string `yaml:"high"`
-	Base   string `yaml:"base,omitempty"`
+	Sample     int        `yaml:"sample"`
+	Low        string     `yaml:"low"`
+	High       string     `yaml:"high"`
+	Base       string     `yaml:"base,omitempty"`
+	RoundRobin []int      `yaml:"round_robin,flow,omitempty"`
+	Layers     []rawLayer `yaml:"layers,omitempty"`
 }
 
+type rawLayer struct {
+	Sample     int     `yaml:"sample"`
+	RoundRobin []int   `yaml:"round_robin,flow,omitempty"`
+	Velocity   [2]int  `yaml:"velocity,flow"`
+	Gain       float32 `yaml:"gain,omitempty"`
+}
+
+type rawArticulation struct {
+	Name     string    `yaml:"name"`
+	Triggers []string  `yaml:"triggers,flow,omitempty"`
+	Zones    []rawZone `yaml:"zones,omitempty"`
+	Gain     float32   `yaml:"gain,omitempty"`
+	VolEnv   *rawEnv   `yaml:"volume_env,omitempty"`
+	FadeOut  float32   `yaml:"fade_out,omitempty"`
+}
+
+type rawPlayback struct {
+	Range         []string  `yaml:"range,flow,omitempty"`
+	Transposition int       `yaml:"transposition,omitempty"`
+	Clef          string    `yaml:"clef,omitempty"`
+	Gliss         string    `yaml:"gliss,omitempty"`
+	Staccato      float32   `yaml:"staccato,omitempty"`
+	Release       float32   `yaml:"release,omitempty"`
+	StaffLines    int       `yaml:"staff_lines,omitempty"`
+	Drums         []rawDrum `yaml:"drums,omitempty"`
+	Tuning        string    `yaml:"tuning,omitempty"`
+}
+
+type rawDrum struct {
+	Key          int    `yaml:"key"`
+	Name         string `yaml:"name"`
+	Line         int    `yaml:"line"`
+	Head         string `yaml:"head,omitempty"`
+	Articulation string `yaml:"articulation,omitempty"`
+	Shortcut     string `yaml:"shortcut,omitempty"`
+}
+
+// rawInstrument is an instrument in a song, and the body of a .finst. A
+// song's slot that plays a library instrument is only its name and Ref.
 type rawInstrument struct {
 	Name      string    `yaml:"name"`
-	Samples   []string  `yaml:"samples,flow"`
+	Ref       string    `yaml:"ref,omitempty"`
+	Samples   []string  `yaml:"samples,flow,omitempty"`
 	Zones     []rawZone `yaml:"zones,omitempty"`
 	Volume    *float32  `yaml:"volume,omitempty"`
 	Pan       float32   `yaml:"pan,omitempty"`
@@ -93,6 +136,9 @@ type rawInstrument struct {
 	VibDelay  float32   `yaml:"vibrato_delay,omitempty"`
 	Polyphony int       `yaml:"polyphony,omitempty"`
 	Interp    string    `yaml:"interp,omitempty"`
+
+	Articulations []rawArticulation `yaml:"articulations,omitempty"`
+	Playback      *rawPlayback      `yaml:"playback,omitempty"`
 }
 
 type rawSection struct {
@@ -253,26 +299,15 @@ func Parse(b []byte) (*Song, error) {
 
 func instrumentFromRaw(ri rawInstrument) (*Instrument, error) {
 	in := NewInstrument(ri.Name, "")
+	if ri.Ref != "" {
+		// A library slot: the rest comes from the .finst when it resolves.
+		in.Ref = ri.Ref
+		return in, nil
+	}
 	in.Samples = append([]string(nil), ri.Samples...)
-	for _, z := range ri.Zones {
-		lo, err := ParseNote(z.Low)
-		if err != nil {
-			return nil, err
-		}
-		hi, err := ParseNote(z.High)
-		if err != nil {
-			return nil, err
-		}
-		var base uint8
-		if z.Base != "" {
-			if base, err = ParseNote(z.Base); err != nil {
-				return nil, err
-			}
-		}
-		if z.Sample < 0 || z.Sample >= len(in.Samples) {
-			return nil, fmt.Errorf("zone names sample %d of %d", z.Sample, len(in.Samples))
-		}
-		in.Zones = append(in.Zones, Zone{Sample: z.Sample, Low: lo, High: hi, BaseNote: base})
+	var err error
+	if in.Zones, err = zonesFromRaw(ri.Zones, len(in.Samples)); err != nil {
+		return nil, err
 	}
 	in.Volume = orF(ri.Volume, 1)
 	in.Pan = ri.Pan
@@ -291,7 +326,226 @@ func instrumentFromRaw(ri rawInstrument) (*Instrument, error) {
 	in.VibRate, in.VibDepth, in.VibDelay = ri.VibRate, ri.VibDepth, ri.VibDelay
 	in.Polyphony = orInt(ri.Polyphony, 1)
 	in.Interp = parseInterp(ri.Interp)
+	for _, ra := range ri.Articulations {
+		if ra.Name == "" {
+			return nil, fmt.Errorf("an articulation has no name")
+		}
+		a := Articulation{Name: ra.Name, Triggers: append([]string(nil), ra.Triggers...), Gain: ra.Gain,
+			VolEnv: envFromRaw(ra.VolEnv), FadeOut: ra.FadeOut}
+		if a.Zones, err = zonesFromRaw(ra.Zones, len(in.Samples)); err != nil {
+			return nil, fmt.Errorf("articulation %s: %w", ra.Name, err)
+		}
+		in.Articulations = append(in.Articulations, a)
+	}
+	if rp := ri.Playback; rp != nil {
+		pb := Playback{Transposition: rp.Transposition, Clef: rp.Clef, Gliss: ParseGlissStyle(rp.Gliss),
+			Staccato: rp.Staccato, Release: rp.Release}
+		switch len(rp.Range) {
+		case 0:
+		case 2:
+			if pb.Low, err = ParseNote(rp.Range[0]); err != nil {
+				return nil, fmt.Errorf("playback range: %w", err)
+			}
+			if pb.High, err = ParseNote(rp.Range[1]); err != nil {
+				return nil, fmt.Errorf("playback range: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("playback range wants [low, high], got %v", rp.Range)
+		}
+		if pb.Clef != "" && !validClef(pb.Clef) {
+			return nil, fmt.Errorf("playback clef %q; one of %v", pb.Clef, Clefs)
+		}
+		if rp.StaffLines < 0 || rp.StaffLines > 5 {
+			return nil, fmt.Errorf("playback staff_lines %d; a percussion staff has 1 to 5", rp.StaffLines)
+		}
+		pb.StaffLines, pb.Tuning = rp.StaffLines, rp.Tuning
+		if pb.Drums, err = drumsFromRaw(rp.Drums); err != nil {
+			return nil, err
+		}
+		in.Playback = pb
+	}
 	return in, nil
+}
+
+// empty reports playback settings that are all defaults (nothing to write).
+func (p Playback) empty() bool {
+	return p.Low == 0 && p.High == 0 && p.Transposition == 0 && p.Clef == "" && p.Gliss == GlissSlide &&
+		p.Staccato == 0 && p.Release == 0 && p.StaffLines == 0 && len(p.Drums) == 0 && p.Tuning == ""
+}
+
+// drumsFromRaw reads a drum map: every key a MIDI key, at most once, every
+// head one of DrumHeads, every shortcut a letter A-G.
+func drumsFromRaw(rd []rawDrum) ([]DrumNote, error) {
+	var out []DrumNote
+	keys := map[int]bool{}
+	for _, r := range rd {
+		d := DrumNote{Key: r.Key, Name: r.Name, Line: r.Line, Head: r.Head, Articulation: r.Articulation, Shortcut: strings.ToUpper(r.Shortcut)}
+		if d.Key < 0 || d.Key > 127 {
+			return nil, fmt.Errorf("drum %q: key %d is not a MIDI key (0-127)", d.Name, d.Key)
+		}
+		if keys[d.Key] {
+			return nil, fmt.Errorf("drum %q: key %d is mapped twice", d.Name, d.Key)
+		}
+		keys[d.Key] = true
+		if d.Name == "" {
+			return nil, fmt.Errorf("drum on key %d has no name", d.Key)
+		}
+		if d.Line < -8 || d.Line > 16 {
+			return nil, fmt.Errorf("drum %q: line %d is too far from the staff (-8..16)", d.Name, d.Line)
+		}
+		if d.Head == "" {
+			d.Head = "normal"
+		}
+		ok := false
+		for _, h := range DrumHeads {
+			ok = ok || h == d.Head
+		}
+		if !ok {
+			return nil, fmt.Errorf("drum %q: head %q (want one of %s)", d.Name, d.Head, strings.Join(DrumHeads, ", "))
+		}
+		if d.Shortcut != "" && (len(d.Shortcut) != 1 || d.Shortcut[0] < 'A' || d.Shortcut[0] > 'G') {
+			return nil, fmt.Errorf("drum %q: shortcut %q (a letter A-G)", d.Name, r.Shortcut)
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+func validClef(c string) bool {
+	for _, k := range Clefs {
+		if k == c {
+			return true
+		}
+	}
+	return false
+}
+
+func zonesFromRaw(rz []rawZone, samples int) ([]Zone, error) {
+	var out []Zone
+	idx := func(i int) error {
+		if i < 0 || i >= samples {
+			return fmt.Errorf("zone names sample %d of %d", i, samples)
+		}
+		return nil
+	}
+	for _, z := range rz {
+		lo, err := ParseNote(z.Low)
+		if err != nil {
+			return nil, err
+		}
+		hi, err := ParseNote(z.High)
+		if err != nil {
+			return nil, err
+		}
+		var base uint8
+		if z.Base != "" {
+			if base, err = ParseNote(z.Base); err != nil {
+				return nil, err
+			}
+		}
+		if err := idx(z.Sample); err != nil {
+			return nil, err
+		}
+		zone := Zone{Sample: z.Sample, Low: lo, High: hi, BaseNote: base}
+		for _, r := range z.RoundRobin {
+			if err := idx(r); err != nil {
+				return nil, err
+			}
+			zone.RoundRobin = append(zone.RoundRobin, r)
+		}
+		for _, rl := range z.Layers {
+			if err := idx(rl.Sample); err != nil {
+				return nil, err
+			}
+			lv, hv := rl.Velocity[0], rl.Velocity[1]
+			if lv < 0 || hv > 127 || lv > hv {
+				return nil, fmt.Errorf("layer velocity %v; want [low, high] in 0..127", rl.Velocity)
+			}
+			l := Layer{Sample: rl.Sample, VelLow: uint8(lv), VelHigh: uint8(hv), Gain: rl.Gain}
+			for _, r := range rl.RoundRobin {
+				if err := idx(r); err != nil {
+					return nil, err
+				}
+				l.RoundRobin = append(l.RoundRobin, r)
+			}
+			zone.Layers = append(zone.Layers, l)
+		}
+		out = append(out, zone)
+	}
+	return out, nil
+}
+
+func zonesToRaw(zs []Zone) []rawZone {
+	var out []rawZone
+	for _, z := range zs {
+		rz := rawZone{Sample: z.Sample, Low: NoteName(z.Low), High: NoteName(z.High), RoundRobin: z.RoundRobin}
+		if z.BaseNote != 0 {
+			rz.Base = NoteName(z.BaseNote)
+		}
+		for _, l := range z.Layers {
+			rz.Layers = append(rz.Layers, rawLayer{Sample: l.Sample, RoundRobin: l.RoundRobin,
+				Velocity: [2]int{int(l.VelLow), int(l.VelHigh)}, Gain: l.Gain})
+		}
+		out = append(out, rz)
+	}
+	return out
+}
+
+// instrumentToRaw is an instrument as a song or a .finst stores it.
+func instrumentToRaw(in *Instrument) rawInstrument {
+	if in.Ref != "" {
+		return rawInstrument{Name: in.Name, Ref: in.Ref}
+	}
+	ri := rawInstrument{
+		Name: in.Name, Samples: in.Samples, Pan: in.Pan, Transpose: in.Transpose, FineTune: in.FineTune,
+		VolEnv: envToRaw(in.VolEnv), PanEnv: envToRaw(in.PanEnv), PitchEnv: envToRaw(in.PitchEnv), FilterEnv: envToRaw(in.FilterEnv),
+		Resonance: in.Resonance, VibRate: in.VibRate, VibDepth: in.VibDepth, VibDelay: in.VibDelay,
+		Interp: in.Interp.String(), Zones: zonesToRaw(in.Zones),
+	}
+	if in.Volume != 1 {
+		v := in.Volume
+		ri.Volume = &v
+	}
+	if in.Filter != FilterOff {
+		ri.Filter = in.Filter.String()
+		ri.Cutoff = in.Cutoff
+	}
+	if in.FadeOut != 0.05 {
+		v := in.FadeOut
+		ri.FadeOut = &v
+	}
+	if in.Polyphony > 1 {
+		ri.Polyphony = in.Polyphony
+	}
+	for _, a := range in.Articulations {
+		ri.Articulations = append(ri.Articulations, rawArticulation{Name: a.Name, Triggers: a.Triggers,
+			Zones: zonesToRaw(a.Zones), Gain: a.Gain, VolEnv: envToRaw(a.VolEnv), FadeOut: a.FadeOut})
+	}
+	if pb := in.Playback; !pb.empty() {
+		rp := &rawPlayback{Transposition: pb.Transposition, Clef: pb.Clef, Staccato: pb.Staccato, Release: pb.Release, StaffLines: pb.StaffLines, Tuning: pb.Tuning}
+		for _, d := range pb.Drums {
+			rd := rawDrum{Key: d.Key, Name: d.Name, Line: d.Line, Articulation: d.Articulation, Shortcut: d.Shortcut}
+			if d.Head != "normal" {
+				rd.Head = d.Head
+			}
+			rp.Drums = append(rp.Drums, rd)
+		}
+		if pb.Gliss != GlissSlide {
+			rp.Gliss = pb.Gliss.String()
+		}
+		if pb.Low != 0 || pb.High != 0 {
+			rp.Range = []string{NoteName(max(pb.Low, NoteMin)), NoteName(orNote(pb.High, NoteMax))}
+		}
+		ri.Playback = rp
+	}
+	return ri
+}
+
+func orNote(n, def uint8) uint8 {
+	if n == 0 {
+		return def
+	}
+	return n
 }
 
 func envFromRaw(r *rawEnv) Envelope {
@@ -357,35 +611,7 @@ func Marshal(s *Song) ([]byte, error) {
 		r.Channels = append(r.Channels, rc)
 	}
 	for _, in := range s.Instruments {
-		ri := rawInstrument{
-			Name: in.Name, Samples: in.Samples, Pan: in.Pan, Transpose: in.Transpose, FineTune: in.FineTune,
-			VolEnv: envToRaw(in.VolEnv), PanEnv: envToRaw(in.PanEnv), PitchEnv: envToRaw(in.PitchEnv), FilterEnv: envToRaw(in.FilterEnv),
-			Resonance: in.Resonance, VibRate: in.VibRate, VibDepth: in.VibDepth, VibDelay: in.VibDelay,
-			Interp: in.Interp.String(),
-		}
-		for _, z := range in.Zones {
-			rz := rawZone{Sample: z.Sample, Low: NoteName(z.Low), High: NoteName(z.High)}
-			if z.BaseNote != 0 {
-				rz.Base = NoteName(z.BaseNote)
-			}
-			ri.Zones = append(ri.Zones, rz)
-		}
-		if in.Volume != 1 {
-			v := in.Volume
-			ri.Volume = &v
-		}
-		if in.Filter != FilterOff {
-			ri.Filter = in.Filter.String()
-			ri.Cutoff = in.Cutoff
-		}
-		if in.FadeOut != 0.05 {
-			v := in.FadeOut
-			ri.FadeOut = &v
-		}
-		if in.Polyphony > 1 {
-			ri.Polyphony = in.Polyphony
-		}
-		r.Instruments = append(r.Instruments, ri)
+		r.Instruments = append(r.Instruments, instrumentToRaw(in))
 	}
 	for _, sec := range s.Sections {
 		r.Sections = append(r.Sections, rawSection{Name: sec.Name, Start: sec.Start, End: sec.End, Loop: sec.Loop, Next: sec.Next})

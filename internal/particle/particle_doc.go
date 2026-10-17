@@ -493,6 +493,12 @@ type Layer struct {
 	// frame. Amp is its strength, Freq how tightly it varies in space.
 	TurbulenceAmp  float32
 	TurbulenceFreq float32
+	// Wind is how readily the layer's particles are carried by the level's
+	// wind (SetWind; phase W5, docs/terrain-paint/PHASE_W5.md): the
+	// per-second rate at which their horizontal velocity is pulled toward
+	// the wind's. 0, the default, ignores it; a waterfall's mist drifts
+	// downwind at about 1.
+	Wind float32
 	// LocalSpace simulates in the emitter's frame, so the whole effect is
 	// carried rigidly when the emitter moves. Off, particles are released into
 	// the world and left behind — which is the difference between a torch on a

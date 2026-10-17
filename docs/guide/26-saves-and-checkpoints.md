@@ -45,6 +45,8 @@ Some things are deliberately not restored, and restart instead:
 - how far through its clip a sound was
 - a music crossfade
 - one-shot effects such as a gunshot or an explosion
+- water's splashes and the rings on its surface (the rain on it,
+  `@level.prop.rain_ripples`, is kept)
 
 Saves are files in `saves/` in the player's data directory, next to
 `settings.yaml`. A development build writes them to the project directory, and

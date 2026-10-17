@@ -83,6 +83,12 @@ layout(std430, binding = 12) buffer BlockPrefix {
 
 uniform uint workBase;
 uniform uint kindTileCount;
+// liveList: the kind list bound at 13 is this pass's live range tiles,
+// liveCount long (render/nanite_live_tiles.go; the range scatter only).
+uniform int liveList;
+layout(std430, binding = 18) readonly buffer LiveCount {
+    uint liveCount;
+};
 uniform uint tileCount;
 uniform uint blockCount;
 uniform uint groupCount;
@@ -162,7 +168,7 @@ void main() {
 #elif defined(COMPACT_SCATTER_RANGE)
     // A thread a range tile: its RANGE_SLOTS_COMPACT slots, in order.
     uint n = workBase + gl_GlobalInvocationID.x;
-    if (n >= kindTileCount) {
+    if (n >= (liveList != 0 ? liveCount : kindTileCount)) {
         return;
     }
     uint ti = kindTiles[n];

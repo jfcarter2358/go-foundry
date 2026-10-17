@@ -1,0 +1,12 @@
+version: 1
+title: Graces
+lines:
+- name: Flute
+  instrument: woodwinds/flute
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | /eD5 qC5 ^eB4 qA4 /sF#4 /sG4 qA4 ^sC5 ^sD5 qE5
+      | /eC#5+E5 qD5 /eBb4 /eC5 /eD5 hEb5 qr
+      | qG4 qA4 h_ /eF5

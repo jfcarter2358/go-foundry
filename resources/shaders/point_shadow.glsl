@@ -24,7 +24,9 @@
 
 #include "scene_block.glsl"
 
-uniform samplerCubeShadow pointShadowMap[MAX_POINT_LIGHTS];
+// Every casting light's cube, one cube-map array (render/shadow.go): cube
+// pointShadowCube[light]. One sampler where there were eight.
+uniform samplerCubeArrayShadow pointShadowCubes;
 
 #define POINT_SHADOW_TAPS 8
 // How far the disk reaches, in the units of the old kernel's diskRadius: its
@@ -48,6 +50,10 @@ float pointShadowTurn() {
 // pointShadow is how shadowed worldPos is from point light lightIdx: 0 lit,
 // 1 fully in shadow. The caller checks pointLightCastShadows first.
 float pointShadow(int lightIdx, vec3 worldPos) {
+    int cube = pointShadowCube[lightIdx];
+    if (cube < 0) {
+        return 0.0;
+    }
     vec3 fragToLight = worldPos - pointLightPos[lightIdx];
     float currentDist = length(fragToLight);
     float farPlane = pointLightFarPlane[lightIdx];
@@ -71,7 +77,7 @@ float pointShadow(int lightIdx, vec3 worldPos) {
         float r = sqrt((float(i) + 0.5) / float(POINT_SHADOW_TAPS));
         float a = float(i) * 2.39996323 + turn;
         vec3 offset = (t * cos(a) + b * sin(a)) * (r * diskRadius);
-        lit += texture(pointShadowMap[lightIdx], vec4(fragToLight + offset, ref));
+        lit += texture(pointShadowCubes, vec4(fragToLight + offset, float(cube)), ref);
     }
     return 1.0 - lit / float(POINT_SHADOW_TAPS);
 }

@@ -1,0 +1,8 @@
+version: 1
+name: Fx Vinyl
+samples: [fx/fx_vinyl]
+fade_out: 0.3
+playback:
+  clef: percussion
+  release: 6
+description: 'Lo-fi vinyl surface: crackle, pops and hiss'

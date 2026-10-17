@@ -1,0 +1,9 @@
+version: 1
+name: Strings Pizz
+samples: [pads/strings_pizz]
+fade_out: 0.3
+playback:
+  range: [G-3, E-7]
+  clef: treble
+  release: 0.6
+description: 'Pizzicato violin: short pluck through a wooden body'

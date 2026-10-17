@@ -265,8 +265,8 @@ func pointShadowSignaturesIn(level *world.Level, pl world.PointLight, cubemap ui
 	}
 
 	// Entities, under RenderEntitiesShadow's.
-	for ei := range level.Entities {
-		e := &level.Entities[ei]
+	for ei, n := 0, drawnEntityCount(level); ei < n; ei++ {
+		e := drawnEntity(level, ei)
 		frame := level.Frames.FrameFor(e)
 		if !e.Visible || !EntityInFrustumOf(frame, e, &box) {
 			continue

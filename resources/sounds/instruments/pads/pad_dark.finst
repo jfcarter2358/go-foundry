@@ -1,0 +1,8 @@
+version: 1
+name: Pad Dark
+samples: [pads/pad_dark]
+fade_out: 0.9
+playback:
+  range: [C-1, C-5]
+  clef: bass
+description: 'Dark drone: saws and low noise under a slowly moving filter'

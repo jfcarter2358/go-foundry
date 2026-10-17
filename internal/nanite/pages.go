@@ -85,11 +85,14 @@ type Page struct {
 }
 
 // PageData is a page decoded: 5 floats a vertex (x, y, z, u, v), 3 normal
-// floats a vertex, and the triangles as indices into this page's vertices.
+// floats a vertex, and the triangles as indices into this page's vertices —
+// and, for a mesh with colours (Mesh.HasColors), one RGBA8 word a vertex in
+// Colors (nil otherwise).
 type PageData struct {
 	Vertices []float32
 	Normals  []float32
 	Indices  []uint32
+	Colors   []uint32
 }
 
 // pageMagic starts every page's bytes.
@@ -125,13 +128,16 @@ type groupKey struct{ slot, group int32 }
 
 // BuildPages packs the mesh's clusters into pages (see the file comment).
 // The mesh must be whole in memory — its pool snapped to its quantisation
-// (Quant.Quantize), q the pool's integers — with its clusters and tree
-// built. Afterwards the mesh's Vertices, Normals and Indices are the decoded
+// (Quant.Quantize), q the pool's integers, and with HasColors its Colors one
+// a pool vertex — with its clusters and tree built. Afterwards the mesh's Vertices, Normals and Indices are the decoded
 // pages, exactly what a load decodes, and the packed bytes are kept for
 // Encode.
 func (m *Mesh) BuildPages(q []QVertex) error {
 	if len(q) != len(m.Vertices)/5 {
 		return fmt.Errorf("pages: %d quantised vertices for a %d-vertex pool", len(q), len(m.Vertices)/5)
+	}
+	if m.HasColors && len(m.Colors) != len(q) {
+		return fmt.Errorf("pages: %d colours for a %d-vertex pool", len(m.Colors), len(q))
 	}
 	slot := m.slotOf()
 	leaves := cluster.LeafRanges(m.Nodes)
@@ -252,7 +258,7 @@ func (m *Mesh) BuildPages(q []QVertex) error {
 	m.data = blob
 	m.dataPages = uint64(len(blob))
 	var verts, normals []float32
-	var idx []uint32
+	var idx, colors []uint32
 	for pi := range m.Pages {
 		d, err := m.decodePage(pi, blob[m.Pages[pi].Offset:m.Pages[pi].Offset+uint64(m.Pages[pi].Size)])
 		if err != nil {
@@ -264,6 +270,7 @@ func (m *Mesh) BuildPages(q []QVertex) error {
 		}
 		verts = append(verts, d.Vertices...)
 		normals = append(normals, d.Normals...)
+		colors = append(colors, d.Colors...)
 	}
 	if len(idx) != len(m.Indices) {
 		return fmt.Errorf("pages decode to %d indices, not %d", len(idx), len(m.Indices))
@@ -274,8 +281,14 @@ func (m *Mesh) BuildPages(q []QVertex) error {
 			return fmt.Errorf("pages: corner %d decodes to %v %v, not %v %v (was the pool quantised?)", i,
 				verts[5*b:5*b+5], normals[3*b:3*b+3], m.Vertices[5*a:5*a+5], m.Normals[3*a:3*a+3])
 		}
+		if m.HasColors && m.Colors[a] != colors[b] {
+			return fmt.Errorf("pages: corner %d's colour decodes to %08x, not %08x", i, colors[b], m.Colors[a])
+		}
 	}
 	m.Vertices, m.Normals, m.Indices = verts, normals, idx
+	if m.HasColors {
+		m.Colors = colors
+	}
 	m.PoolVertices = int32(len(verts) / 5)
 	return nil
 }
@@ -294,7 +307,11 @@ func (m *Mesh) encodePage(pi int, local [][]uint32, q []QVertex) []byte {
 }
 
 // encodeCluster packs one cluster: its vertex and triangle counts, its
-// fields' bases and widths, its vertices, then its local indices.
+// fields' bases and widths, its vertices, then its local indices. With
+// colours (format 5) each channel has a base and a width too (8 bits and 4),
+// after the index width, and every vertex its four channels after its
+// normal: a generated rock's colour varies slowly, so a cluster's channels
+// usually take 3 to 5 bits each rather than 8.
 func (m *Mesh) encodeCluster(w *bitWriter, c *Cluster, local []uint32, q []QVertex) {
 	nv := len(local)
 	var pmin, pmax [3]int32
@@ -328,6 +345,25 @@ func (m *Mesh) encodeCluster(w *bitWriter, c *Cluster, local []uint32, q []QVert
 		ub[k] = bitsFor(uint32(umax[k] - umin[k]))
 	}
 	ib := bitsFor(uint32(max(nv-1, 0)))
+	var cmin [4]uint32
+	var cb [4]uint8
+	if m.HasColors {
+		var cmax [4]uint32
+		for i, v := range local {
+			for k := 0; k < 4; k++ {
+				x := m.Colors[v] >> (8 * k) & 0xff
+				if i == 0 || x < cmin[k] {
+					cmin[k] = x
+				}
+				if i == 0 || x > cmax[k] {
+					cmax[k] = x
+				}
+			}
+		}
+		for k := 0; k < 4; k++ {
+			cb[k] = bitsFor(cmax[k] - cmin[k])
+		}
+	}
 	w.write(uint32(nv), 16)
 	w.write(c.TriCount, 16)
 	for k := 0; k < 3; k++ {
@@ -339,6 +375,12 @@ func (m *Mesh) encodeCluster(w *bitWriter, c *Cluster, local []uint32, q []QVert
 		w.write(uint32(ub[k]), 8)
 	}
 	w.write(uint32(ib), 8)
+	if m.HasColors {
+		for k := 0; k < 4; k++ {
+			w.write(cmin[k], 8)
+			w.write(uint32(cb[k]), 4)
+		}
+	}
 	nb := m.Quant.NormalBits
 	for _, v := range local {
 		for k := 0; k < 3; k++ {
@@ -349,6 +391,11 @@ func (m *Mesh) encodeCluster(w *bitWriter, c *Cluster, local []uint32, q []QVert
 		}
 		w.write(uint32(q[v].Normal[0]), nb)
 		w.write(uint32(q[v].Normal[1]), nb)
+		if m.HasColors {
+			for k := 0; k < 4; k++ {
+				w.write(m.Colors[v]>>(8*k)&0xff-cmin[k], cb[k])
+			}
+		}
 	}
 	slotOf := make(map[uint32]uint32, nv)
 	for i, v := range local {
@@ -382,6 +429,9 @@ func (m *Mesh) decodePage(pi int, b []byte) (PageData, error) {
 		Vertices: make([]float32, 0, int(p.Vertices)*5),
 		Normals:  make([]float32, 0, int(p.Vertices)*3),
 		Indices:  make([]uint32, 0, int(p.Triangles)*3),
+	}
+	if m.HasColors {
+		d.Colors = make([]uint32, 0, int(p.Vertices))
 	}
 	q := m.Quant
 	for c := p.ClusterFirst; c < p.ClusterFirst+p.ClusterCount; c++ {
@@ -425,6 +475,20 @@ func (m *Mesh) decodePage(pi int, b []byte) (PageData, error) {
 			return PageData{}, err
 		}
 		ib := uint8(min(ibv, 32))
+		var cmin [4]uint32
+		var cb [4]uint8
+		if m.HasColors {
+			for k := 0; k < 4; k++ {
+				if cmin[k], err = r.read(8); err != nil {
+					return PageData{}, err
+				}
+				v, err := r.read(4)
+				if err != nil {
+					return PageData{}, err
+				}
+				cb[k] = uint8(min(v, 8))
+			}
+		}
 		base := uint32(len(d.Vertices) / 5)
 		nv := int(nv32)
 		if int(base)+nv > int(p.Vertices) {
@@ -458,6 +522,17 @@ func (m *Mesh) decodePage(pi int, b []byte) (PageData, error) {
 			n := q.Normal([2]uint16{uint16(ox), uint16(oy)})
 			d.Vertices = append(d.Vertices, pos[0], pos[1], pos[2], uv[0], uv[1])
 			d.Normals = append(d.Normals, n[0], n[1], n[2])
+			if m.HasColors {
+				var c uint32
+				for k := 0; k < 4; k++ {
+					v, err := r.read(cb[k])
+					if err != nil {
+						return PageData{}, err
+					}
+					c |= (cmin[k] + v) & 0xff << (8 * k)
+				}
+				d.Colors = append(d.Colors, c)
+			}
 		}
 		for i := 0; i < 3*int(nt); i++ {
 			v, err := r.read(ib)

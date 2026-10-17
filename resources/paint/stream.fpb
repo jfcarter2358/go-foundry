@@ -1,0 +1,49 @@
+# Stream: a narrow, shallow, quick river - a stroke becomes a stream spline
+# in the ground_edit (width 1.4 x the brush radius): riffles every few
+# metres, pebbly bed, small boulders, little floodplain, grassy banks with
+# sedge; a long steep run down a valley side cascades in 1.2 m steps
+# (phase W4). docs/guide/36-terrain-paint.md "Rivers and streams". Poly Haven
+# (CC0): gravel_floor, brown_mud_02, rock_moss_set_02, grass_medium_01.
+name: Stream
+doc: A narrow quick stream along the stroke - shallow riffles, pebbly bed, small boulders, sedge on the banks.
+order: 177
+river:
+  depth: 0.45
+  width_scale: 0.7
+  material: water_river
+  simplify: 0.3
+  shape: {pools: 0.8, boulders: 1.5, bank_height: 0.25, floodplain: 1.5, bank_slope: 0.4, reach: 6, speed: 1.2, max_slope: 0.3, min_fall: 0.4,
+    cascade_step: 1.2}
+recipe:
+  textures:
+    - {name: pond_mud, id: brown_mud_02, scale: 2}
+    - {name: river_gravel, id: gravel_floor, scale: 1.5}
+  material:
+    - {mask: river_bar, texture: pond_mud, slots: [wet], fallback: cracked, strength: 0.05}
+    - {mask: river_bed, texture: river_gravel, slots: [ash, snow], fallback: gravel, strength: 0.95}
+  stages:
+    - stage: polyhaven_rocks
+      id: river_rocks_src
+      params:
+        assets: [{id: rock_moss_set_02}]
+        back: none
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source
+        water_sounds: true
+        river_rocks: river_rocks_src
+    - stage: polyhaven_plants
+      id: cover_grass
+      params:
+        assets: [{id: grass_medium_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: shore_sedge, plants: cover_grass, pieces: mid, density: 1.5, scale: [3, 4.5], slope: [0, 35],
+             cluster: 0.45, cluster_scale: 16, max_triangles: 500, shore: [1, 7], shore_soft: 3,
+             tint_a: [0.9, 1.0, 0.72], tint_b: [1.0, 0.98, 0.66], tint_scale: 40}

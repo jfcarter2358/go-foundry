@@ -1,0 +1,8 @@
+version: 1
+name: Timpani
+samples: [drums/timpani]
+polyphony: 4
+playback:
+  clef: bass
+  release: 3
+description: 'Timpani: tuned membrane that settles into pitch'

@@ -1,0 +1,8 @@
+version: 1
+name: Fx Downlifter
+samples: [fx/fx_downlifter]
+fade_out: 0.3
+playback:
+  clef: percussion
+  release: 6
+description: Falling sweep that drains the energy out

@@ -1,0 +1,35 @@
+# water_falls.fmat — a waterfall's falling sheet (docs/terrain-paint/
+# PHASE_W4.md). ground_edit places a sheet over every fall its rivers make,
+# wearing this (its falls_material); put it on any mesh hung as a fall.
+#
+# `falls` switches the water shader to its falling-water path: streaks
+# scrolling down the mesh's V (metres down the sheet) at falls_speed, the
+# sheet glassy and see-through where it leaves the lip and white, aerated
+# and opaque toward the foot (the vertex colour's red), its sides frayed
+# (green). The rest are the water effect's own numbers, chosen for a sheet:
+# no swell (a vertical mesh must not be displaced by the surface's waves),
+# no flow map (the vertex colour is the sheet's data, not a current), no
+# caustics or screen reflections; the colours are the river's, so the glassy
+# part matches the water that went over the lip.
+kind: surface
+texture: water
+doc: 'A waterfall''s falling sheet: streaks running down, white water at the lip and foot, see-through where it is glassy.'
+effects:
+  - effect: water
+    falls: 1
+    falls_speed: 4
+    wave_amplitude: 0
+    swell: 0
+    flow_map: 0
+    absorption: 0.7
+    shallow_color: {r: 0.66, g: 0.78, b: 0.64}
+    scatter_color: {r: 0.09, g: 0.145, b: 0.105}
+    roughness: 0.2
+    refraction: 0.5
+    reflectivity: 0.34
+    reflect_color: {r: 0.92, g: 0.96, b: 0.76}
+    foam: 1
+    detail_scale: 1.2
+    detail_strength: 1.2
+    caustics: 0
+    ssr: 0

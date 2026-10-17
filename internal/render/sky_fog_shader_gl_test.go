@@ -49,6 +49,8 @@ var fogUniformNames = []string{
 	"fogDensity", "fogMaxOpacity", "fogCamPos",
 	"numFogVolumes", "fogVolBasis[0]", "fogVolCenter[0]", "fogVolShape[0]",
 	"fogVolColor[0]", "fogVolDensity[0]", "fogVolMaxOpacity[0]",
+	// The atmosphere (world/fog_atmosphere.go).
+	"fogAtmos", "fogHeightDensity", "fogAerialDensity", "fogAerialTint", "fogSunDir", "fogSunColor",
 }
 
 func TestSkyAndFogShadersCompile(t *testing.T) {

@@ -102,7 +102,7 @@ func TestSceneBlockMatchesTheShader(t *testing.T) {
 				t.Errorf("%s: array stride %d in the shader, %d in gfx.SceneBlock", f.Name, stride, want)
 			}
 		}
-		if strings.HasPrefix(name, "fogVolBasis") || strings.HasPrefix(name, "cascadeMatrix") || name == "cloudShadowMatrix" {
+		if strings.HasPrefix(name, "fogVolBasis") || strings.HasPrefix(name, "ambVolBasis") || strings.HasPrefix(name, "cascadeMatrix") || name == "cloudShadowMatrix" {
 			mstride, _ := sceneResource(prog, lookup, gl.MATRIX_STRIDE)
 			if mstride != 16 {
 				t.Errorf("%s: matrix stride %d, want 16", f.Name, mstride)
@@ -114,6 +114,9 @@ func TestSceneBlockMatchesTheShader(t *testing.T) {
 // The Go side's array sizes have to be the shader's, and the shader's are the
 // ones the engine fills to.
 func TestSceneBlockSizesAreTheEngines(t *testing.T) {
+	if gfx.SceneMaxAmbientVolumes != world.MaxAmbientVolumes {
+		t.Errorf("gfx.SceneMaxAmbientVolumes %d, world.MaxAmbientVolumes %d", gfx.SceneMaxAmbientVolumes, world.MaxAmbientVolumes)
+	}
 	if gfx.SceneMaxDirLights != world.MaxDirLights || gfx.SceneMaxPointLights != world.MaxPointLights ||
 		gfx.SceneShadowCascades != ShadowCascades || gfx.SceneMaxFogVolumes != world.MaxFogVolumes {
 		t.Errorf("gfx.Scene* sizes (%d, %d, %d, %d) differ from the engine's (%d, %d, %d, %d)",

@@ -107,16 +107,26 @@ func sceneryGroupsSignature(lvl *world.Level) uint64 {
 		h.Write(b[:])
 	}
 	put(uint32(len(lvl.Scenery)))
+	put(uint32(boolToInt32(DrawDistances)))
 	for i := range lvl.Scenery {
 		subs := lvl.Scenery[i].Submeshes
 		if lvl.Scenery[i].NaniteGPU {
+			// The GPU cull's (nanite_scenery.go): in no group, so nothing
+			// else of it matters here — and its CPU-only submeshes, hashed
+			// a frame for each of thousands of placements, were a
+			// millisecond and a half (docs/regions/PRESETS_5.md).
 			put(0xffffffff)
+			continue
 		}
 		// Its chunk switched off: out of every group (world.SyncPlacementChunks).
 		if !lvl.Scenery[i].InWorld() {
 			put(0xfffffffe)
 		}
 		put(uint32(len(subs)))
+		// Its draw and shadow distances, which the GPU cull's records
+		// carry (classicDrawCuts).
+		put(math.Float32bits(lvl.Scenery[i].DrawDistance))
+		put(math.Float32bits(lvl.Scenery[i].ShadowDistance))
 		for si := range subs {
 			put(subs[si].Vao)
 			put(math.Float32bits(subs[si].Alpha))
@@ -204,9 +214,16 @@ func (in *sceneryInstancer) refresh(i int) bool {
 	return true
 }
 
-// visible is SceneryInFrustum from the cached bounds.
-func (in *sceneryInstancer) visible(i int, cull *Frustum) bool {
+// visible is SceneryInFrustum from the cached bounds — and the placement's
+// draw distance from the camera, the per-instance cut (world/scenery_draw.go):
+// shadow says which, its draw or its shadow distance.
+func (in *sceneryInstancer) visible(i int, cull *Frustum) bool { return in.visibleFor(i, cull, false) }
+
+func (in *sceneryInstancer) visibleFor(i int, cull *Frustum, shadow bool) bool {
 	in.matrix(i)
+	if DrawDistances && !in.lvl.Scenery[i].DrawnAt(gfx.Cam.Position, shadow) {
+		return false
+	}
 	b := &in.boxes[i]
 	return cull == nil || !b.ok || AABBInFrustum(*cull, b.lo, b.hi)
 }
@@ -226,7 +243,7 @@ func (in *sceneryInstancer) fill(cull *Frustum, shadows bool) int {
 		}
 		for _, m := range g.members {
 			s := &in.lvl.Scenery[m]
-			if !in.visible(int(m), cull) {
+			if !in.visibleFor(int(m), cull, shadows) {
 				continue
 			}
 			mat := in.mats[m]
@@ -312,7 +329,7 @@ func renderSceneryShadowInstanced(lvl *world.Level, prog uint32, skin *gfx.SkinU
 			continue
 		}
 		geo := &lvl.Scenery[g.rep].Submeshes[g.sub]
-		if geo.Alpha < 0.05 {
+		if !geo.CastsShadow() {
 			continue
 		}
 		// A coarser stand-in where the mesh has one (gfx.Geometry.ShadowLOD).

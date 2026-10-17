@@ -12,14 +12,10 @@ import (
 // calling it — the point is that WaterParamsFromRaw reads back every field the
 // writer puts out.
 func TestWaterParamsRoundTrip(t *testing.T) {
-	want := gfx.WaterParams{
-		Enabled:       true,
-		WaveAmplitude: 0.25,
-		WaveLength:    7.5,
-		WaveSpeed:     1.25,
-		Reflectivity:  0.8,
-		ReflectColor:  mgl32.Vec3{0.1, 0.2, 0.3},
-	}
+	// The five numbers the block carries over the default water's look.
+	want := gfx.DefaultWaterParams()
+	want.WaveAmplitude, want.WaveLength, want.WaveSpeed = 0.25, 7.5, 1.25
+	want.Reflectivity, want.ReflectColor = 0.8, mgl32.Vec3{0.1, 0.2, 0.3}
 	raw := &RawWater{
 		WaveAmplitude: want.WaveAmplitude,
 		WaveLength:    want.WaveLength,

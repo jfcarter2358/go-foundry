@@ -1,0 +1,8 @@
+version: 1
+name: Bass Moog
+samples: [bass/bass_moog]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: 'Fat analog bass: two detuned saws into a ladder filter'

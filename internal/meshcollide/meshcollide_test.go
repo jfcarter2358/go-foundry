@@ -519,3 +519,27 @@ func BenchmarkDecomposeSphere(b *testing.B) {
 		Decompose(pos, idx, Settings{})
 	}
 }
+
+// TestMeshModeCookSkipsTheHulls: a mesh cooked to collide as itself has its
+// tree and no hulls, still validates, and a placement asking it for hulls
+// gets its box.
+func TestMeshModeCookSkipsTheHulls(t *testing.T) {
+	pos, idx := boxMesh(mgl32.Vec3{-1, 0, -2}, mgl32.Vec3{1, 3, 2})
+	flat := make([]float32, 0, 3*len(pos))
+	for _, p := range pos {
+		flat = append(flat, p[0], p[1], p[2])
+	}
+	d, err := Build(Input{Positions: flat, Indices: idx}, Settings{Mode: ModeMesh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Hulls) != 0 || d.TriangleCount() != 12 || len(d.Nodes) == 0 {
+		t.Errorf("%d hulls, %d triangles, %d nodes", len(d.Hulls), d.TriangleCount(), len(d.Nodes))
+	}
+	if m := d.Resolve(ModeAuto, 100); m != ModeMesh {
+		t.Errorf("auto resolves to %v", m)
+	}
+	if m := d.Resolve(ModeHulls, 1); m != ModeBox {
+		t.Errorf("a hulls override resolves to %v, want the box", m)
+	}
+}

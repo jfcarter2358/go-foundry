@@ -1,0 +1,9 @@
+version: 1
+name: Marimba
+samples: [keys/marimba]
+fade_out: 0.3
+polyphony: 4
+playback:
+  range: [C-2, C-7]
+  clef: grand
+description: 'Marimba: tuned wooden bar over a resonator'

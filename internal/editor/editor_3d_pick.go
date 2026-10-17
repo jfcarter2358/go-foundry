@@ -855,6 +855,9 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// the room behind would read as belonging to this one.
 	drawNavigationOverlay()
 	gizmo.GizmoFlush(projView)
+	// The generator paint layer being painted, on the terrain
+	// (editor_generator_paint3d.go): its own pass, depth-tested.
+	drawGenPaintOverlay(projView)
 
 	gl.Disable(gl.DEPTH_TEST)
 	defer func() {
@@ -880,6 +883,9 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// of five brushes is indistinguishable from five loose brushes.
 	DrawPrefabOutlines()
 	drawSelectedVolumeOutline()
+	// Every environment region's footprint in its environment's colour, and
+	// the selected one's point handles (editor_volume_region.go).
+	drawRegionVolumeOutlines()
 	drawSelectedSpriteOutline(ws().camPos())
 	drawSelectedDecalOutline()
 	drawSelectedSceneryOutline()
@@ -894,6 +900,8 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	DrawBrushPlaceGhost()
 	// The terrain brush's ring, on the ground it is about to reshape.
 	drawTerrainBrushRing()
+	// The generator paint brush's ring, on the ground it paints.
+	drawGenPaintRing()
 	RenderEmitterMarkers(ws().level, ws().camPos())
 	RenderSoundMarkers(ws().level, ws().camPos())
 	RenderEffectMarkers(ws().level, ws().camPos())

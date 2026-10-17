@@ -1,0 +1,55 @@
+# River: a stroke becomes a river spline in the ground_edit (its width the
+# brush's diameter, editable per point afterwards, turned to run downhill):
+# a carved channel whose surface never rises, pools and riffles, a waterfall
+# where it is steep, boulders in the riffles throwing foam, a gravel bed,
+# sand bars on the inside of bends, wet mud and reeds along the banks.
+# docs/guide/36-terrain-paint.md "Rivers and streams". Poly Haven (CC0):
+# gravel_floor, sand_02, brown_mud_02, rock_moss_set_02 (boulders),
+# grass_medium_01 (reeds stand-in).
+name: River
+doc: A river along the stroke - carved channel, flowing water, gravel bed, sand bars, boulders in the riffles, reeds on the banks.
+order: 175
+river:
+  depth: 1.3
+  width_scale: 1
+  material: water_river
+  simplify: 0.35
+  shape: {pools: 0.65, boulders: 0.8, bank_height: 0.4, floodplain: 4, bank_slope: 0.3, speed: 0.9}
+recipe:
+  textures:
+    - {name: pond_mud, id: brown_mud_02, scale: 2}
+    - {name: river_gravel, id: gravel_floor, scale: 1.5}
+    - {name: river_sand, id: sand_02, scale: 2.5}
+  material:
+    # The wet slot (the wet rule muds the banks; a touch on the bed).
+    - {mask: river_bar, texture: pond_mud, slots: [wet], fallback: cracked, strength: 0.05}
+    - {mask: river_bed, texture: river_gravel, slots: [ash, snow], fallback: gravel, strength: 0.9}
+  stages:
+    - stage: polyhaven_rocks
+      id: river_rocks_src
+      params:
+        assets: [{id: rock_moss_set_02}]
+        back: none
+    - stage: ground_edit
+      id: ground_edit
+      params:
+        terrain: $source
+        water_sounds: true
+        river_rocks: river_rocks_src
+    - stage: polyhaven_plants
+      id: cover_grass
+      params:
+        assets: [{id: grass_medium_01}]
+        thin_foliage: true
+    - stage: grass_field
+      id: cover
+      params:
+        terrain: $terrain
+        avoid: $scatter
+        rules:
+          - {name: shore_reeds, plants: cover_grass, pieces: tall, density: 2.5, scale: [6, 9], slope: [0, 30],
+             cluster: 0.6, cluster_scale: 10, max_triangles: 400, shore: [0, 2.5], shore_soft: 1.5, max_depth: 0.15,
+             tint_a: [0.95, 1.0, 0.7], tint_b: [1.1, 1.0, 0.68], tint_scale: 30, wind_bend: 0.4, wind_flutter: 0.06}
+          - {name: shore_sedge, plants: cover_grass, pieces: mid, density: 1.5, scale: [3, 4.5], slope: [0, 35],
+             cluster: 0.45, cluster_scale: 16, max_triangles: 500, shore: [1, 7], shore_soft: 3,
+             tint_a: [0.9, 1.0, 0.72], tint_b: [1.0, 0.98, 0.66], tint_scale: 40}

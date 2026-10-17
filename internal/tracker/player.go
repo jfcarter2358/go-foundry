@@ -11,18 +11,16 @@ package tracker
 //
 // Render processes in control blocks of at most controlBlock frames, cut short
 // at every tick boundary, so effects land exactly on their tick and envelopes
-// and parameter ramps update often enough to be smooth.
+// and parameter ramps update often enough to be smooth. The sound itself —
+// voices, channel strips, send buses — is an Engine (engine.go) the
+// sequencer drives; the Player is the patterns, ticks and effect commands.
 
 import (
 	"math"
 	"sync/atomic"
+
+	"foundry/internal/audio"
 )
-
-// MaxVoices caps sounding notes per song, released tails included.
-const MaxVoices = 128
-
-// controlBlock is the most frames rendered between control updates.
-const controlBlock = 64
 
 // Quantize says when a requested change takes effect.
 type Quantize uint8
@@ -98,15 +96,15 @@ const (
 )
 
 type command struct {
-	kind   cmdKind
-	name   string
-	i, j   int
-	f, f2  float32
-	b      bool
-	q      Quantize
-	song   *Song
-	player *Player
-	hold   float32
+	kind  cmdKind
+	name  string
+	i, j  int
+	f, f2 float32
+	b     bool
+	q     Quantize
+	song  *Song
+	gen   audio.Generator
+	hold  float32
 }
 
 type paramState struct {
@@ -120,7 +118,7 @@ type resolvedBind struct {
 }
 
 type stingerReq struct {
-	p *Player
+	g audio.Generator
 	q Quantize
 }
 
@@ -129,10 +127,9 @@ type Player struct {
 	cmds   chan command
 	events chan Event
 	pos    atomic.Uint64
-	levels [MaxChannels]atomic.Uint32
-	scope  [scopeLen]atomic.Uint32
-	// voicesLive is published for the editor's CPU/voice readout.
-	voicesLive atomic.Int32
+	// eng is the song's sound; its meters and scope are what ChannelLevel
+	// and Scope read. Set once, in NewPlayer.
+	eng *Engine
 
 	// ---- mixer-owned ----
 	song  *Song
@@ -157,39 +154,25 @@ type Player struct {
 	pendingSection int
 	pendingQuant   Quantize
 
-	chans   []chanState
-	preview chanState
-	keys    [16]previewKey
-	voices  [MaxVoices]pvoice
-	age     uint64
+	chans []chanState
+	keys  [16]previewKey
 
 	params []paramState
 	binds  []resolvedBind
-	strip  []stripState
 
-	rev  *reverb
-	dly  *delay
-	comp compressor
-
-	chanBuf   [][]float32
-	used      []bool // channel buffer written this block
-	prevBuf   []float32
-	dry, a, b []float32
-
-	stingers   []*Player
+	// stingers are generators mixed over the song: another song's player,
+	// or a score's (StingerGenerator).
+	stingers   []audio.Generator
 	pending    []stingerReq
 	stingerBuf []float32
-	scopePos   int
 	rng        uint64
 }
 
 type previewKey struct {
 	key   int
-	voice int
+	voice NoteID
 	used  bool
 }
-
-const scopeLen = 512
 
 // NewPlayer prepares a song to play. It does not start the transport; call
 // Start, or hand the player to audio.PlayGenerator after Start.
@@ -202,13 +185,11 @@ func NewPlayer(s *Song) *Player {
 		jumpOrder:      -1,
 		breakRow:       -1,
 		rng:            0x9E3779B97F4A7C15,
-		stingers:       make([]*Player, 0, 4),
+		stingers:       make([]audio.Generator, 0, 4),
 		pending:        make([]stingerReq, 0, 4),
+		eng:            NewEngine(0),
 	}
 	p.installSong(s)
-	for i := range p.voices {
-		p.voices[i].ch = -2
-	}
 	return p
 }
 
@@ -291,12 +272,30 @@ func (p *Player) Tempo(bpm, secs float32) bool {
 // Stinger plays another song over this one, starting on the next q boundary.
 // The stinger does not loop.
 func (p *Player) Stinger(s *Song, q Quantize) bool {
+	return p.StingerGenerator(NewStinger(s), q)
+}
+
+// NewStinger is a started player for a song played once over other music:
+// a copy that does not loop. It is what Stinger mixes over a song, and
+// what a score's player mixes over a score (play.Player.Stinger).
+func NewStinger(s *Song) *Player {
 	c := s.Clone()
 	c.Loop = false
 	sp := NewPlayer(c)
 	sp.child = true
 	sp.Start("")
-	return p.send(command{kind: cmdStinger, player: sp, q: q})
+	return sp
+}
+
+// StingerGenerator mixes any generator over the song from the next q
+// boundary until it reports it is done — a score's player as a stinger
+// over a song. It must be started, must not loop, and must not be playing
+// anywhere else: the song renders it on the mixer goroutine.
+func (p *Player) StingerGenerator(g audio.Generator, q Quantize) bool {
+	if g == nil {
+		return false
+	}
+	return p.send(command{kind: cmdStinger, gen: g, q: q})
 }
 
 // SetSong swaps in an edited copy of the song, keeping the position. The
@@ -357,22 +356,13 @@ func (p *Player) Position() Position {
 }
 
 // ChannelLevel is a channel's recent peak, 0..1+, for meters.
-func (p *Player) ChannelLevel(ch int) float32 {
-	if ch < 0 || ch >= MaxChannels {
-		return 0
-	}
-	return math.Float32frombits(p.levels[ch].Load())
-}
+func (p *Player) ChannelLevel(ch int) float32 { return p.eng.StripLevel(ch) }
 
 // Scope copies the most recent master output (mono) into dst, oldest first.
-func (p *Player) Scope(dst []float32) {
-	for i := range dst {
-		dst[i] = math.Float32frombits(p.scope[i%scopeLen].Load())
-	}
-}
+func (p *Player) Scope(dst []float32) { p.eng.Scope(dst) }
 
 // LiveVoices is how many notes are sounding.
-func (p *Player) LiveVoices() int { return int(p.voicesLive.Load()) }
+func (p *Player) LiveVoices() int { return p.eng.LiveVoices() }
 
 // ---------- mixer side ----------
 
@@ -410,22 +400,14 @@ func (p *Player) installSong(s *Song) {
 			chans[i] = newChanState()
 		}
 		p.chans = chans
-		strip := make([]stripState, len(s.Channels))
-		copy(strip, p.strip)
-		for i := len(p.strip); i < len(strip); i++ {
-			strip[i] = stripState{mute: 1, muteTarget: 1}
-		}
-		p.strip = strip
+		p.eng.SetStripCount(len(s.Channels))
 	}
 	for i, ch := range s.Channels {
-		m := float32(1)
-		if ch.Mute {
-			m = 0
-		}
 		if old == nil || i >= len(old.Channels) || old.Channels[i].Mute != ch.Mute {
-			p.strip[i].mute, p.strip[i].muteTarget = m, m
+			p.eng.SetMuteNow(i, ch.Mute)
 		}
 	}
+	p.eng.SetInterp(s.Interp)
 	params := make([]paramState, len(s.Params))
 	for i, prm := range s.Params {
 		params[i] = paramState{cur: prm.Default, target: prm.Default}
@@ -453,38 +435,20 @@ func (p *Player) installSong(s *Song) {
 	if p.section >= len(s.Sections) {
 		p.section = -1
 	}
-	if p.rate > 0 {
-		p.configureFX()
-		p.ensureBuffers()
-	}
+	p.configureFX()
 }
 
+// configureFX hands the song's buses to the engine, which applies them once
+// it has a rate.
 func (p *Player) configureFX() {
-	p.rev.set(p.song.Reverb)
-	p.dly.set(p.song.Delay, p.bpm, p.rate)
-	p.comp.set(p.song.Compressor, p.rate)
-}
-
-func (p *Player) ensureBuffers() {
-	n := controlBlock * 2
-	for len(p.chanBuf) < len(p.chans) {
-		p.chanBuf = append(p.chanBuf, make([]float32, n))
-		p.used = append(p.used, true)
-	}
-	if p.prevBuf == nil {
-		p.prevBuf = make([]float32, n)
-		p.dry = make([]float32, n)
-		p.a = make([]float32, n)
-		p.b = make([]float32, n)
-	}
+	p.eng.bpm = p.bpm
+	p.eng.SetBuses(p.song.Reverb, p.song.Delay, p.song.Compressor, p.song.Gain)
 }
 
 func (p *Player) init(rate int) {
 	p.rate = rate
-	p.rev = newReverb(rate)
-	p.dly = newDelay(rate)
-	p.configureFX()
-	p.ensureBuffers()
+	p.eng.bpm = p.bpm
+	p.eng.init(rate)
 }
 
 func (p *Player) pattern() *Pattern {
@@ -557,29 +521,29 @@ func (p *Player) apply(c command) {
 		if c.name != "" {
 			ci = s.ChannelIndex(c.name)
 		}
-		if ci < 0 || ci >= len(p.strip) {
+		if ci < 0 || ci >= p.eng.StripCount() {
 			return
 		}
-		p.strip[ci].setMute(c.b, c.f2)
+		p.eng.SetMute(ci, c.b, c.f2)
 	case cmdSolo:
-		for i := range p.strip {
-			p.strip[i].setMute(c.i >= 0 && i != c.i, 0.01)
+		for i := 0; i < p.eng.StripCount(); i++ {
+			p.eng.SetMute(i, c.i >= 0 && i != c.i, 0.01)
 		}
 	case cmdTempo:
 		p.bpmTarget = clamp32(c.f, 16, 999)
 		if c.f2 <= 0 {
 			p.bpm, p.bpmRate = p.bpmTarget, 0
-			p.dly.set(s.Delay, p.bpm, p.rate)
+			p.eng.SetTempo(p.bpm)
 		} else {
 			p.bpmRate = absf(p.bpmTarget-p.bpm) / c.f2
 		}
 	case cmdStinger:
 		if c.q == QuantNow || !p.playing {
-			p.addStinger(c.player)
+			p.addStinger(c.gen)
 			return
 		}
 		if len(p.pending) < cap(p.pending) {
-			p.pending = append(p.pending, stingerReq{p: c.player, q: c.q})
+			p.pending = append(p.pending, stingerReq{g: c.gen, q: c.q})
 		}
 	case cmdSetSong:
 		p.installSong(c.song)
@@ -607,7 +571,7 @@ func (p *Player) apply(c command) {
 	}
 }
 
-func (p *Player) addStinger(sp *Player) {
+func (p *Player) addStinger(sp audio.Generator) {
 	if sp == nil {
 		return
 	}
@@ -665,14 +629,100 @@ func (p *Player) Render(dst []float32, frames, rate int) bool {
 		i += n
 	}
 	p.mixStingers(out, frames, rate)
-	p.voicesLive.Store(int32(p.liveVoices()))
+	live := p.eng.liveVoices()
+	p.eng.voicesLive.Store(int32(live))
 	if p.finished {
 		p.tailFrames -= frames
-		if p.tailFrames <= 0 && p.liveVoices() == 0 && len(p.stingers) == 0 {
+		if p.tailFrames <= 0 && live == 0 && len(p.stingers) == 0 {
 			return false
 		}
 	}
 	return true
+}
+
+// renderBlock mixes n frames into out: the song's controls for the block,
+// then the engine's voices, strips and buses.
+func (p *Player) renderBlock(out []float32, n int) {
+	p.rampControls(float32(n) / float32(p.rate))
+	p.eng.mixBlock(out, n)
+}
+
+// rampControls moves params and tempo toward their targets and works out
+// each strip's controls for this block: the channel's mixer settings, its
+// effect-column sends and filter, and its param bindings, plus the values
+// the channel's note follows.
+func (p *Player) rampControls(dt float32) {
+	for i := range p.params {
+		ps := &p.params[i]
+		if ps.cur != ps.target {
+			step := ps.rate * dt
+			if ps.rate == 0 || absf(ps.target-ps.cur) <= step {
+				ps.cur = ps.target
+			} else if ps.target > ps.cur {
+				ps.cur += step
+			} else {
+				ps.cur -= step
+			}
+		}
+	}
+	if p.bpm != p.bpmTarget {
+		step := p.bpmRate * dt
+		if p.bpmRate == 0 || absf(p.bpmTarget-p.bpm) <= step {
+			p.bpm = p.bpmTarget
+		} else if p.bpmTarget > p.bpm {
+			p.bpm += step
+		} else {
+			p.bpm -= step
+		}
+		p.eng.SetTempo(p.bpm)
+	}
+	strips := p.eng.strips
+	for ci := range strips {
+		st := &strips[ci]
+		chn := &p.song.Channels[ci]
+		ch := &p.chans[ci]
+		st.vol, st.pan = chn.Volume, chn.Pan
+		st.sendA, st.sendB = ch.sendA, ch.sendB
+		if !ch.sendSet {
+			st.sendA, st.sendB = chn.SendA, chn.SendB
+		}
+		st.cutoffHz = 0
+		st.drive, st.crush = chn.Drive, chn.Crush
+	}
+	for _, b := range p.binds {
+		v := p.params[b.param].cur
+		st := &strips[b.ch]
+		lin := b.from + (b.to-b.from)*v
+		switch b.target {
+		case BindVolume:
+			st.vol *= lin
+		case BindPan:
+			st.pan = clamp32(st.pan+lin, -1, 1)
+		case BindSendA:
+			st.sendA = lin
+		case BindSendB:
+			st.sendB = lin
+		case BindCutoff:
+			from, to := max(b.from, 16), max(b.to, 16)
+			hz := from * float32(math.Pow(float64(to/from), float64(v)))
+			if st.cutoffHz == 0 || hz < st.cutoffHz {
+				st.cutoffHz = hz
+			}
+		}
+	}
+	for ci := range strips {
+		st := &strips[ci]
+		ch := &p.chans[ci]
+		// The F command's channel filter and a bound cutoff: the darker wins.
+		if ch.cutoff < 1 {
+			fx := 20 * float32(math.Pow(1000, float64(ch.cutoff)))
+			if st.cutoffHz == 0 || fx < st.cutoffHz {
+				st.cutoffHz = fx
+			}
+		}
+		st.reso = ch.reso
+		st.fVol, st.fPitch, st.fPan = p.volMod(ch), p.pitchMod(ch), ch.pan
+	}
 }
 
 func (p *Player) mixStingers(out []float32, frames, rate int) {
@@ -698,16 +748,6 @@ func (p *Player) mixStingers(out []float32, frames, rate int) {
 		p.stingers[j] = nil
 	}
 	p.stingers = p.stingers[:k]
-}
-
-func (p *Player) liveVoices() int {
-	n := 0
-	for i := range p.voices {
-		if p.voices[i].active {
-			n++
-		}
-	}
-	return n
 }
 
 // rand is a xorshift for anything random the player does, seeded per song

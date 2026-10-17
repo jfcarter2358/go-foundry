@@ -141,7 +141,12 @@ const CompiledExt = ".fbsp"
 // from seconds to a fraction of one. Nothing it MEANS changed, so a version-9
 // gob file is still read (legacyGobVersion) — it just reads slowly until the
 // level is next compiled.
-const CompiledVersion = 10
+//
+// 11: a level's direct light is baked into lightmaps (compile/lightmap.go;
+// docs/lighting/PLAN.md, phase 5) — faces carry a chart, the file the pages.
+// A version-10 file is a per-vertex bake and would load and draw as one,
+// but the renderer it was baked for is gone, so it is asked to recompile.
+const CompiledVersion = 11
 
 // CompiledVersionStamp is CompiledVersion spelled where a release build can
 // find it in a game binary's bytes (release.PlayerLevelVersion): a prebuilt
@@ -149,7 +154,7 @@ const CompiledVersion = 10
 // ship, refuse every level the editor compiled, and close on the player. It is
 // a literal because Go cannot format a constant at compile time; a test holds
 // it to CompiledVersion, and ReadCompiledLevel uses it so the linker keeps it.
-const CompiledVersionStamp = "FOUNDRY-FBSP-VERSION=10;"
+const CompiledVersionStamp = "FOUNDRY-FBSP-VERSION=11;"
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure
@@ -184,6 +189,11 @@ type CompiledLevel struct {
 	// (world/static_clusters.go): what the GPU-driven cull culls, made once
 	// here rather than on every load.
 	Clusters []world.StaticClusterGroup
+
+	// Lightmaps are the pages the faces' direct light was baked into
+	// (compile/lightmap.go), which a face's Lightmap chart indexes. Nil for a
+	// per-vertex bake.
+	Lightmaps []compile.LightmapPage
 }
 
 // CompileLevel runs the compiler over a loaded level and returns the artefact.
@@ -201,13 +211,14 @@ func CompileLevel(lvl *world.Level, opt compile.Options) (*CompiledLevel, error)
 	raw.Prefabs = nil
 
 	c := &CompiledLevel{
-		Version: CompiledVersion,
-		Faces:   res.Tree.Faces,
-		Tree:    res.Tree.Tree,
-		PVS:     res.Vis,
-		Chunks:  storableChunks(lvl),
-		Raw:     raw,
-		Stats:   res.Stats,
+		Version:   CompiledVersion,
+		Faces:     res.Tree.Faces,
+		Tree:      res.Tree.Tree,
+		PVS:       res.Vis,
+		Chunks:    storableChunks(lvl),
+		Raw:       raw,
+		Stats:     res.Stats,
+		Lightmaps: res.Tree.Lightmaps,
 	}
 	clusters, err := CutCompiledClusters(c)
 	if err != nil {
@@ -315,6 +326,7 @@ func encodeCompiledLevel(c *CompiledLevel) ([]byte, error) {
 	if err := writeClusters(w, c.Clusters); err != nil {
 		return nil, err
 	}
+	writeLightmaps(w, c.Lightmaps)
 	w.bytesCol("chunks", chunks)
 	w.bytesCol("stats", stats)
 	w.bytesCol("raw.yaml", rawYAML)
@@ -402,6 +414,7 @@ func readCompiledBinary(data []byte) (*CompiledLevel, error) {
 		func() (err error) { c.Tree, err = readTree(f); return },
 		func() (err error) { c.PVS, err = readPVS(f); return },
 		func() (err error) { c.Clusters, err = readClusters(f); return },
+		func() (err error) { c.Lightmaps, err = readLightmaps(f); return },
 		func() error {
 			if len(chunks) == 0 {
 				return nil

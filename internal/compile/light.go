@@ -107,6 +107,12 @@ type LightOptions struct {
 	// per bounce (bounce.go). Zero means DefaultBounceSamples. How many bounces
 	// there are is the level's own choice, GlobalLight.Bounces.
 	BounceSamples int
+	// Lightmap bakes the faces' direct light per texel into lightmap pages
+	// (lightmap.go) instead of refining the grid for it: shadows as sharp as
+	// a texel, with the vertices left to carry only the smooth indirect part.
+	// LightmapTexel is the texel size in world units (0: the default).
+	Lightmap      bool
+	LightmapTexel float32
 	// MaxAlbedo caps how much of the light arriving at a surface it may send
 	// on. A texture averaging to white would otherwise hand on everything it
 	// received, and a closed white room would never stop brightening. Zero
@@ -141,6 +147,12 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) { bakeLight(t, lv
 // bakeLight is BakeLight, telling p how far it has got.
 func bakeLight(t *BSPTree, lvl *world.Level, opt LightOptions, p Progress) {
 	p.report("Light: cutting faces on the grid", 0)
+	if opt.Lightmap {
+		// Each face's pieces share its chart (lightmap.go).
+		for fi := range t.Faces {
+			t.Faces[fi].lmParent = int32(fi) + 1
+		}
+	}
 	if opt.GridStep > 0 {
 		t.SubdivideFaces(opt.GridStep)
 	}
@@ -159,7 +171,9 @@ func bakeLight(t *BSPTree, lvl *world.Level, opt LightOptions, p Progress) {
 	// inside it.
 	b.reach = t.Hi.Sub(t.Lo).Len() + 1
 	b.softRadius = opt.GridStep
-	if opt.GridStep > 0 && opt.MinGridStep > 0 && opt.MinGridStep < opt.GridStep {
+	// A lightmapped bake carries the shadow edges in its texels, so the grid is
+	// not refined for them: the vertices hold only the smooth indirect part.
+	if !opt.Lightmap && opt.GridStep > 0 && opt.MinGridStep > 0 && opt.MinGridStep < opt.GridStep {
 		p.report("Light: refining shadow edges", 0)
 		b.refineShadowEdges(opt.GridStep, opt.MinGridStep)
 		b.bvh = buildFaceBVH(t, true)
@@ -215,6 +229,10 @@ func bakeLight(t *BSPTree, lvl *world.Level, opt LightOptions, p Progress) {
 		for fi := range t.Faces {
 			sumFace(fi)
 		}
+	}
+	t.Lightmaps = nil
+	if opt.Lightmap {
+		b.bakeLightmaps(opt.LightmapTexel)
 	}
 }
 

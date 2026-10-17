@@ -1,0 +1,9 @@
+version: 1
+name: Piano
+samples: [keys/piano]
+fade_out: 0.3
+polyphony: 4
+playback:
+  range: [A-0, C-8]
+  clef: grand
+description: 'Acoustic piano: stretched partials, hammer, two-stage decay'

@@ -62,7 +62,8 @@ void main() {
             discard;
         }
     }
-    c = applyFog(c, vWorldPos);
+    // Lit in scene units in the vertex stage (gfx/hdr.go).
+    c = applyFogScene(c, vWorldPos);
     outputColor = vec4(c, clamp(a, 0.0, 1.0));
     outMotion = vec2(16384.0);
     if (writeMotion != 0) {

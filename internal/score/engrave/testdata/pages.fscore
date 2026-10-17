@@ -1,0 +1,25 @@
+version: 1
+title: Page Layout
+subtitle: a fixture for systems, pages and parts
+composer: Foundry tests
+meter: [{bar: 1, sig: 4/4}, {bar: 13, sig: 3/4}]
+key: [{bar: 1, fifths: 0}, {bar: 9, fifths: -3}]
+sections: [{name: A, bar: 6}]
+layout:
+  breaks: [{bar: 9}, {bar: 13}, {bar: 17, page: true}]
+  courtesy: true
+lines:
+- name: Clarinet in Bb
+  instrument: woodwinds/clarinet
+  staves:
+  - clef: treble
+    transpose: -M2
+    voices: ["| qF#4 qG4 qA4 qB4 | qF4 qE4 hD4 | R | R | R | R | R | R | qEb4 qF4 qG4 qAb4 | wBb4 | hC5 hBb4 | wG4 | q.F4 eG4 qAb4 | h.G4 | qF4 qEb4 qD4 | h.Eb4 | qG4 qF4 qEb4 | h.D4 | R | R |"]
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices: ["| wC5+E5 | wB4+D5 | wC5+E5 | wA4+C5 | wG4+B4 | wC5+E5 | wF4+A4 | wG4+B4 | wEb4+G4 | wF4+Ab4 | wG4+Bb4 | wEb4+G4 | h.Ab4 | h.G4 | h.F4 | h.Eb4 | h.Eb5 | h.F5 | h.G5 | h.Bb5 | h.G5 | h.Eb5 |"]
+  - clef: bass
+    clefs: [{at: "17", clef: treble}]
+    voices: ["| wC3 | wG2 | wA2 | wF2 | wG2 | wC3 | wD3 | wG2 | wC3 | wD3 | wEb3 | wC3 | h.F3 | h.Eb3 | h.D3 | h.C3 | h.G4 | h.Ab4 | h.Bb4 | h.D5 | h.Bb4 | h.G4 |"]

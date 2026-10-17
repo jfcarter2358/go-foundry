@@ -1,0 +1,10 @@
+version: 1
+name: Harp
+samples: [plucked/harp]
+fade_out: 1.5
+polyphony: 4
+playback:
+  range: [B-0, G#7]
+  clef: grand
+  gliss: diatonic
+description: 'Concert harp: round, ringing pluck'

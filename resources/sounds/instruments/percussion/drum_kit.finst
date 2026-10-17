@@ -1,0 +1,191 @@
+version: 1
+name: Drum Kit
+samples: [drums/kick_acoustic, drums/snare_rim, drums/snare_acoustic, orchestral/snare_acoustic_rr2,
+  orchestral/snare_acoustic_rr3, drums/clap_808, drums/snare_909, drums/tom_floor,
+  drums/hat_closed_808, orchestral/hat_closed_rr2, drums/hat_pedal, drums/tom_mid,
+  drums/hat_open_808, drums/crash, drums/ride, drums/ride_bell, drums/tambourine,
+  drums/cowbell_808]
+zones:
+- sample: 0
+  low: B-1
+  high: B-1
+  base: C-2
+- sample: 0
+  low: C-2
+  high: C-2
+  base: C-2
+- sample: 1
+  low: C#2
+  high: C#2
+  base: C#2
+- sample: 2
+  low: D-2
+  high: D-2
+  base: D-2
+  round_robin: [3, 4]
+- sample: 5
+  low: D#2
+  high: D#2
+  base: D#2
+- sample: 6
+  low: E-2
+  high: E-2
+  base: E-2
+- sample: 7
+  low: F-2
+  high: F-2
+  base: F-2
+- sample: 8
+  low: F#2
+  high: F#2
+  base: F#2
+  round_robin: [9]
+- sample: 7
+  low: G-2
+  high: G-2
+  base: F-2
+- sample: 10
+  low: G#2
+  high: G#2
+  base: G#2
+- sample: 11
+  low: A-2
+  high: A-2
+  base: B-2
+- sample: 12
+  low: A#2
+  high: A#2
+  base: A#2
+- sample: 11
+  low: B-2
+  high: B-2
+  base: B-2
+- sample: 11
+  low: C-3
+  high: C-3
+  base: B-2
+- sample: 13
+  low: C#3
+  high: C#3
+  base: C#3
+- sample: 11
+  low: D-3
+  high: D-3
+  base: B-2
+- sample: 14
+  low: D#3
+  high: D#3
+  base: D#3
+- sample: 15
+  low: F-3
+  high: F-3
+  base: F-3
+- sample: 16
+  low: F#3
+  high: F#3
+  base: F#3
+- sample: 13
+  low: G-3
+  high: G-3
+  base: D-3
+- sample: 17
+  low: G#3
+  high: G#3
+  base: G#3
+- sample: 13
+  low: A-3
+  high: A-3
+  base: A#3
+polyphony: 8
+playback:
+  clef: percussion
+  release: 3
+  drums:
+  - key: 36
+    name: Bass Drum
+    line: 1
+    shortcut: B
+  - key: 35
+    name: Bass Drum 2
+    line: 0
+  - key: 38
+    name: Snare
+    line: 5
+    shortcut: A
+  - key: 37
+    name: Side Stick
+    line: 5
+    head: circle_x
+  - key: 40
+    name: Electric Snare
+    line: 5
+    head: diamond
+  - key: 39
+    name: Hand Clap
+    line: 4
+    head: x
+  - key: 42
+    name: Closed Hi-Hat
+    line: 9
+    head: x
+    shortcut: G
+  - key: 46
+    name: Open Hi-Hat
+    line: 9
+    head: x
+    articulation: open
+  - key: 44
+    name: Pedal Hi-Hat
+    line: -1
+    head: x
+    shortcut: F
+  - key: 49
+    name: Crash Cymbal
+    line: 10
+    head: x
+    shortcut: C
+  - key: 57
+    name: Crash Cymbal 2
+    line: 12
+    head: x
+  - key: 50
+    name: High Tom
+    line: 8
+    shortcut: E
+  - key: 51
+    name: Ride Cymbal
+    line: 8
+    head: x
+    shortcut: D
+  - key: 53
+    name: Ride Bell
+    line: 8
+    head: diamond
+  - key: 48
+    name: Hi-Mid Tom
+    line: 7
+  - key: 54
+    name: Tambourine
+    line: 7
+    head: x
+  - key: 56
+    name: Cowbell
+    line: 7
+    head: triangle
+  - key: 47
+    name: Low-Mid Tom
+    line: 6
+  - key: 45
+    name: Low Tom
+    line: 4
+  - key: 43
+    name: High Floor Tom
+    line: 3
+  - key: 41
+    name: Low Floor Tom
+    line: 2
+  - key: 55
+    name: Splash Cymbal
+    line: 11
+    head: circle_x
+description: An acoustic kit on the General MIDI keys, snare and hat in round robin

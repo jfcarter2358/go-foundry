@@ -1,0 +1,13 @@
+version: 1
+name: Woodblock
+samples: [drums/woodblock]
+polyphony: 4
+playback:
+  clef: percussion
+  release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Woodblock
+    line: 4
+description: Woodblock knock

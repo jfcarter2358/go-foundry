@@ -1,0 +1,8 @@
+version: 1
+name: Bass Reese
+samples: [bass/bass_reese]
+fade_out: 0.08
+playback:
+  range: [C-1, G-4]
+  clef: bass
+description: 'Reese: detuned saws drifting slowly in and out of phase'

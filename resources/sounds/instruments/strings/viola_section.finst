@@ -1,0 +1,77 @@
+version: 1
+name: Viola Section
+samples: [orchestral/vln_sus_loud_g3, orchestral/vln_sus_soft_g3, orchestral/vln_sus_loud_d5,
+  orchestral/vln_sus_soft_d5, orchestral/vln_short_g3, orchestral/vln_short_d5, pads/strings_pizz]
+zones:
+- sample: 0
+  low: C-0
+  high: G#4
+  layers:
+  - sample: 1
+    velocity: [0, 96]
+  - sample: 0
+    velocity: [64, 127]
+- sample: 2
+  low: A-4
+  high: B-9
+  layers:
+  - sample: 3
+    velocity: [0, 96]
+  - sample: 2
+    velocity: [64, 127]
+filter: lowpass
+cutoff: 4800
+resonance: 0.1
+fade_out: 0.28
+polyphony: 2
+articulations:
+- name: staccato
+  triggers: [stacc., spiccato, spicc., staccatissimo]
+  zones:
+  - sample: 4
+    low: C-0
+    high: G#4
+  - sample: 5
+    low: A-4
+    high: B-9
+  fade_out: 0.07
+- name: pizzicato
+  triggers: [pizz., pizz]
+  zones:
+  - sample: 6
+    low: C-0
+    high: G#4
+  - sample: 6
+    low: A-4
+    high: B-9
+  fade_out: 0.5
+- name: tremolo
+  triggers: [trem., trem]
+  zones:
+  - sample: 4
+    low: C-0
+    high: G#4
+  - sample: 5
+    low: A-4
+    high: B-9
+  gain: -1
+  volume_env:
+    points: [[0, 0], [0.012, 1], [0.042, 0.38], [0.072, 1], [0.3, 0]]
+    loop_start: 1
+    loop_end: 3
+- name: muted
+  triggers: [con sord., con sordino, sord.]
+  zones:
+  - sample: 1
+    low: C-0
+    high: G#4
+  - sample: 3
+    low: A-4
+    high: B-9
+  gain: -5
+  fade_out: 0.35
+playback:
+  range: [C-3, E-6]
+  clef: alto
+  staccato: 0.4
+description: 'A viola section: darker than the violins, read in the alto clef'

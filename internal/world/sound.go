@@ -259,6 +259,26 @@ func SoundUpdate(lvl *Level, dt float32, playing bool, listenerPos, listenerFwd,
 				continue
 			}
 
+			// Out of earshot (phase W5, docs/terrain-paint/PHASE_W5.md): a
+			// looping sound past its max distance gives its voice back and
+			// takes one again when the listener comes within it. The mixer
+			// keeps only eight loops (audio.maxLoopingVoices), and a level
+			// whose rivers place a loop every forty metres would otherwise
+			// fill them with sounds nobody can hear and refuse the near
+			// ones. A margin past the distance keeps one at the edge from
+			// restarting every few frames.
+			if s.Loop && s.MaxDistance > 0 {
+				d := s.WorldPosition(lvl).Sub(listenerPos).Len()
+				if !s.Voice.IsZero() && d > s.MaxDistance*soundCullMargin {
+					audio.FadeOut(s.Voice, 0.25)
+					s.Voice = 0
+					continue
+				}
+				if s.Voice.IsZero() && d > s.MaxDistance {
+					continue
+				}
+			}
+
 			if s.Voice.IsZero() {
 				s.Voice = audio.Play(audio.PlayOptions{
 					Clip:     s.Clip,
@@ -308,6 +328,10 @@ func SoundUpdate(lvl *Level, dt float32, playing bool, listenerPos, listenerFwd,
 		Voices:          buf,
 	})
 }
+
+// soundCullMargin is how far past its max distance a looping sound keeps
+// its voice before giving it back (SoundUpdate).
+const soundCullMargin = 1.15
 
 // reapSpentSounds drops finished one-shots. Compacts in place rather than
 // rebuilding, so the common case of nothing to reap costs one pass.
