@@ -56,7 +56,8 @@ import (
 )
 
 // groundRiverVersion changes when a ribbon changes for the same cells.
-const groundRiverVersion = "ground-river-1"
+// 2: the vertex normal follows the surface's slope (fixes after W5).
+const groundRiverVersion = "ground-river-2"
 
 // riverTileName is a ribbon's placement ID.
 func riverTileName(ti, tj int, mat string) string { return fmt.Sprintf("river_%d_%d_%s", ti, tj, mat) }
@@ -256,6 +257,52 @@ func riverVertexColor(s terrain.RiverSample) [4]uint8 {
 	return [4]uint8{enc(s.Foam), enc(0.5 + 0.5*s.FlowX/terrain.RiverFlowMax), enc(0.5 + 0.5*s.FlowZ/terrain.RiverFlowMax), 255}
 }
 
+// riverSurfaceNormal is the ribbon's facing at sample (i, j): the surface's
+// slope from its neighbours (fixes after W5: the water shader tells which
+// side of a sloping river the eye is on by it, docs/terrain-paint/
+// PHASE_W5.md). Along each axis the gentler of the two one-sided slopes,
+// so the step a fall leaves on the grid does not tilt the water beside it,
+// and no slope at all past 0.6 (the step itself).
+func riverSurfaceNormal(rv *groundRivers, s int, cell float32, i, j int) mgl32.Vec3 {
+	at := func(i, j int) (float32, bool) {
+		if i < 0 || j < 0 || i >= s || j >= s {
+			return 0, false
+		}
+		v, ok := rv.res.Samples[int32(j*s+i)]
+		return v.Surface, ok && v.Surface == v.Surface
+	}
+	h0, ok := at(i, j)
+	if !ok {
+		return mgl32.Vec3{0, 1, 0}
+	}
+	slope := func(di, dj int) float32 {
+		var best float32
+		found := false
+		for _, sg := range [2]int{-1, 1} {
+			h, ok := at(i+sg*di, j+sg*dj)
+			if !ok {
+				continue
+			}
+			d := (h - h0) / (float32(sg) * cell)
+			if !found || abs32(d) < abs32(best) {
+				best, found = d, true
+			}
+		}
+		if abs32(best) > 0.6 {
+			return 0
+		}
+		return best
+	}
+	return mgl32.Vec3{-slope(1, 0), 1, -slope(0, 1)}.Normalize()
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // riverTileMesh is a tile's ribbon over cells cs, in tile-local
 // coordinates, with its vertex colours.
 func riverTileMesh(g *terrain.Grid, tp tilePlan, rv *groundRivers, cs []int32, ti, tj int) *model.ImportMesh {
@@ -264,7 +311,6 @@ func riverTileMesh(g *terrain.Grid, tp tilePlan, rv *groundRivers, cs []int32, t
 	cell := float32(g.Cell)
 	var b meshout.Builder
 	b.Slot("water", "")
-	up := mgl32.Vec3{0, 1, 0}
 	index := map[int]uint32{}
 	var colors [][4]uint8
 	vert := func(i, j int) uint32 {
@@ -275,7 +321,7 @@ func riverTileMesh(g *terrain.Grid, tp tilePlan, rv *groundRivers, cs []int32, t
 		smp := rv.res.Samples[int32(k)]
 		x := float32(i-ti*tp.per)*cell - ts/2
 		z := float32(j-tj*tp.per)*cell - ts/2
-		v := b.Vertex(mgl32.Vec3{x, smp.Surface, z}, up, mgl32.Vec2{smp.U, smp.V})
+		v := b.Vertex(mgl32.Vec3{x, smp.Surface, z}, riverSurfaceNormal(rv, s, cell, i, j), mgl32.Vec2{smp.U, smp.V})
 		colors = append(colors, riverVertexColor(smp))
 		index[k] = v
 		return v

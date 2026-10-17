@@ -33,6 +33,20 @@ var (
 	ShadowCubeFragPath   = "shaders/shadow_cube_frag.glsl"
 )
 
+// BootProgress, when set, hears each stage of StandUpWorld before it starts —
+// step of BootSteps, and what it is. app.Run draws its startup bar from it;
+// nothing else that stands the world up sets it.
+var BootProgress func(step, steps int, label string)
+
+// BootSteps is how many stages StandUpWorld reports through BootProgress.
+const BootSteps = 10
+
+func bootStep(step int, label string) {
+	if BootProgress != nil {
+		BootProgress(step, BootSteps, label)
+	}
+}
+
 // StandUpWorld loads the world program and every pass that draws through it,
 // and leaves the GL state the engine draws in: depth testing on, the viewport
 // filling w by h, and each of the world program's uniforms at its documented
@@ -59,6 +73,7 @@ func StandUpWorld(w, h int32) error {
 	gl.DepthFunc(gl.LEQUAL)
 	gl.Viewport(0, 0, w, h)
 
+	bootStep(0, "Compiling shaders: world")
 	vert := fileutil.ShaderPath(gfx.VertexShaderPath)
 	frag := fileutil.ShaderPath(gfx.FragmentShaderPath)
 	if err := gfx.LoadProgram(vert, frag); err != nil {
@@ -72,6 +87,7 @@ func StandUpWorld(w, h int32) error {
 	// samplerCube array, and an unassigned sampler defaults to unit 0 where the
 	// albedo sampler2D already lives. Three sampler types on one unit makes
 	// every draw GL_INVALID_OPERATION and nothing rasterises.
+	bootStep(1, "Compiling shaders: shadows")
 	if err := InitShadows(
 		fileutil.ShaderPath(ShadowVertShaderPath),
 		fileutil.ShaderPath(ShadowFragShaderPath),

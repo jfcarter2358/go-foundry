@@ -356,3 +356,77 @@ Final runs (GOFLAGS=-p=6 GOMEMLIMIT=6GiB):
   resident on a 31 GB box shared with other sessions (the suite's own growth
   across hundreds of GL scenes; not investigated further). So the full render
   GL suite was not run to completion.
+
+## Fixes after W5
+
+Three bugs the user found in terrain_paint_demo (2026-10-16):
+
+1. **Water drawn pure black from below its own height.** Two causes.
+   (a) The shader's "seen from under the surface" test was `camPos.y <
+   fragWorldPos.y`: any reach of a sloping river higher than the eye — the
+   river above a fall seen from its pool, every upstream reach seen from
+   downstream — took the from-below path (Snell's window / total internal
+   reflection), whose murk is the water's fog volume, absent in the open
+   air, so black. Now a surface is shaded from below only when the CPU says
+   the eye is under water (`waterRippleInfo.z`, set by water_interact.go
+   from the same hysteresis state) AND the eye is on the underside of the
+   surface's own plane — the mesh normal, which a river ribbon now gives
+   per vertex along its slope (`riverSurfaceNormal`, groundRiverVersion
+   `ground-river-2`; the gentler one-sided slope, none past 0.6, so a fall's
+   step tilts nothing). Seen from beneath in the air the surface is shaded
+   as from above with the view mirrored through the plane; the depth into
+   the water is measured along that normal, and the ripple normal rides the
+   slope. (b) `WaterAt` counted any triangle under 73° from level as a
+   surface, so the ribbon's strip pitched down a fall's step stood "over"
+   the plunge pool's air: now 41° (`waterMinFacing` 0.75), steeper than any
+   river or rapids. (c) The murk darkened as exp(−depth·density·0.5): two
+   metres into a river it was near black; now exp(−depth·density·0.12),
+   floored at 0.35.
+2. **White water across the current.** The flow vertex colours were right
+   (TestRibbonFlowRunsAlongTheRiver: both directions, drawn either way).
+   The shader was not: the foam was squeezed along the current by turning
+   the WORLD POSITION into the current's frame with a speed-dependent
+   squeeze, per pixel. Tens of metres from the origin, a riffle's speed
+   change or a bend swung that coordinate by metres per metre, crushing the
+   foam along the current into stripes across it. Now two of four fixed
+   axes 45° apart are squeezed (constant 2.6×) and cross-faded by the
+   heading (`waterFoamBin`, textureGrad with the position's own gradients);
+   the vertex foam (a riffle's band across the river) is broken into
+   streaks by the squeezed patch noise; the slow third ripple layer is
+   advected down the current (it drifted along the material's
+   `flow_direction`, +X, whatever way the river ran); the swell's
+   fixed-heading sines are cut to 35 % on flow-mapped water.
+3. **Falls tiled side to side.** Mesh (terrain/river_falls.go, seeded by
+   the fall's position): columns every ~0.35 m (odd count), each thrown its
+   own distance (`ColVX`, 0.8–1.2×) from an uneven lip (`ColLip`, −5..+3
+   cm), aeration thick and thin along the lip, sides frayed wider and more
+   raggedly lower down, the odd gap opening below the lip; the notch clears
+   the lowest column (`VXMin`, `OutMax`). Shader (`waterFallsShade`):
+   low-frequency lip noise for glassy stretches and white ropes; streaks in
+   jittered columns, each with hashed width/length/speed/phase, blended at
+   the seams (`waterFallsColumn`, textureGrad); falling clots and tears that
+   grow toward the foot and sides; scrolls wrapped with fract. No new
+   sampler, uniform or texture unit (the under flag rides in the existing
+   `waterRippleInfo.z`).
+
+Tests: TestWaterAtBelowAFallIsNotUnderTheLip (world; fails at 0.3),
+TestRibbonFlowRunsAlongTheRiver (stages), TestFallsCurtainVariesAlongTheLip
+(terrain), GL TestWaterBelowTheSurfaceHeightIsNotBlack (render).
+
+Verified on terrain_paint_demo (regenerated with `-force`; only its
+generated outputs and level changed): from the plunge pool and from
+downstream the river above the lip is water, not a black slab; the spawn
+view's far upstream strip is no longer black; confluence foam trails down
+the main river instead of lying across it; the main fall is thick and white
+in places, thin and glassy in others, with an uneven lip. All water GL tests
+pass. Open: a headless run with the eye under the lower river hangs in the
+driver (glBufferData in SceneBuffer.Flush), before these changes as after;
+the submerged-in-a-river case is covered by the GL test instead.
+
+Follow-up (falls read as a stained curtain): through thin water the sand in
+the colour copy showed as tan blotches. What shows through glassy water is
+now the fall's face, wet and shadowed: strongly darkened (×0.3) and nearly
+grey. Thick and thin now mostly show as brighter and fainter white water
+(`white` holds ≥55 %, the veil is 0.4, the interior cover ≥0.9). The mesh's
+gaps are rarer and narrower, weighted toward the sides and the lower half
+(almost none mid-top). The per-column throw and hashed streaks are kept.

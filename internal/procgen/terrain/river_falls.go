@@ -89,16 +89,32 @@ type FallsCurtain struct {
 	// the lip its last row is; LipWidth and FootWidth its width at the lip
 	// and at the pool.
 	Out, VX, Sink, LipWidth, FootWidth float64
+	// ColVX is each column's own throw (VX varied along the lip: an uneven
+	// lip throws some of the water further than the rest) and ColLip its
+	// lip height offset (m); VXMin is the least of ColVX, OutMax the
+	// furthest any column lands (fixes after W5, the file comment's
+	// VARIATION).
+	ColVX, ColLip []float64
+	VXMin, OutMax float64
 }
 
-// SheetY is the curtain's height a horizontal distance `along` past the
-// lip (the lip's level at and before it).
+// SheetY is the curtain's lowest height a horizontal distance `along` past
+// the lip (the lip's level at and before it): the column thrown least, at
+// the lowest lip, which is what the notch must clear.
 func (c *FallsCurtain) SheetY(lip, along float64) float64 {
-	if along <= 0 || c.VX <= 0 {
-		return lip
+	vx := c.VXMin
+	if vx <= 0 {
+		vx = c.VX
 	}
-	t := along / c.VX
-	return lip - 0.5*fallsGravity*t*t
+	low := 0.0
+	for _, o := range c.ColLip {
+		low = math.Min(low, o)
+	}
+	if along <= 0 || vx <= 0 {
+		return lip + low
+	}
+	t := along / vx
+	return lip + low - math.Min(0.5*fallsGravity*t*t, c.Sink)
 }
 
 // HalfWidth is the curtain's half-width `along` past the lip.
@@ -120,7 +136,10 @@ func (f Waterfall) Curtain(cell float64) FallsCurtain {
 	c.FootWidth = c.LipWidth * (1 + math.Min(0.25, 0.06*drop))
 	lead := math.Max(1.5*cell, 0.5)
 	c.Rows = min(max(int(math.Ceil(drop/0.35))+2, 5), 28)
-	c.Cols = min(max(int(math.Ceil(c.FootWidth/0.6))+1, 3), 48)
+	// Columns every ~0.35 m: the variation along the lip lives in the
+	// vertex colours and the per-column throw, so it needs the columns.
+	// Odd, so one column runs down the middle.
+	c.Cols = min(max(int(math.Ceil(c.FootWidth/0.35))+1, 3), 48) | 1
 	tx, tz := f.DirX, f.DirZ
 	if l := math.Hypot(tx, tz); l > 1e-9 {
 		tx, tz = tx/l, tz/l
@@ -128,6 +147,32 @@ func (f Waterfall) Curtain(cell float64) FallsCurtain {
 		tx, tz = 1, 0
 	}
 	lx, lz := -tz, tx // left of the heading
+
+	// VARIATION along the lip (fixes after W5: the sheet read as one
+	// evenly tiled curtain side to side). Low-frequency noise across the
+	// lip, seeded by where the fall is, so no two falls match and nothing
+	// repeats across one: an uneven lip (a few centimetres up and down),
+	// some of the water thrown further than the rest, thick white ropes and
+	// thin glassy stretches (the aeration), and the odd gap where the sheet
+	// parts and the rock shows (the edge share, which also frays the sides
+	// more the further the water has fallen). The shader adds its own
+	// per-column streaks on top (water.glsl, waterFallsShade).
+	seed := noise.Hash64(math.Float64bits(math.Round(f.X*100)), math.Float64bits(math.Round(f.Z*100)), 0xfa11)
+	nAt := func(o uint64, x, y float64) float64 { return 0.5 + 0.5*noise.Value2(seed+o, x, y) }
+	c.ColVX = make([]float64, c.Cols)
+	c.ColLip = make([]float64, c.Cols)
+	c.VXMin = c.VX
+	for k := 0; k < c.Cols; k++ {
+		a := (float64(k)/float64(c.Cols-1)*2 - 1) * c.LipWidth / 2
+		c.ColVX[k] = c.VX * (0.8 + 0.4*nAt(1, a/1.3, 0.5))
+		c.ColLip[k] = -0.05 + 0.08*nAt(2, a/0.9, 2.5)
+		c.VXMin = math.Min(c.VXMin, c.ColVX[k])
+	}
+	c.OutMax = c.Out
+	for _, v := range c.ColVX {
+		c.OutMax = math.Max(c.OutMax, v*tEnd)
+	}
+
 	arc, pa, py := -lead, -lead, f.Lip
 	for r := 0; r < c.Rows; r++ {
 		along, y, prog := -lead, f.Lip+0.01, 0.0
@@ -148,11 +193,30 @@ func (f Waterfall) Curtain(cell float64) FallsCurtain {
 		}
 		for k := 0; k < c.Cols; k++ {
 			a := (float64(k)/float64(c.Cols-1)*2 - 1) * hw
-			c.P = append(c.P, [3]float64{f.X + tx*along + lx*a, y, f.Z + tz*along + lz*a})
+			// This column's throw and lip.
+			ca := along
+			if r > 0 {
+				ca = c.ColVX[k] * math.Sqrt(2*(f.Lip-y)/fallsGravity)
+			}
+			cy := y + c.ColLip[k]*(1-0.5*prog)
+			c.P = append(c.P, [3]float64{f.X + tx*ca + lx*a, cy, f.Z + tz*ca + lz*a})
 			c.U = append(c.U, a)
 			c.V = append(c.V, arc)
-			c.Aeration = append(c.Aeration, noise.Clamp(aer, 0, 1))
-			c.Edge = append(c.Edge, noise.SmoothStep(0, math.Min(0.45, 0.3*hw), hw-math.Abs(a)))
+			// Thick and thin along the lip, drifting a little as it falls;
+			// the foot's churn evens it out.
+			thick := nAt(3, a/1.1, prog*0.8)
+			ka := aer + (thick-0.5)*0.55*(1-prog*prog)
+			c.Aeration = append(c.Aeration, noise.Clamp(ka, 0, 1))
+			// Frayed sides, wider and more ragged lower down; the odd
+			// gap opening below the lip.
+			fw := math.Min(0.45, 0.3*hw) * (1 + 1.4*prog) * (0.6 + 0.8*nAt(4, a/0.7, prog*2))
+			e := noise.SmoothStep(0, math.Min(fw, 0.9*hw), hw-math.Abs(a))
+			// Gaps: rare and narrow, by the sides and toward the foot,
+			// almost never in the middle of the top.
+			gap := noise.SmoothStep(0.2, 0.34, nAt(5, a/0.6, prog*1.2))
+			where := math.Max(noise.SmoothStep(0.45, 0.9, math.Abs(a)/math.Max(hw, 1e-3)), noise.SmoothStep(0.45, 0.85, prog))
+			e *= 1 - (1-gap)*noise.SmoothStep(0.05, 0.35, prog)*where
+			c.Edge = append(c.Edge, e)
 			c.Progress = append(c.Progress, prog)
 		}
 	}
@@ -171,7 +235,7 @@ func notchFalls(g *Grid, falls []Waterfall, water *WaterResult, floor float32, c
 		} else {
 			tx, tz = 1, 0
 		}
-		reach := c.Out + g.Cell
+		reach := math.Max(c.Out, c.OutMax) + g.Cell
 		half := c.FootWidth/2 + g.Cell
 		R := math.Hypot(reach, half)
 		i0 := max(int(math.Floor((f.X-R-g.MinX)/g.Cell)), 0)
@@ -190,7 +254,7 @@ func notchFalls(g *Grid, falls []Waterfall, water *WaterResult, floor float32, c
 				if along <= 0.05 || along > reach || across > c.HalfWidth(math.Min(along, c.Out))+g.Cell {
 					continue
 				}
-				lim := float32(c.SheetY(f.Lip, math.Min(along, c.Out)) - notchClear)
+				lim := float32(c.SheetY(f.Lip, math.Min(along, math.Max(c.Out, c.OutMax))) - notchClear)
 				lim = max(lim, floor)
 				if g.H[k] > lim {
 					g.H[k] = lim

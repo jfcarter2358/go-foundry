@@ -62,6 +62,7 @@ and is always current.
 | [Environment regions](35-regions.md) | Several environments in one generated world: region volumes, presets, the world generator, the region list, adjacency rules and "Insert intermediate region", incremental runs |
 | [Terrain paint](36-terrain-paint.md) | Painting a generator's inputs: paint layers and their kinds, the 2D view's brush, paint bands on scatter and grass rules, exclude layers, material overrides, the files beside the .fgen, `foundry gen paint` |
 | [Water](37-water.md) | What water does beyond its look: rings and splashes from wading, falling in and shots, rain on the water, the underwater view (murk, Snell's window, caustics, muffled sound), river and waterfall sounds, `water_at` from a script |
+| [Stylized lighting](38-stylized-lighting.md) | Experimental painted-miniature look: cool shadows and warm light, edge highlights, recess wash and dry-brush; the `stylize:` block, the View menu switch, tuning and the debug views |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
 | [Saves and checkpoints](26-saves-and-checkpoints.md) | Checkpoint volumes, Retry, save slots, per-level save mode |

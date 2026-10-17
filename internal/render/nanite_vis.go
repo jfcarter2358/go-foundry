@@ -852,6 +852,7 @@ func naniteVisShade(lvl *world.Level, frame ShadowFrame, now float64) {
 
 	// 4. Each bin's pixels, shaded: its tiles at its depth, GL_EQUAL.
 	gl.BindFramebuffer(gl.FRAMEBUFFER, v.colourFBO)
+	stylizeMaterialDrawBuffers()
 	gl.Viewport(0, 0, w, h)
 	gl.DepthFunc(gl.EQUAL)
 	gl.DepthMask(false)
@@ -1108,6 +1109,9 @@ func (v *naniteVisPass) ensureFBOs() {
 	}
 	gl.BindFramebuffer(gl.FRAMEBUFFER, v.colourFBO)
 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, scene.colour, 0)
+	// A painted level's normal buffer, or none (stylize.go): the draw set
+	// that writes it is chosen each frame (stylizeMaterialDrawBuffers).
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, scene.stylize, 0)
 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, v.binDepth, 0)
 	gl.DrawBuffer(gl.COLOR_ATTACHMENT0)
 	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {

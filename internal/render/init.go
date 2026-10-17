@@ -37,11 +37,18 @@ func InitWorldPasses() {
 	// context being stood up, so whatever an earlier one left is forgotten.
 	scenery = sceneryInstancer{}
 	sceneryInstancing = os.Getenv("FOUNDRY_SCENERY_INSTANCING") != "0"
+	bootStep(3, "Compiling shaders: grass")
 	GrassInit()
+	bootStep(4, "Compiling shaders: sprites")
 	SpriteInit()
+	bootStep(5, "Compiling shaders: sky")
 	SkyInit()
+	bootStep(6, "Compiling shaders: volumetrics")
 	VolumetricInit()
+	bootStep(7, "Compiling shaders: terrain")
 	TerrainInit()
+	bootStep(8, "Compiling shaders: foliage")
 	FoliageInit()
+	bootStep(9, "Compiling shaders: grass fields")
 	GrassFieldInit()
 }

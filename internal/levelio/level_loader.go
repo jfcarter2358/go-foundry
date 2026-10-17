@@ -732,6 +732,7 @@ func loadLevelObjectsAfterScenery(raw world.RawLevel, level *world.Level, texNee
 	level.Sky = world.SkyFromRaw(raw.Sky)
 	level.Fog = world.FogFromRaw(raw.Fog)
 	level.Tonemap = world.TonemapFromRaw(raw.Tonemap)
+	level.Stylize = world.StylizeFromRaw(raw.Stylize)
 
 	// The player's own tuning (player_settings.go). Assigned unconditionally,
 	// including for a level with no `player:` block: this loader fills a Level

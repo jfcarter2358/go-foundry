@@ -294,7 +294,8 @@ vec3 biomeLightingSpec(vec3 worldPos, vec3 normal, float viewDepth, bool receive
         }
     }
 
-    return lighting;
+    // A painted level's light ramp (light_model.glsl); untouched without one.
+    return stylizeLight(lighting);
 }
 
 // biomeLighting is the diffuse alone, for the passes that take no highlight

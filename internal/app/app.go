@@ -266,6 +266,29 @@ func Run() {
 	log.Printf("GLSL version   : %s", gl.GoStr(gl.GetString(gl.SHADING_LANGUAGE_VERSION)))
 	log.Printf("GPU renderer   : %s", gl.GoStr(gl.GetString(gl.RENDERER)))
 
+	// The runtime UI. Four installs and one GL init, all of them the same
+	// inversion the function variables above use: internal/ui, internal/uifont
+	// and internal/video sit below the log window and below the script runtime,
+	// so the owner hands them what they need rather than reaching up for it.
+	ui.Logf = func(format string, args ...any) { log.Printf(format, args...) }
+	video.Logf = func(format string, args ...any) { log.Printf(format, args...) }
+	uifont.LogMissing = func(name string, err error) {
+		log.Printf("ui: font %q could not be loaded (%v); falling back to the built-in bitmap face", name, err)
+	}
+	ui.LoadActiveTheme()
+	if err := uidraw.Init(); err != nil {
+		log.Printf("ui renderer: %v", err)
+	}
+	defer uidraw.Delete()
+	// The UI renderer needs nothing from resources/, so the startup progress
+	// bar can go up now, before the seconds of shader compiles and loading
+	// below — see boot_splash.go.
+	bootSplashBegin()
+	render.BootProgress = func(step, steps int, label string) {
+		bootStep(0.05+0.40*float32(step)/float32(steps), label)
+	}
+	defer func() { render.BootProgress = nil }()
+
 	// Reads back what CreateAntiAliasedWindow's request above actually got
 	// granted and applies AntiAliasEnabled's default (on) — see antialias.go.
 	render.ApplyAntiAliasGLState()
@@ -301,6 +324,7 @@ func Run() {
 	}
 	log.Printf("shader program linked OK (id=%d)", gfx.Program)
 	// The textures only the materials reach, now that there is a context.
+	bootStep(0.45, "Loading materials")
 	gfx.EnsureMaterialTextures()
 
 	// Default camera position; overridden by the level's spawn point when it
@@ -312,7 +336,10 @@ func Run() {
 	// its manifest names, with no editor to open one from. See startup_dev.go
 	// and startup_release.go.
 	log.Printf("%s", startupDescribeLevel())
-	level, levelPath, levelsDir, err := startupLevel()
+	bootStep(0.50, "Loading level")
+	level, levelPath, levelsDir, err := startupLevel(func(frac float32, detail string) {
+		bootProgress(0.50+0.35*frac, detail, false)
+	})
 	if err != nil {
 		fatalStartup(fmt.Sprintf("The first level would not load: %v", err), "Reinstalling the game may fix this.")
 	}
@@ -330,6 +357,7 @@ func Run() {
 	// The player is created by the engine, not authored into the level — see
 	// NewPlayer (entity.go). It carries the camera and is what collision is
 	// resolved for; nothing draws it, since the view is from inside its head.
+	bootStep(0.85, "Preparing level")
 	world.PlayerEntity = world.NewPlayer(gfx.Cam.Position.Sub(mgl32.Vec3{0, world.EyeHeight, 0}))
 	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
 	gfx.UpdateCamMatrix()
@@ -364,24 +392,10 @@ func Run() {
 	// one. See platform.ToggleFullscreenFunc.
 	platform.ToggleFullscreenFunc = ToggleFullscreen
 
-	// The runtime UI. Four installs and one GL init, all of them the same
-	// inversion the function variables above use: internal/ui, internal/uifont
-	// and internal/video sit below the log window and below the script runtime,
-	// so the owner hands them what they need rather than reaching up for it.
-	ui.Logf = func(format string, args ...any) { log.Printf(format, args...) }
-	video.Logf = func(format string, args ...any) { log.Printf(format, args...) }
-	uifont.LogMissing = func(name string, err error) {
-		log.Printf("ui: font %q could not be loaded (%v); falling back to the built-in bitmap face", name, err)
-	}
-	ui.LoadActiveTheme()
-	if err := uidraw.Init(); err != nil {
-		log.Printf("ui renderer: %v", err)
-	}
-	defer uidraw.Delete()
-
 	// The developer tools — the F3 overlay a release build can draw for
 	// itself, and the tilde console — behind FOUNDRY_DEBUG_ENABLED. After the
 	// UI renderer, because they are drawn with it. See internal/devui.
+	bootStep(0.92, "Starting up")
 	devui.Init()
 
 	// Init level editor (must be after LoadLevel and OpenGL context ready).
@@ -411,6 +425,7 @@ func Run() {
 
 	// Drain any events that accumulated during startup (level load, window creation,
 	// etc.) so the first game-loop poll doesn't see a huge mouse-motion delta.
+	bootStep(0.98, "Drawing the first frame")
 	sdl.PumpEvents()
 	for e := sdl.PollEvent(); e != nil; e = sdl.PollEvent() {
 	}
@@ -782,6 +797,8 @@ func Run() {
 		render.ProfileBegin("swap")
 		platform.Window.GLSwap()
 		render.ProfileEnd()
+		// The first frame is up over the startup bar; log what it all took.
+		bootSplashEnd()
 		// A GPU-bound frame's wait, here and named, rather than inside
 		// whichever pass the driver's queue filled up in (render/frame_pace.go).
 		render.ProfileBegin("gpu wait")

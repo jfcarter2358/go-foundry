@@ -62,7 +62,10 @@ uniform int groundLayer[8];
 uniform float groundScale[8];
 uniform float groundWalls[8];
 
-out vec4 outputColor;
+layout(location = 0) out vec4 outputColor;
+// The stylize pass's record (light_model.glsl's stylizePack): as
+// fragment.glsl's, written only where a painted level binds the buffer.
+layout(location = 1) out uvec4 outputStylize;
 
 float tHash(vec2 p) {
     p = fract(p * vec2(0.1031, 0.1030));
@@ -243,4 +246,5 @@ void main() {
     vec3 color = giDebugAlbedo(albedo) * clamp(lighting, 0.0, hdrLightMax()) + clamp(spec, 0.0, hdrLightMax());
     color = applyFogScene(color, vWorldPos);
     outputColor = vec4(color, 1.0);
+    outputStylize = styRamp.w == 0.0 ? uvec4(0u) : stylizePack(normal, normal, vViewDepth, 1.0);
 }

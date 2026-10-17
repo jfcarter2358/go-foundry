@@ -97,6 +97,9 @@ type Level struct {
 	// Tonemap is the level's HDR shading and tone curve (tonemap.go), or nil
 	// for LDR shading as every level before it had.
 	Tonemap *Tonemap
+	// Stylize is the level's painted-miniature look (stylize.go), or nil for
+	// none — the look every level before it had.
+	Stylize *Stylize
 	// Player is the level's tuning for the engine-owned player it starts
 	// (player_settings.go). A value rather than a pointer, because there is
 	// always a player and its zero value is the engine's own defaults.

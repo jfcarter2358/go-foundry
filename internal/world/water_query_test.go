@@ -115,3 +115,54 @@ func TestWaterQueryLeavesFallingSheetsOut(t *testing.T) {
 		t.Fatal("a falls sheet counted as a water surface")
 	}
 }
+
+// waterTestStrip is a ribbon running along +X across z ∈ [0, w]: one quad
+// per pair of (x, y) stations, every vertex still (flow colour 128, 128).
+func waterTestStrip(w float32, xy ...[2]float32) *nanite.Mesh {
+	col := uint32(255) | uint32(128)<<8 | uint32(128)<<16 | 255<<24
+	m := &nanite.Mesh{Slots: []nanite.Slot{{Name: "water", First: 0, BaseCount: 1}}, HasColors: true}
+	lo := mgl32.Vec3{xy[0][0], xy[0][1], 0}
+	hi := lo
+	for i, p := range xy {
+		for _, z := range [2]float32{0, w} {
+			m.Vertices = append(m.Vertices, p[0], p[1], z, 0, 0)
+			m.Normals = append(m.Normals, 0, 1, 0)
+			m.Colors = append(m.Colors, col)
+			lo = mgl32.Vec3{min(lo.X(), p[0]), min(lo.Y(), p[1]), 0}
+			hi = mgl32.Vec3{max(hi.X(), p[0]), max(hi.Y(), p[1]), w}
+		}
+		if i > 0 {
+			a := uint32(2 * (i - 1))
+			m.Indices = append(m.Indices, a, a+1, a+3, a, a+3, a+2)
+		}
+	}
+	n := uint32(len(m.Indices) / 3)
+	m.Clusters = []nanite.Cluster{{Cluster: cluster.Cluster{TriFirst: 0, TriCount: n}}}
+	m.Lo, m.Hi = lo, hi
+	return m
+}
+
+// Standing in the air below a fall must not count as under water: the
+// ribbon's step down the fall (lip at 5, foot at 2 over a metre) is not a
+// surface over the plunge pool (fixed after phase W5).
+func TestWaterAtBelowAFallIsNotUnderTheLip(t *testing.T) {
+	waterTestMaterial(t, "wq_fall_river", 1)
+	lvl := &Level{}
+	lvl.Scenery = append(lvl.Scenery, Scenery{ID: "ribbon", Material: "wq_fall_river", Scale: mgl32.Vec3{1, 1, 1},
+		Nanite: waterTestStrip(6, [2]float32{0, 5}, [2]float32{10, 5}, [2]float32{11, 2}, [2]float32{30, 1.8})})
+	InvalidateWaterQuery()
+	// An eye 1.6 m over the pool, right at the foot of the step (under where
+	// the step's strip passes, 4.1 m up) and a little further out.
+	for _, x := range []float32{10.3, 10.8, 11.5, 14} {
+		if w := WaterAt(lvl, mgl32.Vec3{x, 3.6, 3}); w.In {
+			t.Errorf("eye at x %.1f, 1.6 m over the pool: %+v, want not under water", x, w)
+		}
+	}
+	// Still in the river above the fall and in the pool below it.
+	if w := WaterAt(lvl, mgl32.Vec3{5, 4, 3}); !w.In || w.Surface != 5 {
+		t.Errorf("in the river above the lip: %+v", w)
+	}
+	if w := WaterAt(lvl, mgl32.Vec3{14, 1, 3}); !w.In || w.Surface < 1.8 || w.Surface > 2 {
+		t.Errorf("in the plunge pool: %+v", w)
+	}
+}

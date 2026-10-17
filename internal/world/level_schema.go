@@ -976,6 +976,10 @@ type RawLevel struct {
 	// Tonemap opts the level into HDR shading with a filmic tone curve
 	// (tonemap.go). Absent: LDR, as every level before it.
 	Tonemap *RawTonemap `yaml:"tonemap,omitempty"`
+	// Stylize gives the level a painted-miniature look (stylize.go;
+	// experimental): cool shadows, warm light, highlighted edges, washed
+	// recesses and dry-brushed detail. Absent: drawn as every level before it.
+	Stylize *RawStylize `yaml:"stylize,omitempty"`
 	// Player is this level's tuning for the body it starts (player_settings.go).
 	// A pointer for the reason Sky and Fog are: the player is engine-owned, so
 	// a level that never wanted to say anything about it writes no block at all

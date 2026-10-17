@@ -41,7 +41,8 @@ func TestFallsCurtainFollowsTheLipAndABallisticProfile(t *testing.T) {
 		t.Fatalf("lip width %.2f for a %.2f m river", w, f.Width)
 	}
 	mid := lip[c.Cols/2]
-	if math.Abs(mid[0]-f.X) > 0.01 || math.Abs(mid[2]-f.Z) > 0.01 || math.Abs(mid[1]-f.Lip) > 1e-9 {
+	// The lip is uneven by a few centimetres (fixes after W5).
+	if math.Abs(mid[0]-f.X) > 0.01 || math.Abs(mid[2]-f.Z) > 0.01 || math.Abs(mid[1]-f.Lip) > 0.06 {
 		t.Fatalf("lip centre %v", mid)
 	}
 	// The lead-in reaches back upstream at the lip's level.
@@ -59,15 +60,17 @@ func TestFallsCurtainFollowsTheLipAndABallisticProfile(t *testing.T) {
 			t.Fatalf("row %d %v: not falling outward", r, p)
 		}
 		if r > 1 {
-			fall := f.Lip - p[1]
-			want := c.VX * math.Sqrt(2*fall/fallsGravity)
+			// Each column on its own throw (fixes after W5), from the
+			// lip's nominal level.
+			fall := f.Lip + c.ColLip[c.Cols/2]*(1-0.5*c.Progress[r*c.Cols+c.Cols/2]) - p[1]
+			want := c.ColVX[c.Cols/2] * math.Sqrt(2*fall/fallsGravity)
 			if math.Abs(along-want) > 1e-6 {
 				t.Fatalf("row %d: along %.3f, ballistic %.3f", r, along, want)
 			}
 		}
 		prevY, prevA = p[1], along
 	}
-	if prevY > f.Foot-0.1 || prevA < 0.12*f.Drop || prevA > 0.5*f.Drop+0.4+1e-9 {
+	if prevY > f.Foot-0.1 || prevA < 0.12*f.Drop || prevA > c.OutMax+1e-9 || c.OutMax > 1.25*(0.5*f.Drop+0.4) {
 		t.Fatalf("foot at y %.2f out %.2f", prevY, prevA)
 	}
 	// It spreads as it falls; aerated toward the foot; frayed at the sides.
@@ -188,5 +191,52 @@ func TestConfluenceFoamTrailsDownTheMainRiver(t *testing.T) {
 	down, up, far := foamAt(c.X+8, c.Z-0.5), foamAt(c.X-8, c.Z-0.5), foamAt(c.X+18, c.Z-0.5)
 	if down < 0.2 || up > 0.1 || far >= down {
 		t.Fatalf("confluence foam: 8 m down %.2f, 8 m up %.2f, 18 m down %.2f", down, up, far)
+	}
+}
+
+// The sheet varies along its lip and nothing repeats evenly across it
+// (fixes after W5): the columns are thrown different distances from an
+// uneven lip, the aeration across a row is thick and thin, the sheet parts
+// somewhere below the lip, and two falls elsewhere do not match.
+func TestFallsCurtainVariesAlongTheLip(t *testing.T) {
+	f := Waterfall{River: "r", X: 39.57, Z: 2.33, Lip: -6.5, Foot: -8.7, Drop: 2.2, DirX: 0.964, DirZ: 0.266, Width: 4.7, Speed: 1.4}
+	c := f.Curtain(1)
+	spread := func(v []float64) float64 {
+		lo, hi := math.Inf(1), math.Inf(-1)
+		for _, x := range v {
+			lo, hi = math.Min(lo, x), math.Max(hi, x)
+		}
+		return hi - lo
+	}
+	if s := spread(c.ColVX); s < 0.08*c.VX {
+		t.Errorf("throw varies by %.3f m/s of %.2f across the lip", s, c.VX)
+	}
+	if s := spread(c.ColLip); s < 0.02 {
+		t.Errorf("the lip is level to %.3f m", s)
+	}
+	// A row a third of the way down, inside the frayed sides.
+	r := c.Rows / 3
+	row := c.Aeration[r*c.Cols+2 : (r+1)*c.Cols-2]
+	if s := spread(row); s < 0.12 {
+		t.Errorf("aeration across row %d spans only %.3f: one even curtain", r, s)
+	}
+	// Somewhere inside the sheet below the lip the edge share dips: a gap
+	// or a ragged side well in from the edge.
+	dip := false
+	for rr := 2; rr < c.Rows; rr++ {
+		for k := c.Cols / 4; k < c.Cols*3/4; k++ {
+			if c.Edge[rr*c.Cols+k] < 0.7 {
+				dip = true
+			}
+		}
+	}
+	if !dip {
+		t.Errorf("the sheet never parts in its middle half")
+	}
+	g := f
+	g.X, g.Z = -51.33, 35.03
+	if c2 := g.Curtain(1); c2.Cols == c.Cols && math.Abs(c2.ColVX[c.Cols/2]/c2.VX-c.ColVX[c.Cols/2]/c.VX) < 1e-6 &&
+		math.Abs(c2.Aeration[r*c.Cols+c.Cols/2]-c.Aeration[r*c.Cols+c.Cols/2]) < 1e-6 {
+		t.Errorf("two falls in different places have the same variation")
 	}
 }

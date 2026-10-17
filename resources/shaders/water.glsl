@@ -415,6 +415,24 @@ float waterBedCaustics(vec3 bp, vec3 bn, float depth, float sun) {
     return clamp(1.0 + strength * fade * (c * 1.4 - 0.3), 0.0, 2.5);
 }
 
+// waterStretch is q in a frame squeezed by st along the fixed unit axis d.
+vec2 waterStretch(vec2 q, vec2 d, float st) {
+    vec2 e = vec2(-d.y, d.x);
+    return d * (dot(q, d) / st) + e * dot(q, e);
+}
+
+// waterFoamBin is the two-phase foam sample squeezed along the fixed axis
+// ax (waterShade's foam, fixes after W5): q0, q1 the two copies' advected
+// positions, w the first's weight, scale the pattern size, o0 and o1 the
+// copies' offsets; dpx, dpy the position's screen derivatives.
+vec4 waterFoamBin(vec2 q0, vec2 q1, vec2 ax, float st, float scale, vec2 o0, vec2 o1, float w, vec2 dpx, vec2 dpy) {
+    vec2 gx = waterStretch(dpx, ax, st) / scale;
+    vec2 gy = waterStretch(dpy, ax, st) / scale;
+    vec4 a = textureGrad(waterDetail, waterStretch(q0, ax, st) / scale + o0, gx, gy);
+    vec4 b = textureGrad(waterDetail, waterStretch(q1, ax, st) / scale + o1, gx, gy);
+    return a * w + b * (1.0 - w);
+}
+
 // waterSurfaceNormal is the swell's normal tilted by the ripples. Taken at
 // the top of fragment.glsl's main, before anything can discard, since the
 // ripple samples need screen-space derivatives.
@@ -451,8 +469,22 @@ vec3 waterSurfaceNormal(vec3 p) {
         vec2 q1 = p.xz - fv * ph.y + vec2(0.37, 0.71) * scale;
         vec2 s0 = waterDetailSlope(q0, scale, 0.37, vec2(0.0)) + 0.7 * waterDetailSlope(q0, scale * 0.53, 1.61, vec2(0.0));
         vec2 s1 = waterDetailSlope(q1, scale, 0.37, vec2(0.0)) + 0.7 * waterDetailSlope(q1, scale * 0.53, 1.61, vec2(0.0));
-        sl = s0 * ph.z + s1 * (1.0 - ph.z)
-           + 0.6 * waterDetailSlope(p.xz, scale * 2.17, -0.83, drift * 0.6);
+        // The slow third layer is carried down the current too (fixes
+        // after W5: it drifted along the material's flow_direction, +X
+        // on water_river, whichever way the river ran — across it or up
+        // it), two-phase on a longer cycle, slower, so its cross-fade never
+        // falls with the other two's.
+        float T2 = max(waterFlowMap.y, 0.25) * 1.618;
+        float r0 = fract(time / T2 + 0.25);
+        float r1 = fract(time / T2 + 0.75);
+        float rw = 1.0 - abs(2.0 * r0 - 1.0);
+        vec2 s2 = waterDetailSlope(p.xz - fv * (r0 * T2 * 0.6), scale * 2.17, -0.83, vec2(0.0)) * rw
+                + waterDetailSlope(p.xz - fv * (r1 * T2 * 0.6) + vec2(0.41, 0.17) * scale, scale * 2.17, -0.83, vec2(0.0)) * (1.0 - rw);
+        sl = s0 * ph.z + s1 * (1.0 - ph.z) + 0.6 * s2;
+        // The swell's three sines run along fixed world headings: on a
+        // river they are crests across (or up) the current, so they are
+        // kept to a ripple there (fixes after W5).
+        n = normalize(vec3(n.x * 0.35, n.y, n.z * 0.35));
         // Faster water is choppier, and white water — riffles, boulders,
         // a fall's pool, a confluence's mixing line (the vertex foam) — is
         // churned rougher still (phase W4).
@@ -566,12 +598,49 @@ vec3 waterGGX(vec3 n, vec3 v, vec3 ldir, vec3 rad, float rough) {
     return rad * (D * vis * F * nl);
 }
 
+// waterFallsTex is the detail map at uv·k + off, its derivatives the
+// continuous coordinates' (the columns below jump at their seams, which
+// implicit derivatives would take for a huge minification there).
+vec4 waterFallsTex(vec2 uv, vec2 k, vec2 off, vec2 dx, vec2 dy) {
+    return textureGrad(waterDetail, uv * k + off, dx * k, dy * k);
+}
+
+// waterFallsColumn is one column of a falling sheet's streaks (fixes after
+// W5): its own streak width, length, speed and phase, hashed from its id,
+// so neighbouring columns never fall in step and nothing repeats across
+// the sheet. x the streak value (0..1), y the foam threads, zw a
+// refraction wobble. The scroll is wrapped to one tile (fract) so a long
+// session's `time` does not eat the coordinates' precision.
+vec4 waterFallsColumn(float id, vec2 uv, vec2 dx, vec2 dy, float sc, float sp, float lipN) {
+    float h1 = waterHash(vec2(id, 3.7));
+    float h2 = waterHash(vec2(id, 9.1));
+    float h3 = waterHash(vec2(id, 1.3));
+    float s1 = sp * (0.75 + 0.6 * h1) * (0.85 + 0.3 * lipN);
+    vec2 k1 = vec2(1.0 / (sc * 0.3 * (0.6 + 0.9 * h2)), 1.0 / (sc * 4.0 * (0.7 + 0.6 * h3)));
+    vec4 a = waterFallsTex(uv, k1, vec2(h3 * 17.0, h1 * 23.0 - fract(time * s1 * k1.y)), dx, dy);
+    float s2 = s1 * (1.25 + 0.3 * h3);
+    vec2 k2 = vec2(1.0 / (sc * 0.17 * (0.7 + 0.7 * h1)), 1.0 / (sc * 2.6 * (0.7 + 0.6 * h2)));
+    vec4 b = waterFallsTex(uv, k2, vec2(h2 * 31.0 + 0.37, h3 * 13.0 + 0.21 - fract(time * s2 * k2.y)), dx, dy);
+    float streak = clamp((0.6 * a.a + 0.4 * b.a - 0.5) * 2.2 + 0.5 + 0.3 * b.b, 0.0, 1.0);
+    return vec4(streak, b.b, a.r - 0.5, b.g - 0.5);
+}
+
 // waterFallsShade is a falling sheet's colour (phase W4; the file comment):
 // streaks of the detail map stretched down the sheet's V and scrolled at
 // falls_speed, aerated white by the vertex red, glassy elsewhere with the
 // scene behind seen through it, frayed at the sides by the vertex green. A
 // mesh without vertex colours (a brush face hung as a fall) is taken as
 // fairly aerated all over.
+//
+// VARIATION (fixes after W5; the sheet read as one evenly tiled curtain
+// side to side): low-frequency noise along the lip makes thin glassy
+// stretches and thick white ropes; the streaks come in COLUMNS of jittered
+// width, each with its own hashed streak width, length, speed and phase,
+// blended across their seams; clots gather and the sheet tears into
+// strands as it falls, more toward the foot and the frayed sides. The
+// mesh varies too (terrain/river_falls.go): an uneven lip, some water
+// thrown further, thickness and gaps in its vertex colours. All from the
+// detail map: no sampler is added.
 vec3 waterFallsShade(vec3 n, vec3 lighting, inout float alpha) {
     vec3 V = normalize(camPos - fragWorldPos);
     bool vc = vertexColors != 0;
@@ -582,26 +651,49 @@ vec3 waterFallsShade(vec3 n, vec3 lighting, inout float alpha) {
     float sp = max(waterFlowMap.w, 0.1);
     float sc = max(waterFlow.z, 0.1);
     vec2 uv = fragTexCoord;
-    // Streaks: the detail map's noise squeezed across and drawn out down
-    // the sheet, two layers, the second faster (the water speeds up as it
-    // falls) and offset so their repeats never line up; a little of the
-    // foam network on top for the ragged white threads.
-    vec4 s1 = texture(waterDetail, vec2(uv.x / (sc * 0.3), (uv.y - time * sp) / (sc * 4.0)));
-    vec4 s2 = texture(waterDetail, vec2(uv.x / (sc * 0.17) + 0.37, (uv.y - time * sp * 1.4) / (sc * 2.6) + 0.21));
-    float streak = clamp((0.6 * s1.a + 0.4 * s2.a - 0.5) * 2.2 + 0.5 + 0.3 * s2.b, 0.0, 1.0);
+    vec2 dx = dFdx(uv), dy = dFdy(uv);
+    // Along the lip: two octaves of noise, slow across the sheet and
+    // nearly constant down it, stretched to the full 0..1.
+    float lipN = 0.65 * waterFallsTex(uv, vec2(1.0 / (sc * 5.3), 0.012), vec2(0.13, 0.41), dx, dy).a
+               + 0.35 * waterFallsTex(uv, vec2(1.0 / (sc * 2.1), 0.03), vec2(0.57, 0.83), dx, dy).a;
+    lipN = clamp((lipN - 0.5) * 2.4 + 0.5, 0.0, 1.0);
+    // The columns: ~0.36 m, each seam jittered, the nearest neighbour
+    // blended in toward the seam (half and half on it).
+    float cw = 0.3 * sc;
+    float x = (uv.x + (lipN - 0.5) * 1.2 * cw) / cw;
+    float ci = floor(x);
+    float id = ci;
+    if (x < ci + 0.4 * (waterHash(vec2(ci, 5.5)) - 0.5)) {
+        id = ci - 1.0;
+    } else if (x >= ci + 1.0 + 0.4 * (waterHash(vec2(ci + 1.0, 5.5)) - 0.5)) {
+        id = ci + 1.0;
+    }
+    float dL = x - (id + 0.4 * (waterHash(vec2(id, 5.5)) - 0.5));
+    float dR = id + 1.0 + 0.4 * (waterHash(vec2(id + 1.0, 5.5)) - 0.5) - x;
+    float nb = dR < dL ? id + 1.0 : id - 1.0;
+    float wN = 0.5 * (1.0 - smoothstep(0.0, 0.2, min(dL, dR)));
+    vec4 col = mix(waterFallsColumn(id, uv, dx, dy, sc, sp, lipN), waterFallsColumn(nb, uv, dx, dy, sc, sp, lipN), wN);
+    float streak = col.x;
+    // Clots of white falling with the water, and the tears between them.
+    vec2 kc = vec2(1.0 / (sc * 1.3), 1.0 / (sc * 1.7));
+    float clump = waterFallsTex(uv, kc, vec2(0.71, 0.29 - fract(time * sp * 0.85 * kc.y)), dx, dy).a;
+    clump = clamp((clump - 0.5) * 2.2 + 0.5, 0.0, 1.0);
     // Seen edge-on the streaks, scrolling down V, read as horizontal ribs
     // (phase W4's note): toward grazing they flatten out and the sheet
     // thins away, the white water staying longest.
     vec3 gN = dot(fragNormal, fragNormal) > 1e-8 ? normalize(fragNormal) : vec3(0.0, 0.0, 1.0);
     float edgeOn = smoothstep(0.04, 0.35, abs(dot(gN, V)));
     streak = mix(0.5, streak, edgeOn);
-    // White water: the sheet's aeration, broken up by the streaks, and the
-    // boil at the foot.
-    float white = aer * (0.55 + 0.8 * streak) + 0.45 * smoothstep(0.75, 1.0, prog);
+    // White water: the sheet's aeration, thick and thin along the lip,
+    // broken up by the streaks, clotting lower down, and the boil at the
+    // foot.
+    float thick = mix(0.45, 1.3, lipN);
+    float white = aer * (0.4 + 0.8 * streak) * thick + 0.45 * smoothstep(0.75, 1.0, prog);
+    white += 0.35 * smoothstep(0.55, 0.85, clump) * smoothstep(0.1, 0.6, prog);
     white = smoothstep(0.25, 0.8, white) * strength;
     // Never quite clear where the sheet is thick: a veil of white over
     // what shows through (phase W5).
-    white = max(white, 0.28 * strength * smoothstep(0.1, 0.5, aer) * edge);
+    white = max(white, 0.4 * strength * smoothstep(0.1, 0.5, aer) * edge * mix(0.55, 1.0, lipN));
     vec3 light = clamp(lighting, 0.0, hdrLightMax());
     // Foam scatters what reaches it in every direction: lit by the scene's
     // light, a touch of the sky's on top.
@@ -616,8 +708,21 @@ vec3 waterFallsShade(vec3 n, vec3 lighting, inout float alpha) {
     vec3 foamCol = vec3(0.94, 0.94, 0.92) * (light + 0.22 * sky);
     float F = clamp((WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - nv, 5.0)) * reflectivity * 2.0, 0.0, 1.0);
     // How much of the sheet is there at all: none past its frayed sides,
-    // thin where it is glassy and the streaks part.
-    float cover = smoothstep(0.0, 1.0, edge * (0.85 + 0.6 * streak)) * mix(0.75 + 0.25 * streak, 1.0, white);
+    // thin where it is glassy and the streaks part; torn into strands as
+    // it falls (more at the sides and toward the foot, where the boil
+    // closes it again), and thin where the lip runs thin.
+    // A tear thins the water to glass (a veil of it still there: the
+    // rock behind seen through it, not bare), and only at the frayed
+    // sides opens right through.
+    float tearAt = 0.1 + 0.35 * prog * prog + 0.3 * (1.0 - edge);
+    float hold = smoothstep(tearAt, tearAt + 0.22, 0.55 * clump + 0.45 * streak + 0.15 * lipN);
+    hold = max(hold, smoothstep(0.82, 1.0, prog) * edge);
+    // Thick and thin read as bands of brighter and fainter white water;
+    // the sheet itself stays (see-through only at its ragged sides and
+    // the mesh's rare gaps, edge).
+    white *= mix(0.55, 1.0, hold);
+    float cover = smoothstep(0.0, 1.0, edge * (0.85 + 0.6 * streak)) * mix(0.9 + 0.1 * streak, 1.0, white);
+    cover *= mix(1.0, hold, smoothstep(0.6, 0.15, edge));
     cover *= mix(edgeOn, 1.0, 0.6 * white);
     vec2 suv = (gl_FragCoord.xy - waterViewport.xy) / max(waterViewport.zw, vec2(1.0));
     if ((waterFrameFlags & WATER_HAVE_COLOUR) != 0) {
@@ -625,15 +730,18 @@ vec3 waterFallsShade(vec3 n, vec3 lighting, inout float alpha) {
         // by a few centimetres of the river, the sky on top by fresnel.
         // Barely bent and veiled (phase W5): bent by the full streaks, the
         // pale sand behind a fall was drawn down the sheet as brown streaks.
-        vec2 off = vec2(s1.r - 0.5, s2.g - 0.5) * 0.01 * waterLook.y;
+        vec2 off = col.zw * 0.01 * waterLook.y;
         vec3 behind = textureLod(waterSceneColour, clamp(suv + off, vec2(0.001), vec2(0.999)), 0.0).rgb;
         vec3 plain = textureLod(waterSceneColour, suv, 0.0).rgb;
         vec3 T = pow(clamp(waterAbsorb.rgb, vec3(0.001), vec3(1.0)), vec3(0.6 * waterAbsorb.w));
         vec3 seen = behind * T;
-        seen = mix(vec3(dot(seen, vec3(0.2126, 0.7152, 0.0722))), seen, 0.5) * 0.75;
-        vec3 glass = seen * (1.0 - F) + sky * F + waterScatter.rgb * light * 0.5 + foamCol * 0.12;
-        vec3 col = mix(glass, foamCol, white);
-        return mix(plain, col, cover);
+        // What shows through thin water is the fall's face, wet and in
+        // the sheet's shadow: dark, nearly grey rock, not the dry sand
+        // the colour copy holds (it read as tan stains on the sheet).
+        seen = mix(vec3(dot(seen, vec3(0.2126, 0.7152, 0.0722))), seen, 0.15) * 0.3;
+        vec3 glass = seen * (1.0 - F) + sky * F + waterScatter.rgb * light * 0.5 + foamCol * 0.18;
+        vec3 c = mix(glass, foamCol, white);
+        return mix(plain, c, cover);
     }
     // Blended: the glassy part lets the framebuffer through.
     vec3 glass = sky * F + waterScatter.rgb * light * 0.5;
@@ -688,7 +796,34 @@ vec3 waterShade(vec3 n, vec3 lighting, inout float alpha) {
     }
     vec3 N = n.y < 0.0 ? -n : n;
     vec3 V = normalize(camPos - fragWorldPos);
-    bool below = camPos.y < fragWorldPos.y;
+    // The surface's own facing, up: the mesh's normal (a generated
+    // ribbon's follows its slope, ground-river-2; smooth, so it carries
+    // none of the waves' facets), straight up without one. Fixes after W5:
+    // "below" used to be the eye lower than the fragment, so a river
+    // sloping down toward the eye — every upstream reach higher than the
+    // eye, the river above a fall seen from its pool — was drawn as seen
+    // from under the water, whose murk is near black in the open air.
+    // Now: the eye on the plane's underside AND under water (the CPU's
+    // WaterAt at the eye, waterRippleInfo.z). Seen from beneath in the air
+    // (through a gap under the lip) the surface is shaded as from above.
+    vec3 Ng = dot(fragNormal, fragNormal) > 1e-8 ? normalize(fragNormal) : vec3(0.0, 1.0, 0.0);
+    Ng *= Ng.y < 0.0 ? -1.0 : 1.0;
+    Ng = Ng.y < 0.5 ? vec3(0.0, 1.0, 0.0) : Ng;
+    float side = dot(camPos - fragWorldPos, Ng);
+    bool below = waterRippleInfo.z > 0.5 && side < 0.0;
+    // How far straight into the water (along the surface's normal) a metre
+    // of the view ray goes: V.y on level water. Seen from the underside in
+    // the air, the same depth the other way.
+    float vin = abs(dot(V, Ng));
+    // The ripples ride the surface's own slope (a river's ribbon falls a
+    // few per cent downstream; the ripple normal is about straight up).
+    N = normalize(N + Ng - vec3(0.0, 1.0, 0.0));
+    if (!below && side < 0.0) {
+        // Seen from beneath in the air: shaded as from above, the view
+        // mirrored through the plane, so the light and the fresnel are
+        // what that side would show rather than nothing.
+        V = V - 2.0 * dot(V, Ng) * Ng;
+    }
     float rough = clamp(waterLook.x, 0.01, 1.0);
     // White water is rough water: a river's vertex foam (riffles, a fall's
     // pool, a confluence) blurs its reflection and keeps it off a mirror
@@ -708,7 +843,7 @@ vec3 waterShade(vec3 n, vec3 lighting, inout float alpha) {
     float rayLen = length(camPos - fragWorldPos);
     float sceneZ = haveDepth ? waterLinearDepth(textureLod(waterSceneDepth, uv, 0.0).r) : surfZ + 3.0;
     float path = max(sceneZ - surfZ, 0.0) * rayLen / surfZ;
-    float vdepth = max(V.y * path, 0.0);
+    float vdepth = vin * path;
 
     // Refraction: the bed seen bent by the ripples, more so the deeper it
     // is — unless the bent sample lands on something in front of the water.
@@ -720,7 +855,7 @@ vec3 waterShade(vec3 n, vec3 lighting, inout float alpha) {
         if (cz > surfZ) {
             ruv = cand;
             path = max(cz - surfZ, 0.0) * rayLen / surfZ;
-            vdepth = max(V.y * path, 0.0);
+            vdepth = vin * path;
         }
     }
     path = min(path, 400.0);
@@ -791,43 +926,72 @@ vec3 waterShade(vec3 n, vec3 lighting, inout float alpha) {
     // Foam where the bed comes within a band of the surface — a third of
     // the band on a river, whose foam is its vertex foam (phase W4).
     float band = (0.25 + 0.75 * waterLook.z) * (waterFlowMapped() ? WATER_RIVER_SHORE : 1.0);
-    float foamMask = haveDepth ? 1.0 - smoothstep(0.0, band, vdepth) : 0.0;
+    float foamMask0 = haveDepth ? 1.0 - smoothstep(0.0, band, vdepth) : 0.0;
     float vfoam = vertexColors != 0 ? fragVertColor.r : 0.0;
-    foamMask = max(foamMask, vfoam);
-    // A strong young ring's white (a body dropping in; phase W5).
-    foamMask = max(foamMask, waterRippleFoam(fragWorldPos.xz));
+    float foamMask = max(foamMask0, vfoam);
     float foam = 0.0;
     // Sampled outside the branch below: implicit derivatives are only defined
     // under uniform control flow.
     float fscale = max(waterFlow.z, 0.1);
     // Foam drifts as streaks along the water's motion (phase W5): its
     // coordinates are squeezed along the current — a river's flow map, or
-    // still water's drift — by up to 3x on fast water.
+    // still water's drift — so it trails as streaks.
     vec2 fmove = waterFlowMapped() ? waterVertexFlow() : waterFlow.xy;
     float fspeed = length(fmove);
     vec2 fdir = fspeed > 1e-4 ? fmove / fspeed : vec2(1.0, 0.0);
-    vec2 fperp = vec2(-fdir.y, fdir.x);
-    float fstretch = 1.0 + 2.0 * clamp(fspeed / 1.5, 0.0, 1.0);
-    vec2 sp = fdir * (dot(fragWorldPos.xz, fdir) / fstretch) + fperp * dot(fragWorldPos.xz, fperp);
-    vec2 sdrift = fdir * (dot(waterFlow.xy * time * 0.4, fdir) / fstretch);
-    vec4 d1 = texture(waterDetail, (sp - sdrift) / (fscale * 0.8));
+    vec4 d1, d3;
     vec4 d2 = texture(waterDetail, fragWorldPos.xz / (fscale * 5.0) + vec2(0.37, 0.71));
-    // The patches: a mid scale of the noise, carried with the foam.
-    vec4 d3 = texture(waterDetail, (sp - sdrift * 0.7) / (fscale * 2.3) + vec2(0.11, 0.83));
     if (waterFlowMapped()) {
         // The foam carried down the current, two-phase like the ripples:
         // a river's foam streams away from the riffle that throws it.
+        //
+        // Squeezed along FIXED axes (fixes after W5). The squeeze used to
+        // turn the world position itself into the current's frame, by
+        // the current's own heading and a speed-dependent amount, per
+        // pixel: across a riffle (the speed changing over a few metres)
+        // or round a bend, a position tens of metres from the origin
+        // swung its coordinate by metres per metre, and the foam was
+        // crushed ALONG the current into stripes across it. Now the
+        // pattern is squeezed along two of four fixed axes 45° apart —
+        // the two either side of the current — and the two cross-faded
+        // by the heading, with a constant squeeze; the gradients are the
+        // position's own, so a change of axis pair is no mip seam.
         vec2 fv = fmove;
         vec3 ph = waterFlowPhases(fv);
-        vec2 o0 = fdir * (dot(fv * ph.x, fdir) / fstretch);
-        vec2 o1 = fdir * (dot(fv * ph.y, fdir) / fstretch);
-        vec4 a = texture(waterDetail, (sp - o0) / (fscale * 0.8));
-        vec4 b = texture(waterDetail, (sp - o1) / (fscale * 0.8) + vec2(0.53, 0.29));
-        d1 = a * ph.z + b * (1.0 - ph.z);
-        vec4 a3 = texture(waterDetail, (sp - o0) / (fscale * 2.3) + vec2(0.11, 0.83));
-        vec4 b3 = texture(waterDetail, (sp - o1) / (fscale * 2.3) + vec2(0.64, 0.42));
-        d3 = a3 * ph.z + b3 * (1.0 - ph.z);
+        const float st = 2.6;
+        float ab = atan(fdir.y, fdir.x) / 0.78539816;
+        float a0 = floor(ab);
+        float wb = ab - a0;
+        vec2 ax0 = vec2(cos(a0 * 0.78539816), sin(a0 * 0.78539816));
+        vec2 ax1 = vec2(cos((a0 + 1.0) * 0.78539816), sin((a0 + 1.0) * 0.78539816));
+        vec2 dpx = dFdx(fragWorldPos.xz), dpy = dFdy(fragWorldPos.xz);
+        vec2 q0 = fragWorldPos.xz - fv * ph.x;
+        vec2 q1 = fragWorldPos.xz - fv * ph.y;
+        float s1 = fscale * 0.8, s3 = fscale * 2.3;
+        d1 = mix(waterFoamBin(q0, q1, ax0, st, s1, vec2(0.0), vec2(0.53, 0.29), ph.z, dpx, dpy),
+                 waterFoamBin(q0, q1, ax1, st, s1, vec2(0.0), vec2(0.53, 0.29), ph.z, dpx, dpy), wb);
+        d3 = mix(waterFoamBin(q0, q1, ax0, st, s3, vec2(0.11, 0.83), vec2(0.64, 0.42), ph.z, dpx, dpy),
+                 waterFoamBin(q0, q1, ax1, st, s3, vec2(0.11, 0.83), vec2(0.64, 0.42), ph.z, dpx, dpy), wb);
+        // White water is streaky too: the vertex foam (a riffle's band
+        // across the river, a fall's boil) is broken into streaks along
+        // the current by the squeezed patch noise, so a riffle trails
+        // white lines downstream instead of lying across the river as a
+        // bar.
+        vfoam *= mix(1.0, smoothstep(0.3, 0.62, d3.a) * 1.25, 0.65 * (1.0 - smoothstep(0.75, 1.0, vfoam)));
+        foamMask = max(foamMask0, vfoam);
+    } else {
+        // Still water's drift is one heading over the whole surface (a
+        // uniform), so the position may be turned into its frame.
+        vec2 fperp = vec2(-fdir.y, fdir.x);
+        float fstretch = 1.0 + 2.0 * clamp(fspeed / 1.5, 0.0, 1.0);
+        vec2 sp = fdir * (dot(fragWorldPos.xz, fdir) / fstretch) + fperp * dot(fragWorldPos.xz, fperp);
+        vec2 sdrift = fdir * (dot(waterFlow.xy * time * 0.4, fdir) / fstretch);
+        d1 = texture(waterDetail, (sp - sdrift) / (fscale * 0.8));
+        // The patches: a mid scale of the noise, carried with the foam.
+        d3 = texture(waterDetail, (sp - sdrift * 0.7) / (fscale * 2.3) + vec2(0.11, 0.83));
     }
+    // A strong young ring's white (a body dropping in; phase W5).
+    foamMask = max(foamMask, waterRippleFoam(fragWorldPos.xz));
     if (waterLook.z > 0.0 && foamMask > 0.0) {
         float pattern = d1.b * (0.6 + 0.8 * d2.a);
         // Stronger toward the shore: the threshold falls, so more of the

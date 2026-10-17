@@ -203,7 +203,12 @@ in vec3 fragBakedIndirect;
 // The vertex colour and cavity (vertexColors); white without them.
 in vec4 fragVertColor;
 
-out vec4 outputColor;
+layout(location = 0) out vec4 outputColor;
+// The stylize pass's record of this surface (light_model.glsl's stylizePack;
+// render/stylize.go). Draw buffer 1 is the scene target's normal buffer only
+// while a painted level's opaque world draws (stylizeBeginWrites); everywhere
+// else nothing is bound there and the write goes nowhere.
+layout(location = 1) out uvec4 outputStylize;
 
 // Tangent frame reconstructed from screen-space derivatives, rather than from
 // per-vertex tangent attributes.
@@ -790,6 +795,11 @@ void main() {
         lighting *= waterCaustics(fragWorldPos, normal);
     }
 
+    // A painted level's light ramp (light_model.glsl): cool shadow, warm
+    // light. On the diffuse light alone — the highlights are the lights' own
+    // colour — and after everything that adds to or scales it.
+    lighting = stylizeLight(lighting);
+
     // A water surface's `tex` is the generated detail map, whose alpha is
     // noise, not coverage (water.glsl).
     float finalAlpha = (isWater != 0 ? 1.0 : texColor.a) * alpha;
@@ -873,6 +883,7 @@ void main() {
         surface = mix(vec3(1.0), texColor.rgb, finalAlpha);
         surface = applyFogModulate(surface, fragWorldPos);
         outputColor = vec4(surface, 1.0);
+        outputStylize = uvec4(0u);
         return;
     }
 
@@ -889,4 +900,9 @@ void main() {
         : applyFogScene(surface, fragWorldPos);
 
     outputColor = vec4(surface, finalAlpha);
+    // Self-lit things, water and blended marks take no paint. Packed only for
+    // a painted level (styRamp.w, a uniform): elsewhere nothing reads it.
+    outputStylize = styRamp.w == 0.0 ? uvec4(0u)
+        : stylizePack(geoNormal, normal, fragViewDepth,
+            (unlit != 0 || isWater != 0 || surfaceBlend != 0) ? 0.0 : 1.0);
 }

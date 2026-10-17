@@ -101,9 +101,10 @@ func TestFallsMeshCarriesTheSheetData(t *testing.T) {
 	if len(m.Colors) != c.Rows*c.Cols || len(m.Positions) != c.Rows*c.Cols || len(m.Indices) != 6*(c.Rows-1)*(c.Cols-1) {
 		t.Fatalf("mesh %d verts %d colours %d indices for %d×%d", len(m.Positions), len(m.Colors), len(m.Indices), c.Rows, c.Cols)
 	}
-	// Relative to the placement: the lip's centre at (0, lip − foot, 0).
+	// Relative to the placement: the lip's centre at (0, lip − foot, 0),
+	// give or take the lip's unevenness (fixes after W5).
 	mid := m.Positions[c.Cols+c.Cols/2]
-	if math.Abs(float64(mid.X())) > 1e-4 || math.Abs(float64(mid.Y())-3) > 1e-4 || math.Abs(float64(mid.Z())) > 1e-4 {
+	if math.Abs(float64(mid.X())) > 1e-4 || math.Abs(float64(mid.Y())-3) > 0.06 || math.Abs(float64(mid.Z())) > 1e-4 {
 		t.Fatalf("lip centre %v", mid)
 	}
 	// Red the aeration, green the edge, blue the progress; alpha opaque.

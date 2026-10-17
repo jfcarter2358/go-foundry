@@ -17,8 +17,9 @@ package world
 // water at once — a release build ships the meshes, not the generator's
 // terrain.yaml, so building from the generator's own lists would have
 // answered only in the editor — and it can never disagree with the picture.
-// A waterfall's falling sheet (the `falls` param) and any steep triangle are
-// left out: they are not a surface anything stands in.
+// A waterfall's falling sheet (the `falls` param) and any steep triangle
+// (waterMinFacing: the ribbon's step under a fall) are left out: they are
+// not a surface anything stands in.
 //
 // The triangles go into a uniform grid over X/Z (waterCell metres a cell,
 // each cell listing the triangles whose box touches it), so a query is one
@@ -58,6 +59,17 @@ const waterFlowMax = 4.0
 
 // waterCell is the grid's cell size, metres.
 const waterCell = 4.0
+
+// waterMinFacing is the least upward facing (the normal's Y) a triangle
+// needs to count as a surface: about 41° from level. No river runs that
+// steep (MaxSlope keeps a surface under ~20°, rapids under ~30°); what is
+// steeper is the strip of ribbon a fall's step leaves on the grid, pitched
+// from the lip's level to the foot's over a cell or two. Counted, that strip
+// stood over the plunge pool's air: a body by the pool (or the camera, which
+// then drew the whole frame as under water) was "just under" the lip's
+// surface. Fixed after phase W5 (docs/terrain-paint/PHASE_W5.md, "Fixes
+// after W5"); it was 0.3 (73°).
+const waterMinFacing = 0.75
 
 // WaterSample is the answer for one point.
 type WaterSample struct {
@@ -297,7 +309,7 @@ func buildWaterGrid(lvl *Level) *waterGrid {
 	add := func(a, b, c mgl32.Vec3, fa, fb, fc mgl32.Vec2, bi int32) {
 		n := b.Sub(a).Cross(c.Sub(a))
 		l := n.Len()
-		if l < 1e-9 || math.Abs(float64(n.Y()/l)) < 0.3 {
+		if l < 1e-9 || math.Abs(float64(n.Y()/l)) < waterMinFacing {
 			return // degenerate, or steep: not a surface to stand in
 		}
 		g.tris = append(g.tris, waterTri{a: a, b: b, c: c, fa: fa, fb: fb, fc: fc, body: bi})

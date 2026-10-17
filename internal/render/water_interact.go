@@ -273,9 +273,12 @@ func underwaterVolume(lvl *world.Level, ws world.WaterSample, eye mgl32.Vec3) wo
 		}
 	}
 	// Deeper is darker: the light reaching the eye has come down through
-	// the water above it.
+	// the water above it. Gently (fixes after W5): the extinction is mostly
+	// scattering, which turns the light rather than taking it, so the water
+	// round a diver stays lit by the surface's glow. At half the extinction
+	// a river two metres down (density ~1.6) drew its murk near black.
 	depth := max(ws.Depth, 0)
-	light *= float32(math.Exp(float64(-depth * density * 0.5)))
+	light *= float32(max(math.Exp(float64(-depth*density*0.12)), 0.35))
 	// The scatter colours are small (the shader multiplies them by the lit
 	// light at the surface, then tone maps): scaled so the murk reads as
 	// the water's own colour, not black.
@@ -298,5 +301,11 @@ func uploadWaterInteract(prog uint32) {
 	if l := loc("waterRipples"); l >= 0 && wi.count > 0 {
 		gl.Uniform4fv(l, wi.count, &wi.packed[0])
 	}
-	gl.Uniform4f(loc("waterRippleInfo"), float32(wi.count), wi.rain, 0, 0)
+	// z: the camera is under water (water.glsl draws a surface from below
+	// only then; fixes after W5).
+	under := float32(0)
+	if wi.under {
+		under = 1
+	}
+	gl.Uniform4f(loc("waterRippleInfo"), float32(wi.count), wi.rain, under, 0)
 }

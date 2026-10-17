@@ -27,6 +27,62 @@ vec3 ambientAt(vec3 ambient, vec3 n) {
     return ambient * (1.0 + 0.5 * clamp(ambientHemisphere, 0.0, 1.0) * n.y);
 }
 
+// ---------- Stylized light (world/stylize.go; experimental) ----------
+//
+// A level's painted-miniature look bends the light a surface takes before its
+// colour multiplies it: what falls into shadow turns toward a cool hue and is
+// lifted off black by a little light of that hue, and what is brightly lit
+// warms. Every pass that sums a surface's light calls this on the sum —
+// fragment.glsl's main and biome_light.glsl's biomeLightingSpec — so the
+// walls, the cooked meshes, the terrain and everything that grows on it bend
+// the same way. styRamp.w is 0 in a block nothing wrote (every level without
+// a `stylize:` block): the light comes back untouched.
+//
+// The two points are on the light as it will be SHOWN — the scene's units
+// times the HDR exposure — so moving the exposure does not move the ramp.
+// The tints keep the light's luminance (the hue divided by its own), so they
+// turn the colour without darkening or brightening it; only the fill adds.
+float styLuma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 stylizeLight(vec3 light) {
+    if (styRamp.w == 0.0) {
+        return light;
+    }
+    float e = hdrMode != 0 ? hdrExposure : 1.0;
+    float lum = styLuma(light) * e;
+    float lit = smoothstep(styRamp.x, styRamp.y, lum);
+    float shade = 1.0 - lit;
+    float warm = smoothstep(0.5 * (styRamp.x + styRamp.y), styRamp.y, lum);
+    vec3 cool = styShadow.rgb / max(styLuma(styShadow.rgb), 1e-3);
+    vec3 hot = styHighlight.rgb / max(styLuma(styHighlight.rgb), 1e-3);
+    vec3 l = light * mix(vec3(1.0), cool, shade * styShadow.a);
+    l *= mix(vec3(1.0), hot, warm * styHighlight.a);
+    return l + styShadow.rgb * (styRamp.z * shade / e);
+}
+
+// The stylize pass's per-pixel record (render/stylize.go): what an opaque
+// surface leaves in the scene target's normal buffer for the paint effects
+// to read. x and y the geometric and the shading (bumped) normals, octahedral
+// in two halves each; z the fragment's distance along the view axis, which
+// the pass compares with the depth buffer to tell a surface still in front
+// from one something drawn later (foliage, a sprite) has covered; w how much
+// of the paint it takes (0..255) with bit 8 set, so a cleared texel (0) is
+// "no surface".
+vec2 styOct(vec3 n) {
+    n /= abs(n.x) + abs(n.y) + abs(n.z) + 1e-8;
+    if (n.z < 0.0) {
+        n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return n.xy;
+}
+
+uvec4 stylizePack(vec3 geoNormal, vec3 shadingNormal, float viewDepth, float weight) {
+    return uvec4(packHalf2x16(styOct(geoNormal)), packHalf2x16(styOct(shadingNormal)),
+                 floatBitsToUint(viewDepth), uint(clamp(weight, 0.0, 1.0) * 255.0 + 0.5) | 0x100u);
+}
+
 // ---------- Ambient volumes (world/volume_ambient.go) ----------
 //
 // Regions the sky's light does not reach — a cave, a slot canyon — for the

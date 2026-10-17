@@ -79,7 +79,7 @@ func editorLevelEditMenu() {
 
 // editorLevelViewMenu is the 3D view's display state, which the tool row
 // below also offers as buttons.
-func editorLevelViewMenu() {
+func editorLevelViewMenu(lvl *world.Level) {
 	if !imgui.BeginMenu("View") {
 		return
 	}
@@ -98,6 +98,8 @@ func editorLevelViewMenu() {
 	editorMenuTooltip(editorCameraTooltip(flying))
 	editorLiveGIMenu()
 	editorLightingMenu()
+	imgui.Separator()
+	editorStylizeMenuItem(lvl)
 	imgui.EndMenu()
 }
 

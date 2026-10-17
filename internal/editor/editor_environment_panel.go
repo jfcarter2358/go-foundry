@@ -38,6 +38,7 @@ func editorEnvironmentSection(lvl *world.Level) {
 	editorSkyGroup(lvl)
 	editorFogGroup(lvl)
 	editorViewDistanceGroup(lvl)
+	editorStylizeGroup(lvl)
 }
 
 // ---------- View distance ----------

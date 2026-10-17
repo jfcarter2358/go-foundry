@@ -331,6 +331,7 @@ func PackFog(b *gfx.SceneBlock, f *Fog, vols []Volume, lvl *Level, camPos mgl32.
 	b.FogCamPos = camPos
 	packAtmosphere(b, f, lvl)
 	packTonemap(b, lvl)
+	packStylize(b, lvl)
 	if f == nil {
 		b.FogColor, b.FogStart, b.FogEnd, b.FogDensity, b.FogMaxOpacity = [3]float32{}, 0, 0, 0, 0
 		return

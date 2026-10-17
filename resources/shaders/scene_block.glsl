@@ -174,6 +174,12 @@ layout(std140, binding = 0) uniform SceneBlock {
     // Each point light's cube in the shadow cube-map array, -1 for none
     // (point_shadow.glsl; render.packPointShadows).
     int   pointShadowCube[MAX_POINT_LIGHTS];
+
+    // ---- stylized light ramp (world.Stylize; light_model.glsl's
+    // stylizeLight). All zero — off — in a block nothing wrote.
+    vec4  styShadow;    // rgb the hue shadow turns toward, a how far (0..1)
+    vec4  styHighlight; // rgb the hue bright light warms toward, a how far
+    vec4  styRamp;      // x shadow point, y light point, z shadow fill, w 1 = on
 };
 
 #endif

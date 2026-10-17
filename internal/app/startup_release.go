@@ -25,6 +25,7 @@ package app
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"foundry/internal/fileutil"
 	"foundry/internal/game"
@@ -108,14 +109,25 @@ func startupApplyWindow() {
 // startupLevel loads the game's start level — the COMPILED one, which is the
 // only kind this build reads (levelsource_release.go).
 //
-// Synchronously, unlike a level change during play: there is no frame on screen
-// yet to cover with a loading screen, so there is nothing for the stepped
-// LoadJob to buy. The path and directory returned are what an editor would save
-// to, and are unused here.
-func startupLevel() (world.Level, string, string, error) {
+// Before the frame loop, unlike a level change during play: there is no game
+// UI up yet to show a loading screen, so the job is stepped here with progress
+// reporting each slice to the startup bar (boot_splash.go). The path and
+// directory returned are what an editor would save to, and are unused here.
+func startupLevel(progress func(frac float32, detail string)) (world.Level, string, string, error) {
 	path := levelSourcePath(manifest.StartLevel)
-	level, err := levelio.LoadCompiledLevel(path)
-	return level, path, levelio.LevelsDir(), err
+	job, err := levelio.BeginLoadCompiled(path)
+	if err != nil {
+		return world.Level{}, path, levelio.LevelsDir(), err
+	}
+	for !job.StepFor(levelLoadFrameBudget) {
+		progress(job.Progress())
+		// StepFor returns at once while the job waits on its own goroutines.
+		time.Sleep(time.Millisecond)
+	}
+	if err := job.Err(); err != nil {
+		return world.Level{}, path, levelio.LevelsDir(), err
+	}
+	return *job.Level(), path, levelio.LevelsDir(), nil
 }
 
 // startupDescribeLevel is what the boot log says it just loaded.

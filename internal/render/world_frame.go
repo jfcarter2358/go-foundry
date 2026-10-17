@@ -139,6 +139,8 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 	// A TAA frame draws into the renderer's own scene target, which stands in
 	// for the caller's from here to sceneFrameEnd (scene_target.go, taa.go).
 	sceneFrameBegin(o)
+	// Whether it is a painted one (stylize.go), before its clear.
+	stylizeFrameBegin(lvl)
 	// The "off" anti-aliasing mode's frame: no window samples (antialias.go).
 	beginAAModeFrame(o)
 	defer endAAModeFrame()
@@ -430,6 +432,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// draws below write triangle IDs, shaded after its last pass
 		// (nanite_vis.go).
 		naniteVisBegin()
+		// A painted level's opaque world writes the normal buffer from here
+		// to the material pass (stylize.go).
+		stylizeBeginWrites()
 		naniteChunkPending = naniteChunkPending[:0]
 		DebugStats.NaniteClusters, DebugStats.NaniteTriangles = 0, 0
 		DebugStats.NaniteFoliage = false
@@ -560,6 +565,7 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// draws still own, shaded once, before anything else draws over
 		// the opaque world (nanite_vis.go).
 		naniteVisShade(lvl, shadowFrame, o.Now)
+		stylizeEndWrites()
 
 		// The spawn marker is an authoring aid, not level geometry: it
 		// exists to be seen and dragged in the editor and must never show
@@ -767,6 +773,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// A TAA frame's motion vectors, from the world's depth before the
 		// viewmodel clears it (taa.go).
 		taaMotionPass()
+		// A painted level's paint, from the world's depth and normals,
+		// before the viewmodel clears the one (stylize.go).
+		stylizePaint()
 		if !o.Editor || EditorPreviewActive {
 			ProfileBegin("viewmodel")
 			RenderViewmodel()

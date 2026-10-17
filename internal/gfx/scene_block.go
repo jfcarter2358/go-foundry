@@ -166,9 +166,15 @@ type SceneBlock struct {
 	ReflVolMax       [SceneMaxReflVolumes][4]float32 // 5104: xyz high corner, w intensity
 	// PointShadowCube is each point light's cube in the shadow array, -1 none.
 	PointShadowCube [SceneMaxPointLights][4]int32 // 5232
+
+	// ---- stylized light ramp (world.Stylize; light_model.glsl's
+	// stylizeLight). All zero — off — for a level without the look.
+	StyShadow    [4]float32 // 5360: rgb the shadow's hue, a how far it turns
+	StyHighlight [4]float32 // 5376: rgb the light's hue, a how far it turns
+	StyRamp      [4]float32 // 5392: x shadow point, y light point, z fill, w on
 }
 
-// SceneBlockSize is the block's size in bytes: 5360.
+// SceneBlockSize is the block's size in bytes: 5408.
 const SceneBlockSize = int(unsafe.Sizeof(SceneBlock{}))
 
 // SceneBuffer is one SceneBlock on the CPU and the GL buffer it is sent to.
