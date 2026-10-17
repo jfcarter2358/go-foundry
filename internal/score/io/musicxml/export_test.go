@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -710,5 +711,63 @@ func TestJazzMarksRoundTrip(t *testing.T) {
 	got := score.FormatVoice(back.Lines[0].Staves[0].Voices[0])
 	if want := score.FormatVoice(s.Lines[0].Staves[0].Voices[0]); got != want {
 		t.Errorf("came back\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestOpenHairpinsStopAtTheNextDynamic checks that a hairpin with no
+// hairpin_end — the grammar's `<`/`>` shorthand, cresc./dim. dashes —
+// stops at the next dynamic in MusicXML, as the interpreter plays it and
+// the engraver draws it, in that dynamic's own direction; and that it
+// comes back with no hairpin_end, while a written one stays written.
+func TestOpenHairpinsStopAtTheNextDynamic(t *testing.T) {
+	useRepoResources(t)
+	s := score.New("hairpins")
+	l := score.NewLine("Cello", "keys/grand_piano", "bass")
+	src := []string{
+		"| hF2(p,cresc) hC3(f) | qF2 qC3 qF3 qAb3 | hC3(dim) hF2(pp) | wF2",
+		"| h.C3< qD3(f) | hE3(cresc=text) hF3 | qG3(ff) qr hr | hC3(dim) hD3(hairpin_end) | wE3(p)",
+		"| qC3(mf) qD3> qE3 qF3 | hG3(sfz) hA3(cresc) | wB3(mf)",
+	}
+	l.Staves[0].Voices = nil
+	s.Lines = append(s.Lines, l)
+	s.Bars = 6
+	for i, v := range src {
+		pv, err := score.ParseVoice(v)
+		if err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+		if i == 0 {
+			l.Staves[0].Voices = append(l.Staves[0].Voices, pv)
+			continue
+		}
+		ln := score.NewLine(fmt.Sprintf("Cello %d", i+1), "keys/grand_piano", "bass")
+		ln.Staves[0].Voices = []*score.Voice{pv}
+		s.Lines = append(s.Lines, ln)
+	}
+	back, b := roundTrip(t, s, ExportOptions{})
+	for li := range s.Lines {
+		want := score.FormatVoice(s.Lines[li].Staves[0].Voices[0])
+		got := score.FormatVoice(back.Lines[li].Staves[0].Voices[0])
+		if got != want {
+			t.Errorf("line %d came back\n%s\nwant\n%s", li+1, got, want)
+		}
+	}
+	// Each open one's stop shares a direction with the dynamic ending it:
+	// cresc→f, dim→pp, <→f, cresc. dashes→ff, >→sfz, cresc→mf; the
+	// written hairpin_end before the p stops on its own.
+	shared, alone := 0, 0
+	for _, d := range regexp.MustCompile(`<direction[ >]`).Split(string(b), -1)[1:] {
+		d = d[:strings.Index(d, "</direction>")]
+		if !strings.Contains(d, `type="stop"`) || !(strings.Contains(d, "<wedge") || strings.Contains(d, "<dashes")) {
+			continue
+		}
+		if strings.Contains(d, "<dynamics>") {
+			shared++
+		} else {
+			alone++
+		}
+	}
+	if shared != 6 || alone != 1 {
+		t.Errorf("%d hairpin stops with their dynamic and %d alone, want 6 and 1", shared, alone)
 	}
 }

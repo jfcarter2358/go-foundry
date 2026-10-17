@@ -321,6 +321,9 @@ func (p *pager) metrics() []barMetric {
 		if e.repeatStarts(bc.bar) {
 			lead = startRepeatGap + e.barlineWidth(barRepeatStart) + math.Max(barGapAfter, bc.cols[0].left+0.6)
 		}
+		// A glissando coming in from the bar before runs from the
+		// system's start.
+		lead = math.Max(lead, e.glissLeadIn(i))
 		if bc.folded {
 			lead = 0
 		}

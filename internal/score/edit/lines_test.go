@@ -210,3 +210,71 @@ func TestRetranspose(t *testing.T) {
 		t.Error("a grand staff instrument is written as it sounds")
 	}
 }
+
+// An empty duplicate keeps every setting of the line, not only the mixer's
+// fader: pre-fader sends, the short name, swing, humanise, glissando style,
+// chord playback, and each staff's percussion lines and tablature. What is
+// written at a place — notes, clef changes, lanes, dynamics overrides,
+// chord symbols — stays behind.
+func TestDuplicateLineEmptyKeepsSettings(t *testing.T) {
+	s := one(t, "4/4", 0, "| qC4 qD4 hE4 | wF4 |")
+	l := s.Lines[0]
+	l.Name, l.Short, l.Instrument = "Guitar", "Gtr.", "guitars/acoustic_guitar"
+	l.PreA, l.PreB, l.SendA, l.SendB = true, true, 0.4, 0.5
+	l.Swing = &score.Swing{Amount: 0.6, Unit: 16}
+	l.Humanize = &score.Humanize{Timing: 0.1, Velocity: 0.2, Seed: 7}
+	l.Gliss = "chromatic"
+	l.ChordPlay = &score.ChordPlay{Style: 1, Volume: 0.5, Octave: -1}
+	ch, err := score.ParseChord("Cmaj7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Chords = []score.ChordSymbol{{At: score.Pos{Bar: 1}, Chord: ch}}
+	l.Overrides = []score.DynOverride{{From: score.Pos{Bar: 1}, To: score.Pos{Bar: 2}, Level: 0.3}}
+	l.Staves[0].Tab = score.NewTab("guitar_drop_d")
+	l.Staves[0].Tab.Capo = 2
+	l.Staves[0].Clefs = []score.ClefChange{{At: score.Pos{Bar: 2}, Clef: "bass"}}
+	drum := score.NewLine("Tambourine", "percussion/tambourine", "percussion")
+	drum.Staves[0].Lines = 1
+	s.Lines = append(s.Lines, drum)
+
+	i, err := DuplicateLine(s, 0, false)
+	if err != nil || i != 1 {
+		t.Fatal(i, err)
+	}
+	c := s.Lines[1]
+	if !c.PreA || !c.PreB || c.SendA != 0.4 || c.SendB != 0.5 || c.Short != "Gtr." || c.Gliss != "chromatic" {
+		t.Errorf("empty copy's settings: %+v", c)
+	}
+	if c.Swing == nil || *c.Swing != *l.Swing || c.Swing == l.Swing {
+		t.Errorf("empty copy's swing %+v", c.Swing)
+	}
+	if c.Humanize == nil || *c.Humanize != *l.Humanize || c.Humanize == l.Humanize {
+		t.Errorf("empty copy's humanise %+v", c.Humanize)
+	}
+	if c.ChordPlay == nil || *c.ChordPlay != *l.ChordPlay || c.ChordPlay == l.ChordPlay {
+		t.Errorf("empty copy's chord playback %+v", c.ChordPlay)
+	}
+	st := c.Staves[0]
+	if st.Tab == nil || st.Tab == l.Staves[0].Tab || st.Tab.Capo != 2 || len(st.Tab.Tuning) != len(l.Staves[0].Tab.Tuning) ||
+		st.Tab.Tuning[0] != l.Staves[0].Tab.Tuning[0] {
+		t.Errorf("empty copy's tablature %+v", st.Tab)
+	}
+	if len(c.Chords) != 0 || len(c.Overrides) != 0 || len(st.Clefs) != 0 || len(st.Voices) != 1 || len(st.Voices[0].Measures) != 0 {
+		t.Errorf("empty copy keeps what is written: chords %v, overrides %v, clefs %v, voices %d", c.Chords, c.Overrides, st.Clefs, len(st.Voices))
+	}
+	if len(l.Staves[0].Clefs) != 1 || len(l.Chords) != 1 || len(l.Staves[0].Voices[0].Measures) == 0 {
+		t.Error("duplicating emptied the original")
+	}
+
+	i, err = DuplicateLine(s, 2, false)
+	if err != nil || i != 3 {
+		t.Fatal(i, err)
+	}
+	if d := s.Lines[3]; d.Staves[0].Lines != 1 || d.Staves[0].Clef != "percussion" {
+		t.Errorf("the tambourine's empty copy: %d lines, clef %q", d.Staves[0].Lines, d.Staves[0].Clef)
+	}
+	if issues := s.Validate(nil); hasError(issues) {
+		t.Errorf("issues after duplicating: %v", issues)
+	}
+}

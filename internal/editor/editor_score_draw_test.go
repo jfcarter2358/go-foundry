@@ -2,6 +2,7 @@ package editor
 
 import (
 	"image"
+	"strings"
 	"testing"
 
 	"foundry/internal/score"
@@ -346,4 +347,128 @@ func TestScoreWordFieldsDraw(t *testing.T) {
 		scEd.wordsKey(scoreWordEscape)
 		scoreFrame(away, false)
 	})
+}
+
+// Alt+click pastes the clipboard where the pointer is: the modifier is read
+// by the real pane's click (scoreClick), in or out of note input.
+func TestScoreAltClickPastesThroughTheView(t *testing.T) {
+	scoreDrawTest(t)
+	withImgui(func() {
+		imgui.CurrentIO().SetIniFilename("")
+		scoreShowKeypad = false
+		e := scEd
+		e.Input = true
+		e.clickWrite(0, 0, 1, score.Frac{}, pitchD("G5"))
+		e.Input = false
+		e.clickBar(0, 1, false, false)
+		e.copySel()
+		scoreList = nil
+		l := scoreLayout()
+		cs := l.Staves[1]
+		io := imgui.CurrentIO()
+		const altKey = 201
+		for _, input := range []bool{false, true} {
+			e.Input = input
+			bar := map[bool]int{false: 2, true: 3}[input]
+			at := scoreAt(engrave.Point{X: l.Bar(bar).XAt(0) + 0.5, Y: cs.Top + 1})
+			io.KeyPress(altKey)
+			io.KeyAlt(altKey, altKey)
+			scoreClickAt(at)
+			io.KeyRelease(altKey)
+			io.KeyAlt(altKey, altKey)
+			scoreFrame(at, false)
+			if got := barOf(e, 1, 0, bar); got != "qG5 qr hr" {
+				t.Errorf("Alt+click on the cello's bar %d (note input %v) = %q (status %q)", bar, input, got, e.Status)
+			}
+			scoreList = nil
+			l = scoreLayout()
+		}
+		// Without Alt the same click in note input writes a note instead.
+		e.Input = true
+		at := scoreAt(engrave.Point{X: l.Bar(4).XAt(0) + 0.5, Y: l.Staves[1].Top + 1})
+		scoreClickAt(at)
+		if got := barOf(e, 1, 0, 4); got == "qG5 qr hr" || got == "" {
+			t.Errorf("a plain click in note input = %q, want a note written, not the clipboard", got)
+		}
+	})
+}
+
+// Follow playback: while the score plays far along, each view brings the
+// play head into sight — the score view scrolls across, the timeline
+// moves its time scroll, the page view scrolls down to the system — and
+// with Follow off none of them moves.
+func TestScoreViewsFollowPlayback(t *testing.T) {
+	scoreDrawTest(t)
+	scoreUseTestInstruments(t)
+	prevView, prevPage, prevZoom, prevScroll := scoreView, scorePageView, scoreTLZoom, scoreTLScroll
+	t.Cleanup(func() {
+		scoreView, scorePageView, scoreTLZoom, scoreTLScroll = prevView, prevPage, prevZoom, prevScroll
+		scoreSentMix, scoreSentMute, scoreMeterVals = nil, nil, nil
+	})
+	s := score.New("follow")
+	s.Bars = 120 // pages of it
+	l := score.NewLine("A", "dc/0.5", "treble")
+	src := strings.Repeat("| qC5 qD5 qE5 qF5 ", 120) + "|"
+	v, err := score.ParseVoice(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Staves[0].Voices = []*score.Voice{v}
+	s.Lines = []*score.Line{l}
+	e := newScoreState(s)
+	p := scoreWithPlayer(t, e)
+	scoreList = nil
+	const bar = 110
+	p.PlayFrom(int64(bar-1) * score.TicksPerWhole)
+	buf := make([]float32, 480*2)
+	p.Render(buf, 480, 48000)
+	if pos := p.Position(); !pos.Playing || pos.Bar != bar {
+		t.Fatalf("the player is at %+v, want playing in bar %d", pos, bar)
+	}
+	away := imgui.Vec2{X: 5, Y: 5}
+	frames := func() {
+		for i := 0; i < 3; i++ {
+			scoreFrame(away, false)
+		}
+	}
+	for _, follow := range []bool{false, true} {
+		e.Transport.Follow = follow
+		// The score view.
+		withImgui(func() {
+			imgui.CurrentIO().SetIniFilename("")
+			scoreShowKeypad = false
+			scoreView, scorePageView = scoreViewScore, false
+			frames()
+			hx, ok := scoreHeadX(scoreLayout())
+			if !ok {
+				t.Fatal("no play head on the layout")
+			}
+			x := float32(hx)*scoreZoom + scoreHeaderW + scorePad - scoreViewScroll.X
+			in := x >= scoreHeaderW && x <= 1400-scoreScrollW
+			if in != follow || follow && scoreViewScroll.X <= 0 || !follow && scoreViewScroll.X != 0 {
+				t.Errorf("score view, follow %v: scrolled %.0f, the play head at %.0f on screen", follow, scoreViewScroll.X, x)
+			}
+		})
+		// The timeline.
+		withImgui(func() {
+			imgui.CurrentIO().SetIniFilename("")
+			scoreView, scoreTLZoom, scoreTLScroll = scoreViewTimeline, 120, 0
+			frames()
+			head, _ := scoreTLHeadTime()
+			visible := float64(1400) / float64(scoreTLZoom)
+			in := head.Float() >= scoreTLScroll && head.Float() <= scoreTLScroll+visible
+			if in != follow || !follow && scoreTLScroll != 0 {
+				t.Errorf("timeline, follow %v: scrolled to %.2f wholes, the play head at %.2f", follow, scoreTLScroll, head.Float())
+			}
+		})
+		// The page view.
+		withImgui(func() {
+			imgui.CurrentIO().SetIniFilename("")
+			scoreView, scorePageView = scoreViewScore, true
+			frames()
+			if follow != (scorePageScroll.Y > 0) {
+				t.Errorf("page view, follow %v: scrolled %.0f down", follow, scorePageScroll.Y)
+			}
+		})
+	}
 }

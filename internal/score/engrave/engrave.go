@@ -631,13 +631,25 @@ func (e *engraver) lastEventBefore(sc *staffCtx, vi int, v *score.Voice, bar int
 		if se.Kind != score.EventChord {
 			return nil
 		}
-		sb := &staffBar{st: sc, bar: &barCtx{bar: bar, length: e.s.BarLength(bar)}, fifths: sc.key(e.s.KeyAt(bar).Fifths)}
-		offs, _ := m.Offsets(sb.bar.length)
-		x := e.newEv(sb, vi, bar, ei, se, offs[ei], m)
-		x.ref.Bar = -bar // outside the layout
-		return x
+		return e.outsideEv(sc, vi, v, evKey{bar, ei})
 	}
 	return nil
+}
+
+// outsideEv builds a voice's event outside the layout, its notes at their
+// heights on the staff but in no column: what a tie or glissando across
+// the layout's edge reaches for. Its Ref's bar is negative. (A tablature's
+// notes are put on their strings by the caller, placeTab.)
+func (e *engraver) outsideEv(sc *staffCtx, vi int, v *score.Voice, k evKey) *ev {
+	m := v.Measure(k.bar)
+	if k.ev < 0 || k.ev >= len(m.Events) {
+		return nil
+	}
+	sb := &staffBar{st: sc, bar: &barCtx{bar: k.bar, length: e.s.BarLength(k.bar)}, fifths: sc.key(e.s.KeyAt(k.bar).Fifths)}
+	offs, _ := m.Offsets(sb.bar.length)
+	x := e.newEv(sb, vi, k.bar, k.ev, &m.Events[k.ev], offs[k.ev], m)
+	x.ref.Bar = -k.bar // outside the layout
+	return x
 }
 
 func (e *engraver) newEv(sb *staffBar, vi, bar, ei int, se *score.Event, onset score.Frac, m score.Measure) *ev {

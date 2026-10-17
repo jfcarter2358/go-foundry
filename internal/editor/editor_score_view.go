@@ -140,6 +140,7 @@ func scoreViewPane(pos, size imgui.Vec2) {
 
 	wp := imgui.WindowPos()
 	sx, sy := imgui.ScrollX(), imgui.ScrollY()
+	scoreViewScroll = imgui.Vec2{X: sx, Y: sy}
 	g := scoreViewGeom{
 		origin: imgui.Vec2{X: wp.X + scoreHeaderW + scorePad - sx, Y: wp.Y + scoreRulerH + scorePad - sy},
 		zoom:   z,
@@ -199,6 +200,10 @@ func scoreViewPane(pos, size imgui.Vec2) {
 	}
 	imgui.End()
 }
+
+// scoreViewScroll is the score view's scroll as last drawn (what following
+// the play head moves; the tests read it).
+var scoreViewScroll imgui.Vec2
 
 // scoreClick is a left click on the music.
 func scoreClick(l *engrave.List, p engrave.Point, t scoreTarget, tOK bool, io imgui.IO) {

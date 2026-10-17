@@ -330,7 +330,7 @@ place of its neighbour (staccatissimo replaces staccato, marcato the accent).
 | --- | --- |
 | Slur | `S`: from the selected note to the next; `S` again on its first note carries it one note further |
 | Crescendo / diminuendo hairpin | `H` / `Shift+H`, the same way. **Marks > cresc. (Text)** and **dim. (Text)** write the words with dashes |
-| Glissando | `Alt+G` (`G` is the note G): a straight line to the next note; **Marks > Wavy Glissando** for the wavy one. How it plays is the line's (right-click the header: **Glissandi Play**) or the instrument's |
+| Glissando | `Alt+G` (`G` is the note G): a straight line to the next note; **Marks > Wavy Glissando** for the wavy one. Spacing keeps room for the line however close the notes are, and one across a system break runs to the system's end and on from the next system's start into its note. How it plays is the line's (right-click the header: **Glissandi Play**) or the instrument's |
 | Dynamic or words | `Ctrl+E` opens the expression box: type `mf`, `sfz`, `pizz.`, `con sord.`, `dolce`, `cresc.` or `rit.` and press `Enter`, or click one of its buttons. It files what you type by what it is: a dynamic, a technique word (which switches the instrument's articulation), cresc./dim. with dashes (words around them, such as `poco cresc.` or `dim. molto`, are printed as typed), tempo text (at the selection, played as a tempo change) or expression text |
 | Articulations | `.` staccato, `'` staccatissimo, `Shift+.` (`>`) accent, `Shift+-` (`_`) tenuto, `Shift+'` marcato; or the keypad's second layout (`F8`): `7` staccato, `8` tenuto, `9` staccatissimo, `+` marcato. On the first layout keypad `+` is the accent. The articulation layout (`F10`) has them all: `7` staccato, `8` tenuto, `9` staccatissimo, `+` accent, `4` marcato, `5` portato, `6` fermata, `1` open, `2` stopped, `3` arpeggio |
 | Jazz marks | the keypad's jazz layout (`F12`): `7` scoop, `8` plop, `9` bend, `+` fall, `4` doit, `5` long fall, `6` long doit; or **Marks > Jazz** and the palette's Jazz row. A scoop rises into the note from a minor third below and a plop drops into it from a third above, over its first 16th; a doit rises a fourth and a fall drops a fifth over its last eighth (the long ones an octave over its last quarter); a bend dips a semitone and comes back |
@@ -450,7 +450,7 @@ a percussion staff) with a header beside it:
 | Name | click selects every bar of the line; double-click renames it (scripts and bindings find lines by name, so names stay unique and bindings follow a rename); drag it up or down to move the line there |
 | Instrument | click for the picker: type to search the whole `.finst` library, click (or `Enter` for the first match) to play the line on it. It works while the score plays — the notes do not change; what is sounding finishes on the old instrument and the next note is the new one's. The staff takes the new instrument's transposition (a line moved to a B♭ clarinet is written a tone up), so the page changes and the sound does not |
 | `M` / `S` | mute, solo (several lines can be soloed) |
-| Two squares | duplicate the line: **with notes**, or **empty** with the same instrument, clefs, transposition and mixer settings |
+| Two squares | duplicate the line: **with notes**, or **empty** with the same settings and nothing written — instrument and short name, each staff's clef, transposition, percussion lines and tablature, the mixer (fader, pan, sends and their pre-fader switches, inserts, mute), swing, humanise, glissando style and chord playback; notes, clef changes, lanes, dynamics overrides and chord symbols stay behind |
 | Slider | the line's volume (the mixer's fader); double-click for 0 dB |
 | Meter | the line's level while it plays, in decibels (empty at -48 dB, full at 0 dB; yellow from about -14 dB, red from -6 dB, a red cap over 0 dB) |
 
@@ -479,7 +479,7 @@ plays it.
 | Move the play head | click the ruler (it snaps to the nearest beat), or click a note |
 | Back to the start | `Home` or **Start** (the loop's start when the loop is on) |
 | Loop | drag along the ruler between two beats; or select bars and press `L`. `L` with no bars selected, **Loop** and `Shift+L` switch the region on and off (off, it stays on the ruler, grey) |
-| Follow | **Follow** scrolls the score to keep the play head in sight |
+| Follow | **Follow** keeps the play head in sight while it plays, in every view: the score scrolls across, the timeline along, the page view down to the system playing |
 | Tempo | the **Tempo** slider plays at 25 %–200 % of the written tempo without changing the score (double-click: 100 %). **Write** puts it into the score: every tempo mark scaled to the slider, or one tempo mark at the selected bar (or the play head's) with the tempo heard there — then the slider goes back to 100 % |
 
 The readout shows the bar (with *x2* on a repeat's second time), the beat and
@@ -1259,8 +1259,12 @@ tuplet brackets, ties, and every mark above; tempo marks with their
 metronome marks and the tempo they play; the layout as hints. The part's
 library instrument goes in its `<virtual-instrument>`, so a score exported
 and imported again plays what it played, and a note's `vel=` its velocity.
-What MusicXML has no place for — the mixer and its effects, lanes, params,
-bindings, markers, a section's loop and next — stays in the `.fscore`. A
+What MusicXML has no place for — the mixer and its effects, lanes and
+dynamics overrides, params, bindings, markers, a section's loop and next,
+swing and humanise, a line's glissando style (`gliss:`) and chord
+playback (`chord_play`) — stays in the `.fscore`. A hairpin with no
+`hairpin_end` (`h.C5<`) stops at the next dynamic in the file too, in that
+dynamic's own `<direction>`, and comes back with no `hairpin_end`. A
 score exported and imported again is the same in everything MusicXML holds
 (the round-trip tests check every fixture and shipped score). MuseScore
 draws a nested tuplet (a triplet inside a triplet) as one flat tuplet; that

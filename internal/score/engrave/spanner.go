@@ -407,69 +407,291 @@ func (e *engraver) putSlur(sc *staffCtx, owner *ev, p0, p1 Point, above bool) {
 
 // ---------- glissandi ----------
 
-// drawGlissandi draws every glissando line of a staff.
-func (e *engraver) drawGlissandi(sc *staffCtx) {
-	for _, sb := range sc.bars {
-		for _, v := range sb.voices {
-			for _, x := range v {
-				if x.grace || x.col == nil || len(x.notes) == 0 {
+// glissMin is the least length of a glissando's line. Spacing keeps it
+// (glissRods), so a slide between close notes is printed as it is played.
+const glissMin = 1.6
+
+// glissRun is one glissando of a voice, in score terms: from event a to the
+// voice's next main event z. to says z is a chord the line can reach (not
+// a rest, and not past the voice's end); either end may be outside the
+// layout.
+type glissRun struct {
+	a, z evKey
+	to   bool
+	wavy bool
+}
+
+// glissRuns are a voice's glissandi, as the interpreter plays them: a
+// `gliss` chord slides to the next main event when that is a chord.
+func (e *engraver) glissRuns(v *score.Voice) []glissRun {
+	var out []glissRun
+	var prev *score.Event
+	var pk evKey
+	mark := func(se *score.Event) (wavy, ok bool) {
+		if se.Kind != score.EventChord || len(se.Notes) == 0 {
+			return false, false
+		}
+		for _, mk := range se.Marks {
+			if mk.Name == "gliss" {
+				return mk.Value == "wavy", true
+			}
+		}
+		return false, false
+	}
+	e.eachEvent(v, true, func(k evKey, se *score.Event) {
+		if prev != nil {
+			if wavy, ok := mark(prev); ok {
+				out = append(out, glissRun{a: pk, z: k, to: se.Kind == score.EventChord && len(se.Notes) > 0, wavy: wavy})
+			}
+		}
+		prev, pk = se, k
+	})
+	if prev != nil {
+		if wavy, ok := mark(prev); ok {
+			out = append(out, glissRun{a: pk, wavy: wavy})
+		}
+	}
+	return out
+}
+
+// glissFrom is where a glissando leaves its note, from the note's column:
+// just past its heads, or past its dots.
+func glissFrom(a *ev) float64 {
+	if a.dots > 0 {
+		return a.shift + a.dotX + float64(a.dots)*dotSpacing + 0.15
+	}
+	_, ar := headSpan(a)
+	return a.shift + ar + 0.25
+}
+
+// glissTo is where a glissando meets its target, from the target's column:
+// just before its heads, or its accidentals.
+func glissTo(b *ev) float64 {
+	bl, _ := headSpan(b)
+	x1 := b.shift + bl - 0.25
+	for _, n := range b.notes {
+		if n.acc {
+			x1 = math.Min(x1, n.accX-0.15)
+		}
+	}
+	return x1
+}
+
+// glissEnds are the glissando's ends that sit on a layout event: its note
+// and its target (nil when outside the layout, or with no target).
+func (e *engraver) glissEnds(sc *staffCtx, vi int, r glissRun) (a, z *ev) {
+	a = e.evAt(sc, vi, r.a)
+	if a != nil && (a.col == nil || len(a.notes) == 0) {
+		a = nil
+	}
+	if r.to {
+		z = e.evAt(sc, vi, r.z)
+		if z != nil && (z.col == nil || len(z.notes) == 0) {
+			z = nil
+		}
+	}
+	return a, z
+}
+
+// colIndex is a column's index in its bar.
+func colIndex(bc *barCtx, c *column) int {
+	for i, x := range bc.cols {
+		if x == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// rodDistance is the least distance (the rods) from column k of layout bar
+// i to column m of bar j, i <= j: the gaps between, and each barline, bar
+// head and lead crossed.
+func (e *engraver) rodDistance(i, k, j, m int) float64 {
+	d := 0.0
+	for b := i; b <= j; b++ {
+		bc := e.bars[b]
+		from, to := 0, len(bc.rods)
+		if b == i {
+			from = k
+		}
+		if b == j {
+			to = m
+		}
+		if b > i {
+			d += e.barlineWidth(e.barlineBefore(b)) + bc.prefixW + bc.lead
+		}
+		for g := from; g < to && g < len(bc.rods); g++ {
+			d += bc.rods[g]
+		}
+	}
+	return d
+}
+
+// glissRods keeps room for every glissando's line: glissMin between its
+// note's ink and its target's, and between the note and its bar's end when
+// the target is in a later bar (a system may break there and the line runs
+// to it). A system opening on a glissando's target has a lead long enough
+// for the line coming in (glissLeadIn).
+func (e *engraver) glissRods() {
+	for _, sc := range e.staves {
+		for vi, v := range sc.st.Voices {
+			for _, r := range e.glissRuns(v) {
+				a, z := e.glissEnds(sc, vi, r)
+				if a == nil {
 					continue
 				}
-				for _, mk := range x.e.Marks {
-					if mk.Name == "gliss" {
-						e.drawGliss(sc, x, mk.Value == "wavy")
+				ai := r.a.bar - e.from
+				abc := e.bars[ai]
+				ka := colIndex(abc, a.col)
+				last := len(abc.rods) - 1
+				if ka < 0 || last < 0 {
+					continue
+				}
+				from := glissFrom(a)
+				if z == nil || r.z.bar != r.a.bar {
+					// To the bar's end: the line to the next system (or the
+					// stub of one going nowhere) ends 0.3 before it.
+					if short := from + glissMin + 0.3 - e.rodDistance(ai, ka, ai, len(abc.cols)-1); short > 0 {
+						abc.rods[last] += short
 					}
 				}
+				if z == nil {
+					continue
+				}
+				zi := r.z.bar - e.from
+				kz := colIndex(e.bars[zi], z.col)
+				if kz < 0 || (zi == ai && kz <= ka) {
+					continue
+				}
+				short := from - glissTo(z) + glissMin - e.rodDistance(ai, ka, zi, kz)
+				switch {
+				case short <= 0:
+				case zi == ai:
+					abc.rods[kz-1] += short // the gap before the target
+				default:
+					abc.rods[last] += short // the gap before the barline
+				}
+			}
+		}
+	}
+	if len(e.bars) > 0 {
+		e.bars[0].lead = math.Max(e.bars[0].lead, e.glissLeadIn(0))
+	}
+}
+
+// glissLeadIn is the least lead layout bar bi needs when it opens a system
+// with a glissando coming into it from the bar before: room for the line
+// from the system's start (layoutStart) to the target.
+func (e *engraver) glissLeadIn(bi int) float64 {
+	bc := e.bars[bi]
+	need := 0.0
+	for _, sc := range e.staves {
+		for vi, v := range sc.st.Voices {
+			for _, r := range e.glissRuns(v) {
+				if !r.to || r.z.bar != bc.bar || r.a.bar >= bc.bar {
+					continue
+				}
+				_, z := e.glissEnds(sc, vi, r)
+				if z == nil {
+					continue
+				}
+				kz := colIndex(bc, z.col)
+				if kz < 0 {
+					continue
+				}
+				// layoutStart is 0.2 into the bar's content.
+				need = math.Max(need, 0.2+glissMin-glissTo(z)-e.rodDistance(bi, 0, bi, kz))
+			}
+		}
+	}
+	return need
+}
+
+// drawGlissandi draws every glissando line of a staff. One across the
+// layout's edge is drawn in two: to the end of the first system, halfway to
+// its target's height, and on from the start of the next.
+func (e *engraver) drawGlissandi(sc *staffCtx) {
+	for vi, v := range sc.st.Voices {
+		for _, r := range e.glissRuns(v) {
+			a, z := e.glissEnds(sc, vi, r)
+			switch {
+			case a != nil && z != nil:
+				e.drawGliss(sc, a, z, a.col.x+glissFrom(a), z.col.x+glissTo(z), nil, r.wavy, true, true)
+			case a != nil && r.to && r.z.bar > e.to:
+				// On to the next system: halfway to the target there.
+				t := e.outsidePlaced(sc, vi, v, r.z)
+				e.drawGliss(sc, a, a, a.col.x+glissFrom(a), e.layoutEnd(), glissHalfway(a, t, false), r.wavy, true, false)
+			case a != nil:
+				// To a rest or the voice's end: a short line, level.
+				x0 := a.col.x + glissFrom(a)
+				e.drawGliss(sc, a, a, x0, math.Min(x0+3, a.sb.bar.x1-0.3), nil, r.wavy, false, false)
+			case z != nil && r.a.bar < e.from:
+				// From the system before: from halfway to the note.
+				s := e.outsidePlaced(sc, vi, v, r.a)
+				e.drawGliss(sc, z, z, e.layoutStart(), z.col.x+glissTo(z), glissHalfway(s, z, true), r.wavy, false, true)
 			}
 		}
 	}
 }
 
-func (e *engraver) drawGliss(sc *staffCtx, a *ev, wavy bool) {
-	b := a.nextEv
-	if b != nil && (b.col == nil || b.ref.Bar <= 0 || len(b.notes) == 0) {
-		b = nil
+// outsidePlaced is outsideEv with a tablature's notes on their strings.
+func (e *engraver) outsidePlaced(sc *staffCtx, vi int, v *score.Voice, k evKey) *ev {
+	x := e.outsideEv(sc, vi, v, k)
+	if x != nil && sc.tab != nil {
+		e.placeTab(sc, x, sc.tab.VoicePlaces(v))
 	}
+	return x
+}
+
+// glissHalfway pairs a glissando's notes from the top, the top note sliding
+// to the top note, for a line broken by a system break: each pair's heights
+// at its note and halfway, in the order the piece runs (in: from halfway to
+// the target).
+func glissHalfway(a, z *ev, in bool) [][2]float64 {
+	if a == nil || z == nil || len(a.notes) == 0 || len(z.notes) == 0 {
+		return nil
+	}
+	var out [][2]float64
+	for i := 0; i < min(len(a.notes), len(z.notes)); i++ {
+		ya, yz := a.notes[len(a.notes)-1-i].y, z.notes[len(z.notes)-1-i].y
+		mid := (ya + yz) / 2
+		if in {
+			out = append(out, [2]float64{mid, yz})
+		} else {
+			out = append(out, [2]float64{ya, mid})
+		}
+	}
+	return out
+}
+
+// drawGliss draws a glissando's lines from x0 to x1: from a's notes to z's,
+// paired from the top, or the given pairs of heights (nil: a's notes,
+// level). atA and atZ say which ends meet a notehead, where the line starts
+// from the head's edge rather than its middle.
+func (e *engraver) drawGliss(sc *staffCtx, a, z *ev, x0, x1 float64, pairs [][2]float64, wavy, atA, atZ bool) {
 	ref := a.ref
 	ref.Note = -1
-	_, ar := headSpan(a)
-	x0 := a.x + ar + 0.25
-	if a.dots > 0 {
-		x0 = a.x + a.dotX + float64(a.dots)*dotSpacing + 0.15
-	}
-	type pair struct{ y0, y1 float64 }
-	var pairs []pair
-	var x1 float64
-	if b != nil {
-		bl, _ := headSpan(b)
-		x1 = b.x + bl - 0.25
-		for _, n := range b.notes {
-			if n.acc {
-				x1 = math.Min(x1, b.col.x+n.accX-0.15)
-			}
-		}
-		// Paired from the top: the top note slides to the top note.
-		k := min(len(a.notes), len(b.notes))
+	if pairs == nil {
+		k := min(len(a.notes), len(z.notes))
 		for i := 0; i < k; i++ {
-			pairs = append(pairs, pair{a.notes[len(a.notes)-1-i].y, b.notes[len(b.notes)-1-i].y})
-		}
-	} else {
-		// To the end of the layout: the target is past it.
-		x1 = math.Min(x0+3, a.sb.bar.x1-0.3)
-		for _, n := range a.notes {
-			pairs = append(pairs, pair{n.y, n.y})
+			pairs = append(pairs, [2]float64{a.notes[len(a.notes)-1-i].y, z.notes[len(z.notes)-1-i].y})
 		}
 	}
-	if x1-x0 < 0.4 {
+	if len(pairs) == 0 || x1-x0 < 0.4 {
 		return
 	}
 	th := 0.14
 	for _, p := range pairs {
 		// From the heads' edges toward each other.
-		y0, y1 := p.y0, p.y1
+		y0, y1 := p[0], p[1]
 		if y1 != y0 {
 			s := math.Copysign(0.25, y1-y0)
-			y0, y1 = y0+s, y1-s
+			if atA {
+				y0 += s
+			}
+			if atZ {
+				y1 -= s
+			}
 		}
 		p0, p1 := Point{X: x0, Y: y0}, Point{X: x1, Y: y1}
 		if wavy {
@@ -483,7 +705,7 @@ func (e *engraver) drawGliss(sc *staffCtx, a *ev, wavy bool) {
 		size := 1.2
 		w := TextWidthFont("gliss.", TextItalic, size)
 		mx := (x0 + x1) / 2
-		lineY := func(x float64) float64 { return p.y0 + (p.y1-p.y0)*(x-x0)/(x1-x0) }
+		lineY := func(x float64) float64 { return p[0] + (p[1]-p[0])*(x-x0)/(x1-x0) }
 		base := math.Min(lineY(mx-w/2), lineY(mx+w/2)) - 0.25*size - 0.2
 		e.put(sc, nil, Item{Kind: ItemText, Role: RoleText, Ref: ref, P: Point{X: mx - w/2, Y: base}, Text: "gliss.", Font: TextItalic, Size: size})
 	}

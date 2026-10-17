@@ -178,6 +178,7 @@ func (e *engraver) measure() {
 		e.multiRestWidths(bc)
 	}
 	e.crossBarRods()
+	e.glissRods()
 	e.stretch(1)
 }
 

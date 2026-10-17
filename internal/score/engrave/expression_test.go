@@ -355,6 +355,98 @@ func TestGlissandoLines(t *testing.T) {
 	}
 }
 
+// glissLines are a list's glissando lines (straight and wavy), each as
+// its bounds.
+func glissLines(l *List) []Rect {
+	var out []Rect
+	for _, it := range l.Items {
+		if it.Role == RoleLine && (it.Kind == ItemLine || it.Kind == ItemPath) {
+			out = append(out, ItemBounds(&it))
+		}
+	}
+	return out
+}
+
+// TestGlissandoBetweenCloseNotes checks that spacing keeps room for a
+// glissando however close its notes are, so what is printed is what
+// plays: 16ths, a target with an accidental, a dotted note, a chord, and
+// one into the next bar, each at the tightest spacing too.
+func TestGlissandoBetweenCloseNotes(t *testing.T) {
+	for _, src := range []string{
+		"| eC5 eD5 sE5 sF5(gliss=wavy) sG5 sA5 qC6 qD5",
+		"| sC5(gliss) sG#5 sC5 sD5 qr hr",
+		"| s.C5(gliss) tE5 sF5 sG5 qr hr",
+		"| sC5+E5(gliss=wavy) sD5+F5 sE5 sF5 qr hr",
+		"| hr qr sC5 sD5 sE5 sF5(gliss) | sDb5 sE5 sF5 sG5 qr hr",
+	} {
+		for _, sp := range []float64{0.5, 1} {
+			l := Engrave(one(t, "treble", src), Options{Spacing: sp})
+			lines := glissLines(l)
+			want := 1
+			if strings.Contains(src, "+") {
+				want = 2 // a chord slides note by note
+			}
+			if len(lines) != want {
+				t.Errorf("%q at spacing %v: %d glissando lines, want %d", src, sp, len(lines), want)
+				continue
+			}
+			for _, r := range lines {
+				if w := r.Max.X - r.Min.X; w < glissMin-0.01 {
+					t.Errorf("%q at spacing %v: a glissando %.2f long, want at least %v", src, sp, w, glissMin)
+				}
+			}
+		}
+	}
+}
+
+// TestGlissandoAcrossASystemBreak checks that a glissando from a system's
+// last note runs to the system's end, halfway down to its target, and goes
+// on from the next system's start into the target, on pages as in the
+// layouts each system is engraved as.
+func TestGlissandoAcrossASystemBreak(t *testing.T) {
+	s := one(t, "treble", "| qC5 qD5 qE5 qF5 | qG5 qA5 qB5 qC6(gliss=wavy) | qG5 qF5 qE5 qD5 | wC5")
+	first := Engrave(s, Options{From: 1, To: 2})
+	second := Engrave(s, Options{From: 3, To: 4})
+	a, b := glissLines(first), glissLines(second)
+	if len(a) != 1 || len(b) != 1 {
+		t.Fatalf("%d glissando lines on the first system and %d on the second, want 1 and 1", len(a), len(b))
+	}
+	// Heights from the staff's top line: C6 -2, G5 -0.5; halfway -1.25.
+	if r := a[0]; r.Max.X-r.Min.X < glissMin || staffY(first, r.Max.Y) < -1.5 {
+		t.Errorf("the first system's piece %v: too short, or not going down", r)
+	}
+	if end := first.Width; a[0].Max.X < end-margin-2 {
+		t.Errorf("the first system's piece ends at %.2f, short of the system's end %.2f", a[0].Max.X, end-margin)
+	}
+	g := second.Items
+	var target Rect
+	for _, it := range g {
+		if it.Kind == ItemGlyph && it.Role == RoleNotehead && it.Ref.Bar == 3 && it.Ref.Event == 0 {
+			target = ItemBounds(&it)
+		}
+	}
+	r := b[0]
+	if r.Min.X > target.Min.X-glissMin+0.1 || r.Max.X > target.Min.X {
+		t.Errorf("the second system's piece %v does not come into G5 at %v", r, target)
+	}
+	if top := staffY(second, r.Min.Y); top > -1 || top < -1.6 {
+		t.Errorf("the second system's piece starts at %.2f, not from over G5 (halfway from C6)", top)
+	}
+	// On pages: a system break at bar 3.
+	s.Layout.Breaks = []score.Break{{Bar: 3}}
+	book := ScoreBook(s, false)
+	var pieces, systems int
+	for _, pg := range book.Pages {
+		for _, sys := range pg.Systems {
+			systems++
+			pieces += len(glissLines(sys.List))
+		}
+	}
+	if systems != 2 || pieces != 2 {
+		t.Errorf("on pages: %d systems with %d glissando pieces, want 2 and 2", systems, pieces)
+	}
+}
+
 func TestOrnamentsFermatasTremolosArpeggios(t *testing.T) {
 	l := Engrave(one(t, "treble", "| qC5(tr=#) qD5(mord) qE5(turn=b/#) qF5(ferm=long) | hC5(trem=3) hE5(trem2=2) | hC4+E4+G4(arp=down) hF5(ferm) | R(ferm)"), Options{})
 	for _, g := range []string{"ornamentTrill", "ornamentMordent", "ornamentTurn", "fermataLongAbove", "tremolo3", "fermataAbove"} {

@@ -111,26 +111,22 @@ func AddLine(s *score.Score, at int, l *score.Line) int {
 
 // DuplicateLine copies line i to just after it and returns the copy's
 // index. With notes it is the whole line — staves, voices, lanes; empty it
-// is the same instrument, clefs, transpositions and mixer settings (fader,
-// pan, sends, inserts, mute) with nothing written. A copy never comes
-// soloed: two soloed lines would silence the rest twice over.
+// is the line's settings with nothing written: the same instrument and
+// short name, each staff's clef, transposition, percussion lines and
+// tablature, the mixer (fader, pan, sends and their pre-fader switches,
+// inserts, mute), swing, humanise, glissando style and chord playback —
+// but no notes, clef changes, automation lanes, dynamics overrides or
+// chord symbols. A copy never comes soloed: two soloed lines would silence
+// the rest twice over.
 func DuplicateLine(s *score.Score, i int, withNotes bool) (int, error) {
 	if i < 0 || i >= len(s.Lines) {
 		return 0, fmt.Errorf("no line %d", i+1)
 	}
-	src := s.Lines[i]
-	var c *score.Line
-	if withNotes {
-		c = src.Clone()
-	} else {
-		c = &score.Line{Name: src.Name, Instrument: src.Instrument, Volume: src.Volume, Pan: src.Pan, Mute: src.Mute,
-			SendA: src.SendA, SendB: src.SendB}
-		for _, f := range src.Inserts {
-			f.Params = append([]score.FXParam(nil), f.Params...)
-			c.Inserts = append(c.Inserts, f)
-		}
-		for _, st := range src.Staves {
-			c.Staves = append(c.Staves, &score.Staff{Clef: st.Clef, Transpose: st.Transpose, Voices: []*score.Voice{{}}})
+	c := s.Lines[i].Clone()
+	if !withNotes {
+		c.Lanes, c.Overrides, c.Chords = nil, nil, nil
+		for _, st := range c.Staves {
+			st.Voices, st.Clefs = []*score.Voice{{}}, nil
 		}
 	}
 	c.Solo = false

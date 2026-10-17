@@ -1193,6 +1193,16 @@ func (r *partReader) readDirection(d *node, cur score.Frac) xdir {
 		}
 		delete(r.dashes, n)
 	}
+	// A wedge (or cresc. dashes) stopping in the direction of a dynamic
+	// ends at that dynamic, which is what a hairpin with no hairpin_end
+	// does: the file keeps the open-ended spelling (`hC5(cresc) hE5(f)`,
+	// the grammar's `h.C5<`), as Foundry's export writes it.
+	for _, mk := range x.marks {
+		if hasDynamicName(mk.Name) {
+			x.stops = withoutMark(x.stops, "hairpin_end")
+			break
+		}
+	}
 	return x
 }
 
@@ -2351,6 +2361,23 @@ func dropDanglingTies(l *score.Line) {
 			}
 		}
 	}
+}
+
+// hasDynamicName reports a mark name that is a dynamic.
+func hasDynamicName(name string) bool {
+	_, ok := score.Dynamics[name]
+	return ok
+}
+
+// withoutMark is marks with every one of a name taken out.
+func withoutMark(marks []score.Mark, name string) []score.Mark {
+	out := marks[:0]
+	for _, mk := range marks {
+		if mk.Name != name {
+			out = append(out, mk)
+		}
+	}
+	return out
 }
 
 func clearTies(e *score.Event) {

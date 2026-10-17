@@ -475,7 +475,10 @@ type voiceState struct {
 	// ("wedge" or "dashes"), a two-note tremolo's strokes.
 	slurs   int
 	hairpin string
-	last    vref // the voice's last event
+	// stopAtDynamic is a hairpin with no hairpin_end that the next event's
+	// dynamic ends: its stop goes in that dynamic's direction.
+	stopAtDynamic bool
+	last          vref // the voice's last event
 }
 
 // staffState is a staff's lines: ottava (its size, 0 none) and pedal.
@@ -1387,6 +1390,9 @@ func (p *partWriter) dirType(body func()) {
 func (p *partWriter) before(si, vi int, e *score.Event, vs *voiceState) {
 	w := &p.x.w
 	ss := p.staves[si]
+	// A hairpin the event's dynamic ends stops in its direction.
+	stopHere := vs.stopAtDynamic && vs.hairpin != ""
+	vs.stopAtDynamic = false
 	for _, mk := range e.Marks {
 		mk := mk
 		switch {
@@ -1396,7 +1402,14 @@ func (p *partWriter) before(si, vi int, e *score.Event, vs *voiceState) {
 				name = "n"
 			}
 			lvl := score.Dynamics[mk.Name].Level
+			stop := ""
+			if stopHere {
+				stop, stopHere, vs.hairpin = vs.hairpin, false, ""
+			}
 			p.direction(si, vi, "below", func() {
+				if stop != "" {
+					p.hairpinStop(vi, stop)
+				}
 				p.dirType(func() {
 					w.open("dynamics")
 					w.empty(name)
@@ -1404,6 +1417,7 @@ func (p *partWriter) before(si, vi int, e *score.Event, vs *voiceState) {
 				})
 			}, attr{"dynamics", num(math.Round(float64(lvl)*127/90*10000) / 100)})
 		case mk.Name == "cresc" || mk.Name == "dim":
+			stopHere = false
 			p.closeHairpin(si, vi, vs)
 			if mk.Value == "" {
 				kind := map[string]string{"cresc": "crescendo", "dim": "diminuendo"}[mk.Name]
@@ -1454,21 +1468,23 @@ func (p *partWriter) before(si, vi int, e *score.Event, vs *voiceState) {
 			ss.pedal = true
 		}
 	}
+	if stopHere {
+		p.closeHairpin(si, vi, vs)
+	}
 }
 
 func (p *partWriter) closeHairpin(si, vi int, vs *voiceState) {
-	w := &p.x.w
-	switch vs.hairpin {
-	case "wedge":
-		p.direction(si, vi, "below", func() {
-			p.dirType(func() { w.empty("wedge", attr{"type", "stop"}, attr{"number", itoa(vi + 1)}) })
-		})
-	case "dashes":
-		p.direction(si, vi, "below", func() {
-			p.dirType(func() { w.empty("dashes", attr{"type", "stop"}, attr{"number", itoa(vi + 1)}) })
-		})
+	if kind := vs.hairpin; kind != "" {
+		p.direction(si, vi, "below", func() { p.hairpinStop(vi, kind) })
 	}
-	vs.hairpin = ""
+	vs.hairpin, vs.stopAtDynamic = "", false
+}
+
+// hairpinStop writes the direction-type stopping a hairpin of a kind
+// ("wedge" or "dashes").
+func (p *partWriter) hairpinStop(vi int, kind string) {
+	w := &p.x.w
+	p.dirType(func() { w.empty(kind, attr{"type", "stop"}, attr{"number", itoa(vi + 1)}) })
 }
 
 func (p *partWriter) closeOttava(si, vi int) {
@@ -1490,8 +1506,8 @@ func (p *partWriter) closePedal(si, vi int) {
 }
 
 // after writes the directions an event's marks end — a hairpin's stop
-// after its last note, an ottava's, a pedal's — and closes what is still
-// open when the voice ends.
+// after its last note (or before the next dynamic), an ottava's, a
+// pedal's — and closes what is still open when the voice ends.
 func (p *partWriter) after(si, vi int, r vref, e *score.Event, vs *voiceState) {
 	ss := p.staves[si]
 	end := r == vs.last
@@ -1513,6 +1529,11 @@ func (p *partWriter) after(si, vi int, r vref, e *score.Event, vs *voiceState) {
 	}
 	if e.Has("hairpin_end") || end && vs.hairpin != "" || vs.hairpin != "" && starts("cresc", "dim") {
 		p.closeHairpin(si, vi, vs)
+	} else if vs.hairpin != "" && next != nil && hasDynamicMark(next) && !p.hairpinEndsAhead(si, vi, r) {
+		// One with no hairpin_end runs to the next dynamic, as the
+		// interpreter plays it and the engraver draws it: it stops in
+		// that dynamic's direction (before), which tells the reader so.
+		vs.stopAtDynamic = true
 	}
 	if ss.ottava != 0 && (e.Has("ottava_end") || end && p.lastOfStaff(si, r) || starts("8va", "8vb", "15ma", "15mb")) {
 		p.closeOttava(si, vi)
@@ -1520,6 +1541,35 @@ func (p *partWriter) after(si, vi int, r vref, e *score.Event, vs *voiceState) {
 	if ss.pedal && (e.Has("ped_end") || end && p.lastOfStaff(si, r)) {
 		p.closePedal(si, vi)
 	}
+}
+
+// hairpinEndsAhead reports a hairpin_end in a voice after a place, before
+// the next hairpin starts: the open hairpin is ended by it rather than by
+// a dynamic.
+func (p *partWriter) hairpinEndsAhead(si, vi int, r vref) bool {
+	for {
+		nr, e, ok := p.neighbour(si, vi, r, 1)
+		if !ok {
+			return false
+		}
+		if e.Has("hairpin_end") {
+			return true
+		}
+		if e.Has("cresc") || e.Has("dim") {
+			return false
+		}
+		r = nr
+	}
+}
+
+// hasDynamicMark reports an event marked with a dynamic.
+func hasDynamicMark(e *score.Event) bool {
+	for _, mk := range e.Marks {
+		if mk.Kind() == score.MarkDynamic {
+			return true
+		}
+	}
+	return false
 }
 
 // lastOfStaff reports whether no voice of a staff has an event after a

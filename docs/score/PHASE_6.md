@@ -246,8 +246,12 @@ Windows with mingw.
   no part in that model.
 - **What MusicXML has no element for** stays in the `.fscore`: a part's
   own page layout (a partwise file has one), smooth tempo ramps (only
-  their marks go out), the mixer, effects, lanes, params, bindings, game
-  markers, a section's loop and next, swing and humanise.
+  their marks go out), the mixer, effects, lanes, dynamics overrides,
+  params, bindings, game markers, a section's loop and next, swing and
+  humanise, a line's glissando playback style (`gliss:` slide, chromatic
+  or diatonic: `<glissando>`/`<slide>` say how a line is drawn, not how
+  the instrument plays it, and an unset style is the instrument's) and its
+  chord-symbol playback (`chord_play`). (Listed in round 2.)
 - **Linux codecs** are the system's libraries unless `CODECS_LINUX` bundles
   a folder: distribution `.so` files tie a tarball to one distribution.
 - **PDF text is outlines**: SPEC asks for no font embedding; titles are in
@@ -428,3 +432,70 @@ pre-existing failure in the other session's render work.
   no `/dev/snd/seq` and no keyboard (`foundry score midi` says so), and
   WinMM can only be built and vetted here. Everything above the device
   layer runs through `mididev.Virtual` and the real scheduler offline.
+
+## Final audit round 2
+
+The second audit found nine gaps; six are fixed below, three are kept
+with the reason.
+
+| Found | Fixed in |
+| --- | --- |
+| A glissando between closely spaced notes was left out of the engraving (screen, PNG, SVG, PDF) at the default spacing: `drawGliss` dropped a line under 0.4 spaces and nothing in spacing kept room for one, so what printed and what played disagreed | `engrave/spanner.go` `glissRods` (called from `measure`): every glissando keeps `glissMin` (1.6 spaces) of line between its note's ink (heads or dots) and its target's (heads or accidentals) — in the bar, or across the barline to the next bar — and from its note to the bar's end when the target is in a later bar (a system may break there). `glissLeadIn` gives a system opening on a glissando's target the lead for the line coming in, in the pager's line breaking (`page.go` `metrics`) too. `TestGlissandoBetweenCloseNotes` (16ths, a sharp target, a dotted note, a chord, over a barline; at spacing 0.5 and 1; fails with `glissRods` off). The auditor's `gl.fscore` and `adv1.fscore` bar 3 now show their lines (looked at) |
+| A glissando across a system break was a stub on the first system and nothing on the next | `drawGlissandi` works from `glissRuns` (score terms, the whole voice, as the interpreter pairs a `gliss` chord with the next main event): a target past the layout runs the line to the system's end, halfway to the target's height; on the next system a line comes in from the start, from that height, into the target. The far end is built off the layout by `outsideEv` (what `lastEventBefore` now uses too). `TestGlissandoAcrossASystemBreak` (both layouts and the paged book: two systems, two pieces); the auditor's `span.fscore` looked at |
+| MusicXML export did not stop a hairpin with no `hairpin_end` at the next dynamic, so the wedge ran past it, and a round trip moved `hairpin_end` and changed playback (the grammar's `h.C5<` shorthand, `cresc=text` dashes too) | `io/musicxml/export.go` `after`/`before`: an open-ended hairpin (no `hairpin_end` before the next hairpin, `hairpinEndsAhead`) whose next event has a dynamic stops in that dynamic's own `<direction>` (`stopAtDynamic`, `hairpinStop`); a written `hairpin_end` still stops after its note. `import.go` `readDirection`: a wedge or dashes stop in a direction holding a dynamic is that dynamic's end, so no `hairpin_end` is written. `TestOpenHairpinsStopAtTheNextDynamic` (the auditor's cello line, `<`/`>`, `cresc=text`, one written end: exact round trip, six stops in their dynamic's direction, one alone). `adv1.fscore` round trips with `hC3(f)`/`hF2(pp)` and no ends; its export validates against the 4.0 XSD |
+| An empty duplicated line lost pre-fader sends, percussion staff lines, tablature, glissando style, swing, humanise, chord playback and the short name | `edit/lines.go` `DuplicateLine`: the empty copy is the line's clone with what is written taken off (notes, clef changes, lanes, dynamics overrides, chord symbols). `TestDuplicateLineEmptyKeepsSettings` (a guitar with drop D tab and capo, PreA/PreB, swing, humanise, gliss, chord play; a one-line tambourine) |
+| "View follows playback" had no test in any view | `TestScoreViewsFollowPlayback`: a 120-bar score playing at bar 110 through the real player (offline), drawn through the window: the score view scrolls the play head on screen, the timeline's scroll takes in the head's time, the page view scrolls down; with Follow off none moves. The views record their scroll as drawn (`scoreViewScroll`, `scorePageScroll`) |
+| Alt+click paste was tested only below the click | `TestScoreAltClickPastesThroughTheView`: Alt held through `scoreFrame` clicks, in and out of note input, paste the copied bar into the cello; without Alt the note-input click writes a note (fails with the Alt case taken out of `scoreClick`) |
+| The MusicXML "no element for" list left out a line's glissando style and chord playback | PHASE_6 *Kept as limits* and the guide's MusicXML paragraph now name `gliss:` (MusicXML's `<glissando>`/`<slide>` say how a line is drawn, not how the instrument plays it, and an unset style is the instrument's), `chord_play`, dynamics overrides, swing and humanise |
+
+### Decisions
+
+- **A glissando always has room**: 1.6 spaces of line at least, the
+  rhythm's spacing giving way (as accidentals and dynamics already make
+  it), since a slide that plays must print.
+- **A broken glissando meets halfway**: the first system's piece ends at
+  the height halfway between its notes, the next system's starts there
+  (as Gould draws a line continued over a break).
+- **An open-ended hairpin ends in its dynamic's direction** in MusicXML:
+  one direction holding the wedge's stop and the dynamic is read as "runs
+  to that dynamic", so the file keeps the spelling it was written in
+  either way. Whether a hairpin with an end and a dynamic inside it stops
+  at the dynamic (the engraver) or passes through (the interpreter) is not
+  changed here; the export keeps the written end.
+
+### How to verify (round 2)
+
+```
+go test -run 'Glissando' -v ./internal/score/engrave/
+go test -run 'OpenHairpins' -v ./internal/score/io/musicxml/
+go test -run 'DuplicateLine' -v ./internal/score/edit/
+go test -run 'TestScoreViewsFollowPlayback|TestScoreAltClickPastesThroughTheView' -v ./internal/editor/
+foundry score render gl.fscore -png /tmp/gl.png -scale 20        # bar 2: the wavy line F5 → G5 at default spacing
+foundry score render span.fscore -png /tmp/span.png -page 1      # the glissando C6 → G5 over the break, in two pieces
+foundry score export-musicxml adv1.fscore -o /tmp/a.musicxml && foundry score import /tmp/a.musicxml -o /tmp/a.fscore   # hC3(f), hF2(pp), no hairpin_end
+task test-release
+```
+
+### Kept (round 2)
+
+- **A real Sibelius export** is still not in `testdata`: Sibelius runs
+  only on Windows and macOS and needs a licence, and no permissively
+  licensed file Sibelius wrote was found to vendor (musicxml.com's sample
+  set is Finale's; the Dolet-for-Sibelius source on GitHub ships no
+  exports). `sibelius_piano.musicxml` stays an imitation of Sibelius's
+  export, written from its documented habits; the first session with
+  Sibelius should export a score with tuplets, cresc. hairpins, part names
+  with flats and two voices and add it beside the imitation.
+- **A MIDI keyboard on real hardware** is untested: no `/dev/snd/seq` and
+  no keyboard here (`foundry score midi` says so); WinMM builds and vets
+  with mingw only. Everything above the device layer runs through
+  `mididev.Virtual`.
+- **The task's baseline file** (`scratchpad/baseline.txt`) does not exist;
+  the suite was compared with the failures PHASE_3 and PHASE_6 record
+  instead (below).
+
+`go test ./...` (105 packages pass) and the release suite (`go test -tags
+release` over `cmd/foundry`'s dependencies and `internal/pack`) fail only
+`internal/glext`'s `TestEveryReadbackGoesThroughTheWrappers`, on GL test
+files of the other session's render work (no score, editor or tracker
+file), as recorded since phase 3.

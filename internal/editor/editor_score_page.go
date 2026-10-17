@@ -153,6 +153,7 @@ func scorePagePane(pos, size imgui.Vec2) {
 
 	wp := imgui.WindowPos()
 	sx, sy := imgui.ScrollX(), imgui.ScrollY()
+	scorePageScroll = imgui.Vec2{X: sx, Y: sy}
 	g := scorePageGeomAt(b, wp, size, sx, sy)
 	imgui.SetCursorPos(imgui.Vec2{X: sx, Y: sy})
 	imgui.InvisibleButton("##scpagecanvas", imgui.Vec2{X: max(g.visMax.X-g.visMin.X, 1), Y: max(g.visMax.Y-g.visMin.Y, 1)})
@@ -339,6 +340,10 @@ func scorePageReveal(b *engrave.Book, g scorePageGeom, wp, size imgui.Vec2) {
 	}
 	scorePageScrollTo(b, g, pg.Number-1, sys, wp)
 }
+
+// scorePageScroll is the page view's scroll as last drawn (what following
+// the play head moves; the tests read it).
+var scorePageScroll imgui.Vec2
 
 // scorePageFollow keeps the play head's system in sight while it plays.
 func scorePageFollow(b *engrave.Book, g scorePageGeom) {
