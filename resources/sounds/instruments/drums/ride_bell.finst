@@ -5,4 +5,10 @@ polyphony: 4
 playback:
   clef: percussion
   release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Ride Bell
+    line: 4
+    head: diamond
 description: 'Ride bell: few strong, bell-like partials'

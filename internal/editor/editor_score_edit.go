@@ -155,6 +155,23 @@ type scoreState struct {
 	// TL is the Timeline tab's state: the grid, the tools, the roll's and
 	// the lanes' selections (editor_score_timeline_edit.go).
 	TL scoreTimeline
+
+	// Words is a lyric or chord symbol being typed, nil for none
+	// (editor_score_words.go).
+	Words *scoreWordEntry
+	// TabString is the tablature string in hand (1 the highest; 0 the
+	// selected note's), TabKeys that the tablature has the keyboard (the
+	// selection was picked on its strings), fretTyped the last fret typed.
+	TabString int
+	TabKeys   bool
+	fretTyped scoreFretTyped
+
+	// MIDI is the MIDI keyboard's step entry and recording
+	// (editor_score_midi.go).
+	MIDI scoreMIDIEntry
+	// Find is the Find dialog's query and what it found
+	// (editor_score_tools.go).
+	Find scoreFind
 }
 
 // newScoreState starts an editor on a score.
@@ -570,9 +587,9 @@ func (e *scoreState) write(l edit.Loc, at score.Frac, written *score.Pitch) bool
 // drum that sits there.
 func (e *scoreState) clickWrite(line, staff, bar int, at score.Frac, diatonic int) bool {
 	if e.percussion(line, staff) {
-		d, ok := score.DrumAt(diatonic - score.PercussionBottom)
+		d, ok := e.kitOf(line).At(diatonic - score.PercussionBottom)
 		if !ok {
-			e.Status = "No drum sits on that line or space of a percussion staff"
+			e.Status = "No drum of " + e.kitOf(line).Name + " sits on that line or space"
 			return false
 		}
 		p := score.DrumPitch(d)
@@ -583,15 +600,15 @@ func (e *scoreState) clickWrite(line, staff, bar int, at score.Frac, diatonic in
 }
 
 // percussion reports a percussion staff: its notes are drums by place
-// (score.GMDrums), not pitches.
+// (the line's drum map, score.Kit), not pitches.
 func (e *scoreState) percussion(line, staff int) bool {
 	st := edit.Staff(e.Score, line, staff)
 	return st != nil && st.Clef == "percussion"
 }
 
 // ghostDrum is the drum a click at a percussion staff position writes.
-func (e *scoreState) ghostDrum(diatonic int) (score.Drum, bool) {
-	return score.DrumAt(diatonic - score.PercussionBottom)
+func (e *scoreState) ghostDrum(line, diatonic int) (score.Drum, bool) {
+	return e.kitOf(line).At(diatonic - score.PercussionBottom)
 }
 
 // ghost is what a click at a staff position would write, as written: the
@@ -599,7 +616,7 @@ func (e *scoreState) ghostDrum(diatonic int) (score.Drum, bool) {
 // staff's drum there).
 func (e *scoreState) ghost(line, staff, bar, diatonic int) score.Pitch {
 	if e.percussion(line, staff) {
-		if d, ok := e.ghostDrum(diatonic); ok {
+		if d, ok := e.ghostDrum(line, diatonic); ok {
 			return score.DrumPitch(d)
 		}
 	}
@@ -647,7 +664,7 @@ func (e *scoreState) letter(step int) {
 		return
 	}
 	if e.percussion(l.Line, l.Staff) {
-		e.Status = "A percussion staff takes drums, not letters: click the drum's line or space"
+		e.Status = "No drum of " + e.kitOf(l.Line).Name + " has that letter: click the drum's line or space"
 		return
 	}
 	p := edit.NearestLetter(step, ptrPitch(e.prevPitch(l, at)), e.writtenFifths(l.Line, l.Staff, l.Bar))
@@ -1416,6 +1433,27 @@ func (e *scoreState) setKey(bar, fifths int, mode string) {
 	}
 }
 
+// rebarMeter puts a time signature at a bar and re-bars the music it
+// governs: the notes keep their time and are written again across the new
+// barlines (edit.Rebar), the bars after it moving with them.
+func (e *scoreState) rebarMeter(bar int, m score.Meter) {
+	var delta int
+	if e.change(func() error {
+		var err error
+		delta, err = edit.Rebar(e.Score, bar, m)
+		return err
+	}) {
+		e.Status = fmt.Sprintf("%s from bar %d, the music re-barred", m, bar)
+		switch {
+		case delta > 0:
+			e.Status += fmt.Sprintf(" (%d bar(s) more)", delta)
+		case delta < 0:
+			e.Status += fmt.Sprintf(" (%d bar(s) fewer)", -delta)
+		}
+		e.dropStaleSel()
+	}
+}
+
 // setMeter puts a time signature at a bar.
 func (e *scoreState) setMeter(bar int, m score.Meter) {
 	var from, to int
@@ -1538,7 +1576,7 @@ func scoreEventText(e *scoreState, line, staff int, ev *score.Event) string {
 	drums := e.percussion(line, staff)
 	for _, n := range ev.Notes {
 		if drums {
-			names = append(names, score.DrumName(n.Pitch))
+			names = append(names, e.kitOf(line).NameOf(n.Pitch))
 		} else {
 			names = append(names, edit.PitchName(e.toWritten(line, staff, n.Pitch)))
 		}

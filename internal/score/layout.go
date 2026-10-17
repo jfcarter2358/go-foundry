@@ -129,6 +129,13 @@ type Layout struct {
 	// Courtesy prints a courtesy accidental, in parentheses, on a note in
 	// the bar after one where its pitch was altered.
 	Courtesy bool
+	// NoBrackets leaves out the brackets that join the lines of each
+	// instrument family (woodwinds, brass, percussion, voices, strings),
+	// and the barlines through them.
+	NoBrackets bool
+	// HideEmpty leaves out of a system, after the first, every line with
+	// no notes in its bars (an orchestral score's resting instruments).
+	HideEmpty bool
 	// Parts are the parts' own settings, by line name.
 	Parts []PartLayout
 }
@@ -318,7 +325,7 @@ func (l Layout) Clone() Layout {
 // IsZero reports a layout with nothing set (the file leaves it out).
 func (l Layout) IsZero() bool {
 	return l.Paper == (Paper{}) && l.Staff == 0 && l.SystemGap == 0 && l.Spacing == 0 && len(l.Breaks) == 0 && !l.TitlePage &&
-		!l.NoPageNumbers && l.Names == NamesFullThenShort && !l.NoCautionary && !l.Courtesy && len(l.Parts) == 0
+		!l.NoPageNumbers && l.Names == NamesFullThenShort && !l.NoCautionary && !l.Courtesy && !l.NoBrackets && !l.HideEmpty && len(l.Parts) == 0
 }
 
 // ShortName is a line's name on systems after the first: its own short
@@ -416,6 +423,8 @@ type rawLayout struct {
 	Names      string        `yaml:"names,omitempty"`
 	Cautionary *bool         `yaml:"cautionary,omitempty"`
 	Courtesy   bool          `yaml:"courtesy,omitempty"`
+	Brackets   *bool         `yaml:"brackets,omitempty"`
+	HideEmpty  bool          `yaml:"hide_empty,omitempty"`
 	Parts      []rawPartPage `yaml:"parts,omitempty"`
 }
 
@@ -551,6 +560,8 @@ func layoutFromRaw(r *rawLayout) (Layout, error) {
 	l.TitlePage, l.Courtesy = r.TitlePage, r.Courtesy
 	l.NoPageNumbers = r.PageNums != nil && !*r.PageNums
 	l.NoCautionary = r.Cautionary != nil && !*r.Cautionary
+	l.NoBrackets = r.Brackets != nil && !*r.Brackets
+	l.HideEmpty = r.HideEmpty
 	if r.Names != "" {
 		found := false
 		for i, n := range NameModes {
@@ -603,6 +614,11 @@ func layoutToRaw(l Layout) *rawLayout {
 		f := false
 		r.Cautionary = &f
 	}
+	if l.NoBrackets {
+		f := false
+		r.Brackets = &f
+	}
+	r.HideEmpty = l.HideEmpty
 	if l.Names != NamesFullThenShort && int(l.Names) < len(NameModes) {
 		r.Names = NameModes[l.Names]
 	}

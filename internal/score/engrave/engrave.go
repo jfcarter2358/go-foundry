@@ -95,6 +95,22 @@ type Options struct {
 	// its bars — a rehearsal mark, a tempo mark, a key, time or clef
 	// change, a repeat or ending, a double barline.
 	MultiRests bool
+	// StaffSteps, when it has an entry per staff, is the least distance
+	// from each staff's top line to the next one's (entry i for staff i,
+	// the first's ignored): a page sets its systems' staves the same
+	// distance apart (page.go).
+	StaffSteps []float64
+
+	// noCross engraves every note on its own staff; crossSteps are the
+	// distances between staves fixed so a cross-staff note can be put on
+	// the other one (cross.go). Engrave sets both itself.
+	noCross    bool
+	crossSteps []float64
+
+	// Kits, when set, is the drum map a percussion staff of an instrument
+	// reads (nil from it: the General MIDI kit's); unset, the library's
+	// (score.KitFor). Tests and fixtures set it to stay off the disk.
+	Kits func(instrument string) *score.Kit
 
 	// runBreaks are bars a multi-bar rest may not run into: a page
 	// layout's manual breaks, when it measures a whole score at once.
@@ -124,6 +140,9 @@ const (
 
 // Engrave lays a score out on one continuous system.
 func Engrave(s *score.Score, o Options) *List {
+	if !o.noCross && o.crossSteps == nil && hasCross(s, o) {
+		o.crossSteps = crossLayout(s, o)
+	}
 	e := newEngraver(s, o)
 	if len(e.staves) == 0 || len(e.bars) == 0 {
 		return &List{Width: 2 * margin, Height: 2 * margin}
@@ -207,9 +226,21 @@ type staffCtx struct {
 	bottom      int            // diatonic of the bottom line
 	iv          score.Interval // sounding → written; zero when concert
 	transposed  bool
-	// percussion shows drums by place and notehead (score.DrumDisplay),
-	// with no key and no accidentals.
+	// percussion shows drums by place and notehead (its kit, the line's
+	// instrument's drum map), with no key and no accidentals, on lines
+	// lines (five, or fewer for a single drum).
 	percussion bool
+	kit        *score.Kit
+	lines      int
+	// tab draws the staff as tablature (tab.go): string lines tabGap
+	// apart, fret numbers on them; tabOnly with the rhythm under it, as
+	// the staff's only view. A notation staff with tablature linked under
+	// it is two staffCtxs over one score staff.
+	tab     *score.Tab
+	tabOnly bool
+	// chords are the line's chord symbols drawn over the staff,
+	// staff-local.
+	chords     []ChordBox
 	first, end bool // first / last staff of its line
 	nStaves    int  // staves in its line
 	// ottavas are the staff's ottava lines (score.Ottavas).
@@ -276,6 +307,10 @@ type barCtx struct {
 	// dynHead and dynTail are, per staff, how far the first column's
 	// dynamics reach left and the last note column's right (dynamicRods).
 	dynHead, dynTail map[*staffCtx]float64
+	// The first and last syllable of each line of words and the first and
+	// last chord symbol of each line, for the rods across the barlines.
+	lyrHead, lyrTail map[lyricKey]lyricEdge
+	chdHead, chdTail map[*staffCtx]lyricEdge
 }
 
 // column is one onset of a bar, shared by every staff.
@@ -343,6 +378,11 @@ type ev struct {
 	tupInTop, tupInBot float64
 	graces             []*ev // grace notes before this one (main events only)
 	nextEv             *ev   // the next main event of the voice (ties)
+	// cross is a cross-staff event's other staff (-1 above, 1 below; 0 its
+	// own), crossY that staff's top line in this staff's coordinates: its
+	// notes are placed there (cross.go).
+	cross  int
+	crossY float64
 }
 
 // nt is one note of a chord.
@@ -363,6 +403,12 @@ type nt struct {
 	ev      *ev
 	// head is a percussion note's own notehead ("" for the event's).
 	head string
+	// art is a percussion note's articulation from its kit ("open").
+	art string
+	// str and fret are a tablature note's place (tab.go); tabOK is false
+	// for one the tuning cannot reach.
+	str, fret int
+	tabOK     bool
 }
 
 func newEngraver(s *score.Score, o Options) *engraver {
@@ -391,13 +437,15 @@ func newEngraver(s *score.Score, o Options) *engraver {
 			continue
 		}
 		l := s.Lines[li]
+		first := len(e.staves)
 		for si, st := range l.Staves {
 			clef := st.ClefAt(score.Pos{Bar: e.from})
 			sc := &staffCtx{line: li, staff: si, st: st, clef: clef, bottom: clefBottom(clef),
-				first: si == 0, end: si == len(l.Staves)-1, nStaves: len(l.Staves), percussion: st.Clef == "percussion"}
+				first: si == 0, nStaves: len(l.Staves), percussion: st.Percussion(), lines: 5}
 			if sc.percussion {
 				// A drum staff does not transpose, change clef or take ottavas.
 				sc.clef, sc.bottom = st.Clef, clefBottom(st.Clef)
+				sc.kit, sc.lines = e.kitFor(l), st.StaffLines()
 			} else {
 				if !e.concert && (st.Transpose.Diatonic != 0 || st.Transpose.Chromatic != 0) {
 					sc.iv = score.Interval{Diatonic: -st.Transpose.Diatonic, Chromatic: -st.Transpose.Chromatic}
@@ -405,10 +453,21 @@ func newEngraver(s *score.Score, o Options) *engraver {
 				}
 				sc.ottavas = s.Ottavas(st)
 			}
-			if si == len(l.Staves)-1 {
-				sc.lane = o.Below[li]
+			if st.Tab != nil && st.Tab.Strings() > 0 && !sc.percussion {
+				// The tablature under the notation (or instead of it): the
+				// same staff's music on the strings.
+				tc := &staffCtx{line: li, staff: si, st: st, clef: "tab", tab: st.Tab, tabOnly: st.Tab.Only,
+					nStaves: len(l.Staves), first: si == 0 && st.Tab.Only, lines: st.Tab.Strings()}
+				if !st.Tab.Only {
+					e.staves = append(e.staves, sc)
+				}
+				sc = tc
 			}
 			e.staves = append(e.staves, sc)
+		}
+		if n := len(e.staves); n > first {
+			e.staves[n-1].end = true
+			e.staves[n-1].lane = o.Below[li]
 		}
 	}
 	prevMeter, prevKey := score.Meter{}, 0
@@ -482,6 +541,13 @@ func (e *engraver) collect() {
 			e.prepareBar(sb)
 		}
 	}
+	// Accidentals once every staff is read: a cross-staff note's are
+	// reckoned on the staff it is written on.
+	for _, sc := range e.staves {
+		for bi, sb := range sc.bars {
+			e.accidentals(sb, e.crossedInto(sc, bi))
+		}
+	}
 	e.columns()
 	if e.o.MultiRests {
 		e.foldRests()
@@ -492,9 +558,16 @@ func (e *engraver) collect() {
 // collectVoice reads one voice over the layout's bars, linking ties across
 // bars (and from the bar before the layout's first).
 func (e *engraver) collectVoice(sc *staffCtx, vi int, v *score.Voice) {
+	var places [][][]score.TabNote // a tablature's strings, the whole voice walked
+	if sc.tab != nil {
+		places = sc.tab.VoicePlaces(v)
+	}
 	var prev *ev // the previous main event, across bars
 	if e.from > 1 {
 		prev = e.lastEventBefore(sc, vi, v, e.from-1)
+		if prev != nil && sc.tab != nil {
+			e.placeTab(sc, prev, places)
+		}
 	}
 	for bi, bc := range e.bars {
 		sb := sc.bars[bi]
@@ -509,6 +582,9 @@ func (e *engraver) collectVoice(sc *staffCtx, vi int, v *score.Voice) {
 		for ei := range m.Events {
 			se := &m.Events[ei]
 			x := e.newEv(sb, vi, bc.bar, ei, se, offs[ei], m)
+			if sc.tab != nil {
+				e.placeTab(sc, x, places)
+			}
 			if whole && x.rest {
 				x.barRest = true // a whole rest filling the bar sits in its middle
 			}
@@ -588,6 +664,13 @@ func (e *engraver) newEv(sb *staffBar, vi, bar, ei int, se *score.Event, onset s
 			at := score.Pos{Bar: bar, Offset: onset}
 			x.bottom = clefBottom(sc.st.ClefAt(at))
 			x.ottava = ottavaAt(sc.ottavas, at)
+			// Written on the other staff: its clef and ottava, placed where
+			// that staff will stand.
+			if t, off, ok := e.crossTarget(sc, se.CrossStaff()); ok && bar >= e.from {
+				x.cross, x.crossY = se.CrossStaff(), off
+				x.bottom = clefBottom(t.st.ClefAt(at))
+				x.ottava = ottavaAt(t.ottavas, at)
+			}
 		}
 		shared, same := score.DrumHead(0), true
 		for k, n := range se.Notes {
@@ -600,14 +683,14 @@ func (e *engraver) newEv(sb *staffBar, vi, bar, ei int, se *score.Event, onset s
 			p.Octave -= int8(x.ottava)
 			q := &nt{idx: k, p: p, pos: p.Diatonic() - x.bottom, tie: n.Tie, ev: x}
 			if sc.percussion {
-				pos, h := score.DrumDisplay(n.Pitch)
-				q.p, q.pos, q.head = score.FromDiatonic(pos+sc.bottom), pos, drumHeadGlyph(h, x.base)
+				pos, h, art := sc.kit.Display(n.Pitch)
+				q.p, q.pos, q.head, q.art = score.FromDiatonic(pos+sc.bottom), pos, drumHeadGlyph(h, x.base), art
 				if k == 0 {
 					shared = h
 				}
 				same = same && h == shared
 			}
-			q.y = 4 - float64(q.pos)/2
+			q.y = 4 - float64(q.pos)/2 + x.crossY
 			switch {
 			case sc.percussion:
 				// Drums have no accidentals.
@@ -618,7 +701,10 @@ func (e *engraver) newEv(sb *staffBar, vi, bar, ei int, se *score.Event, onset s
 			}
 			x.notes = append(x.notes, q)
 		}
-		sort.SliceStable(x.notes, func(i, j int) bool { return x.notes[i].pos < x.notes[j].pos })
+		if sc.tab == nil {
+			// (A tablature's are put on their strings by placeTab.)
+			sort.SliceStable(x.notes, func(i, j int) bool { return x.notes[i].pos < x.notes[j].pos })
+		}
 		x.hasStem = x.base >= score.Half
 		if sc.percussion && same {
 			x.head = drumHeadGlyph(shared, x.base)
@@ -632,12 +718,62 @@ func (e *engraver) newEv(sb *staffBar, vi, bar, ei int, se *score.Event, onset s
 }
 
 // key is the key signature a staff shows for a concert key: none on a
-// percussion staff.
+// percussion staff or tablature.
 func (sc *staffCtx) key(fifths int) int {
-	if sc.percussion {
+	if sc.percussion || sc.tab != nil {
 		return 0
 	}
 	return writtenFifths(fifths, sc.iv)
+}
+
+// height is how far the staff's bottom line is below its top line: four
+// spaces, or a tablature's strings (tabGap apart).
+func (sc *staffCtx) height() float64 {
+	if sc.tab != nil {
+		return float64(sc.lines-1) * tabGap
+	}
+	return 4
+}
+
+// mid is the y of the staff's middle: where a time signature centres.
+func (sc *staffCtx) mid() float64 { return sc.height() / 2 }
+
+// lineYs are the y of the staff's lines: five from 0 to 4; a percussion
+// staff's fewer centred on the middle line; a tablature's strings.
+func (sc *staffCtx) lineYs() []float64 {
+	n := max(sc.lines, 1)
+	out := make([]float64, n)
+	for i := range out {
+		if sc.tab != nil {
+			out[i] = float64(i) * tabGap
+		} else {
+			out[i] = 2 - float64(n-1)/2 + float64(i)
+		}
+	}
+	return out
+}
+
+// barY is how far a staff's barlines reach: its top and bottom lines, a
+// space either side of a one- or two-line staff's.
+func (sc *staffCtx) barY() (float64, float64) {
+	ys := sc.lineYs()
+	y0, y1 := ys[0], ys[len(ys)-1]
+	if sc.tab == nil && sc.lines < 3 {
+		y0, y1 = math.Min(y0, 1), math.Max(y1, 3)
+	}
+	return y0, y1
+}
+
+// kitFor is the drum map a line's percussion staves read: its
+// instrument's (score.KitFor), or what Options.Kits gives.
+func (e *engraver) kitFor(l *score.Line) *score.Kit {
+	if e.o.Kits != nil {
+		if k := e.o.Kits(l.Instrument); k != nil {
+			return k
+		}
+		return score.GMKit
+	}
+	return score.KitFor(l.Instrument)
 }
 
 // linkTies joins the tied notes of a to the same written pitch in b.
@@ -715,7 +851,6 @@ func (e *engraver) prepareBar(sb *staffBar) {
 		e.beamVoice(sb, vi, v)
 		e.tupletSpans(sb, vi, v)
 	}
-	e.accidentals(sb)
 }
 
 // stemUp decides a lone event's stem: a mark, the voice in multi-voice
@@ -763,16 +898,18 @@ func autoUp(ps []int) bool {
 
 // accidentals decides which notes show theirs: per staff and bar, every
 // voice together in time order, against the key; a tied-over note neither
-// shows one nor sets the bar's state.
-func (e *engraver) accidentals(sb *staffBar) {
+// shows one nor sets the bar's state. A cross-staff note counts on the
+// staff it is written on (crossed: the other staves' notes written here).
+func (e *engraver) accidentals(sb *staffBar, crossed []*ev) {
 	var all []*ev
 	for _, v := range sb.voices {
 		for _, x := range v {
-			if len(x.notes) > 0 {
+			if len(x.notes) > 0 && x.cross == 0 {
 				all = append(all, x)
 			}
 		}
 	}
+	all = append(all, crossed...)
 	// Time order; at one time grace notes before the main notes, each
 	// voice's in its written order.
 	sort.SliceStable(all, func(i, j int) bool {
@@ -862,7 +999,7 @@ func (e *engraver) altersBefore(sb *staffBar) map[int]int {
 	}
 	courtesy := e.o.Courtesy
 	e.o.Courtesy = false // the bar before needs no bar before it
-	e.accidentals(pb)
+	e.accidentals(pb, nil)
 	e.o.Courtesy = courtesy
 	return pb.alters
 }
@@ -1000,8 +1137,8 @@ func (e *engraver) barlineWidth(k barlineKind) float64 {
 
 // clefAtBar is the clef a staff reads at a bar's start.
 func (sc *staffCtx) clefAtBar(bar int) string {
-	if sc.percussion {
-		return sc.st.Clef
+	if sc.percussion || sc.tab != nil {
+		return sc.clef
 	}
 	return sc.st.ClefAt(score.Pos{Bar: bar})
 }
@@ -1025,7 +1162,7 @@ func (e *engraver) finish() *List {
 	// Stack the staves by their ink.
 	y := 0.0
 	for i, sc := range e.staves {
-		sc.ext = staffExtent(e.f, sc.items)
+		sc.ext = staffExtent(e.f, sc.items, sc.height())
 		if i == 0 {
 			sc.top = 0
 		} else {
@@ -1034,12 +1171,23 @@ func (e *engraver) finish() *List {
 			if !sc.first {
 				gap = grandGap
 			}
-			below := math.Max(0, p.ext.Max.Y-4)
+			ph := p.height()
+			below := math.Max(0, p.ext.Max.Y-ph)
 			if p.lane > 0 {
 				below += 2*lanePad + p.lane
 			}
 			above := math.Max(0, -sc.ext.Min.Y)
-			sc.top = p.top + 4 + math.Max(gap, below+above+inkPad)
+			if sc.tab != nil && !sc.tabOnly {
+				gap = tabGapAbove // a linked tablature sits close under its notation
+			}
+			sc.top = p.top + ph + math.Max(gap, below+above+inkPad)
+			if len(e.o.StaffSteps) == len(e.staves) {
+				sc.top = math.Max(sc.top, p.top+e.o.StaffSteps[i])
+			}
+			if len(e.o.crossSteps) == len(e.staves) && e.o.crossSteps[i] > 0 {
+				// Fixed: a cross-staff note stands where this staff is.
+				sc.top = p.top + e.o.crossSteps[i]
+			}
 		}
 		y = sc.top
 	}
@@ -1054,13 +1202,21 @@ func (e *engraver) finish() *List {
 
 	for _, sc := range e.staves {
 		sb := StaffBox{Line: sc.line, Staff: sc.staff, Top: sc.top, Clef: sc.clef, Bottom: sc.bottom,
-			Fifths: sc.key(e.bars[0].fifths), Transposed: sc.transposed, Extent: sc.ext.Offset(Point{X: 0, Y: sc.top})}
+			Fifths: sc.key(e.bars[0].fifths), Transposed: sc.transposed, Extent: sc.ext.Offset(Point{X: 0, Y: sc.top}),
+			Lines: sc.lines, Height: sc.height(), Tab: sc.tab != nil}
+		if sc.tab != nil {
+			sb.LineGap = tabGap
+		}
 		for _, cm := range sc.clefMarks {
 			sb.Changes = append(sb.Changes, ClefSpan{X: cm.x, Clef: cm.clef, Bottom: clefBottom(cm.clef)})
 		}
 		l.Staves = append(l.Staves, sb)
+		for _, cb := range sc.chords {
+			cb.Box = cb.Box.Offset(Point{X: 0, Y: sc.top})
+			l.Chords = append(l.Chords, cb)
+		}
 		if sc.lane > 0 {
-			l.Lanes = append(l.Lanes, LaneBox{Line: sc.line, Top: sc.top + math.Max(4, sc.ext.Max.Y) + lanePad, Height: sc.lane})
+			l.Lanes = append(l.Lanes, LaneBox{Line: sc.line, Top: sc.top + math.Max(sc.height(), sc.ext.Max.Y) + lanePad, Height: sc.lane})
 		}
 	}
 	for _, bc := range e.bars {
@@ -1084,7 +1240,8 @@ func (e *engraver) finish() *List {
 	}
 	b := l.Bounds()
 	// The staves themselves count even where nothing is drawn beyond them.
-	b = b.Union(Rect{Min: Point{X: 0, Y: 0}, Max: Point{X: e.bars[len(e.bars)-1].x1, Y: e.staves[len(e.staves)-1].top + 4}})
+	ls := e.staves[len(e.staves)-1]
+	b = b.Union(Rect{Min: Point{X: 0, Y: 0}, Max: Point{X: e.bars[len(e.bars)-1].x1, Y: ls.top + ls.height()}})
 	for _, ln := range l.Lanes {
 		b = b.Union(Rect{Min: Point{X: 0, Y: ln.Top}, Max: Point{X: e.bars[len(e.bars)-1].x1, Y: ln.Top + ln.Height + lanePad}})
 	}
@@ -1094,9 +1251,9 @@ func (e *engraver) finish() *List {
 	return l
 }
 
-// staffExtent is a staff's ink, never less than its five lines.
-func staffExtent(f *glyph.Font, items []Item) Rect {
-	r := Rect{Min: Point{X: 0, Y: 0}, Max: Point{X: 0, Y: 4}}
+// staffExtent is a staff's ink, never less than its lines (h tall).
+func staffExtent(f *glyph.Font, items []Item, h float64) Rect {
+	r := Rect{Min: Point{X: 0, Y: 0}, Max: Point{X: 0, Y: h}}
 	for i := range items {
 		b := itemBounds(f, &items[i])
 		r.Min.Y, r.Max.Y = math.Min(r.Min.Y, b.Min.Y), math.Max(r.Max.Y, b.Max.Y)

@@ -1140,3 +1140,202 @@ func itemsBy(l *List, role Role, bar, voice, event int) []Item {
 	}
 	return out
 }
+
+// In compound time the 16ths' beam breaks at each eighth of the dotted
+// beat: six 16ths are one primary beam and three pairs; in simple time
+// four 16ths keep one secondary beam.
+func TestSecondaryBeamsBreakInCompoundBeats(t *testing.T) {
+	count := func(meter, voice string) int {
+		s := one(t, "treble", voice)
+		m, _ := score.ParseMeter(meter)
+		s.Meter = []score.MeterMark{{Bar: 1, Meter: m}}
+		l := Engrave(s, Options{})
+		n := 0
+		for _, it := range l.Items {
+			if it.Role == RoleBeam && it.Ref.Bar == 1 && it.Ref.Event < 6 {
+				n++
+			}
+		}
+		return n
+	}
+	if n := count("6/8", "| sC5 sD5 sE5 sF5 sG5 sA5 q.B5 |"); n != 4 {
+		t.Errorf("6/8: %d beams over six 16ths, want 4 (the primary and three pairs)", n)
+	}
+	if n := count("2/4", "| sC5 sD5 sE5 sF5 qG5 |"); n != 2 {
+		t.Errorf("2/4: %d beams over four 16ths, want 2", n)
+	}
+}
+
+// In two voices an outward stem from a note outside the staff is shortened
+// to two and a half spaces; one from inside it keeps the standard octave.
+func TestOutwardStemsShorten(t *testing.T) {
+	s := one(t, "treble", "| qA5 qD5 hr |", "| qC4 qG4 hr |")
+	l := Engrave(s, Options{})
+	length := func(voice, event int) float64 {
+		for _, it := range l.Items {
+			if it.Role == RoleStem && it.Ref.Voice == voice && it.Ref.Event == event && it.Ref.Bar == 1 {
+				return math.Abs(it.Q.Y - it.P.Y)
+			}
+		}
+		t.Fatalf("no stem for voice %d event %d", voice, event)
+		return 0
+	}
+	// From the notehead's stem anchor, so a little short of the full value.
+	if a, d := length(0, 0), length(0, 1); math.Abs(a-d) < 0.8 || a > 2.6 || d < 3.2 {
+		t.Errorf("A5's stem %.2f, D5's %.2f: want about 2.5 and 3.5", a, d)
+	}
+	if c := length(1, 0); c > 2.6 {
+		t.Errorf("the lower voice's C4 stem %.2f: want about 2.5", c)
+	}
+	// One voice alone: no shortening.
+	single := Engrave(one(t, "treble", "| qC4 qr hr |"), Options{})
+	for _, it := range single.Items {
+		if it.Role == RoleStem && math.Abs(it.Q.Y-it.P.Y) < 3.2 {
+			t.Errorf("a single voice's stem %.2f", math.Abs(it.Q.Y-it.P.Y))
+		}
+	}
+}
+
+// Cross-staff notes stand on the other staff of the grand staff, with its
+// clef; a beam joining both staves is flat in the gap between them, each
+// note's stem reaching it from its own side.
+func TestCrossStaffNotes(t *testing.T) {
+	s := score.New("t")
+	l := score.NewLine("Piano", "keys/piano", "treble")
+	l.Staves = append(l.Staves, &score.Staff{Clef: "bass"})
+	up, _ := score.ParseVoice("| wE5 |")
+	low, _ := score.ParseVoice("| eC3 eG3 eC4(cross=up) eE4(cross=up) hC3 |")
+	l.Staves[0].Voices = []*score.Voice{up}
+	l.Staves[1].Voices = []*score.Voice{low}
+	s.Lines = []*score.Line{l}
+	s.Bars = 1
+	ls := Engrave(s, Options{})
+	treble, bass := ls.Staves[0], ls.Staves[1]
+	if d := bass.Top - treble.Top; d < crossMinStep-1e-9 {
+		t.Errorf("staves %.2f apart, want at least %.1f for the kneed beam", d, crossMinStep)
+	}
+	heads := map[int]Item{}
+	for _, it := range ls.Items {
+		if it.Role == RoleNotehead && it.Ref.Staff == 1 {
+			heads[it.Ref.Event] = it
+		}
+	}
+	// C4 is a ledger line under the treble staff: one space under its
+	// bottom line; E4 on the bottom line.
+	if y := heads[2].P.Y - treble.Top; math.Abs(y-5) > 1e-6 {
+		t.Errorf("C4 at %.2f under the treble top, want 5", y)
+	}
+	if y := heads[3].P.Y - treble.Top; math.Abs(y-4) > 1e-6 {
+		t.Errorf("E4 at %.2f, want 4", y)
+	}
+	if y := heads[0].P.Y - bass.Top; math.Abs(y-2.5) > 1e-6 {
+		t.Errorf("C3 stays on the bass staff (its second space): %.2f", y)
+	}
+	// The beam: flat, between the treble's bottom and the bass's top.
+	var beams []Item
+	for _, it := range ls.Items {
+		if it.Role == RoleBeam && it.Ref.Staff == 1 {
+			beams = append(beams, it)
+		}
+	}
+	if len(beams) != 1 {
+		t.Fatalf("%d beams", len(beams))
+	}
+	b := ItemBounds(&beams[0])
+	if b.Min.Y < treble.Top+4 || b.Max.Y > bass.Top || b.H() > 0.6 {
+		t.Errorf("the beam %v is not flat in the gap (%v..%v)", b, treble.Top+4, bass.Top)
+	}
+	// Stems: the bass notes' up to it, the crossed ones' down to it.
+	for _, it := range ls.Items {
+		if it.Role != RoleStem || it.Ref.Staff != 1 || it.Ref.Event > 3 {
+			continue
+		}
+		top, bot := math.Min(it.P.Y, it.Q.Y), math.Max(it.P.Y, it.Q.Y)
+		if it.Ref.Event < 2 && math.Abs(top-b.Min.Y) > 0.6 {
+			t.Errorf("bass stem %d does not reach up to the beam: %v..%v", it.Ref.Event, top, bot)
+		}
+		if it.Ref.Event >= 2 && math.Abs(bot-b.Max.Y) > 0.6 {
+			t.Errorf("crossed stem %d does not reach down to the beam: %v..%v", it.Ref.Event, top, bot)
+		}
+	}
+	// One ledger line: C4's, at the treble's.
+	ledgers := 0
+	for _, it := range ls.Items {
+		if it.Role == RoleLedger && it.Ref.Staff == 1 {
+			ledgers++
+			if math.Abs(it.P.Y-(treble.Top+5)) > 1e-6 {
+				t.Errorf("a ledger at %.2f, want the treble's first one under", it.P.Y)
+			}
+		}
+	}
+	if ledgers != 1 {
+		t.Errorf("%d ledger lines", ledgers)
+	}
+	// A line of one staff has nowhere to cross to: the note stays.
+	solo := one(t, "treble", "| qC4(cross=down) qD4 hE4 |")
+	sl := Engrave(solo, Options{})
+	for _, it := range sl.Items {
+		if it.Role == RoleNotehead && it.Ref.Event == 0 && math.Abs(it.P.Y-sl.Staves[0].Top-5) > 1e-6 {
+			t.Errorf("C4 moved with no staff to go to: %.2f", it.P.Y-sl.Staves[0].Top)
+		}
+	}
+	if is := solo.Validate(nil); !strings.Contains(fmt.Sprint(is), "no staff below") {
+		t.Errorf("validation: %v", is)
+	}
+}
+
+// A crossed note's accidental is reckoned on the staff it is written on:
+// an F# there earlier in the bar needs none again, and a crossed F# needs
+// its sharp though its own staff had one.
+func TestCrossStaffAccidentals(t *testing.T) {
+	s := score.New("t")
+	l := score.NewLine("Piano", "keys/piano", "treble")
+	l.Staves = append(l.Staves, &score.Staff{Clef: "bass"})
+	up, _ := score.ParseVoice("| qF#4 qr hr |")
+	low, _ := score.ParseVoice("| qF#2 qr qF#4(cross=up) qF#4(cross=up) |")
+	l.Staves[0].Voices = []*score.Voice{up}
+	l.Staves[1].Voices = []*score.Voice{low}
+	s.Lines = []*score.Line{l}
+	s.Bars = 1
+	ls := Engrave(s, Options{})
+	acc := map[[2]int]int{}
+	for _, it := range ls.Items {
+		if it.Role == RoleAccidental {
+			acc[[2]int{it.Ref.Staff, it.Ref.Event}]++
+		}
+	}
+	if acc[[2]int{0, 0}] != 1 || acc[[2]int{1, 0}] != 1 {
+		t.Errorf("each staff's own F#: %v", acc)
+	}
+	if acc[[2]int{1, 2}] != 0 || acc[[2]int{1, 3}] != 0 {
+		t.Errorf("the crossed F#4s follow the treble's F#4: %v", acc)
+	}
+}
+
+// A crossed note a second from the other staff's note at the same moment
+// moves beside it, as two voices would.
+func TestCrossStaffNotesSitBesideTheOthers(t *testing.T) {
+	s := score.New("t")
+	l := score.NewLine("Piano", "keys/piano", "treble")
+	l.Staves = append(l.Staves, &score.Staff{Clef: "bass"})
+	up, _ := score.ParseVoice("| hE4 hr |")
+	low, _ := score.ParseVoice("| qF4(cross=up) qC3 hr |")
+	l.Staves[0].Voices = []*score.Voice{up}
+	l.Staves[1].Voices = []*score.Voice{low}
+	s.Lines = []*score.Line{l}
+	s.Bars = 1
+	ls := Engrave(s, Options{})
+	var e4, f4 Rect
+	for _, it := range ls.Items {
+		if it.Role == RoleNotehead && it.Ref.Event == 0 {
+			if it.Ref.Staff == 0 {
+				e4 = ItemBounds(&it)
+			} else {
+				f4 = ItemBounds(&it)
+			}
+		}
+	}
+	if f4.Min.X < e4.Max.X-0.05 {
+		t.Errorf("the crossed F4 %v overlaps the treble's E4 %v", f4, e4)
+	}
+}

@@ -632,3 +632,98 @@ func TestTallSystemsShrinkTheStaff(t *testing.T) {
 		t.Errorf("eighty-four lines at %.1f mm", b.Staff)
 	}
 }
+
+// A page's systems set their staves the same distance apart: the most any
+// of them needs, so a line keeps its place down the page.
+func TestStaffSpacingIsUniformOnAPage(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 8
+	s.Layout.Breaks = []score.Break{{Bar: 3}, {Bar: 5}, {Bar: 7}}
+	hi := score.NewLine("Flute", "woodwinds/flute", "treble")
+	lo := score.NewLine("Oboe", "woodwinds/oboe", "treble")
+	// The oboe climbs high in bars 3-4 only: that system needs more room
+	// between the staves than the others.
+	fv, _ := score.ParseVoice("| wC5 | wC5 | wC5 | wC5 | wC5 | wC5 | wC5 | wC5 |")
+	ov, _ := score.ParseVoice("| wC5 | wC5 | wC7 | wD7 | wC5 | wC5 | wC5 | wC5 |")
+	hi.Staves[0].Voices = []*score.Voice{fv}
+	lo.Staves[0].Voices = []*score.Voice{ov}
+	s.Lines = []*score.Line{hi, lo}
+	b := ScoreBook(s, false)
+	checkBook(t, s, b, s.Layout)
+	if len(b.Pages) != 1 || len(b.Pages[0].Systems) != 4 {
+		t.Fatalf("%d pages, %d systems on the first", len(b.Pages), len(b.Pages[0].Systems))
+	}
+	var steps []float64
+	for _, sys := range b.Pages[0].Systems {
+		st := sys.List.Staves
+		steps = append(steps, st[1].Top-st[0].Top)
+	}
+	for i := 1; i < len(steps); i++ {
+		if math.Abs(steps[i]-steps[0]) > 1e-9 {
+			t.Errorf("staff steps differ down the page: %v", steps)
+			break
+		}
+	}
+	// And they are the high system's, not the others' natural distance.
+	natural := Engrave(s, Options{From: 1, To: 2})
+	if d := natural.Staves[1].Top - natural.Staves[0].Top; steps[0] <= d+0.5 {
+		t.Errorf("uniform step %v is not the high system's (a plain one's is %v)", steps[0], d)
+	}
+}
+
+// With hide_empty a system after the first leaves out the lines with no
+// notes in its bars; the first shows every line; without it every system
+// does.
+func TestHideEmptyStaves(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 6
+	s.Layout.Breaks = []score.Break{{Bar: 3}, {Bar: 5}}
+	s.Layout.HideEmpty = true
+	mk := func(name, inst, text string) *score.Line {
+		l := score.NewLine(name, inst, "treble")
+		v, err := score.ParseVoice(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Staves[0].Voices = []*score.Voice{v}
+		return l
+	}
+	s.Lines = []*score.Line{
+		mk("Flute", "woodwinds/flute", "| wC5 | wC5 | wC5 | wC5 | wC5 | wC5 |"),
+		mk("Horn", "brass/horn", "| wr | wr | wr | wr | wr | wr |"),
+		mk("Violins", "strings/violin_section", "| wr | wr | wr | wr | wC5 | wC5 |"),
+	}
+	b := ScoreBook(s, false)
+	checkBook(t, s, b, s.Layout)
+	var counts []int
+	var names []string
+	for _, pg := range b.Pages {
+		for _, sys := range pg.Systems {
+			lines := map[int]bool{}
+			for _, st := range sys.List.Staves {
+				lines[st.Line] = true
+			}
+			counts = append(counts, len(lines))
+		}
+		for _, it := range pg.Items {
+			if it.Role == RoleName {
+				names = append(names, it.Text)
+			}
+		}
+	}
+	if fmt.Sprint(counts) != "[3 1 2]" {
+		t.Errorf("lines per system %v, want [3 1 2]", counts)
+	}
+	if strings.Count(strings.Join(names, " "), "Hn.") != 0 {
+		t.Errorf("a hidden line's name printed: %v", names)
+	}
+	s.Layout.HideEmpty = false
+	b = ScoreBook(s, false)
+	for _, pg := range b.Pages {
+		for _, sys := range pg.Systems {
+			if len(sys.List.Staves) != 3 {
+				t.Errorf("hide_empty off: a system of %d staves", len(sys.List.Staves))
+			}
+		}
+	}
+}

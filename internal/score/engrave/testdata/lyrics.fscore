@@ -1,0 +1,19 @@
+version: 1
+title: Lyrics and chords
+tempo: [{bar: 1, bpm: 84, text: Andante}]
+key: [{bar: 1, fifths: 1, mode: major}]
+lines:
+- name: Voice
+  instrument: choir/choir
+  chords: [{at: "1", sym: G}, {at: "1:3", sym: Em7}, {at: "2", sym: Am7}, {at: "2:3", sym: D7b9/F#}, {at: "3", sym: Cmaj7}, {at: "3:2", sym: "C#m7b5"}, {at: "3:3", sym: F#7alt}, {at: "4", sym: Bm11}, {at: "4:3", sym: Bbdim7}, {at: "5", sym: Gsus4}, {at: "5:3", sym: G6/9}, {at: "6", sym: N.C.}]
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qD4(mf,ly=A-,ly2=Glo-) qG4(ly=ma-,ly2=ri-) qA4(ly=zing,ly2=a) qB4(ly=grace,ly2=in)
+      | h.D5(ly=how_,ly2=ex_) qB4(ly=sweet,ly2=cel-)
+      | qA4(ly=the,ly2=sis) eG4(ly=sound_,ly2=De_) eA4 hB4
+      | qA4(ly=that,ly2=o) q.G4(ly=saved,ly2=De-) eE4 qD4(ly=a,ly2=o)
+      | wG4(ly=wretch_,ly2=lux_)
+      | hG4(ly=like,ly2=a) hr
+      |

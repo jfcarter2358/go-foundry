@@ -1,0 +1,29 @@
+version: 1
+title: Tablature
+key: [{bar: 1, fifths: 0, mode: major}]
+lines:
+- name: Guitar
+  instrument: plucked/guitar_nylon
+  chords: [{at: "1", sym: C}, {at: "2", sym: Am}, {at: "3", sym: G7}, {at: "4", sym: C}]
+  staves:
+  - clef: treble_8vb
+    tab: {tuning: guitar}
+    voices:
+    - |
+      | qC3+E3+G3+C4+E4 eC4 eD4 qE4 qG4~
+      | eG4 eA4 eE4(str=2) eC4 qA3+C4+E4 qA2
+      | q.G2+B2+D3+G3+B3+F4 eD4 tB3 tC4 tD4 tB3 eG3 qr
+      | wC3+G3+C4+E4
+      |
+- name: Bass
+  instrument: bass/bass_finger
+  staves:
+  - clef: bass
+    tab: {tuning: bass, only: true}
+    voices:
+    - |
+      | qC2 qG1 eC2 eE2 qG2
+      | hA1 q.E2 eA1
+      | qG1 qB1 sD2 sF2 sG2 sB2 qG2
+      | wC2
+      |

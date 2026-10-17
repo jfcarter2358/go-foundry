@@ -38,6 +38,7 @@ import (
 
 	"foundry/internal/audio"
 	"foundry/internal/imguibackend"
+	"foundry/internal/score"
 	"foundry/internal/score/io/instimport"
 	"foundry/internal/score/io/sf2"
 	"foundry/internal/score/io/sfz"
@@ -83,6 +84,11 @@ var scoreLibrary struct {
 	presetErr  string
 	result     chan scoreLibImportResult
 	lastImport []string
+
+	// edit is the selected instrument's notation settings, open for
+	// editing (editor_score_instedit.go); openEdit opens their panel.
+	edit     *scoreInstEdit
+	openEdit bool
 }
 
 // scoreLibImportResult is a finished background import.
@@ -694,6 +700,212 @@ func scoreLibDetails(en scoreLibEntry) {
 		}
 	}
 	editorMenuTooltip("Hear the instrument by itself (the line keeps its own until you choose)")
+	imgui.SameLine()
+	if imgui.Button("Open in Instrument Editor##sclibedit") {
+		if err := scoreOpenInInstrumentEditor(en.Name); err != nil {
+			scEd.Status = err.Error()
+		} else {
+			scEd.Status = "The Tracker's instrument editor has " + en.Name + ": Save to library there writes it back"
+		}
+	}
+	editorMenuTooltip("Its samples, zones, velocity layers, envelopes and filter, in the Tracker's\ninstrument editor; Save to library there writes the .finst back.")
+	scoreLibEditPanel(en)
+}
+
+// scoreLibEditPanel edits the selected instrument's notation settings:
+// what a new line takes, how it plays, its drum map, the words that pick
+// its articulations.
+func scoreLibEditPanel(en scoreLibEntry) {
+	L := &scoreLibrary
+	if en.Inst == nil {
+		return
+	}
+	scrollTo := L.openEdit
+	if L.openEdit {
+		imgui.SetNextItemOpen(true, imgui.ConditionAlways)
+		L.openEdit = false
+	}
+	if !imgui.CollapsingHeader("Notation and playback##sclibnp") {
+		return
+	}
+	if scrollTo {
+		imgui.SetScrollHereY(0)
+	}
+	if L.edit == nil || L.edit.Name != en.Name {
+		ie, err := scoreOpenInstEdit(en.Name)
+		if err != nil {
+			editorTextMuted(err.Error())
+			return
+		}
+		L.edit = ie
+	}
+	ie := L.edit
+	pb := &ie.In.Playback
+	mark := func(changed bool) {
+		if changed {
+			ie.Dirty = true
+		}
+	}
+	imgui.SetNextItemWidth(70)
+	mark(imgui.InputTextWithHint("##sclibelo", "lowest", &ie.Low))
+	imgui.SameLine()
+	imgui.SetNextItemWidth(70)
+	mark(imgui.InputTextWithHint("Range##sclibehi", "highest", &ie.High))
+	editorMenuTooltip("The playable range, sounding pitch (G3, Bb5); empty is unbounded.")
+	imgui.SetNextItemWidth(150)
+	clef := pb.Clef
+	if clef == "" {
+		clef = "(treble)"
+	}
+	if imguibackend.BeginCombo("Clef##sclibeclef", clef) {
+		for _, c := range append([]string{"grand"}, score.StaffClefs()...) {
+			if imguibackend.SelectableV(c+"##sclibec", c == pb.Clef, 0, imgui.Vec2{}) {
+				pb.Clef, ie.Dirty = c, true
+			}
+		}
+		imguibackend.EndCombo()
+	}
+	tr := int32(pb.Transposition)
+	imgui.SetNextItemWidth(150)
+	if imgui.InputInt("Transposition##sclibetr", &tr) {
+		pb.Transposition, ie.Dirty = int(max(-36, min(36, tr))), true
+	}
+	editorMenuTooltip("Written to sounding in semitones: -2 a B-flat clarinet, -7 a horn in F.")
+	imgui.SetNextItemWidth(150)
+	if imguibackend.BeginCombo("Glissando##sclibegl", pb.Gliss.String()) {
+		for _, g := range []tracker.GlissStyle{tracker.GlissSlide, tracker.GlissChromatic, tracker.GlissDiatonic} {
+			if imguibackend.SelectableV(g.String()+"##sclibeg", g == pb.Gliss, 0, imgui.Vec2{}) {
+				pb.Gliss, ie.Dirty = g, true
+			}
+		}
+		imguibackend.EndCombo()
+	}
+	st := pb.StaccatoLength()
+	imgui.SetNextItemWidth(150)
+	if imgui.SliderFloatV("Staccato length##sclibest", &st, 0.1, 1, "%.2f", 0) {
+		pb.Staccato, ie.Dirty = st, true
+	}
+	rel := pb.Release
+	imgui.SetNextItemWidth(150)
+	if imgui.SliderFloatV("Release (s)##sclibrel", &rel, 0, 4, "%.2f", 0) {
+		pb.Release, ie.Dirty = rel, true
+	}
+	editorMenuTooltip("0 is the instrument's own fade-out.")
+	if pb.Clef == "percussion" || len(pb.Drums) > 0 {
+		sl := int32(pb.StaffLines)
+		imgui.SetNextItemWidth(150)
+		if imgui.SliderIntV("Staff lines##sclibesl", &sl, 0, 5, "%d", 0) {
+			pb.StaffLines, ie.Dirty = int(sl), true
+		}
+		editorMenuTooltip("0 is five; 1 a single drum's line.")
+	} else {
+		tun := pb.Tuning
+		if tun == "" {
+			tun = "(none)"
+		}
+		imgui.SetNextItemWidth(220)
+		if imguibackend.BeginCombo("Tuning##sclibetun", tun) {
+			if imguibackend.SelectableV("(none)##sclibetn", pb.Tuning == "", 0, imgui.Vec2{}) {
+				pb.Tuning, ie.Dirty = "", true
+			}
+			for _, tp := range score.TuningPresets {
+				if imguibackend.SelectableV(tp.Label+"##sclibet"+tp.Name, tp.Name == pb.Tuning, 0, imgui.Vec2{}) {
+					pb.Tuning, ie.Dirty = tp.Name, true
+				}
+			}
+			imguibackend.EndCombo()
+		}
+		editorMenuTooltip("A fretted instrument's strings: what its tablature reads.")
+	}
+	if pb.Clef == "percussion" || len(pb.Drums) > 0 {
+		editorTextMutedWrapped("Drum map: each sound's key and name; under it its place on the staff (0 the bottom line, 4 the middle, 9 over the top), notehead, articulation and note-input letter.")
+		for i := range pb.Drums {
+			d := &pb.Drums[i]
+			imgui.PushID(fmt.Sprintf("sclibdrum%d", i))
+			k := int32(d.Key)
+			imgui.SetNextItemWidth(90)
+			if imgui.InputInt("##key", &k) {
+				d.Key, ie.Dirty = int(max(0, min(127, k))), true
+			}
+			imgui.SameLine()
+			imgui.SetNextItemWidth(-30)
+			mark(imgui.InputText("##name", &d.Name))
+			imgui.SameLine()
+			removed := false
+			if imgui.Button("x##rm") {
+				ie.removeDrum(i)
+				removed = true
+			}
+			editorMenuTooltip("Take the sound out of the map")
+			if !removed {
+				ln := int32(d.Line)
+				imgui.SetNextItemWidth(90)
+				if imgui.InputInt("##line", &ln) {
+					d.Line, ie.Dirty = int(max(-8, min(16, ln))), true
+				}
+				imgui.SameLine()
+				imgui.SetNextItemWidth(80)
+				head := d.Head
+				if head == "" {
+					head = "normal"
+				}
+				if imguibackend.BeginCombo("##head", head) {
+					for _, h := range tracker.DrumHeads {
+						if imguibackend.SelectableV(h, h == head, 0, imgui.Vec2{}) {
+							d.Head, ie.Dirty = h, true
+						}
+					}
+					imguibackend.EndCombo()
+				}
+				imgui.SameLine()
+				imgui.SetNextItemWidth(56)
+				mark(imgui.InputTextWithHint("##art", "artic.", &d.Articulation))
+				imgui.SameLine()
+				imgui.SetNextItemWidth(26)
+				mark(imgui.InputText("##short", &d.Shortcut))
+				editorMenuTooltip("The letter A-G that writes it in note input")
+			}
+			imgui.PopID()
+			if removed {
+				break
+			}
+			imgui.Spacing()
+		}
+		if imgui.Button("Add a Sound##sclibadddrum") {
+			ie.addDrum()
+		}
+	}
+	if len(ie.In.Articulations) > 0 {
+		editorTextMuted("Words that pick each articulation (technique text, mark names)")
+		for i, a := range ie.In.Articulations {
+			for len(ie.Triggers) <= i {
+				ie.Triggers = append(ie.Triggers, "")
+			}
+			imgui.SetNextItemWidth(220)
+			mark(imgui.InputTextWithHint(fmt.Sprintf("%s##sclibtrig%d", a.Name, i), "pizz., pizzicato", &ie.Triggers[i]))
+		}
+	}
+	label := "Save to the Library##sclibesave"
+	if !ie.Dirty {
+		label = "Saved##sclibesave"
+	}
+	if imgui.Button(label) && ie.Dirty {
+		if err := ie.save(); err == nil {
+			L.entries = scoreLibScan()
+			scEd.Status = "Saved " + ie.Name + tracker.InstrumentExt + ": every score and song using it reads the new settings"
+		}
+	}
+	imgui.SameLine()
+	if imgui.Button("Revert##sclibereset") {
+		L.edit = nil
+	}
+	if ie.Err != "" {
+		imgui.PushStyleColor(imgui.StyleColorText, saveChipUnsaved)
+		imgui.PushTextWrapPos()
+		imgui.Text(ie.Err)
+		imgui.PopTextWrapPos()
+		imgui.PopStyleColor()
+	}
 }
 
 // scoreLibImportPanel is the import's file browser and, for a SoundFont,

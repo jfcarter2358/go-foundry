@@ -32,6 +32,10 @@ type scoreTarget struct {
 	Diatonic int
 	// X and Y are where the note would be drawn (staff spaces).
 	X, Y float64
+	// Tab is a place on a tablature: String (1 the highest) is the string
+	// under the pointer, and Diatonic means nothing.
+	Tab    bool
+	String int
 }
 
 // scorePointerTarget maps a point on the layout to a place to write: the
@@ -50,6 +54,11 @@ func scorePointerTarget(l *engrave.List, s *score.Score, voice int, dur score.Du
 	t.Line, t.Staff, t.Bar = sb.Line, sb.Staff, bb.Bar
 	t.At = scoreSnap(s, t.Line, t.Staff, voice, t.Bar, dur, bb, p.X)
 	t.X = bb.XAt(t.At.Float())
+	if sb.Tab {
+		t.Tab, t.String = true, sb.StringAt(p.Y)
+		t.Y = sb.StringY(t.String)
+		return t, true
+	}
 	// The clef in force where the note would go (a clef change before it).
 	t.Diatonic = sb.DiatonicAt(t.X, p.Y)
 	t.Y = sb.YAt(t.X, t.Diatonic)
@@ -149,7 +158,7 @@ func scoreHitBar(l *engrave.List, p engrave.Point) (line, bar int, ok bool) {
 // scoreHitBarStaff is scoreHitBar with the staff of the line as well.
 func scoreHitBarStaff(l *engrave.List, p engrave.Point) (line, staff, bar int, ok bool) {
 	sb := l.StaffAt(p.Y)
-	if sb == nil || p.Y < sb.Top-2.5 || p.Y > sb.Top+6.5 {
+	if sb == nil || p.Y < sb.Top-2.5 || p.Y > sb.BottomY()+2.5 {
 		return 0, 0, 0, false
 	}
 	bb := l.BarAt(p.X)
@@ -214,7 +223,7 @@ func scoreBarsRect(l *engrave.List, lo, hi, a, z int) (engrave.Rect, bool) {
 		if sb.Line < lo || sb.Line > hi {
 			continue
 		}
-		top, bottom = math.Min(top, sb.Top), math.Max(bottom, sb.Top+4)
+		top, bottom = math.Min(top, sb.Top), math.Max(bottom, sb.BottomY())
 	}
 	if math.IsInf(top, 1) {
 		return engrave.Rect{}, false

@@ -57,10 +57,12 @@ func TextFace(f TextFont, px float64) font.Face {
 	if src == nil {
 		return nil
 	}
-	fc, err := opentype.NewFace(src, &opentype.FaceOptions{Size: float64(k.px) / 4, DPI: 72, Hinting: font.HintingNone})
+	of, err := opentype.NewFace(src, &opentype.FaceOptions{Size: float64(k.px) / 4, DPI: 72, Hinting: font.HintingNone})
 	if err != nil {
 		return nil
 	}
+	// The signs the Go fonts lack (♭ ♮ ♯) come from Bravura (textsign.go).
+	fc := &signFace{Face: of, f: f, px: float64(k.px) / 4}
 	faces[k] = fc
 	return fc
 }
@@ -127,8 +129,9 @@ type outlineKey struct {
 }
 
 // TextGlyphs sets a run in a style as outlines, advanced and kerned as
-// TextWidthFont measures it. Letters the font does not have are left out
-// (their advance kept).
+// TextWidthFont measures it. The signs the font lacks are Bravura's
+// (textsign.go); other letters the font does not have are left out (their
+// advance kept).
 func TextGlyphs(s string, f TextFont) []TextGlyph {
 	TextFace(f, measurePx) // loads the fonts
 	src := textFonts[int(f)%len(textFonts)]
@@ -143,6 +146,12 @@ func TextGlyphs(s string, f TextFont) []TextGlyph {
 	pen := 0.0
 	prev := sfnt.GlyphIndex(0)
 	for i, r := range s {
+		if g := textSign(f, r); g != nil {
+			out = append(out, TextGlyph{Font: f, Rune: r, X: pen, Path: signOutline(g)})
+			pen += signAdvance(g)
+			prev = 0
+			continue
+		}
 		gi, err := src.GlyphIndex(&buf, r)
 		if err != nil {
 			continue

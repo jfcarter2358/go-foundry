@@ -418,3 +418,59 @@ func TestSeparateLineComesBackTogether(t *testing.T) {
 		}
 	}
 }
+
+// A tune that modulates is heard as two keys, the change at the bar it
+// happens in; one that stays put is one key, its passing notes and all.
+func TestDetectKeysFindsAModulation(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 16
+	l := LayoutOf(s)
+	// In each key: the scale up and down, then tonic arpeggios, a bar a
+	// figure, over and over.
+	figures := func(tonic int, minor bool) [][]int {
+		scale := []int{0, 2, 4, 5, 7, 9, 11, 12}
+		third := 4
+		if minor {
+			scale = []int{0, 2, 3, 5, 7, 8, 11, 12}
+			third = 3
+		}
+		up := []int{}
+		for _, d := range scale[:4] {
+			up = append(up, tonic+d)
+		}
+		down := []int{}
+		for _, d := range scale[4:] {
+			down = append(down, tonic+d)
+		}
+		arp := []int{tonic, tonic + third, tonic + 7, tonic + 12}
+		return [][]int{up, down, arp, {tonic + 7, tonic + 5, tonic + third, tonic}}
+	}
+	var notes []Note
+	put := func(bar int, ps []int) {
+		for i, p := range ps {
+			at := l.Starts[bar-1].Add(score.F(int64(i), 4))
+			notes = append(notes, Note{Start: at, End: at.Add(score.F(1, 4)), MIDI: p, Velocity: 80})
+		}
+	}
+	for b := 1; b <= 8; b++ {
+		put(b, figures(60, false)[(b-1)%4])
+	}
+	for b := 9; b <= 16; b++ {
+		put(b, figures(63, false)[(b-1)%4])
+	}
+	ks := DetectKeys(notes, l)
+	if len(ks) != 2 || ks[0].Bar != 1 || ks[0].Fifths != 0 || ks[1].Fifths != -3 || ks[1].Bar < 8 || ks[1].Bar > 10 {
+		t.Errorf("keys %+v, want C major then Eb major from bar 9", ks)
+	}
+	// One key with a chromatic passing note now and then.
+	notes = nil
+	for b := 1; b <= 16; b++ {
+		put(b, figures(67, false)[(b-1)%4])
+		if b%5 == 0 {
+			put(b, []int{68})
+		}
+	}
+	if ks := DetectKeys(notes, l); len(ks) != 1 || ks[0].Fifths != 1 {
+		t.Errorf("G major throughout: %+v", ks)
+	}
+}

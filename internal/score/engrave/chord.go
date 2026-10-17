@@ -290,7 +290,7 @@ func (e *engraver) dotClash(chords []*ev, y, x0, x1 float64) bool {
 	w := e.f.Width("augmentationDot")
 	for _, c := range chords {
 		for _, row := range c.dotRows {
-			cy := 4 - float64(row)/2
+			cy := 4 - float64(row)/2 + c.crossY
 			cx0 := c.shift + c.dotX
 			cx1 := cx0 + float64(c.dots-1)*dotSpacing*c.size + w*c.size
 			if math.Abs(cy-y) < 0.45 && cx0 < x1+0.1 && x0 < cx1+0.1 {

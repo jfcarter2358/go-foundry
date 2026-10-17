@@ -5,4 +5,10 @@ polyphony: 4
 playback:
   clef: percussion
   release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Hat Closed 808
+    line: 4
+    head: x
 description: '808 closed hat: six metallic squares, 50 ms'

@@ -37,8 +37,10 @@ import (
 	"foundry/internal/material"
 	"foundry/internal/model"
 	"foundry/internal/procgen"
+	"foundry/internal/score"
 	"foundry/internal/script"
 	"foundry/internal/texture"
+	"foundry/internal/tracker"
 	"foundry/internal/world"
 	"foundry/internal/textureui"
 	"foundry/internal/uiwin"
@@ -298,6 +300,21 @@ func claudeApplyFileChange(path string) {
 			claudeNoteConflict(abs)
 			return
 		}
+		claudeReload.reloaded++
+
+	case ext == score.FileExt:
+		// A score: the library drops it and the Score editor re-reads it
+		// if it holds it unedited (editor_score_claude.go).
+		if !scoreFileChanged(abs) {
+			claudeNoteConflict(abs)
+			return
+		}
+		claudeReload.reloaded++
+
+	case ext == tracker.InstrumentExt:
+		// An instrument: what plays it and what reads its drum map hear the
+		// new one (editor_score_claude.go).
+		scoreInstrumentChanged()
 		claudeReload.reloaded++
 
 	case ext == ".yaml", ext == ".yml":

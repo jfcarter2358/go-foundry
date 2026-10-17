@@ -196,6 +196,11 @@ func scoreTransportBar(pos imgui.Vec2, w float32) {
 	}
 	editorMenuTooltip("Play from the play head, or stop (" + km.label(scPlay) + "); " + km.label(scPlayFrom) + " plays from the selection")
 	imgui.SameLine()
+	if editorActiveToggleButtonColor("Rec##screc", scoreRecording(), scoreColRec) {
+		scoreRunCmd(scRecord)
+	}
+	editorMenuTooltip("Record from the MIDI keyboard into the armed (or selected) line, from the\nselected bar, after a count-in" + scoreKeysSuffix(scRecord) + "; Space stops.")
+	imgui.SameLine()
 	if editorActiveToggleButtonColor("Loop##scloop", e.Transport.Loop.On, scoreColActive) {
 		scoreRunCmd(scLoopToggle)
 	}

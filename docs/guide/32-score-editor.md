@@ -91,6 +91,8 @@ layout:                          # optional: how the score and its parts print
   names: full_then_short         # full_then_short, full, short or none
   cautionary: true               # clef, key and time at a system's end for the next one's change
   courtesy: false                # courtesy accidentals in the bar after an altered note
+  brackets: true                 # a bracket down each family of two lines or more (false: none)
+  hide_empty: false              # true: a system after the first leaves out lines with no notes in it
   parts:                         # a part's own settings, by line name
     - {line: Violin I, staff: 7.5, breaks: [{bar: 5}], multi_rests: true}
 ```
@@ -118,8 +120,12 @@ layout:                          # optional: how the score and its parts print
 | `master` | The chain over the whole mix, before the master `gain`. |
 | `subtitle` | Printed under the title on the first page (or the title page). |
 | `short` | A line's name on every system after the first ("Vln. I"). Left out, one is made from the name: the usual orchestral abbreviations (Violin → Vln., Clarinet in B♭ → Cl. in B♭, Double Bass → D.B.), numbers kept, other words cut to three letters. |
-| `layout` | How the score prints (see *Pages, parts and printing*): the paper and its margins (margins that would leave the music less than 25 mm either way are made smaller, with a warning), the staff size, the room between systems, the note spacing, the system and page breaks (`bar:` is the bar that starts the new system or page), a title page, page numbers, instrument names, cautionary signatures and courtesy accidentals. `parts:` gives a line's part its own staff size, system gap, paper and breaks (the score's breaks are not the part's), and `multi_rests: false` to print every rest bar on its own. Nothing here changes how the score plays. |
+| `layout` | How the score prints (see *Pages, parts and printing*): the paper and its margins (margins that would leave the music less than 25 mm either way are made smaller, with a warning), the staff size, the room between systems, the note spacing, the system and page breaks (`bar:` is the bar that starts the new system or page), a title page, page numbers, instrument names, cautionary signatures and courtesy accidentals, the family brackets (`brackets: false` leaves them out) and hidden empty staves (`hide_empty: true`). `parts:` gives a line's part its own staff size, system gap, paper and breaks (the score's breaks are not the part's), and `multi_rests: false` to print every rest bar on its own. Nothing here changes how the score plays. |
 | `master_lanes` | The master's automation: `volume` (multiplies `gain`: a fade-out of the whole score) and `<fx>.<setting>` for the master chain's effects (`limiter.ceiling`). Points are written as a line's. |
+| `chords` | A line's chord symbols, over its top staff: `[{at: "1", sym: Cmaj7}, {at: "2:3", sym: D7b9/F#}, {at: "5", sym: N.C.}]`. Each is read as a musician types it and written back in one spelling (see *Lyrics, chord symbols, drums and tablature*). |
+| `chord_play` | How the line's chord symbols play: `{style: pad}` (each held to the next), `{style: comp}` (struck on every beat, the bass on the chord's first stroke and on downbeats) or `off`; `instrument:` plays them on another library instrument (the line's own when left out), `volume:` 0..2 (1, the default, sets the whole chord a little under one of the line's notes), `octave:` moves the voicing. |
+| staff `lines` | A percussion staff's line count, 1–5: `lines: 1` for a single drum (a tambourine, a triangle). |
+| staff `tab` | Tablature: `{tuning: guitar}` (or `strings: [D2, A2, D3, G3, B3, E4]`, lowest first), `capo: 2`, `only: true` for tablature alone instead of under the notation. The tunings: `guitar`, `guitar_drop_d`, `guitar_eb`, `guitar_dadgad`, `guitar_open_g`, `guitar_open_d`, `guitar_7`, `bass`, `bass_5`, `bass_6`, `ukulele`, `mandolin`, `banjo`. |
 
 Positions are written `bar` or `bar:beat`, with beats counted the way the
 bar's meter counts them: `5`, `5:3`, `5:2+1/2`.
@@ -158,7 +164,10 @@ written transposed, violins, cello) and a rhythm section (piano, bass, drum
 kit on a percussion staff), each eight empty bars of 4/4 in C.
 **File > Open**, **Open Recent**, **Save** (Ctrl+S), **Save As** and **Save
 All** work as in every editor, and the chip at the right of the menu bar says
-whether the score matches its file.
+whether the score matches its file. A score the Claude panel rewrites is
+re-read when the editor holds it with no edits of its own (with edits, the
+panel is told and they stay), and a level that plays it next hears the new
+file; an instrument it rewrites is heard on the next note.
 
 The score is drawn as one continuous system on paper, scrolled with the
 wheel (Shift+wheel across) and zoomed with Ctrl+wheel about the pointer,
@@ -187,14 +196,23 @@ voices 2–4 green, orange and magenta.
 | Voice | `Ctrl+Alt+1`–`4`, or keypad `*` for the next. In note input the caret stays where it was, so the new voice starts under the old one's last note; out of it the new voice's note at the same beat is selected |
 | Tuplet | `Ctrl+2`–`9` start one on the selected note: three of its value in the time of two, five in four… Inside a tuplet the new one nests |
 | Flip a stem | `X` or keypad `-` |
+| Cross staff | `Ctrl+Shift+Up` / `Down` (**Notes > Cross to Staff Above / Below**): the selected chord's notes — or every chord of the selected bars — written on the grand staff's other staff, in that staff's clef, while they stay in their own voice; a beam joining notes on both staves is flat in the gap between them, each staff's stems reaching it from its side. The same key back takes them home. Stored as the mark `cross=up` / `cross=down` |
 | Delete | `Delete`: a note becomes a rest, one note of a chord goes, a rest in voices 2–4 is hidden; selected bars are cleared |
 | Previous / next note | `Left` / `Right` |
 | Key, time, clef | `K`, `Ctrl+Shift+T`, `Q` (or the toolbar): a key or time signature from the selected bar; a clef for a whole staff |
 
-Changing the time signature keeps each bar's music but fits it to the new
-length: music past a new barline is cut and a short bar filled with rests
-(Ctrl+Z brings it back). Changing the key never changes a note — the pitches
-are spelled — only what the page prints.
+Changing the time signature **re-bars** the music up to the next time
+signature, as Sibelius's "rewrite bars" does: the notes keep their time
+and are written again across the new barlines — tied where a note now
+crosses one, beamed by the new meter, tuplets where their notes need them,
+every spelling, mark, syllable and grace note kept, the last bar filled
+out with rests — and the bars after it move with them (chord symbols,
+tempo and rehearsal marks, clef changes, lanes, repeats, endings and breaks
+in the passage keep their moment; after it, their music). With **Re-bar
+the music** unticked in the dialog each bar keeps its own notes instead and
+is fitted to the new length (music past a new barline cut, a short bar
+filled with rests). Ctrl+Z brings either back. Changing the key never
+changes a note — the pitches are spelled — only what the page prints.
 
 ### Selecting, copying, repeating
 
@@ -207,6 +225,96 @@ lines) or a single note; `Alt`+click pastes at the clicked bar or beat. `R`
 repeats the selection right after itself, growing the score when it has to,
 and selects the copy, so `R` again carries on. A paste into bars of another
 meter is fitted to them. `Ctrl+Z` / `Ctrl+Y` undo and redo every edit.
+
+### Transposing, respelling, finding
+
+**Notes > Transpose** (`Shift+T`) moves the selected bars (or, with nothing
+selected or **The whole score** chosen, everything) **by an interval** —
+up or down, a unison to an octave and up to three octaves more, spelled as
+the interval implies (C up a minor third is E♭) — or **to a key** (from the
+key at the passage's start: the closest way, or up, or down). **Diatonic**
+moves by letters within each bar's key instead (C up a third is E in C
+major), the key signatures as they are. When every line moves, the key
+signatures move with them (**Transpose key signatures**); a key that would
+need more than seven sharps or flats — or more than six where its
+enharmonic needs fewer — is written as that enharmonic (D♭ up a minor
+second is D major, not E♭♭), the notes spelled for it. Chord symbols move
+with the music unless unticked; double sharps and flats a transposition
+would spell are written with one accidental unless **Use double sharps and
+flats** is ticked. Drum staves never move; a tablature's string choices are
+worked out again. A note the move would take off the keyboard stays where
+it is and the status line counts it. One undo step.
+
+**Notes > Respell Selection** gives every selected note its other spelling
+(F♯ ↔ G♭); **Notes > Spell in Key** writes every selected note — the whole
+score with nothing selected — as its bar's key spells the sound: the key's
+own note where it is one, else a sharp where the line rises to it and a
+flat where it falls (what an import or a chromatic transposition can leave
+untidy). `Return` respells the one selected note, as before.
+
+**Edit > Find** (`Ctrl+F`) opens a small window over the score: type a
+**pitch** (`F#4` by sound, so `Gb4` is found too unless **Exact spelling**
+is ticked; `F#` in any octave; a range `C4..G5`), a **mark** by its musical
+name (`staccato`, `accent`, `fermata`, `trill`, `slur`, `hairpin`, `pedal`,
+`tie`, `grace`, `tuplet`, `dynamic`, or a dynamic itself: `mf`) or any
+**text** (an expression, a technique word, a lyric, a chord symbol, a
+rehearsal mark, tempo text), and press `Return`. **Anything** decides which
+from what was typed. The matches are listed by line, bar and beat; the
+first at or after the selection is selected and scrolled to, and `Ctrl+G`
+(or `F3`) and `Ctrl+Shift+G` (`Shift+F3`) step to the next and previous,
+wrapping round, with the window closed too. **In the selection** searches
+only the selected bars.
+
+### The command palette
+
+`Ctrl+Shift+P` (**View > Command Palette**) lists every command the editor
+has — each with its keys in the active keymap — and the menus' other
+actions (a new score from a template, a recent score, Save All, swing and
+humanise, the instrument library). Type words to narrow it: each must be in
+the command's name, its group or its keys (`voice 2`, `trans`,
+`ctrl+shift+f`); the best matches come first. `Up` and `Down` move, `Return`
+runs, `Escape` or a click elsewhere closes it.
+
+### A MIDI keyboard
+
+**Edit > MIDI Input** chooses the keyboard: every MIDI source the system
+offers (ALSA's sequencer on Linux — USB keyboards, virtual ports, other
+programs — WinMM's devices on Windows), the channel to listen to (or all),
+and **MIDI thru**, which plays each key on the selected line's instrument as
+it is pressed. The choice is kept in `score.yaml` and the keyboard is opened
+again when the Score window next opens; one unplugged mid-session is
+noticed and said so. The dialog shows the last message heard, which is the
+quickest check that a keyboard reaches the editor (`foundry score midi
+-monitor 10` does the same from a terminal).
+
+**Step entry.** In note input a key writes a note of the chosen value after
+the selection, as Sibelius does; keys played while it is still held join it
+as a chord. A key is a sound: what is written is the pitch it played,
+spelled in the key signature (a sharp when the line rises to a note not in
+the key, a flat when it falls), shown where the staff shows that sound — a
+B♭ clarinet's written pitch, under an ottava line an octave down. On a
+percussion staff a key is the drum the line's drum map plays on it. Values,
+dots, rests and ties stay on the computer keyboard (keypad `1`–`6`, `.`,
+`0`, `Enter`). Out of note input the keyboard only sounds.
+
+**Recording.** **Play > Record** (`Ctrl+Shift+F`, the **Rec** button on the
+transport) records into the first **armed** line (the **R** on a Timeline
+track), else the selected one, from the selected bar (else the play head's):
+a count-in of one bar of clicks (0–4 in the dialog), then the score plays,
+with a click on every beat unless **Click** is off, and every key is kept
+with its moment — one played a little early in the count-in's last beat
+goes on the downbeat. Space, the record command again or the score's end
+stops it, and the take is written over the bars it covered exactly as the
+MIDI importer writes a file's part: quantised to the grid the dialog chooses
+(16ths and triplets by default), split onto a grand staff at middle C,
+dealt into up to the dialog's number of voices (two by default), small gaps
+closed, notes played as flicks before the beat made grace notes, velocity
+read as dynamics, the sustain pedal as pedal marks — one undo step. The
+recorded line's old notes play while you record over them. A take stops
+where the performance comes back to a bar it has played (a repeat's second
+time), and the loop is off while recording. **Latency** in the dialog
+moves every key earlier by what the audio device delays the click and the
+music by, should takes come out late.
 
 ### Expression
 
@@ -255,6 +363,82 @@ printed dynamics never change, each drag is one undo step, and while the
 score plays the change is heard as you drag (a held string or wind note
 follows it). Overrides are saved in the file as `dynamic_overrides`.
 
+### Lyrics, chord symbols, drums and tablature
+
+| To | Press |
+| --- | --- |
+| Type lyrics | select a note, `Ctrl+L` (`Ctrl+Alt+L` for verse 2): a field opens under it. `Space` goes to the next note (the word ends), `-` to the next note with a hyphen (the word goes on), `_` holds the syllable over the next note too (a melisma, with an extender line), and `Space` in an empty field holds the syllable before over this note. Rests, grace notes and notes tied over are passed over. `Backspace` in an empty field goes back a note, `Tab` moves on keeping what is typed, `Ctrl+Alt+L` in the field moves to the next verse, `Return` or `Esc` finish. Each syllable is one undo step |
+| Type a chord symbol | select a note or a bar, `Ctrl+K`: a field opens over the staff. Type the symbol as you would write it — `Cmaj7`, `CΔ7`, `F#m7b5`, `Fø7`, `Bb7(b9,#11)/D`, `G7sus4`, `C6/9`, `Eadd9`, `A7alt`, `N.C.` — then `Space` for the next beat or note (whichever comes first), `Return` to finish. A symbol that will not read stays in the field with the reason in the status line; an empty field takes the symbol away. Click a chord symbol to edit it |
+| Drums by letter | on a percussion staff `A`–`G` write the drum map's sound with that shortcut (the starter kit: `B` bass drum, `A` snare, `G` closed hi-hat, `F` pedal hi-hat, `C` crash, `D` ride, `E` high tom), `Shift`+letter adds it to the chord, `Up`/`Down` walk a note through every sound of the kit, and an articulation the map names (**Marks > Open / Stopped**: an "o" on a closed hi-hat) plays that sound |
+| Frets | in note input a click on a tablature string writes that string open; the number keys type the fret on the string in hand (two digits within a second: 10 and up); `Up`/`Down` move to the string above or below, `Alt+Up`/`Down` move the selected note to another string keeping its pitch. Out of note input, click a fret number and type |
+
+A line's menu has **Chord Symbols** (printed only, or played as a pad or as
+comping, on the line's instrument or another) and **Tablature** (none, under
+the notation, alone; the tuning; the capo). **Marks** has the lyrics and
+chord symbol commands, **Clear Lyrics in the Selection** and **Open /
+Stopped**.
+
+**Lyrics** are marks on the notes they are sung on (`ly=` the first verse,
+`ly2=` … `ly8=`): `qC4(ly=Hal-) qD4(ly=le-) qE4(ly=lu-) hF4(ly=jah_)`. A
+trailing `-` hyphenates the syllable to the verse's next; a trailing `_`
+holds it with an extender to the verse's next syllable or the next rest. A
+value with other characters is quoted: `(ly="don't")`. Each verse prints in
+a line of its own under the staff, all of a system's at one height, below
+the lowest note; syllables are centred under their notes (a melisma's first
+syllable set at its note's left), hyphens between a word's syllables (more
+along a long gap), and spacing keeps two syllables apart, across barlines
+too. A hyphen or extender over a system break runs to the end and on from
+the next system's start.
+
+**Chord symbols** stand over the line's top staff at one height, each at its
+place; a change inside a held note gets a column of its own. They print as a
+lead sheet does: the root large, its flat or sharp the chord-symbol glyph,
+the rest smaller — `m`, `maj7`, `7(♭9,♯11)` — with ° and ø for diminished
+and half-diminished. On a transposing staff at written pitch they are
+transposed with it. What is read, in order after the root: the quality (`m`,
+`min`, `mi`, `-`; `dim`, `°`, `o`; `m7b5`, `ø`, `h`; `aug`, `+`; `sus2`,
+`sus4`, `sus`, both together `sus2sus4`; `5`), the seventh (`7`, `maj7`,
+`M7`, `Δ`, `dim7`; minor-major `mmaj7`, `m(maj7)`, printed `m(maj7)`),
+extensions (`9`, `11`, `13`, `6`, `6/9`), alterations (`b5`, `#5`, `b9`,
+`#9`, `#11`, `b13`, `alt`; a `+` with no number after the seventh, `C7+`,
+is `#5`), additions (`add2`, `add9`, `add#11` …; a pop chart's `C2` is
+`Cadd2`), omissions (`no3`, `no5`) and a slash bass (`/E`). The file keeps
+one spelling of each (`CΔ7` is `Cmaj7`, `Cø` is `Cm7b5`). Played (`chord_play`),
+a chord is voiced close: the bass (its slash bass, or its root) in the octave
+below the bass clef's middle line, the chord's notes stacked from its root
+around the E below middle C (a dominant 13th leaves out its 11th, as players
+do); where the music jumps back the symbol in force there sounds again; the
+notes take the line's dynamics, pedal and mixer strip.
+
+**Drum maps** are the instrument's (the `.finst`'s `playback: drums:`, see
+*Instruments*): each sound has the MIDI key that plays it, a staff position,
+a notehead (`normal`, `x`, `circle_x`, `diamond`, `triangle`, `slash`), an
+optional articulation it is written with (`open`, `stopped`, …: two sounds
+can share a place and a head, an open and a closed hi-hat) and an optional
+shortcut letter. A single drum's instrument asks for a one-line staff
+(`playback: staff_lines: 1`): the note sits on the line, the barlines reach
+a space either side, there are no ledger lines.
+
+**Tablature** is the staff's own notes on the strings, not a copy: under
+the notation (a second staff, string 1 on top, fret numbers on the lines,
+the line broken round each number) or alone (with the rhythm under the
+strings — stems, beams, flags, dots and rests). Each note goes on the string
+the music walked from its start puts it on: a string a note of a chord, the
+hand's stretch as small as it can be, near where it was for the note before,
+open strings and low frets first; a note tied over shows its fret in
+brackets, and a note the tuning cannot reach is left off (`foundry score
+check` warns). The `str=` mark keeps a note on a string of your choosing:
+`qE4(str=2)`, `hG3+D4(str=G3/3+D4/2)`. Frets count from the capo. Where
+the music starts, a tuning other than the instrument's standard one and a
+capo head the tablature, as guitar books print them: the retuned strings
+circled (`⑥ = D` for drop D; `Tuning: D A D F♯ A D` when most strings
+move) and `Capo 2`.
+
+Flat, sharp and natural signs typed into any text — a title, a part's
+words (`text="F♯ dolce"`), a syllable, a tempo mark — are drawn as music
+signs in every view and export (the text fonts have none; they come from
+the music font). Letters the text fonts lack altogether (CJK) are left out.
+
 ### Lines
 
 Every line is a staff (a piano's is a grand staff with a brace, a drum kit's
@@ -262,7 +446,7 @@ a percussion staff) with a header beside it:
 
 | Part of the header | Does |
 | --- | --- |
-| Name | click selects every bar of the line; double-click renames it (scripts and bindings find lines by name, so names stay unique and bindings follow a rename) |
+| Name | click selects every bar of the line; double-click renames it (scripts and bindings find lines by name, so names stay unique and bindings follow a rename); drag it up or down to move the line there |
 | Instrument | click for the picker: type to search the whole `.finst` library, click (or `Enter` for the first match) to play the line on it. It works while the score plays — the notes do not change; what is sounding finishes on the old instrument and the next note is the new one's. The staff takes the new instrument's transposition (a line moved to a B♭ clarinet is written a tone up), so the page changes and the sound does not |
 | `M` / `S` | mute, solo (several lines can be soloed) |
 | Two squares | duplicate the line: **with notes**, or **empty** with the same instrument, clefs, transposition and mixer settings |
@@ -276,14 +460,14 @@ grand staff for a piano, a percussion staff for a kit, a horn transposed);
 **Add Grand Staff** and **Add Percussion Staff** add a piano and a drum kit.
 Every line change is one undo step.
 
-On a **percussion staff** each drum has its place and notehead, after the
-usual drum-set notation: bass drum in the bottom space, snare in the third
-space, toms between, hi-hat as an x above the staff (open hi-hat circled),
-crash on the ledger line above, ride as an x on the top line. A click writes
-the drum on that line or space (the ghost note's label names it), stored as
-its General MIDI key, which is what the kit plays; letters and accidentals do
-not apply there. Keys outside the kit (35–59) show at their own letter's
-place.
+On a **percussion staff** each drum has its place and notehead from the
+line's **drum map** — its instrument's (see *Lyrics, chord symbols, drums
+and tablature*; an instrument with none uses the General MIDI kit's): bass
+drum in the bottom space, snare in the third space, toms between, hi-hat as
+an x above the staff (open, with an "o" over it), crash on the ledger line
+above, ride as an x on the top line. A click writes the first drum on that
+line or space (the ghost note's label names it), stored as the key that
+plays it.
 
 ### Playing: the transport and the ruler
 
@@ -519,6 +703,21 @@ How the pages are made:
 - **Courtesy accidentals** (off by default): a note at a position the bar
   before altered shows its accidental again, in parentheses, the first time
   in the bar.
+- **Brackets.** Two lines or more of one family in a row — woodwinds,
+  brass, percussion, voices, strings, by their instruments' categories — are
+  joined by a bracket down the system's left edge, and their barlines run
+  through the gaps between them; a grand staff keeps its brace. The same in
+  the continuous view. **Family brackets** in the setup (`brackets: false`)
+  leaves them out.
+- **Even staff spacing.** The staves of every system on a page stand the
+  same distance apart — as far as the system that needs most room (a high
+  passage with ledger lines, a lyric line) needs — so a line keeps its place
+  down the page; a page that could no longer hold its systems so keeps its
+  own spacing.
+- **Hidden empty staves** (off by default; **Hide empty staves** in the
+  setup, `hide_empty: true`): after the first system, a line with no notes
+  (or chord symbols) in a system's bars is left out of that system, as an
+  orchestral score sets resting instruments.
 - **Parts** are a line each, laid out with the score's settings and the
   part's own over them (staff size, system gap, paper, breaks). At written
   pitch always. Runs of two or more bars in which the part only rests become
@@ -603,8 +802,11 @@ A bar that runs over is an error, and one that runs short is a warning.
 | Dynamics | `pppp` … `ffff`, `niente`; the accents `sf`, `sfz`, `sffz`, `fz`, `rf`, `rfz`; `fp`, `sfp`, `sfpp` |
 | Articulations | `stacc`, `staccmo`, `acc`, `ten`, `marc`, `portato`, `legato` |
 | Ornaments | `tr`, `mord`, `imord`, `turn`, `iturn` (value: the auxiliary's accidental, `tr=#`, a turn's `turn=b/#` upper/lower); `trem=n` (1–4 strokes, bare 3), `trem2=n` (a two-note tremolo with the next event) |
-| Notation | `ferm` (`ferm=short`, `long`, `verylong`), `arp` (`arp=down`), `up`, `down`, `on_beat` / `before_beat` (a grace group's timing) |
+| Notation | `ferm` (`ferm=short`, `long`, `verylong`), `arp` (`arp=down`), `up`, `down`, `on_beat` / `before_beat` (a grace group's timing), `cross=up` / `cross=down` (the notes written on the line's staff above or below their own) |
 | Playback | `vel=96`: the event's notes play at this MIDI velocity (1–127) whatever the dynamics say — the piano roll's velocity lane; nothing prints |
+| Lyrics | `ly=Hal-` (verse 1), `ly2=` … `ly8=`: the syllable, `-` after it a hyphen to the next, `_` an extender |
+| Tablature | `str=2` (a single note's string), `str=G3/3+D4/2` (each note of a chord by its pitch) |
+| Open, stopped | `open`, `stopped`: the "o" and "+" over a note (a horn's; a hi-hat's, which a drum map can play as another sound) |
 | Text | `"dolce"` (`text=`), `expr=`, `tech=` (playing technique: `tech=pizz.`, `tech="con sord."`) |
 | Spanners | `cresc`, `dim` and `hairpin_end` (`cresc=text` prints "cresc." with dashes, any other value prints itself); `slur` and `slur_end`; `gliss` (to the next note; `gliss=wavy`); `8va`, `8vb`, `15ma`, `15mb` and `ottava_end`; `ped` and `ped_end`. An end mark goes on the last note the line covers. |
 
@@ -692,8 +894,10 @@ warns about it. Nothing is lost when an older build opens a newer file.
   move together, and an edit leaves the rest of the score's nudges as they
   were. A line's own `humanize` uses the score's seed unless it gives one.
 
-A MIDI export writes a slide as the chromatic run it passes, since a note
-in a MIDI file cannot bend.
+A MIDI export writes a slide as pitch bend when nothing else on its line
+sounds while it bends (the channel's bend range set by RPN 0 to the widest
+slide), and as the chromatic run it passes otherwise; the pedal goes out
+as CC 64 with the notes at their written lengths.
 
 ## Instruments
 
@@ -727,6 +931,11 @@ playback:
   gliss: slide           # slide, chromatic or diatonic
   staccato: 0.4          # fraction of its length a staccato note sounds
   release: 0             # seconds a note rings past its written end
+  tuning: guitar         # a fretted instrument's strings, offered for its tablature
+  staff_lines: 1         # a percussion staff of one line (a single drum)
+  drums:                 # a kit's drum map: how a percussion staff writes each sound
+    - {key: 42, name: Closed Hi-Hat, line: 9, head: x, shortcut: G}
+    - {key: 46, name: Open Hi-Hat, line: 9, head: x, articulation: open}
 ```
 
 How a score uses it:
@@ -755,6 +964,24 @@ round robin, clef, glissando style, samples, the articulations the notation
 can pick, and a keyboard with its range lit. **Preview** plays it by itself
 before it is chosen; **Use on** puts it on the line (heard at once, while
 the score plays too); a double-click does both.
+
+**Notation and playback**, under the details, edits what the notation reads
+from the instrument and saves it back to its `.finst`: the playable range
+(note names, sounding), the clef a new line takes, the transposition, how
+its glissandi play, its staccato length and release, a fretted
+instrument's tuning, a percussion instrument's staff lines and its **drum
+map** — each sound's key and name, and under them its place on the staff,
+notehead, articulation and note-input letter, with **Add a Sound** and
+**x** to take one out — and the words that pick each articulation. **Save
+to the Library** checks the file as it would read (a drum map with two
+sounds on one key is refused, saying why) and writes it; every score and
+song using the instrument reads the new settings, and its staves redraw
+with the new map. **Open in Instrument Editor** edits the sound itself —
+samples, zones, velocity layers, round robin, envelopes, filter — in the
+Tracker's instrument editor: the Tracker opens on a scratch song holding a
+copy of the instrument, with its library name ready in **Save to
+library**, which writes it back (a Tracker song with unsaved edits is left
+alone and you are asked to save it first).
 
 ### Importing SFZ and SF2
 
@@ -791,9 +1018,10 @@ What carries over:
 What cannot (said in the import's notes, not dropped silently): release
 triggers, modulators and the modulation envelope and LFOs, `<curve>` and
 `<effect>` headers, stacked regions over the same keys and velocities with
-no round robin (a layer plays one sample a note), FLAC samples (convert them
-to WAV), one-shot loops (a note-off releases them unless every region is
-one-shot, when the release is the longest sample).
+no round robin (a layer plays one sample a note), one-shot loops (a
+note-off releases them unless every region is one-shot, when the release is
+the longest sample). FLAC samples are read (and kept as WAV in the
+library), as are WAV, OGG and MP3.
 
 ## A score in a level
 
@@ -895,6 +1123,7 @@ foundry score export-audio <score> [flags] WAV, FLAC, OGG or MP3, a mix or a mix
 foundry score export-ftrk <score> [-o f]   the score as a Tracker song (-rows 4: the grid)
 foundry score export <score> [flags]       every format at once, as the Export dialog writes them
 foundry score codecs                       where the OGG and MP3 encoders were found, or why not
+foundry score midi [-monitor 10] [-port n] the MIDI input ports the editor can use; -monitor prints what one sends
 ```
 
 A score is named by its name under `sounds/` without the extension, or by a
@@ -942,9 +1171,19 @@ staff's voices; a note tied over the barline does not repeat its
 accidental; `!` on a note forces one and `?` puts it in parentheses. Beams
 follow the meter: beats, half bars of eighths in 4/4, dotted beats in 6/8,
 the groups of 3+2+2/8 (5/8 beams 3+2 and 7/8 2+2+3), and each tuplet on its
-own. With two or more voices on a staff, voices 1 and 3 have stems up and 2
-and 4 down, whatever the pitch, and rests move out of the way; the `up` and
-`down` marks force a stem. A bar written as `R`, or as one whole rest, has
+own; in a compound meter a dotted beat of 16ths keeps one primary beam
+with its 16ths' beam broken at each eighth, so the beat's three eighths
+read. With two or more voices on a staff, voices 1 and 3 have stems up and 2
+and 4 down, whatever the pitch, and rests move out of the way; a stem that
+points away from the staff from a note outside it is shortened to two and a
+half spaces; the `up` and `down` marks force a stem. A sung staff (a line
+with lyrics, or a choir's or a voice's) has its dynamics over it, out of
+the words' way. An ottava line carried onto the next system starts there
+with "(8va)". A clef change at a bar's start stands before its barline
+with a clear half space either side. A tablature on its own carries the
+articulations, slurs, ornaments and fermatas over its strings, tremolo
+strokes on its rhythm stems, an arpeggio beside the fret numbers and
+tuplets under the rhythm. A bar written as `R`, or as one whole rest, has
 its rest in the middle; an empty bar shows a faint one. Copyright: the
 Bravura font is © Steinberg Media Technologies, under the SIL Open Font
 License (an editor install carries it in `licenses/`).
@@ -982,9 +1221,16 @@ rehearsal marks, tempo text (`rit.` and `accel.` with their dashes, `a
 tempo`), repeats, 1st and 2nd endings, segno, coda, To Coda, Fine, D.C.
 and D.S., clef changes anywhere in a staff, the part's short name, volume
 and pan, and the page layout (paper, margins, staff size, system and page
-breaks; `-no-layout` leaves it out) are kept too. Anything the score can't
-hold yet is reported as a warning, never dropped silently: lyrics and chord
-symbols (which come with phase 6).
+breaks; `-no-layout` leaves it out) are kept too, and so are lyrics (every
+verse, hyphens and extenders), chord symbols (from the program's own
+spelling when it reads, else from the chord's kind and degrees), tablature
+(a TAB staff with its tuning and capo, each note's string; a TAB staff that
+repeats the notation over it, as MuseScore writes linked staves, becomes
+that staff's linked tablature) and one-line percussion staves. Text keeps
+its ♭ ♯ ♮; a part's name spells them as letters ("Clarinet in Bb", as the
+staff headers set names in the editor's own font), and a Sibelius
+part-name display with its accidental is read whole. Anything the score
+can't hold is reported as a warning, never dropped silently.
 
 `export-musicxml` writes MusicXML 4.0 that Sibelius and MuseScore open as
 the score shows: parts and staves (a piano's two braced), voices 1–4 and
@@ -999,7 +1245,12 @@ bindings, markers, a section's loop and next — stays in the `.fscore`. A
 score exported and imported again is the same in everything MusicXML holds
 (the round-trip tests check every fixture and shipped score). MuseScore
 draws a nested tuplet (a triplet inside a triplet) as one flat tuplet; that
-is MuseScore's reading of the file, which is to the standard.
+is MuseScore's reading of the file, which is to the standard. Every note's
+stem goes out as the page draws it (so another program sets a kit's two
+voices as the score does), a family of lines as a bracketed part group with
+joined barlines, and a cross-staff note on the staff it is written on, in
+its own staff's voice — which is also how other programs' cross-staff notes
+come in.
 
 **Tracker songs** come in through the MIDI importer, with the same options:
 the song is played through once (pattern breaks taken, a jump back read as
@@ -1036,8 +1287,18 @@ order positions and identical patterns shared.
 - **Controllers.** CC7 and CC10 become the line's volume and pan, and CC11
   becomes a volume lane.
 - **Meter and key.** These come from the file's time and key signatures.
-  When the file has none they are guessed, or you can set them with
-  `-meter 6/8` and `-key Eb` (or `F#m`, `"C minor"`, `-3`).
+  When the file has none they are guessed — the meter from where the strong
+  notes fall (4/4 unless 3/4, 5/4, 7/8 or 9/8 is clearly better, then 3/4 or
+  6/8 and 4/4 or 12/8 by how the beats divide), the keys from the pitches
+  bar by bar, so a piece that modulates gets its key changes — or you can
+  set them with `-meter 6/8` and `-key Eb` (or `F#m`, `"C minor"`, `-3`).
+- **Pitch bend and the pedal.** A note the pitch wheel slides to another
+  pitch and holds there is written as the two notes with a glissando
+  between (how a slide is exported); the sustain pedal (CC 64) becomes
+  pedal marks on the lowest staff.
+- **Drums.** Channel 10's General MIDI keys are written as the line's drum
+  map's own sounds — by name, else by place and notehead — so a kit with
+  keys of its own reads a General MIDI file right.
 - **Tempo and markers.** Tempo changes become tempo marks, and a run of small
   steps in one direction becomes a ramp. Markers on a bar line become
   rehearsal marks.
@@ -1048,7 +1309,9 @@ note exactly:
 - **Conductor track:** tempo (ramps as steps), time and key signatures,
   sections as markers.
 - **One track per line:** its General MIDI program, volume and pan, the
-  volume lane as CC11, and notes with velocities from the dynamics.
+  volume lane as CC11, and notes with velocities from the dynamics; a
+  slide as pitch bend (see *How a score plays*), the pedal as CC 64, and a
+  kit's sounds as the General MIDI keys they are.
 
 Repeats are played out unless you pass `-no-repeats`. Importing an export
 gives back the same notes.

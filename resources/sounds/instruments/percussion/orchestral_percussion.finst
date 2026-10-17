@@ -66,5 +66,61 @@ articulations:
 playback:
   clef: percussion
   release: 4
+  drums:
+  - key: 36
+    name: Bass Drum
+    line: 1
+    shortcut: B
+  - key: 35
+    name: Bass Drum 2
+    line: 0
+  - key: 38
+    name: Snare Drum
+    line: 5
+    shortcut: A
+  - key: 52
+    name: Tam-tam
+    line: 2
+    shortcut: F
+  - key: 77
+    name: Woodblock Low
+    line: 3
+  - key: 76
+    name: Woodblock High
+    line: 4
+    shortcut: E
+  - key: 75
+    name: Claves
+    line: 6
+    head: x
+  - key: 54
+    name: Tambourine
+    line: 7
+    head: x
+    shortcut: D
+  - key: 51
+    name: Suspended Cymbal
+    line: 8
+    head: x
+  - key: 49
+    name: Clash Cymbals
+    line: 10
+    head: x
+    shortcut: C
+  - key: 57
+    name: Clash Cymbals 2
+    line: 12
+    head: x
+  - key: 81
+    name: Triangle
+    line: 11
+    head: triangle
+    articulation: open
+    shortcut: G
+  - key: 80
+    name: Triangle, stopped
+    line: 11
+    head: triangle
+    articulation: stopped
 description: Bass drum, snare, cymbals, triangle, tambourine, woodblock, claves, tam-tam
   on the General MIDI keys

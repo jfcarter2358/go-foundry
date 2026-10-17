@@ -576,7 +576,7 @@ func (e *scoreState) rollDescribe(li int, n edit.RollNote) string {
 	p := scorePosOfTime(e.Score, n.Start)
 	name := edit.PitchName(e.toWritten(li, n.Staff, n.Pitch))
 	if e.percussion(li, n.Staff) {
-		name = score.DrumName(n.Pitch)
+		name = e.kitOf(li).NameOf(n.Pitch)
 	}
 	length := n.Length().String()
 	if d, ok := score.DurationFor(n.Length()); ok {

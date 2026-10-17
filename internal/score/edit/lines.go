@@ -56,6 +56,9 @@ func NewLineFor(name, instrument string, pb tracker.Playback) *score.Line {
 		return l
 	}
 	l := score.NewLine(name, instrument, clef)
+	if clef == "percussion" && pb.StaffLines >= 1 && pb.StaffLines < 5 {
+		l.Staves[0].Lines = pb.StaffLines // a single drum's one line
+	}
 	if pb.Transposition != 0 && clef != "percussion" {
 		d, c := gm.Transposition(pb.Transposition)
 		l.Staves[0].Transpose = score.Interval{Diatonic: d, Chromatic: c}
@@ -65,18 +68,29 @@ func NewLineFor(name, instrument string, pb tracker.Playback) *score.Line {
 
 // Retranspose writes a line's staves the way another instrument reads
 // them: each staff (not a percussion one) takes the instrument's
-// transposition, as Sibelius does on a change of instrument. The notes are
-// sounding pitches, so they sound the same; only the page moves. It
-// reports whether any staff changed.
+// transposition, as Sibelius does on a change of instrument, and a
+// percussion staff the instrument's line count (a single drum's one line,
+// a kit's five). The notes are sounding pitches, so they sound the same;
+// only the page moves. It reports whether any staff changed.
 func Retranspose(l *score.Line, pb tracker.Playback) bool {
 	var iv score.Interval
 	if pb.Transposition != 0 && pb.Clef != "grand" {
 		d, c := gm.Transposition(pb.Transposition)
 		iv = score.Interval{Diatonic: d, Chromatic: c}
 	}
+	lines := 0
+	if pb.StaffLines >= 1 && pb.StaffLines < 5 {
+		lines = pb.StaffLines
+	}
 	changed := false
 	for _, st := range l.Staves {
-		if st.Clef == "percussion" || st.Transpose == iv {
+		if st.Clef == "percussion" {
+			if st.Lines != lines {
+				st.Lines, changed = lines, true
+			}
+			continue
+		}
+		if st.Transpose == iv {
 			continue
 		}
 		st.Transpose, changed = iv, true

@@ -5,4 +5,5 @@ fade_out: 0.08
 playback:
   range: [C-1, G-4]
   clef: bass
+  tuning: bass
 description: Fingered electric bass

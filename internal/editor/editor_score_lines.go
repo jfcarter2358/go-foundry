@@ -337,6 +337,37 @@ func (e *scoreState) moveLine(i, dir int) bool {
 	return true
 }
 
+// moveLineTo moves line i to index to (a header dragged there); the
+// selection moves with it. One undo step.
+func (e *scoreState) moveLineTo(i, to int) bool {
+	n := len(e.Score.Lines)
+	to = max(0, min(to, n-1))
+	if i < 0 || i >= n || to == i {
+		return false
+	}
+	if !e.change(func() error {
+		if err := edit.MoveLine(e.Score, i, to); err != nil {
+			return err
+		}
+		e.remapLines(func(o int) int {
+			switch {
+			case o == i:
+				return to
+			case i < to && o > i && o <= to:
+				return o - 1
+			case to < i && o >= to && o < i:
+				return o + 1
+			}
+			return o
+		})
+		return nil
+	}) {
+		return false
+	}
+	e.Status = fmt.Sprintf("Moved %s to place %d", e.lineName(to), to+1)
+	return true
+}
+
 // renameLine renames line i (bindings that name it follow).
 func (e *scoreState) renameLine(i int, name string) bool {
 	if e.line(i) == nil {

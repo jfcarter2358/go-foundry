@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"math"
 	"sync/atomic"
+	"time"
 
 	"foundry/internal/audio"
 	"foundry/internal/score"
@@ -63,6 +64,15 @@ type Position struct {
 	Beat      int
 	// Section indexes the performance's sections, -1 for none.
 	Section int
+	// CountIn reports a count-in clicking before the transport starts
+	// (CountIn), CountBeat which of its beats was last heard (1-based,
+	// counting through every bar of it).
+	CountIn   bool
+	CountBeat int
+	// Published is when the mixer published this position: the time its
+	// block was rendered. A MIDI recording maps a key's arrival time to a
+	// tick from here (Tick plus the score seconds since, at the tempo).
+	Published time.Time
 }
 
 type cmdKind uint8
@@ -89,6 +99,8 @@ const (
 	cmdFX
 	cmdBypass
 	cmdBus
+	cmdClick
+	cmdCountIn
 )
 
 type command struct {
@@ -172,6 +184,7 @@ type Player struct {
 	posTick atomic.Int64
 	posSec  atomic.Uint64
 	posInfo atomic.Uint64
+	posWall atomic.Int64
 	eng     *tracker.Engine
 	// rateHint is the rate the mixer renders at, for the game thread to
 	// build chains at.
@@ -224,6 +237,13 @@ type Player struct {
 	// stingers play over the score; waiting ones start on their boundary.
 	stingers, waiting []stinger
 	stingerBuf        []float32
+
+	// The metronome (click.go): clickOn sounds every beat while the
+	// transport plays; count is a count-in running before it starts.
+	clickOn    bool
+	clickLevel float32
+	count      countIn
+	clicks     [maxClicks]clickVoice
 }
 
 // New prepares a score to play. It does not start the transport: call
@@ -501,14 +521,17 @@ func (p *Player) Events(dst []Event) []Event {
 func (p *Player) Position() Position {
 	info := p.posInfo.Load()
 	return Position{
-		Playing: info&1 != 0,
-		Paused:  info&2 != 0,
-		Section: int((info>>2)&0xFFF) - 1,
-		Beat:    int((info >> 14) & 0xFF),
-		Pass:    int((info >> 22) & 0xFF),
-		Bar:     int((info >> 30) & 0xFFFFF),
-		Tick:    p.posTick.Load(),
-		Seconds: math.Float64frombits(p.posSec.Load()),
+		Playing:   info&1 != 0,
+		Paused:    info&2 != 0,
+		Section:   int((info>>2)&0xFFF) - 1,
+		Beat:      int((info >> 14) & 0xFF),
+		Pass:      int((info >> 22) & 0xFF),
+		Bar:       int((info >> 30) & 0xFFFFF),
+		Tick:      p.posTick.Load(),
+		Seconds:   math.Float64frombits(p.posSec.Load()),
+		CountIn:   info&(1<<50) != 0,
+		CountBeat: int((info >> 51) & 0xFF),
+		Published: time.Unix(0, p.posWall.Load()),
 	}
 }
 
@@ -551,9 +574,14 @@ func (p *Player) publish() {
 		info |= uint64(b.Pass&0xFF) << 22
 		info |= uint64(b.Bar&0xFFFFF) << 30
 	}
+	if p.count.on {
+		info |= 1 << 50
+		info |= uint64(p.count.heard&0xFF) << 51
+	}
 	p.posTick.Store(int64(math.Round(tick)))
 	p.posSec.Store(math.Float64bits(p.sec))
 	p.posInfo.Store(info)
+	p.posWall.Store(time.Now().UnixNano())
 }
 
 func (p *Player) post(e Event) {
@@ -628,8 +656,8 @@ func (p *Player) install(prog *Program) {
 				// A note that need not move takes its new level once, on
 				// an instrument that holds its notes (a piano's keeps the
 				// level it started at).
-				if in := prog.insts[a.line]; in != nil && in.Sustains() {
-					p.eng.SetNoteControls(a.id, VelocityGain(prog.Perf.Notes[a.note].Velocity), 0, 0)
+				if in := prog.noteInst(a.note); in != nil && in.Sustains() {
+					p.eng.SetNoteControls(a.id, VelocityGain(prog.Perf.Notes[a.note].Velocity)*prog.gain(a.note), 0, 0)
 				}
 			}
 		}
@@ -780,6 +808,7 @@ func (p *Player) apply(c command) {
 		p.playing, p.finished = true, false
 	case cmdStop:
 		p.playing = false
+		p.count = countIn{}
 		p.pendingSection = -1
 		p.waiting = p.waiting[:0]
 		p.releaseAll(0)
@@ -818,6 +847,10 @@ func (p *Player) apply(c command) {
 			p.busBase[c.i] = busMix{ret: float32(c.f), pan: clamp32(float32(c.g), -1, 1), mute: c.b}
 			p.applyBuses()
 		}
+	case cmdClick:
+		p.clickOn, p.clickLevel = c.b, float32(c.f)
+	case cmdCountIn:
+		p.startCountIn(c.tick, c.i, float32(c.f))
 	case cmdStinger:
 		if len(p.stingers)+len(p.waiting) >= maxStingers {
 			return
@@ -918,16 +951,22 @@ func (p *Player) Render(dst []float32, frames, rate int) bool {
 		return true
 	}
 	p.rampControls(float64(frames) / float64(rate))
+	from := 0.0
+	if p.count.on {
+		// The count-in clicks; the transport starts on the frame it ends.
+		from = p.countFrames(frames)
+	}
 	if p.playing {
 		p.noteControls(frames)
-		p.schedule(frames)
+		p.scheduleFrom(from, frames)
 	}
 	more := p.eng.Render(out, frames, rate)
+	p.mixClicks(out, frames)
 	p.mixStingers(out, frames, rate)
 	p.publish()
 	if p.finished && !p.playing {
 		p.tail -= frames
-		if p.tail <= 0 && !more && len(p.stingers) == 0 {
+		if p.tail <= 0 && !more && len(p.stingers) == 0 && !p.clicking() {
 			return false
 		}
 	}
@@ -1002,10 +1041,13 @@ const (
 
 // schedule cues one block's notes and moves the play head through it,
 // taking every jump that falls inside.
-func (p *Player) schedule(frames int) {
+func (p *Player) schedule(frames int) { p.scheduleFrom(0, frames) }
+
+// scheduleFrom is schedule from a frame into the block: where a count-in
+// that ended inside it starts the transport.
+func (p *Player) scheduleFrom(fpos float64, frames int) {
 	perf := p.prog.Perf
 	rate := float64(p.rate)
-	fpos := 0.0
 	for guard := 0; p.playing && fpos < float64(frames) && guard < 256; guard++ {
 		bound := p.sec + (float64(frames)-fpos)/rate*p.scale
 		act := actNone
@@ -1028,7 +1070,7 @@ func (p *Player) schedule(frames int) {
 		p.cueOffs(bound, fpos)
 		p.cueOns(bound, fpos)
 		p.cueOffs(bound, fpos)
-		p.postTimed(bound)
+		p.postTimed(bound, fpos)
 		p.startWaiting(bound, -1, fpos)
 		fend := fpos + (bound-p.sec)/p.scale*rate
 		p.cueLanes(p.sec, bound, fpos, fend)
@@ -1087,7 +1129,7 @@ func (p *Player) cueOns(bound, fpos float64) {
 		i := p.next
 		p.next++
 		n := &notes[i]
-		in := prog.insts[n.Line]
+		in := prog.instFor(n)
 		if in == nil || n.Start < p.sec-1e-9 {
 			continue
 		}
@@ -1106,7 +1148,7 @@ func (p *Player) cueOns(bound, fpos float64) {
 		}
 		id := p.eng.NewNoteID()
 		p.cue(tracker.Cue{At: at, Kind: tracker.CueNoteOn, Note: id, Strip: n.Line, Inst: in, Pitch: EnginePitch(n.MIDI, n.Cents),
-			Opts: tracker.NoteOptions{Velocity: n.Velocity, Volume: VelocityGain(n.Velocity), Articulation: prog.arts[i], Release: prog.release[n.Line]}})
+			Opts: tracker.NoteOptions{Velocity: n.Velocity, Volume: VelocityGain(n.Velocity) * prog.gain(i), Articulation: prog.arts[i], Release: prog.releaseFor(i)}})
 		p.active[p.nActive] = activeNote{id: id, end: n.End, line: n.Line, note: i}
 		p.nActive++
 	}
@@ -1141,12 +1183,15 @@ func (p *Player) releaseAll(at int) {
 
 // postTimed tells scripts about the beats, bars, sections and markers
 // before bound.
-func (p *Player) postTimed(bound float64) {
+func (p *Player) postTimed(bound, fpos float64) {
 	perf := p.prog.Perf
 	for p.nextBeat < len(perf.Beats) && perf.Beats[p.nextBeat].Start < bound {
 		bt := perf.Beats[p.nextBeat]
 		p.nextBeat++
 		b := perf.Bars[bt.Bar]
+		if p.clickOn && bt.Start >= p.sec-1e-9 {
+			p.addClick(p.frameAt(bt.Start, fpos), bt.Beat == 1, p.clickLevel)
+		}
 		if bt.Beat == 1 || bt.Tick == b.Tick {
 			for k, sp := range perf.Sections {
 				if sp.Tick == b.Tick && k != p.section {
@@ -1224,7 +1269,7 @@ func (p *Player) noteControls(frames int) {
 		}
 		f := prog.follow[a.note]
 		n := &prog.Perf.Notes[a.note]
-		vol := VelocityGain(n.Velocity)
+		vol := VelocityGain(n.Velocity) * prog.gain(a.note)
 		if f&followLevel != 0 {
 			vol = prog.levelAt(a.note, tick)
 		}

@@ -263,6 +263,14 @@ func compareScores(a, b *score.Score, layout bool) []string {
 		diff(x.Name+" volume", x.Volume, y.Volume)
 		diff(x.Name+" pan", x.Pan, y.Pan)
 		diff(x.Name+" staves", len(x.Staves), len(y.Staves))
+		chords := func(l *score.Line) string {
+			var out []string
+			for _, c := range l.Chords {
+				out = append(out, a.FormatPos(c.At)+" "+c.Chord.String())
+			}
+			return strings.Join(out, ", ")
+		}
+		diff(x.Name+" chord symbols", chords(x), chords(y))
 		for si := range x.Staves {
 			if si >= len(y.Staves) {
 				break
@@ -271,6 +279,14 @@ func compareScores(a, b *score.Score, layout bool) []string {
 			diff(fmt.Sprintf("%s staff %d clef", x.Name, si+1), p.Clef, q.Clef)
 			diff(fmt.Sprintf("%s staff %d transposition", x.Name, si+1), p.Transpose, q.Transpose)
 			diff(fmt.Sprintf("%s staff %d clef changes", x.Name, si+1), p.Clefs, q.Clefs)
+			tab := func(st *score.Staff) string {
+				if st.Tab == nil {
+					return "none"
+				}
+				return fmt.Sprintf("%v capo %d only %v", st.Tab.Tuning, st.Tab.Capo, st.Tab.Only)
+			}
+			diff(fmt.Sprintf("%s staff %d tablature", x.Name, si+1), tab(p), tab(q))
+			diff(fmt.Sprintf("%s staff %d lines", x.Name, si+1), p.StaffLines(), q.StaffLines())
 			var pv, qv []string
 			for _, v := range p.Voices {
 				if t := canonical(a, p, v); t != "" {
@@ -556,5 +572,122 @@ func TestExportIsStableAndCompresses(t *testing.T) {
 func TestExportRefusesAnEmptyScore(t *testing.T) {
 	if _, _, err := Export(score.New("x"), ExportOptions{}); err == nil {
 		t.Error("a score with no lines exported")
+	}
+}
+
+// A family of lines goes out as a bracketed part group with its barlines
+// joined; brackets: false writes none.
+func TestExportFamilyBrackets(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 1
+	s.Lines = []*score.Line{
+		score.NewLine("Flute", "woodwinds/flute", "treble"),
+		score.NewLine("Violins", "strings/violin_section", "treble"),
+		score.NewLine("Cellos", "strings/cello_section", "bass"),
+	}
+	b, _, err := Export(s, ExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := string(b)
+	start := strings.Index(x, `<part-group type="start" number="1">`)
+	stop := strings.Index(x, `<part-group type="stop" number="1"/>`)
+	vln, vc := strings.Index(x, `<score-part id="P2">`), strings.Index(x, `<score-part id="P3">`)
+	if start < 0 || stop < 0 || !(start < vln && vln < vc && vc < stop) || !strings.Contains(x, "<group-symbol>bracket</group-symbol>") || !strings.Contains(x, "<group-barline>yes</group-barline>") {
+		t.Errorf("part group missing or misplaced: start %d stop %d violins %d cellos %d", start, stop, vln, vc)
+	}
+	if strings.Count(x, "<part-group") != 2 {
+		t.Errorf("%d part-group elements", strings.Count(x, "<part-group"))
+	}
+	s.Layout.NoBrackets = true
+	b, _, _ = Export(s, ExportOptions{})
+	if strings.Contains(string(b), "<part-group") {
+		t.Error("brackets: false wrote a part group")
+	}
+}
+
+// Every stemmed note's stem goes out as the page draws it (a kit's two
+// voices, one up one down), and reading our file back keeps a stem mark
+// only where one was asked for against the engraver's choice.
+func TestExportWritesEveryStem(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 1
+	kit := score.NewLine("Drums", "drums/kit", "percussion")
+	up, _ := score.ParseVoice("| eF#2 eF#2 eF#2 eF#2 eF#2 eF#2 eF#2 eF#2 |")
+	down, _ := score.ParseVoice("| qC2 qD2 qC2 qD2 |")
+	kit.Staves[0].Voices = []*score.Voice{up, down}
+	mel := score.NewLine("Flute", "woodwinds/flute", "treble")
+	mv, _ := score.ParseVoice("| qC5 qD5(up) qE4 qG5 |")
+	mel.Staves[0].Voices = []*score.Voice{mv}
+	s.Lines = []*score.Line{kit, mel}
+	b, _, err := Export(s, ExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := string(b)
+	notes := strings.Count(x, "<note>") + strings.Count(x, "<note ")
+	if st := strings.Count(x, "<stem>"); st != notes {
+		t.Errorf("%d stems for %d notes", st, notes)
+	}
+	d, err := Read(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Import(d, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marks := 0
+	for _, l := range back.Lines {
+		for _, st := range l.Staves {
+			for _, v := range st.Voices {
+				for _, m := range v.Measures {
+					for _, e := range m.Events {
+						if e.Has("up") || e.Has("down") {
+							marks++
+						}
+					}
+				}
+			}
+		}
+	}
+	// D5 up is against the engraver's choice (down from the middle line).
+	if marks != 1 {
+		t.Errorf("%d stem marks came back, want the one asked for", marks)
+	}
+}
+
+// A cross-staff note goes out on the staff it is written on, in its own
+// staff's voice, and comes back as cross-staff.
+func TestCrossStaffNotesRoundTrip(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 1
+	l := score.NewLine("Piano", "keys/piano", "treble")
+	l.Staves = append(l.Staves, &score.Staff{Clef: "bass"})
+	up, _ := score.ParseVoice("| wE5 |")
+	low, _ := score.ParseVoice("| eC3 eG3 eC4(cross=up) eE4(cross=up) hC3 |")
+	l.Staves[0].Voices = []*score.Voice{up}
+	l.Staves[1].Voices = []*score.Voice{low}
+	s.Lines = []*score.Line{l}
+	b, _, err := Export(s, ExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(b), "<staff>1</staff>"); n < 3 {
+		t.Errorf("the crossed notes are not on staff 1 (%d notes there)", n)
+	}
+	d, err := Read(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, _, err := Import(d, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := score.FormatMeasure(back.Lines[0].Staves[1].Voices[0].Measure(1)); got != "eC3 eG3 eC4(cross=up) eE4(cross=up) hC3" {
+		t.Errorf("came back as %q", got)
+	}
+	if got := score.FormatMeasure(back.Lines[0].Staves[0].Voices[0].Measure(1)); got != "wE5" {
+		t.Errorf("the upper staff: %q", got)
 	}
 }

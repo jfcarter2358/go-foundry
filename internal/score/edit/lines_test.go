@@ -175,6 +175,9 @@ func TestNewLineFor(t *testing.T) {
 	if kit.Staves[0].Clef != "percussion" || kit.Staves[0].Transpose != (score.Interval{}) {
 		t.Errorf("percussion staff %+v", kit.Staves[0])
 	}
+	if tamb := NewLineFor("Tamb", "drums/tambourine", tracker.Playback{Clef: "percussion", StaffLines: 1}); tamb.Staves[0].Lines != 1 {
+		t.Errorf("a single drum's staff has %d lines", tamb.Staves[0].Lines)
+	}
 	if l := NewLineFor("X", "x", tracker.Playback{}); l.Staves[0].Clef != "treble" || l.Volume != 1 {
 		t.Errorf("default line %+v", l.Staves[0])
 	}
@@ -194,6 +197,13 @@ func TestRetranspose(t *testing.T) {
 	kit := NewLineFor("Kit", "drums/kit", tracker.Playback{Clef: "percussion"})
 	if Retranspose(kit, tracker.Playback{Transposition: 12}) {
 		t.Error("a percussion staff does not transpose")
+	}
+	// Swapped to a single drum, the kit's staff takes one line; and back.
+	if !Retranspose(kit, tracker.Playback{Clef: "percussion", StaffLines: 1}) || kit.Staves[0].Lines != 1 {
+		t.Errorf("to a tambourine: %d lines", kit.Staves[0].Lines)
+	}
+	if !Retranspose(kit, tracker.Playback{Clef: "percussion"}) || kit.Staves[0].StaffLines() != 5 {
+		t.Errorf("back to a kit: %d lines", kit.Staves[0].StaffLines())
 	}
 	grand := NewLineFor("Pno", "keys/piano", tracker.Playback{Clef: "grand"})
 	if Retranspose(grand, tracker.Playback{Clef: "grand", Transposition: 12}) {

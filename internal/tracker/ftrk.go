@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 )
@@ -91,12 +92,24 @@ type rawArticulation struct {
 }
 
 type rawPlayback struct {
-	Range         []string `yaml:"range,flow,omitempty"`
-	Transposition int      `yaml:"transposition,omitempty"`
-	Clef          string   `yaml:"clef,omitempty"`
-	Gliss         string   `yaml:"gliss,omitempty"`
-	Staccato      float32  `yaml:"staccato,omitempty"`
-	Release       float32  `yaml:"release,omitempty"`
+	Range         []string  `yaml:"range,flow,omitempty"`
+	Transposition int       `yaml:"transposition,omitempty"`
+	Clef          string    `yaml:"clef,omitempty"`
+	Gliss         string    `yaml:"gliss,omitempty"`
+	Staccato      float32   `yaml:"staccato,omitempty"`
+	Release       float32   `yaml:"release,omitempty"`
+	StaffLines    int       `yaml:"staff_lines,omitempty"`
+	Drums         []rawDrum `yaml:"drums,omitempty"`
+	Tuning        string    `yaml:"tuning,omitempty"`
+}
+
+type rawDrum struct {
+	Key          int    `yaml:"key"`
+	Name         string `yaml:"name"`
+	Line         int    `yaml:"line"`
+	Head         string `yaml:"head,omitempty"`
+	Articulation string `yaml:"articulation,omitempty"`
+	Shortcut     string `yaml:"shortcut,omitempty"`
 }
 
 // rawInstrument is an instrument in a song, and the body of a .finst. A
@@ -342,9 +355,60 @@ func instrumentFromRaw(ri rawInstrument) (*Instrument, error) {
 		if pb.Clef != "" && !validClef(pb.Clef) {
 			return nil, fmt.Errorf("playback clef %q; one of %v", pb.Clef, Clefs)
 		}
+		if rp.StaffLines < 0 || rp.StaffLines > 5 {
+			return nil, fmt.Errorf("playback staff_lines %d; a percussion staff has 1 to 5", rp.StaffLines)
+		}
+		pb.StaffLines, pb.Tuning = rp.StaffLines, rp.Tuning
+		if pb.Drums, err = drumsFromRaw(rp.Drums); err != nil {
+			return nil, err
+		}
 		in.Playback = pb
 	}
 	return in, nil
+}
+
+// empty reports playback settings that are all defaults (nothing to write).
+func (p Playback) empty() bool {
+	return p.Low == 0 && p.High == 0 && p.Transposition == 0 && p.Clef == "" && p.Gliss == GlissSlide &&
+		p.Staccato == 0 && p.Release == 0 && p.StaffLines == 0 && len(p.Drums) == 0 && p.Tuning == ""
+}
+
+// drumsFromRaw reads a drum map: every key a MIDI key, at most once, every
+// head one of DrumHeads, every shortcut a letter A-G.
+func drumsFromRaw(rd []rawDrum) ([]DrumNote, error) {
+	var out []DrumNote
+	keys := map[int]bool{}
+	for _, r := range rd {
+		d := DrumNote{Key: r.Key, Name: r.Name, Line: r.Line, Head: r.Head, Articulation: r.Articulation, Shortcut: strings.ToUpper(r.Shortcut)}
+		if d.Key < 0 || d.Key > 127 {
+			return nil, fmt.Errorf("drum %q: key %d is not a MIDI key (0-127)", d.Name, d.Key)
+		}
+		if keys[d.Key] {
+			return nil, fmt.Errorf("drum %q: key %d is mapped twice", d.Name, d.Key)
+		}
+		keys[d.Key] = true
+		if d.Name == "" {
+			return nil, fmt.Errorf("drum on key %d has no name", d.Key)
+		}
+		if d.Line < -8 || d.Line > 16 {
+			return nil, fmt.Errorf("drum %q: line %d is too far from the staff (-8..16)", d.Name, d.Line)
+		}
+		if d.Head == "" {
+			d.Head = "normal"
+		}
+		ok := false
+		for _, h := range DrumHeads {
+			ok = ok || h == d.Head
+		}
+		if !ok {
+			return nil, fmt.Errorf("drum %q: head %q (want one of %s)", d.Name, d.Head, strings.Join(DrumHeads, ", "))
+		}
+		if d.Shortcut != "" && (len(d.Shortcut) != 1 || d.Shortcut[0] < 'A' || d.Shortcut[0] > 'G') {
+			return nil, fmt.Errorf("drum %q: shortcut %q (a letter A-G)", d.Name, r.Shortcut)
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 func validClef(c string) bool {
@@ -457,8 +521,15 @@ func instrumentToRaw(in *Instrument) rawInstrument {
 		ri.Articulations = append(ri.Articulations, rawArticulation{Name: a.Name, Triggers: a.Triggers,
 			Zones: zonesToRaw(a.Zones), Gain: a.Gain, VolEnv: envToRaw(a.VolEnv), FadeOut: a.FadeOut})
 	}
-	if pb := in.Playback; pb != (Playback{}) {
-		rp := &rawPlayback{Transposition: pb.Transposition, Clef: pb.Clef, Staccato: pb.Staccato, Release: pb.Release}
+	if pb := in.Playback; !pb.empty() {
+		rp := &rawPlayback{Transposition: pb.Transposition, Clef: pb.Clef, Staccato: pb.Staccato, Release: pb.Release, StaffLines: pb.StaffLines, Tuning: pb.Tuning}
+		for _, d := range pb.Drums {
+			rd := rawDrum{Key: d.Key, Name: d.Name, Line: d.Line, Articulation: d.Articulation, Shortcut: d.Shortcut}
+			if d.Head != "normal" {
+				rd.Head = d.Head
+			}
+			rp.Drums = append(rp.Drums, rd)
+		}
 		if pb.Gliss != GlissSlide {
 			rp.Gliss = pb.Gliss.String()
 		}

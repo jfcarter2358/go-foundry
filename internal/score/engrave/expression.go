@@ -60,10 +60,14 @@ func (e *engraver) drawExpression(sc *staffCtx) {
 			}
 		}
 	}
+	e.drawLyrics(sc)
 	e.drawDynamics(sc)
 	e.drawStaffText(sc)
 	e.drawOttavas(sc)
 	e.drawPedal(sc)
+	if sc.first {
+		e.drawChordSymbols(sc)
+	}
 }
 
 // put adds an item to a staff and its sky; with an event it also grows the
@@ -111,13 +115,21 @@ var articulations = []articulation{
 	{"ten", "articTenutoAbove", "articTenutoBelow", true, 1},
 	{"acc", "articAccentAbove", "articAccentBelow", false, 2},
 	{"marc", "articMarcatoAbove", "articMarcatoBelow", false, 3},
+	// Open and stopped: a horn's "o" and "+", a hi-hat's.
+	{"open", "brassMuteOpen", "brassMuteOpen", false, 4},
+	{"stopped", "brassMuteClosed", "brassMuteClosed", false, 4},
 }
 
-// eventArticulations are an event's articulations, nearest first.
-func eventArticulations(se *score.Event) []articulation {
+// eventArticulations are an event's articulations, nearest first; also
+// names a drum map draws with its notes (an open hi-hat's "o").
+func eventArticulations(se *score.Event, also ...string) []articulation {
 	var out []articulation
 	for _, a := range articulations {
-		if se.Has(a.name) {
+		has := se.Has(a.name)
+		for _, n := range also {
+			has = has || n == a.name
+		}
+		if has {
 			out = append(out, a)
 		}
 	}
@@ -146,7 +158,13 @@ func (e *engraver) drawArticulations(sc *staffCtx, x *ev) {
 	if len(x.notes) == 0 {
 		return
 	}
-	arts := eventArticulations(x.e)
+	var kit []string
+	for _, n := range x.notes {
+		if n.art != "" {
+			kit = append(kit, n.art)
+		}
+	}
+	arts := eventArticulations(x.e, kit...)
 	if len(arts) == 0 {
 		return
 	}

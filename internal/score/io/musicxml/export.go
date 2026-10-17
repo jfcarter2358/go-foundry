@@ -55,6 +55,10 @@ type ExportOptions struct {
 	// NoLayout leaves the page layout out: no paper, margins, staff size
 	// or breaks, so the program opening it lays the score out its own way.
 	NoLayout bool
+	// Kits, when set, is the drum map an instrument's percussion staves
+	// are written by (nil from it: the General MIDI kit's); unset, the
+	// library's (score.KitFor).
+	Kits func(instrument string) *score.Kit
 }
 
 // ExportFile writes a score to a .musicxml (or .xml) file, or a
@@ -120,6 +124,7 @@ func Export(s *score.Score, o ExportOptions) (b []byte, warnings []string, err e
 	if len(s.Lines) == 0 {
 		return nil, nil, fmt.Errorf("musicxml: the score has no lines to write")
 	}
+	s = linkedTabsAsStaves(s)
 	x := &exporter{s: s, o: o, starts: s.BarStarts(), bars: s.Measures()}
 	seen := map[string]bool{}
 	x.warn = func(format string, a ...any) {
@@ -132,6 +137,7 @@ func Export(s *score.Score, o ExportOptions) (b []byte, warnings []string, err e
 	if x.div, err = divisions(s); err != nil {
 		return nil, nil, err
 	}
+	x.stems = stemDirs(s)
 	x.document()
 	return x.w.b.Bytes(), warnings, nil
 }
@@ -145,6 +151,8 @@ type exporter struct {
 	bars   int
 	warn   func(string, ...any)
 	ids    int // directions given an id so far
+	// stems is every stem's direction as the engraver draws it (stems.go).
+	stems map[stemKey]bool
 }
 
 // divisions is the divisions a quarter every length and place in the
@@ -307,6 +315,17 @@ func (x *exporter) credits(title string, pw, ph float64) {
 	}
 }
 
+// kitFor is the drum map a line's percussion is written by.
+func (x *exporter) kitFor(l *score.Line) *score.Kit {
+	if x.o.Kits != nil {
+		if k := x.o.Kits(l.Instrument); k != nil {
+			return k
+		}
+		return score.GMKit
+	}
+	return l.Kit()
+}
+
 // percussive is a staff written as unpitched notes.
 func percussive(st *score.Staff) bool { return st.Clef == "percussion" }
 
@@ -373,7 +392,17 @@ func (x *exporter) partList() {
 	s, w := x.s, &x.w
 	channels := lineChannels(s)
 	w.open("part-list")
+	// The family brackets, as bracketed part groups whose barlines join.
+	groups := score.BracketGroups(s, nil)
 	for li, l := range s.Lines {
+		for gi, g := range groups {
+			if g.First == li {
+				w.open("part-group", attr{"type", "start"}, attr{"number", itoa(gi + 1)})
+				w.leaf("group-symbol", "bracket")
+				w.leaf("group-barline", "yes")
+				w.close()
+			}
+		}
 		w.open("score-part", attr{"id", partID(li)})
 		w.leaf("part-name", l.Name)
 		w.leaf("part-abbreviation", l.ShortName())
@@ -395,7 +424,7 @@ func (x *exporter) partList() {
 		} else {
 			for i, k := range keys {
 				w.open("score-instrument", attr{"id", instID(li, k)})
-				w.leaf("instrument-name", score.DrumName(score.SpellMIDI(k, 0, 1)))
+				w.leaf("instrument-name", x.kitFor(l).NameOf(score.SpellMIDI(k, 0, 1)))
 				if i == 0 {
 					virtual()
 				}
@@ -423,6 +452,11 @@ func (x *exporter) partList() {
 			}
 		}
 		w.close()
+		for gi, g := range groups {
+			if g.Last == li {
+				w.empty("part-group", attr{"type", "stop"}, attr{"number", itoa(gi + 1)})
+			}
+		}
 	}
 	w.close()
 }
@@ -459,11 +493,15 @@ type partWriter struct {
 	// shift is how far the part's written key is from the concert key.
 	shift int
 	keys  []int // drum keys
+	// kit is the line's drum map (its instrument's); places its staves'
+	// voices on their tablature's strings.
+	kit    *score.Kit
+	places map[[2]int][][][]score.TabNote
 }
 
 func (x *exporter) part(li int, l *score.Line) {
 	w := &x.w
-	p := &partWriter{x: x, li: li, l: l, voices: map[[2]int]*voiceState{}, keys: drumKeys(l)}
+	p := &partWriter{x: x, li: li, l: l, voices: map[[2]int]*voiceState{}, keys: drumKeys(l), kit: x.kitFor(l)}
 	if len(l.Staves) > 0 {
 		p.shift = fifthsShift(score.Interval{Diatonic: -l.Staves[0].Transpose.Diatonic, Chromatic: -l.Staves[0].Transpose.Chromatic})
 	}
@@ -555,6 +593,10 @@ func (p *partWriter) measure(bar int) {
 	if p.li == 0 {
 		items = p.partItems(bar, barLen)
 	}
+	if chords := p.chordItems(bar, barLen); len(chords) > 0 {
+		items = append(items, chords...)
+		sort.SliceStable(items, func(i, j int) bool { return items[i].at.Less(items[j].at) })
+	}
 	first := true
 	cursor := score.Frac{}
 	for si, st := range p.l.Staves {
@@ -603,6 +645,9 @@ func (p *partWriter) measure(bar int) {
 // clefsIn are a staff's clef changes inside a bar (after its start).
 func (p *partWriter) clefsIn(si, bar int) []score.ClefChange {
 	var out []score.ClefChange
+	if t := p.l.Staves[si].Tab; t != nil && t.Only {
+		return nil // a TAB staff has no clef changes
+	}
 	for _, c := range p.l.Staves[si].Clefs {
 		if c.At.Bar == bar && c.At.Offset.Sign() > 0 {
 			out = append(out, c)
@@ -645,6 +690,8 @@ func (x *exporter) clefXML(name string, number int) {
 		oct = 1
 	case "percussion":
 		sign, line = "percussion", 0
+	case "tab":
+		sign, line = "TAB", 5
 	}
 	w.open("clef", attr{"number", itoa(number)})
 	w.leaf("sign", sign)
@@ -684,6 +731,12 @@ func (p *partWriter) attributes(bar int) {
 	var clefs []sc
 	for si, st := range p.l.Staves {
 		if c, ok := clefAtStart(st, bar); ok {
+			if st.Tab != nil && st.Tab.Only {
+				if bar > 1 {
+					continue
+				}
+				c = "tab"
+			}
 			clefs = append(clefs, sc{si + 1, c})
 		}
 	}
@@ -728,6 +781,11 @@ func (p *partWriter) attributes(bar int) {
 	}
 	for _, c := range clefs {
 		x.clefXML(c.clef, c.staff)
+	}
+	if bar == 1 {
+		for si, st := range p.l.Staves {
+			x.staffDetailsXML(st, si+1)
+		}
 	}
 	if bar == 1 {
 		same := true
@@ -1530,6 +1588,7 @@ func (p *partWriter) writeEvent(si, vi int, r vref, m score.Measure, e score.Eve
 		notes = []score.Note{{}}
 	}
 	vel := e.VelocityMark()
+	tabs := p.tabPlaces(si, vi, r)
 	for ni, n := range notes {
 		as := []attr{}
 		if vel > 0 && !rest {
@@ -1559,7 +1618,7 @@ func (p *partWriter) writeEvent(si, vi int, r vref, m score.Measure, e score.Eve
 		case rest:
 			w.empty("rest")
 		case percussive(st):
-			pos, _ := score.DrumDisplay(n.Pitch)
+			pos, _, _ := p.kit.Display(n.Pitch)
 			dp := score.FromDiatonic(score.PercussionBottom + pos)
 			w.open("unpitched")
 			w.leaf("display-step", string(score.Steps[dp.Step]))
@@ -1611,14 +1670,19 @@ func (p *partWriter) writeEvent(si, vi int, r vref, m score.Measure, e score.Eve
 			w.close()
 		}
 		if !rest {
+			up, drawn := p.x.stems[stemKey{p.li, si, vi, r.bar, r.idx}]
 			switch {
 			case e.Has("up"):
 				w.leaf("stem", "up")
 			case e.Has("down"):
 				w.leaf("stem", "down")
+			case drawn && up:
+				w.leaf("stem", "up")
+			case drawn:
+				w.leaf("stem", "down")
 			}
 			if percussive(st) {
-				_, head := score.DrumDisplay(n.Pitch)
+				_, head, _ := p.kit.Display(n.Pitch)
 				switch head {
 				case score.DrumHeadX:
 					w.leaf("notehead", "x")
@@ -1631,7 +1695,13 @@ func (p *partWriter) writeEvent(si, vi int, r vref, m score.Measure, e score.Eve
 				}
 			}
 		}
-		w.leaf("staff", itoa(si+1))
+		// A cross-staff note is on the staff it is written on (its voice
+		// still its own staff's).
+		staffNo := si + 1
+		if d := e.CrossStaff(); !rest && d != 0 && si+d >= 0 && si+d < len(p.l.Staves) && !p.l.Staves[si+d].Percussion() {
+			staffNo += d
+		}
+		w.leaf("staff", itoa(staffNo))
 		if ni == 0 {
 			for lv, b := range beams {
 				if b != "" {
@@ -1639,7 +1709,14 @@ func (p *partWriter) writeEvent(si, vi int, r vref, m score.Measure, e score.Eve
 				}
 			}
 		}
-		p.notations(si, vi, e, n, ni, rest, tiedIn, glissIn, tremIn, tm, m, vs)
+		var place *score.TabNote
+		if !rest && ni < len(tabs) && tabs[ni].OK {
+			place = &tabs[ni]
+		}
+		p.notations(si, vi, e, n, ni, rest, tiedIn, glissIn, tremIn, tm, m, vs, place)
+		if ni == 0 && !rest {
+			p.lyricsXML(si, vi, r, e)
+		}
 		w.close()
 	}
 	p.after(si, vi, r, &e, vs)
@@ -1663,7 +1740,7 @@ func accMark(a int) string { return accidentalNames[a] }
 
 // notations writes a note's <notations>: ties, tuplets, slurs, glissandi,
 // ornaments, articulations, fermata, arpeggio.
-func (p *partWriter) notations(si, vi int, e score.Event, n score.Note, ni int, rest bool, tiedIn map[int]bool, glissIn, tremIn string, tm tupletMark, m score.Measure, vs *voiceState) {
+func (p *partWriter) notations(si, vi int, e score.Event, n score.Note, ni int, rest bool, tiedIn map[int]bool, glissIn, tremIn string, tm tupletMark, m score.Measure, vs *voiceState, place *score.TabNote) {
 	w := &p.x.w
 	var body []func()
 	add := func(f func()) { body = append(body, f) }
@@ -1790,6 +1867,24 @@ func (p *partWriter) notations(si, vi int, e score.Event, n score.Note, ni int, 
 				w.close()
 			})
 		}
+		var tech []func()
+		for _, mk := range e.Marks {
+			switch mk.Name {
+			case "open":
+				tech = append(tech, func() { w.empty("open") })
+			case "stopped":
+				tech = append(tech, func() { w.empty("stopped") })
+			}
+		}
+		if len(tech) > 0 && !rest {
+			add(func() {
+				w.open("technical")
+				for _, f := range tech {
+					f()
+				}
+				w.close()
+			})
+		}
 		for _, mk := range e.Marks {
 			if mk.Name == "ferm" {
 				shape := fermataShapes[mk.Value]
@@ -1799,6 +1894,16 @@ func (p *partWriter) notations(si, vi int, e score.Event, n score.Note, ni int, 
 				add(func() { w.leaf("fermata", shape, attr{"type", "upright"}) })
 			}
 		}
+	}
+	if place != nil {
+		// Every note's own place on the strings.
+		st, fr := place.String, place.Fret
+		add(func() {
+			w.open("technical")
+			w.leaf("string", itoa(st))
+			w.leaf("fret", itoa(fr))
+			w.close()
+		})
 	}
 	if !rest {
 		for _, mk := range e.Marks {

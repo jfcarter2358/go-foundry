@@ -5,4 +5,10 @@ polyphony: 4
 playback:
   clef: percussion
   release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Cowbell 808
+    line: 4
+    head: triangle
 description: '808 cowbell: two squares through a bandpass'

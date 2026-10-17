@@ -198,6 +198,12 @@ func inspectLayout(s *score.Score, out io.Writer) {
 	if l.Courtesy {
 		flags = append(flags, "courtesy accidentals")
 	}
+	if l.NoBrackets {
+		flags = append(flags, "no family brackets")
+	}
+	if l.HideEmpty {
+		flags = append(flags, "empty staves hidden")
+	}
 	if len(flags) > 0 {
 		fmt.Fprintf(out, " (%s)", strings.Join(flags, ", "))
 	}

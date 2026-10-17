@@ -183,6 +183,24 @@ const (
 	scExportImage
 	scExport
 	scImport
+	// Words (editor_score_words.go).
+	scLyrics
+	scLyrics2
+	scChordSymbol
+	// MIDI keyboard (editor_score_midi.go).
+	scRecord
+	scMIDIInput
+	// Tools (editor_score_tools.go).
+	scTranspose
+	scRespellSel
+	scSpellInKey
+	scFind
+	scFindNext
+	scFindPrev
+	scPalette
+	// Cross-staff notes (editor_score_tools.go).
+	scCrossUp
+	scCrossDown
 	scCmdCount
 )
 
@@ -306,6 +324,20 @@ func buildScoreCmdInfos() []scoreCmdInfo {
 	set(scExportImage, "export_image", "Export the selected bars as PNG / SVG...", "Layout")
 	set(scExport, "export", "Export... (PDF, MusicXML, MIDI, audio, Tracker song)", "File & view")
 	set(scImport, "import", "Import MusicXML, MIDI or a Tracker song...", "File & view")
+	set(scLyrics, "lyrics", "Lyrics under the selected note (Space next, - hyphen, _ melisma)", "Entry")
+	set(scLyrics2, "lyrics_verse_2", "Lyrics, verse 2 (again in the field: the next verse)", "Entry")
+	set(scChordSymbol, "chord_symbol", "Chord symbol over the selection (Space next beat)", "Entry")
+	set(scRecord, "record", "Record from the MIDI keyboard (again: stop)", "Playback")
+	set(scMIDIInput, "midi_input", "MIDI input... (keyboard, thru, count-in, click, quantise)", "Entry")
+	set(scTranspose, "transpose", "Transpose... (by an interval or to a key; the selection or the whole score)", "Pitch")
+	set(scRespellSel, "respell_selection", "Respell the selection (every note to its other spelling)", "Pitch")
+	set(scSpellInKey, "spell_in_key", "Spell the selection in the key (sharps rising, flats falling)", "Pitch")
+	set(scFind, "find", "Find... (a pitch, a mark or a text)", "Selection")
+	set(scFindNext, "find_next", "Find next", "Selection")
+	set(scFindPrev, "find_previous", "Find previous", "Selection")
+	set(scPalette, "command_palette", "Command palette: every command by name", "File & view")
+	set(scCrossUp, "cross_staff_up", "Notes onto the staff above (cross-staff; again: back)", "Voices & tuplets")
+	set(scCrossDown, "cross_staff_down", "Notes onto the staff below (cross-staff; again: back)", "Voices & tuplets")
 	return in
 }
 
@@ -645,6 +677,22 @@ func scoreCommonBinds(k *scoreKeymap) {
 	k.bind(scExportPDF, ctrlShift(sdl.SCANCODE_E))
 	k.bind(scExport, ctrlShift(sdl.SCANCODE_X))
 	k.bind(scImport, ctrlShift(sdl.SCANCODE_I))
+	// Words: Ctrl+L lyrics and Ctrl+K chord symbols, as in both programs;
+	// Ctrl+Alt+L Sibelius's second verse.
+	k.bind(scLyrics, ctrlKey(sdl.SCANCODE_L))
+	k.bind(scLyrics2, ctrlAlt(sdl.SCANCODE_L))
+	k.bind(scChordSymbol, ctrlKey(sdl.SCANCODE_K))
+	// Recording: Sibelius's Flexi-time key.
+	k.bind(scRecord, ctrlShift(sdl.SCANCODE_F))
+	// Find (Ctrl+F, Ctrl+G again, as both programs have them) and the
+	// command palette.
+	k.bind(scFind, ctrlKey(sdl.SCANCODE_F))
+	k.bind(scFindNext, ctrlKey(sdl.SCANCODE_G), key(sdl.SCANCODE_F3))
+	k.bind(scFindPrev, ctrlShift(sdl.SCANCODE_G), shiftKey(sdl.SCANCODE_F3))
+	k.bind(scPalette, ctrlShift(sdl.SCANCODE_P))
+	// Cross-staff, as both programs have it.
+	k.bind(scCrossUp, ctrlShift(sdl.SCANCODE_UP))
+	k.bind(scCrossDown, ctrlShift(sdl.SCANCODE_DOWN))
 }
 
 // scoreSibeliusKeymap is the default: Sibelius's keys, as SPEC.md's input
@@ -694,6 +742,8 @@ func scoreSibeliusKeymap() *scoreKeymap {
 	k.bind(scClef, key(sdl.SCANCODE_Q))
 	k.bind(scKeypadPanel, ctrlAlt(sdl.SCANCODE_K))
 	k.bind(scMixer, key(sdl.SCANCODE_M))
+	// Sibelius's Transpose dialog.
+	k.bind(scTranspose, shiftKey(sdl.SCANCODE_T))
 	k.index()
 	return k
 }

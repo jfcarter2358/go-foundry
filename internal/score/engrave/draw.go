@@ -20,14 +20,18 @@ func (e *engraver) draw() {
 	endX := e.layoutEndX()
 	t := e.d.StaffLineThickness
 	for _, sc := range e.staves {
+		if sc.tab != nil {
+			e.drawTabStaff(sc)
+			continue
+		}
 		ref := Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: 0, Event: -1, Note: -1}
-		for i := 0; i < 5; i++ {
-			y := float64(i)
+		for _, y := range sc.lineYs() {
 			e.addStaff(sc, Item{Kind: ItemLine, Role: RoleStaff, Ref: ref, P: Point{X: 0, Y: y}, Q: Point{X: endX, Y: y}, Width: t})
 		}
+		by0, by1 := sc.barY()
 		e.drawStart(sc)
 		if bc := e.bars[0]; e.repeatStarts(bc.bar) {
-			for _, it := range e.barlineItems(barRepeatStart, bc.content+startRepeatGap, -t/2, 4+t/2, Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}, true) {
+			for _, it := range e.barlineItems(barRepeatStart, bc.content+startRepeatGap, by0-t/2, by1+t/2, Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}, true) {
 				e.addStaff(sc, it)
 			}
 		}
@@ -39,7 +43,7 @@ func (e *engraver) draw() {
 			}
 			bref := ref
 			bref.Bar = bc.bar
-			for _, it := range e.barlineItems(e.barlineBefore(bi+1), bc.x1, -t/2, 4+t/2, bref, true) {
+			for _, it := range e.barlineItems(e.barlineBefore(bi+1), bc.x1, by0-t/2, by1+t/2, bref, true) {
 				e.addStaff(sc, it)
 			}
 			if bc.multi > 0 || bc.folded {
@@ -204,7 +208,7 @@ func (e *engraver) drawEvent(sc *staffCtx, x *ev) {
 	e.drawArpeggio(sc, x)
 	for k := 0; k < x.dots; k++ {
 		for _, row := range x.dotRows {
-			e.add(sc, x, e.glyphItem(RoleDot, x.ref, "augmentationDot", x.x+x.dotX+float64(k)*dotSpacing*s, 4-float64(row)/2, s))
+			e.add(sc, x, e.glyphItem(RoleDot, x.ref, "augmentationDot", x.x+x.dotX+float64(k)*dotSpacing*s, 4-float64(row)/2+x.crossY, s))
 		}
 	}
 	if x.hasStem && x.beam == nil {
@@ -232,8 +236,8 @@ func (e *engraver) drawAcc(sc *staffCtx, x *ev, n *nt, ax float64, ref Ref) {
 // drawLedgers draws a chord's ledger lines: one at every line between the
 // staff and its furthest note, as wide as the heads that need it.
 func (e *engraver) drawLedgers(sc *staffCtx, x *ev) {
-	if len(x.notes) == 0 {
-		return
+	if len(x.notes) == 0 || sc.lines < 5 {
+		return // a one-line staff's notes sit by the line, with none
 	}
 	s := x.size
 	ext := e.d.LegerLineExtension * s
@@ -252,7 +256,7 @@ func (e *engraver) drawLedgers(sc *staffCtx, x *ev) {
 				left = math.Min(left, accGap*s*0.6)
 			}
 		}
-		y := 4 - float64(L)/2
+		y := 4 - float64(L)/2 + x.crossY
 		e.add(sc, x, Item{Kind: ItemLine, Role: RoleLedger, Ref: x.ref, P: Point{X: x0 - left, Y: y}, Q: Point{X: x1 + ext, Y: y}, Width: th})
 	}
 	for L := -2; L >= lo; L -= 2 {
@@ -304,7 +308,9 @@ func (e *engraver) drawSpanning() {
 	t := e.d.StaffLineThickness
 	first, last := e.staves[0], e.staves[len(e.staves)-1]
 	if len(e.staves) > 1 {
-		for _, it := range e.barlineItems(barSingle, 0, first.top-t/2, last.top+4+t/2, NoRef, false) {
+		f0, _ := first.barY()
+		_, l1 := last.barY()
+		for _, it := range e.barlineItems(barSingle, 0, first.top+f0-t/2, last.top+l1+t/2, NoRef, false) {
 			e.items = append(e.items, it)
 		}
 	}
@@ -313,13 +319,13 @@ func (e *engraver) drawSpanning() {
 			continue
 		}
 		j := i
-		for j+1 < len(e.staves) && e.staves[j+1].line == sc.line && !e.staves[j+1].first {
-			j++
+		for j+1 < len(e.staves) && e.staves[j+1].line == sc.line && !e.staves[j+1].first && e.staves[j+1].tab == nil {
+			j++ // (a linked tablature is not braced to its notation)
 		}
 		if j == i {
 			continue
 		}
-		top, bot := sc.top, e.staves[j].top+4
+		top, bot := sc.top, e.staves[j].top+e.staves[j].height()
 		// The brace, stretched to the grand staff.
 		h := bot - top
 		size := math.Min(math.Max(h/4*0.55, 1), 2.4)
@@ -330,19 +336,20 @@ func (e *engraver) drawSpanning() {
 		// Barlines through the gaps.
 		if bc := e.bars[0]; e.repeatStarts(bc.bar) {
 			for k := i; k < j; k++ {
-				for _, it := range e.barlineItems(barRepeatStart, bc.content+startRepeatGap, e.staves[k].top+4, e.staves[k+1].top, NoRef, false) {
+				for _, it := range e.barlineItems(barRepeatStart, bc.content+startRepeatGap, e.staves[k].top+e.staves[k].height(), e.staves[k+1].top, NoRef, false) {
 					e.items = append(e.items, it)
 				}
 			}
 		}
 		for bi, bc := range e.bars {
 			for k := i; k < j; k++ {
-				for _, it := range e.barlineItems(e.barlineBefore(bi+1), bc.x1, e.staves[k].top+4, e.staves[k+1].top, Ref{Line: sc.line, Staff: -1, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}, false) {
+				for _, it := range e.barlineItems(e.barlineBefore(bi+1), bc.x1, e.staves[k].top+e.staves[k].height(), e.staves[k+1].top, Ref{Line: sc.line, Staff: -1, Voice: -1, Bar: bc.bar, Event: -1, Note: -1}, false) {
 					e.items = append(e.items, it)
 				}
 			}
 		}
 	}
+	e.drawBrackets()
 	e.drawBarNumbers()
 	e.drawSystemMarks()
 }

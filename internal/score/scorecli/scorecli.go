@@ -53,6 +53,9 @@ const usage = `foundry score — work on notated scores (sounds/*.fscore).
   foundry score export <score> [flags]       every format at once, as the Export dialog writes them
                                              (-formats pdf,musicxml,ogg|all, -o dir; see export -h)
   foundry score codecs                       where the OGG and MP3 encoders are found (or why not)
+  foundry score midi [-monitor secs] [-port name]
+                                             the MIDI input ports (ALSA, WinMM); -monitor prints what
+                                             a port sends for that long (the first port with no -port)
 
 A score is a name under sounds/ without the extension, or a path to a file.
 Every verb takes -root <project> before its arguments.
@@ -111,6 +114,8 @@ func Main(root string, args []string, out io.Writer) int {
 		return exportAll(rest, out)
 	case "codecs":
 		return codecs(out)
+	case "midi":
+		return midiCmd(rest, out)
 	}
 	fmt.Fprintf(out, "score: unknown verb %q\n\n", sub)
 	fs.Usage()
@@ -254,7 +259,12 @@ func inspect(rest []string, out io.Writer) int {
 	for i := range lo {
 		lo[i], hi[i] = 999, -1
 	}
+	chordNotes := make([]int, len(s.Lines))
 	for _, n := range perf.Notes {
+		if n.FromChord {
+			chordNotes[n.Line]++
+			continue
+		}
 		counts[n.Line]++
 		lo[n.Line], hi[n.Line] = min(lo[n.Line], n.MIDI), max(hi[n.Line], n.MIDI)
 	}
@@ -292,7 +302,35 @@ func inspect(rest []string, out io.Writer) int {
 			for _, c := range st.Clefs {
 				tr += fmt.Sprintf(", %s from %s", c.Clef, s.FormatPos(c.At))
 			}
+			if st.Percussion() {
+				kit := l.Kit()
+				tr += fmt.Sprintf(", %d line(s), drum map %s (%d sounds)", st.StaffLines(), kit.Name, len(kit.Drums))
+			}
+			if t := st.Tab; t != nil {
+				tuning := t.Preset()
+				if tuning == "" {
+					tuning = fmt.Sprint(t.Tuning)
+				}
+				view := "linked under the notation"
+				if t.Only {
+					view = "alone"
+				}
+				tr += fmt.Sprintf(", tablature %s %s", tuning, view)
+				if t.Capo > 0 {
+					tr += fmt.Sprintf(", capo %d", t.Capo)
+				}
+			}
 			fmt.Fprintf(out, "         staff %d %s%s, %d voice(s)\n", si+1, st.Clef, tr, len(st.Voices))
+			for vi, v := range st.Voices {
+				for verse := 1; verse <= score.MaxVerses; verse++ {
+					if text := score.LyricText(v, verse); text != "" {
+						if len(text) > 60 {
+							text = text[:57] + "..."
+						}
+						fmt.Fprintf(out, "         voice %d verse %d: %s\n", vi+1, verse, text)
+					}
+				}
+			}
 			if in != nil && st.Transpose.Chromatic != in.Playback.Transposition && st.Clef != "percussion" {
 				// Written pitch is the staff's; the instrument's file says
 				// how its parts are usually written.
@@ -302,6 +340,25 @@ func inspect(rest []string, out io.Writer) int {
 		}
 		if counts[i] > 0 {
 			fmt.Fprintf(out, "         %d notes, %s..%s\n", counts[i], score.SpellMIDI(lo[i], 0, 1), score.SpellMIDI(hi[i], 0, 1))
+		}
+		if n := len(l.Chords); n > 0 {
+			var syms []string
+			for _, c := range l.Chords[:min(n, 8)] {
+				syms = append(syms, c.Chord.String())
+			}
+			more := ""
+			if n > 8 {
+				more = " …"
+			}
+			play := "printed only"
+			if cp := l.ChordPlay; cp != nil && cp.Style != score.ChordsSilent {
+				inst := cp.Instrument
+				if inst == "" {
+					inst = "the line's instrument"
+				}
+				play = fmt.Sprintf("played as a %s on %s at %.2f, %d notes", score.ChordStyles[cp.Style], inst, cp.Volume, chordNotes[i])
+			}
+			fmt.Fprintf(out, "         %d chord symbol(s): %s%s; %s\n", n, strings.Join(syms, " "), more, play)
 		}
 		if len(l.Inserts) > 0 || l.SendA > 0 || l.SendB > 0 {
 			pre := func(on bool) string {
@@ -325,7 +382,7 @@ func inspect(rest []string, out io.Writer) int {
 			pb := in.Playback
 			low, high := 0, 0
 			for _, n := range perf.Notes {
-				if n.Line != i {
+				if n.Line != i || n.FromChord {
 					continue
 				}
 				// Playback ranges are tracker note numbers: MIDI - 11.

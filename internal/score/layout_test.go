@@ -24,6 +24,8 @@ layout:
   names: short
   cautionary: false
   courtesy: true
+  brackets: false
+  hide_empty: true
   parts:
     - {line: Flute, staff: 7.5, breaks: [{bar: 4}], multi_rests: false, paper: tabloid}
 lines:
@@ -49,7 +51,7 @@ lines:
 	if len(l.Breaks) != 2 || l.Breaks[0] != (Break{Bar: 2, Page: true}) || l.Breaks[1] != (Break{Bar: 3}) {
 		t.Errorf("breaks sorted: %+v", l.Breaks)
 	}
-	if !l.TitlePage || !l.NoPageNumbers || l.Names != NamesShort || !l.NoCautionary || !l.Courtesy {
+	if !l.TitlePage || !l.NoPageNumbers || l.Names != NamesShort || !l.NoCautionary || !l.Courtesy || !l.NoBrackets || !l.HideEmpty {
 		t.Errorf("switches: %+v", l)
 	}
 	pl, multi := l.ForPart("flute")

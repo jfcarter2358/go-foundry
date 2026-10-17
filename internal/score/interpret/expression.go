@@ -541,7 +541,9 @@ func (in *interp) arpeggios(ve *voiceEvents) {
 	}
 }
 
-// pedals holds every note that ends under a line's pedal until it lifts.
+// pedals holds every note that ends under a line's pedal until it lifts
+// (with Options.PedalPresses, keeps the presses for the performance
+// instead).
 func (in *interp) pedals() {
 	var end score.Frac
 	if n := len(in.order); n > 0 {
@@ -564,6 +566,13 @@ func (in *interp) pedals() {
 		}
 		if open && from.Less(end) {
 			spans = append(spans, [2]score.Frac{from, end})
+		}
+		if in.o.PedalPresses {
+			if in.pedalSpans == nil {
+				in.pedalSpans = make([][][2]score.Frac, len(in.lines))
+			}
+			in.pedalSpans[li] = spans
+			continue
 		}
 		for i := range in.notes {
 			n := &in.notes[i]

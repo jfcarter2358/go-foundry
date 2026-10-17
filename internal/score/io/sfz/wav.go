@@ -5,19 +5,27 @@ package sfz
 // A WAV made for a sampler carries a 'smpl' chunk: the note it was
 // recorded at (with a fraction of a semitone) and its loop points. An SFZ
 // region that gives no pitch_keycenter=sample or no loop_start uses them,
-// so they are read here beside the audio internal/audio decodes.
+// so they are read here beside the audio internal/audio decodes (and FLAC,
+// which it does not, by internal/score/io/audioenc's decoder).
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"foundry/internal/audio"
+	"foundry/internal/score/io/audioenc"
 )
 
-// loadAudio decodes a sample file with its smpl chunk's root and loop.
+// loadAudio decodes a sample file with its smpl chunk's root and loop. A
+// FLAC sample is read by the score's own FLAC decoder (the game's audio
+// reads WAV, OGG and MP3 only); the instrument keeps it as WAV.
 func loadAudio(path string) (*Audio, error) {
+	if strings.EqualFold(pathExt(path), ".flac") {
+		return loadFLAC(path)
+	}
 	clip, err := audio.LoadClip(path, path)
 	if err != nil {
 		return nil, err
@@ -32,6 +40,27 @@ func loadAudio(path string) (*Audio, error) {
 		}
 	}
 	return a, nil
+}
+
+// loadFLAC decodes a FLAC sample to floats.
+func loadFLAC(path string) (*Audio, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	st, err := audioenc.DecodeFLAC(b)
+	if err != nil {
+		return nil, err
+	}
+	if st.Channels < 1 || st.Bits < 1 || st.Bits > 32 {
+		return nil, fmt.Errorf("FLAC: %d channels of %d bits", st.Channels, st.Bits)
+	}
+	scale := 1 / float32(int64(1)<<(st.Bits-1))
+	data := make([]float32, len(st.Samples))
+	for i, v := range st.Samples {
+		data[i] = float32(v) * scale
+	}
+	return &Audio{Name: path, Data: data, Channels: st.Channels, Rate: st.Rate, Root: -1}, nil
 }
 
 func pathExt(p string) string {

@@ -792,6 +792,22 @@ func scoreMarksMenu() {
 		scoreRunCmd(scGraceApp)
 	}
 	imgui.Separator()
+	item("Lyrics", scLyrics)
+	item("Lyrics, Verse 2", scLyrics2)
+	item("Chord Symbol", scChordSymbol)
+	if imgui.MenuItemV("Clear Lyrics in the Selection", "", false, e.Sel.Kind == scoreSelBars) {
+		e.clearLyrics()
+	}
+	if imgui.BeginMenu("Open / Stopped") {
+		for _, m := range []struct{ name, label string }{{"open", "Open (o)"}, {"stopped", "Stopped / Closed (+)"}} {
+			if imgui.MenuItem(m.label + "##scmos") {
+				e.toggleMark(m.name, "")
+			}
+		}
+		imgui.EndMenu()
+	}
+	editorMenuTooltip("A horn's open and stopped notes; on a drum kit an \"o\" plays the open hi-hat")
+	imgui.Separator()
 	item("Tempo...", scTempoText)
 	item("Rehearsal Mark...", scRehearsal)
 	item("Repeat...", scRepeatBars)

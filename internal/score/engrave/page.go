@@ -200,6 +200,14 @@ type pager struct {
 
 	// over is the tallest system's height over its page's music area.
 	over float64
+
+	// What place decided about each page and system, for uniform: a
+	// page's music area top, whether it is spread, and each system's
+	// engraving options and whether it is the score's first.
+	pageTop  map[*Page]float64
+	spreadOn map[*Page]bool
+	sysOpts  map[*System]Options
+	sysFirst map[*System]bool
 }
 
 func (p *pager) newPage() *Page {
@@ -226,6 +234,8 @@ func (p *pager) names() {
 		}
 		return size, w
 	}
+	// Room left of the opening barline for a brace or a family bracket.
+	p.brace = len(score.BracketGroups(p.s, p.lines)) > 0
 	for _, li := range p.lines {
 		l := p.s.Lines[li]
 		if len(l.Staves) > 1 {
@@ -432,6 +442,8 @@ func (p *pager) place(starts []int) {
 		}
 	}
 	gap := p.o.Layout.SystemGapOrDefault()
+	p.pageTop, p.spreadOn = map[*Page]float64{}, map[*Page]bool{}
+	p.sysOpts, p.sysFirst = map[*System]Options{}, map[*System]bool{}
 	var pg *Page
 	var top, bottom float64 // the page's music area
 	var y float64           // the last system's top line
@@ -447,6 +459,7 @@ func (p *pager) place(starts []int) {
 		musicPages++
 		bottom = p.b.Height - p.mb
 		prev = nil
+		p.pageTop[pg] = top
 	}
 	for si, a := range starts {
 		z := n - 1
@@ -456,6 +469,9 @@ func (p *pager) place(starts []int) {
 		first := si == 0
 		o := p.engraveOptions()
 		o.From, o.To = a+1, z+1
+		if !first && p.o.Layout.HideEmpty && p.o.Part == "" {
+			o.Lines = p.sounding(a+1, z+1)
+		}
 		avail := p.measureWidth(first)
 		var l *List
 		if si == len(starts)-1 {
@@ -478,7 +494,7 @@ func (p *pager) place(starts []int) {
 		if pg == nil {
 			startPage()
 		} else if pageBreak[a+1] {
-			p.spread(pg, bottom)
+			p.spreadOn[pg] = true
 			startPage()
 		}
 		if prev == nil {
@@ -493,7 +509,7 @@ func (p *pager) place(starts []int) {
 			pDown := pl.Height - margin - pl.Origin.Y
 			ny := y + math.Max(pBottom+gap, pDown+up+sysInkPad)
 			if ny+down > bottom {
-				p.spread(pg, bottom)
+				p.spreadOn[pg] = true
 				startPage()
 				ny = top + up
 				p.overflow(top, bottom, up+down)
@@ -502,10 +518,121 @@ func (p *pager) place(starts []int) {
 		}
 		sys.At = Point{X: p.ml + p.indent(first) - l.Origin.X, Y: y - l.Origin.Y}
 		pg.Systems = append(pg.Systems, sys)
-		p.nameItems(pg, sys, first)
+		p.sysOpts[sys], p.sysFirst[sys] = o, first
 		prev = sys
 	}
+	for _, pg := range p.b.Pages {
+		p.uniform(pg)
+		if p.spreadOn[pg] {
+			p.spread(pg, p.b.Height-p.mb)
+		}
+		for _, sys := range pg.Systems {
+			p.nameItems(pg, sys, p.sysFirst[sys])
+		}
+	}
 	p.pageNumbers()
+}
+
+// sounding is the lines with a note somewhere in bars a..z — the lines a
+// system shows when the layout hides empty staves (every line, should
+// none have one).
+func (p *pager) sounding(a, z int) []int {
+	var out []int
+	for _, li := range p.lines {
+		if lineSounds(p.s.Lines[li], a, z) {
+			out = append(out, li)
+		}
+	}
+	if len(out) == 0 {
+		return p.lines
+	}
+	return out
+}
+
+// lineSounds reports a note of a line in bars a..z, or a chord symbol
+// there.
+func lineSounds(l *score.Line, a, z int) bool {
+	for _, c := range l.Chords {
+		if c.At.Bar >= a && c.At.Bar <= z {
+			return true
+		}
+	}
+	for _, st := range l.Staves {
+		for _, v := range st.Voices {
+			for b := a; b <= z && b <= len(v.Measures); b++ {
+				for _, e := range v.Measures[b-1].Events {
+					if e.Kind == score.EventChord {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// uniform sets the staves of a page's systems the same distance apart:
+// each staff the most any system on the page needs below the one above
+// it (its ink), so a line keeps its place down the page as engravers set
+// it. Systems are engraved again with those distances and placed down the
+// page again; a page that would no longer hold them keeps its own.
+func (p *pager) uniform(pg *Page) {
+	k := len(pg.Systems)
+	if k < 2 {
+		return
+	}
+	n := len(pg.Systems[0].List.Staves)
+	if n < 2 {
+		return
+	}
+	steps := make([]float64, n)
+	for _, sys := range pg.Systems {
+		st := sys.List.Staves
+		if len(st) != n {
+			return
+		}
+		for i := 1; i < n; i++ {
+			steps[i] = math.Max(steps[i], st[i].Top-st[i-1].Top)
+		}
+	}
+	gap := p.o.Layout.SystemGapOrDefault()
+	bottom := p.b.Height - p.mb
+	moved := make([]*List, k)
+	ats := make([]Point, k)
+	var y float64
+	for si, sys := range pg.Systems {
+		l := sys.List
+		same := true
+		for i := 1; i < n; i++ {
+			same = same && math.Abs((l.Staves[i].Top-l.Staves[i-1].Top)-steps[i]) < 1e-9
+		}
+		if !same {
+			o := p.sysOpts[sys]
+			o.StaffSteps = steps
+			l = Engrave(p.s, o)
+			for i := range l.Items {
+				l.Items[i].Faint = false
+			}
+		}
+		up := l.Origin.Y - margin
+		down := l.Height - margin - l.Origin.Y
+		if si == 0 {
+			y = p.pageTop[pg] + up
+		} else {
+			pl := moved[si-1]
+			pBottom := pl.Staves[len(pl.Staves)-1].Top + 4 - pl.Origin.Y
+			pDown := pl.Height - margin - pl.Origin.Y
+			y += math.Max(pBottom+gap, pDown+up+sysInkPad)
+		}
+		if y+down > bottom+1e-9 {
+			return // the page would overflow: it keeps its own spacing
+		}
+		moved[si] = l
+		ats[si] = Point{X: sys.At.X - (l.Origin.X - sys.List.Origin.X), Y: y - l.Origin.Y}
+	}
+	for si, sys := range pg.Systems {
+		sys.List, sys.At = moved[si], ats[si]
+	}
 }
 
 // overflow notes a system of height h starting a page whose music area
@@ -733,12 +860,14 @@ func (b *Book) List(pg *Page) *List {
 			c.Bars[i].Columns = append([]Column(nil), c.Bars[i].Columns...)
 		}
 		c.Events = append([]EventBox(nil), sys.List.Events...)
+		c.Chords = append([]ChordBox(nil), sys.List.Chords...)
 		c.Lanes = nil
 		c.Translate(sys.At)
 		l.Items = append(l.Items, c.Items...)
 		l.Staves = append(l.Staves, c.Staves...)
 		l.Bars = append(l.Bars, c.Bars...)
 		l.Events = append(l.Events, c.Events...)
+		l.Chords = append(l.Chords, c.Chords...)
 	}
 	l.Items = append(l.Items, pg.Items...)
 	return l

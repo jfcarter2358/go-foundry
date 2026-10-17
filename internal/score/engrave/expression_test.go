@@ -450,6 +450,21 @@ func TestOttavaLinesMoveTheNotesTheyCover(t *testing.T) {
 	if hooks != 1 || dashes < 3 {
 		t.Errorf("%d hooks, %d dashes", hooks, dashes)
 	}
+	// A line carried onto the next system is "(8va)" there; its first
+	// system has no parentheses.
+	long := one(t, "treble", "| qC6(8va) qD6 qE6 qF6 | qG6 qF6 qE6 qD6 | wC6(ottava_end) |")
+	first := Engrave(long, Options{From: 1, To: 1})
+	next := Engrave(long, Options{From: 2, To: 3})
+	if len(glyphsNamed(first, "octaveParensLeft")) != 0 {
+		t.Error("parentheses on the line's own start")
+	}
+	pl, pr, g := glyphsNamed(next, "octaveParensLeft"), glyphsNamed(next, "octaveParensRight"), glyphsNamed(next, "ottavaAlta")
+	if len(pl) != 1 || len(pr) != 1 || len(g) != 1 {
+		t.Fatalf("continued: %d ( %d ) %d 8va", len(pl), len(pr), len(g))
+	}
+	if a, b, c := ItemBounds(&pl[0]), ItemBounds(&g[0]), ItemBounds(&pr[0]); !(a.Max.X <= b.Min.X+0.05 && b.Max.X <= c.Min.X+0.05) {
+		t.Errorf("(8va) out of order: %v %v %v", a, b, c)
+	}
 	// 8vb under the staff, notes an octave up.
 	l = Engrave(one(t, "treble", "| qC4(8vb) qD4 hE4"), Options{})
 	if g := glyphsNamed(l, "ottavaBassaVb"); len(g) != 1 || staffY(l, ItemBounds(&g[0]).Min.Y) < 4 {
@@ -783,5 +798,65 @@ func TestNoCollisionsWithExpression(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Two lines of one family in a row are bracketed, with barlines through
+// the gap between them; a family of one, keyboards and the layout's
+// brackets: false are not.
+func TestFamilyBrackets(t *testing.T) {
+	s := score.New("t")
+	s.Bars = 2
+	s.Lines = []*score.Line{
+		score.NewLine("Flute", "woodwinds/flute", "treble"),
+		score.NewLine("Violins", "strings/violin_section", "treble"),
+		score.NewLine("Violas", "strings/viola_section", "alto"),
+		score.NewLine("Cellos", "strings/cello_section", "bass"),
+		score.NewLine("Piano", "keys/piano", "treble"),
+	}
+	g := score.BracketGroups(s, nil)
+	if len(g) != 1 || g[0].First != 1 || g[0].Last != 3 || g[0].Family != "strings" {
+		t.Fatalf("groups %+v", g)
+	}
+	if g := score.BracketGroups(s, []int{0, 1, 4}); len(g) != 0 {
+		t.Errorf("one string line is not a family: %+v", g)
+	}
+	l := Engrave(s, Options{})
+	tops, hooks := 0, 0
+	var line Item
+	for _, it := range l.Items {
+		if it.Role != RoleBrace {
+			continue
+		}
+		switch {
+		case it.Kind == ItemLine:
+			tops++
+			line = it
+		case it.Glyph == "bracketTop" || it.Glyph == "bracketBottom":
+			hooks++
+		}
+	}
+	if tops != 1 || hooks != 2 {
+		t.Fatalf("%d bracket lines, %d hooks", tops, hooks)
+	}
+	if v, c := l.Staves[1], l.Staves[3]; line.P.Y > v.Top || line.Q.Y < c.Top+4 || line.P.X >= l.Origin.X {
+		t.Errorf("the bracket %v should run from the violins (%v) to the cellos (%v), left of the system", line, v.Top, c.Top)
+	}
+	// Barlines through the gaps: between violins and violas at each bar.
+	through := 0
+	for _, it := range l.Items {
+		if it.Role == RoleBarline && it.Kind == ItemLine && it.P.Y >= l.Staves[1].Top+4-0.1 && it.Q.Y <= l.Staves[2].Top+0.1 && it.Q.Y > it.P.Y {
+			through++
+		}
+	}
+	if through < 2 {
+		t.Errorf("%d barlines through the violins' and violas' gap", through)
+	}
+	s.Layout.NoBrackets = true
+	if g := score.BracketGroups(s, nil); len(g) != 0 {
+		t.Errorf("brackets: false: %+v", g)
+	}
+	if score.Family("plucked/guitar_nylon") != "" || score.Family("winds/oboe") != "woodwinds" || score.Family("choir/choir") != "voices" {
+		t.Error("families")
 	}
 }

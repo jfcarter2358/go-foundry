@@ -24,7 +24,14 @@ type Program struct {
 
 	insts   []*tracker.Instrument // per line; nil plays nothing
 	release []float32             // per line: the instrument's Playback.Release
-	arts    []int                 // per note: 1-based articulation, 0 the default
+	// chordInsts, chordRelease and chordVol are per line what its chord
+	// symbols play on (score.Line.ChordPlay): its own instrument, a
+	// release, a volume; nil insts where the line's own plays them.
+	chordInsts   []*tracker.Instrument
+	chordRelease []float32
+	chordVol     []float32
+
+	arts []int // per note: 1-based articulation, 0 the default
 	// follow is per note what the scheduler moves while it sounds:
 	// followLevel its level along the line's dynamics (a held note under a
 	// hairpin, an accent falling back), followBend its pitch (a slide).
@@ -42,6 +49,11 @@ type Program struct {
 	mixLanes           [3][]laneAuto
 }
 
+// chordLevel is how loud a line's chord symbols play at ChordPlay.Volume
+// 1, against one of its notes: a voiced chord is five or six notes, so this
+// sets the whole chord a little under the line rather than over it.
+const chordLevel = 0.4
+
 // LoadInstrument resolves a line's instrument. It is a variable so tests
 // can play scores without the library.
 var LoadInstrument = tracker.LoadInstrument
@@ -53,7 +65,21 @@ func Prepare(s *score.Score) (prog *Program, errs []error, err error) {
 	prog = &Program{Score: s}
 	prog.insts = make([]*tracker.Instrument, len(s.Lines))
 	prog.release = make([]float32, len(s.Lines))
+	prog.chordInsts = make([]*tracker.Instrument, len(s.Lines))
+	prog.chordRelease = make([]float32, len(s.Lines))
+	prog.chordVol = make([]float32, len(s.Lines))
 	for i, l := range s.Lines {
+		prog.chordVol[i] = 1
+		if cp := l.ChordPlay; cp != nil && cp.Style != score.ChordsSilent {
+			prog.chordVol[i] = cp.Volume * chordLevel
+			if cp.Instrument != "" {
+				if in, err := LoadInstrument(cp.Instrument); err != nil {
+					errs = append(errs, fmt.Errorf("line %s: chord symbols: %w", l.Name, err))
+				} else {
+					prog.chordInsts[i], prog.chordRelease[i] = in, in.Playback.Release
+				}
+			}
+		}
 		if l.Instrument == "" {
 			errs = append(errs, fmt.Errorf("line %s: no instrument", l.Name))
 			continue
@@ -115,7 +141,7 @@ func (p *Program) noteFollow(n *interpret.Note) uint8 {
 	if len(n.Bend) > 0 {
 		f |= followBend
 	}
-	in := p.insts[n.Line]
+	in := p.instFor(n)
 	if in == nil || !in.Sustains() {
 		return f
 	}
@@ -141,12 +167,45 @@ func (p *Program) levelAt(i int, tick float64) float32 {
 		}
 		lv = p.Perf.Dynamics[k].Effective.At(tick) * acc
 	}
-	return VelocityGain(clamp32(lv, 0, 1))
+	return VelocityGain(clamp32(lv, 0, 1)) * p.gain(i)
+}
+
+// instFor is the instrument a note plays on: its line's, or for the
+// line's chord symbols the one they name.
+func (p *Program) instFor(n *interpret.Note) *tracker.Instrument {
+	if n.FromChord && p.chordInsts != nil && p.chordInsts[n.Line] != nil {
+		return p.chordInsts[n.Line]
+	}
+	return p.insts[n.Line]
+}
+
+// noteInst is note i's instrument (instFor).
+func (p *Program) noteInst(i int) *tracker.Instrument { return p.instFor(&p.Perf.Notes[i]) }
+
+// releaseFor is note i's release: its instrument's Playback.Release.
+func (p *Program) releaseFor(i int) float32 {
+	n := &p.Perf.Notes[i]
+	if n.FromChord && p.chordInsts != nil && p.chordInsts[n.Line] != nil {
+		return p.chordRelease[n.Line]
+	}
+	return p.release[n.Line]
+}
+
+// gain is how loud note i plays against its velocity: 1, or a chord
+// symbol's ChordPlay volume.
+func (p *Program) gain(i int) float32 {
+	if i < 0 || i >= len(p.Perf.Notes) || p.chordVol == nil {
+		return 1
+	}
+	if n := &p.Perf.Notes[i]; n.FromChord {
+		return p.chordVol[n.Line]
+	}
+	return 1
 }
 
 func articulation(insts []*tracker.Instrument, n *interpret.Note) int {
 	in := insts[n.Line]
-	if in == nil {
+	if in == nil || n.FromChord {
 		return 0
 	}
 	if a := in.ArticulationIndex(n.Articulation); a > 0 {

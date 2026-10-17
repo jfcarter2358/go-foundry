@@ -49,10 +49,56 @@ func scoreEditorHandleEvent(event sdl.Event) {
 		}
 		return
 	}
+	if scEd.Words != nil && scoreWordsEvent(sc, sdl.GetModState()) {
+		return
+	}
+	if scorePalette.Open && scorePaletteKey(sc) {
+		return
+	}
 	if imgui.CurrentIO().WantCaptureKeyboard() || scoreModifierKey(sc) {
 		return
 	}
+	if d, ok := scoreFretKey(sc, sdl.GetModState()); ok && scEd.tabFocus() {
+		scEd.tabDigit(d)
+		return
+	}
 	scoreDispatch(scoreChordOf(sc, sdl.GetModState()), t.Repeat != 0)
+}
+
+// scoreWordsEvent gives a lyric or chord symbol field the keys it acts on
+// itself (the text goes to the field): Return, Escape, Tab, Backspace in
+// an empty field, and Ctrl+Alt+L, the next verse.
+func scoreWordsEvent(sc sdl.Scancode, mod sdl.Keymod) bool {
+	ch := scoreChordOf(sc, mod)
+	switch {
+	case sc == sdl.SCANCODE_RETURN || sc == sdl.SCANCODE_KP_ENTER:
+		scEd.wordsKey(scoreWordEnter)
+	case sc == sdl.SCANCODE_ESCAPE:
+		scEd.wordsKey(scoreWordEscape)
+	case sc == sdl.SCANCODE_TAB:
+		scEd.wordsKey(scoreWordTab)
+	case sc == sdl.SCANCODE_BACKSPACE && scEd.Words.Text == "":
+		scEd.wordsKey(scoreWordBackspace)
+	case ch == ctrlAlt(sdl.SCANCODE_L):
+		scEd.wordsKey(scoreWordNextVerse)
+	default:
+		return false
+	}
+	return true
+}
+
+// scoreFretKey is a main-row digit with no modifier: a fret, when the
+// tablature has the keyboard.
+func scoreFretKey(sc sdl.Scancode, mod sdl.Keymod) (int, bool) {
+	if mod&(sdl.KMOD_CTRL|sdl.KMOD_ALT|sdl.KMOD_SHIFT|sdl.KMOD_GUI) != 0 {
+		return 0, false
+	}
+	for d, k := range scoreDigitKeys {
+		if k == sc {
+			return d, true
+		}
+	}
+	return 0, false
 }
 
 // scoreDispatch runs the command a chord is bound to, reporting whether

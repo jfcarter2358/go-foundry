@@ -19,8 +19,9 @@ package engrave
 // the note nearest it, reaches the middle line from notes far outside the
 // staff, and inside the staff is moved outward until it sits on, hangs from
 // or straddles a line at both ends (no white wedges against the lines).
-// Secondary beams join the notes that have them; a lone note's partial beam
-// points to the note it belongs with.
+// Secondary beams join the notes that have them — in a compound meter the
+// 16ths' beam broken at each eighth of the dotted beat — and a lone note's
+// partial beam points to the note it belongs with.
 
 import (
 	"math"
@@ -36,6 +37,10 @@ type beamGroup struct {
 	size  float64
 	// The primary beam's outer edge (the stem tips): y = y0 + slope·(x-x0).
 	x0, y0, slope float64
+	// knee is a beam joining notes on both staves of a grand staff, kneeY
+	// the other staff's top line (cross.go).
+	knee  bool
+	kneeY float64
 }
 
 func (g *beamGroup) yAt(x float64) float64 { return g.y0 + g.slope*(x-g.x0) }
@@ -137,6 +142,14 @@ func (e *engraver) beamVoice(sb *staffBar, vi int, v []*ev) {
 	for _, evs := range groups {
 		g := &beamGroup{evs: evs, size: 1}
 		g.up = e.groupUp(evs, vi, sb.forced)
+		if g.kneed() {
+			// Across the staves (cross.go): each note's own direction.
+			for _, x := range evs {
+				x.beam = g
+			}
+			sb.beams = append(sb.beams, g)
+			continue
+		}
 		for _, x := range evs {
 			x.beam, x.up = g, g.up
 		}
@@ -237,20 +250,41 @@ func (e *engraver) flagExtra(b score.DurBase, up bool) float64 {
 	return math.Max(0, an.Y-a16.Y)
 }
 
+// outwardStem is the stem length of a note in multi-voice music whose
+// stem points away from the staff from a note outside it — an upper
+// voice's high note, a lower voice's low one: such stems are shortened
+// (Gould: to two and a half spaces, a space under the standard), keeping
+// the voices' extremes close to the staff.
+const outwardStem = 2.5
+
+// stemLen is the standard stem for an event's direction: shorter for an
+// outward stem from a note outside the staff in multi-voice music.
+func stemLen(x *ev, far float64) float64 {
+	if x.forced && !x.grace && (x.up && far < -0.25 || !x.up && far > 4.25) {
+		return outwardStem
+	}
+	return stemLength
+}
+
 // stemTip is an unbeamed stem's end: a standard length past the far note,
 // longer for many-hooked flags, reaching the middle line.
 func (e *engraver) stemTip(x *ev) float64 {
-	l := stemLength*x.size + e.flagExtra(x.base, x.up)*x.size
+	far := x.notes[0].y
+	if x.up {
+		far = x.notes[len(x.notes)-1].y
+	}
+	l := stemLen(x, far-x.crossY)*x.size + e.flagExtra(x.base, x.up)*x.size
+	mid := midY(x)
 	if x.up {
 		tip := x.notes[len(x.notes)-1].y - l
-		if !x.grace && tip > 2 {
-			tip = 2
+		if !x.grace && tip > mid {
+			tip = mid
 		}
 		return tip
 	}
 	tip := x.notes[0].y + l
-	if !x.grace && tip < 2 {
-		tip = 2
+	if !x.grace && tip < mid {
+		tip = mid
 	}
 	return tip
 }
@@ -274,6 +308,12 @@ func (e *engraver) layoutBeam(g *beamGroup) {
 	n := len(evs)
 	g.x0 = xs[0]
 	dx := xs[n-1] - xs[0]
+	if g.knee {
+		e.layoutKnee(g, xs)
+		return
+	}
+	// A group written wholly on the other staff reckons by that staff.
+	cy := evs[0].crossY
 
 	// The slope: by the interval from first to last, flat when the inner
 	// notes reach past both ends toward the beam.
@@ -293,9 +333,16 @@ func (e *engraver) layoutBeam(g *beamGroup) {
 	}
 	g.slope = slope
 
-	// The note nearest the beam gets a standard stem; more beams than two
-	// lengthen it.
-	l := (stemLength + beamStep*math.Max(0, float64(maxB-2))) * s
+	// The note nearest the beam gets a standard stem (an outward one in
+	// multi-voice music shorter: stemLen); more beams than two lengthen it.
+	std, outward := stemLength, true
+	for i, x := range evs {
+		outward = outward && stemLen(x, ref[i]) == outwardStem
+	}
+	if outward {
+		std = outwardStem
+	}
+	l := (std + beamStep*math.Max(0, float64(maxB-2))) * s
 	if g.up {
 		y0 := math.Inf(1)
 		for i := range evs {
@@ -314,17 +361,18 @@ func (e *engraver) layoutBeam(g *beamGroup) {
 	}
 	// Reach the middle line from far outside the staff.
 	ya, yb := g.yAt(xs[0]), g.yAt(xs[n-1])
-	if g.up && math.Max(ya, yb) > 2 {
-		g.y0 -= math.Max(ya, yb) - 2
+	if g.up && math.Max(ya, yb) > 2+cy {
+		g.y0 -= math.Max(ya, yb) - 2 - cy
 	}
-	if !g.up && math.Min(ya, yb) < 2 {
-		g.y0 += 2 - math.Min(ya, yb)
+	if !g.up && math.Min(ya, yb) < 2+cy {
+		g.y0 += 2 + cy - math.Min(ya, yb)
 	}
 	// Quantise against the staff lines, moving outward.
 	dir := -1.0
 	if !g.up {
 		dir = 1
 	}
+	g.y0 -= cy
 	if g.up {
 		g.y0 = math.Floor(g.y0*4+1e-6) / 4
 	} else {
@@ -334,10 +382,11 @@ func (e *engraver) layoutBeam(g *beamGroup) {
 	for k := 0; k <= 4; k++ {
 		g.y0 = base + dir*0.25*float64(k)
 		if beamEndOK(g.yAt(xs[0]), g.up) && beamEndOK(g.yAt(xs[n-1]), g.up) {
+			g.y0 += cy
 			return
 		}
 	}
-	g.y0 = base
+	g.y0 = base + cy
 }
 
 // beamEndOK reports a beam end that meets the staff lines cleanly: its
@@ -388,6 +437,17 @@ func (e *engraver) drawBeam(sc *staffCtx, g *beamGroup) {
 	}
 	n := len(g.evs)
 	quad(g.evs[0], xs[0]-t/2, xs[n-1]+t/2, 0)
+	// In a compound meter the 16ths' beam breaks at each eighth of the
+	// dotted beat, so the beat's three eighths read under one primary beam
+	// (Gould: secondary beams show the beat's subdivisions).
+	compound := !g.grace && g.evs[0].sb != nil && g.evs[0].sb.bar.meter.Compound()
+	breakAt := func(level, j int) bool {
+		if !compound || level != 1 {
+			return false
+		}
+		x := g.evs[j]
+		return x.tuplets == nil && onGrid(x.onset, score.F(1, 8))
+	}
 	for level := 1; level < maxB; level++ {
 		for i := 0; i < n; {
 			if beamCount(g.evs[i].base) <= level {
@@ -395,7 +455,7 @@ func (e *engraver) drawBeam(sc *staffCtx, g *beamGroup) {
 				continue
 			}
 			j := i
-			for j+1 < n && beamCount(g.evs[j+1].base) > level {
+			for j+1 < n && beamCount(g.evs[j+1].base) > level && !breakAt(level, j+1) {
 				j++
 			}
 			if j > i {

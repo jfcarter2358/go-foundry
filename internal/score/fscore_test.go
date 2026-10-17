@@ -194,7 +194,7 @@ func randomScore(r *rand.Rand) *Score {
 		s.Subtitle = "for the hangar"
 		s.Layout = Layout{Paper: Paper{Name: PaperNames[r.Intn(len(PaperNames)-1)], Landscape: r.Intn(2) == 0},
 			Staff: 6.5, SystemGap: 11, Spacing: []float64{0, 0.75, 1.4}[r.Intn(3)], Breaks: []Break{{Bar: 2}, {Bar: 3, Page: true}}, TitlePage: r.Intn(2) == 0,
-			NoPageNumbers: r.Intn(2) == 0, Names: NameMode(r.Intn(len(NameModes))), NoCautionary: r.Intn(2) == 0, Courtesy: r.Intn(2) == 0}
+			NoPageNumbers: r.Intn(2) == 0, Names: NameMode(r.Intn(len(NameModes))), NoCautionary: r.Intn(2) == 0, Courtesy: r.Intn(2) == 0, NoBrackets: r.Intn(3) == 0, HideEmpty: r.Intn(3) == 0}
 		if r.Intn(2) == 0 {
 			s.Layout.Paper = Paper{Name: "custom", Width: 230, Height: 305, Margins: Margins{10, 12, 14, 16}}
 		}
@@ -223,6 +223,16 @@ func randomScore(r *rand.Rand) *Score {
 			if r.Intn(2) == 0 {
 				staff.Clefs = []ClefChange{{At: Pos{Bar: 1, Offset: F(1, 8)}, Clef: "bass"}, {At: Pos{Bar: 2}, Clef: "alto"}}
 			}
+			switch {
+			case staff.Clef == "percussion" && r.Intn(2) == 0:
+				staff.Lines = 1 + r.Intn(5)
+			case staff.Clef != "percussion" && r.Intn(3) == 0:
+				staff.Tab = NewTab(TuningPresets[r.Intn(len(TuningPresets))].Name)
+				staff.Tab.Capo, staff.Tab.Only = r.Intn(4), r.Intn(2) == 0
+				if r.Intn(3) == 0 {
+					staff.Tab.Tuning = pitches("C2", "G2", "D3", "A3")
+				}
+			}
 			for v := 0; v < 1+r.Intn(MaxVoices); v++ {
 				staff.Voices = append(staff.Voices, randomVoice(r))
 			}
@@ -231,6 +241,23 @@ func randomScore(r *rand.Rand) *Score {
 		if r.Intn(2) == 0 {
 			ln.Gliss = GlissStyles[r.Intn(len(GlissStyles))]
 			ln.Overrides = []DynOverride{{From: Pos{Bar: 1, Offset: F(1, 4)}, To: Pos{Bar: 2}, Level: 0.25}}
+		}
+		if r.Intn(2) == 0 {
+			for k, sym := range []string{"Cmaj7", "F#m7b5/C", "Bb13b9#11", "N.C.", "Dsus4add9no5"}[:1+r.Intn(5)] {
+				c, err := ParseChord(sym)
+				if err != nil {
+					panic(err)
+				}
+				at := Pos{Bar: 1 + k/2}
+				if k%2 == 1 {
+					at.Offset = F(1, 4)
+				}
+				ln.Chords = append(ln.Chords, ChordSymbol{At: at, Chord: c})
+			}
+			ln.ChordPlay = &ChordPlay{Style: ChordStyle(r.Intn(3)), Volume: []float32{1, 0.5}[r.Intn(2)], Octave: r.Intn(3) - 1}
+			if r.Intn(2) == 0 {
+				ln.ChordPlay.Instrument = "synth/warm_pad"
+			}
 		}
 		if r.Intn(2) == 0 {
 			ln.Lanes = []Lane{{Name: "eq.low", Points: []LanePoint{{At: Pos{Bar: 1}, Value: -3}}},

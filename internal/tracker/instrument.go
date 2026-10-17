@@ -268,7 +268,43 @@ type Playback struct {
 	// Release, above 0, is the release in seconds the Score gives a note
 	// at its written end, in place of the instrument's fade-out.
 	Release float32
+	// StaffLines is how many lines the percussion staff a new line for
+	// the instrument has: 1 for a single drum (a tambourine, a triangle);
+	// 0 is the usual five.
+	StaffLines int
+	// Drums is the instrument's drum map: each sound of a kit and how a
+	// percussion staff writes it. Empty, a percussion staff uses the
+	// General MIDI kit's map.
+	Drums []DrumNote
+	// Tuning names the strings of a fretted instrument (a Score tuning
+	// preset: "guitar", "bass", "ukulele"): what its tablature reads.
+	Tuning string
 }
+
+// DrumNote is one sound of a drum map: the key that plays it, and where a
+// percussion staff writes it — a line or space, a notehead, and an
+// articulation drawn with it, so two sounds may share a place and a head
+// (a hi-hat closed and open) — and the letter that writes it in note
+// input.
+type DrumNote struct {
+	// Key is the MIDI key the note is stored as and plays (36 a General
+	// MIDI bass drum).
+	Key  int
+	Name string
+	// Line is the staff position in half spaces above the bottom line: 0
+	// the bottom line, 4 the middle line, 9 the space above the staff.
+	Line int
+	// Head is the notehead: normal, x, circle_x, diamond, triangle, slash.
+	Head string
+	// Articulation is a mark drawn with the note and played by this sound
+	// rather than another at the same place ("open", "stopped", "acc").
+	Articulation string
+	// Shortcut is the letter (A-G) that writes the sound in note input.
+	Shortcut string
+}
+
+// DrumHeads are the noteheads a drum map names, "normal" first.
+var DrumHeads = []string{"normal", "x", "circle_x", "diamond", "triangle", "slash"}
 
 // StaccatoLength is Staccato with its default.
 func (p Playback) StaccatoLength() float32 {
@@ -361,6 +397,7 @@ func (in *Instrument) Clone() *Instrument {
 	}
 	c.VolEnv, c.PanEnv = in.VolEnv.clone(), in.PanEnv.clone()
 	c.PitchEnv, c.FilterEnv = in.PitchEnv.clone(), in.FilterEnv.clone()
+	c.Playback.Drums = append([]DrumNote(nil), in.Playback.Drums...)
 	c.loaded = append([]*Sample(nil), in.loaded...)
 	return &c
 }

@@ -217,6 +217,23 @@ func TestScoreHeadersRulerAndMixerThroughTheView(t *testing.T) {
 		scoreClickAt(away)
 		scEd.takeOps()
 
+		// The flute's name dragged below the cello's header: the flute is
+		// the second line now.
+		for i := 0; i < 30; i++ {
+			scoreFrame(name, false)
+		}
+		below := imgui.Vec2{X: 30, Y: mid1 + 40}
+		scoreFrame(name, true)
+		scoreFrame(imgui.Vec2{X: 30, Y: mid + 10}, true)
+		scoreFrame(below, true)
+		scoreFrame(below, false)
+		if scEd.Score.Lines[1].Name != "Flute" || scoreHeaderDrag != -1 {
+			t.Errorf("drag: lines %s, %s (drag %d, %s)", scEd.Score.Lines[0].Name, scEd.Score.Lines[1].Name, scoreHeaderDrag, scEd.Status)
+		}
+		scoreUndo()
+		scoreList = nil
+		l = scoreLayout()
+
 		// The ruler: a click on bar 3's barline moves the play head there.
 		rulerY := scoreViewTop + 20
 		b3 := l.Bar(3)
@@ -268,6 +285,7 @@ func TestScoreHeadersRulerAndMixerThroughTheView(t *testing.T) {
 			func() { scoreOpenAddLine(0) },
 			func() { scoreDupOpen, scoreMenuLine = true, 0 },
 			func() { scoreLineOpen, scoreMenuLine = true, 1 },
+			func() { scoreOpenChordPicker(0, imgui.Vec2{X: 100, Y: 100}) },
 			scoreOpenExport,
 		} {
 			open()
@@ -278,5 +296,52 @@ func TestScoreHeadersRulerAndMixerThroughTheView(t *testing.T) {
 		}
 		scoreView = scoreViewScore
 		scoreFrame(imgui.Vec2{X: 5, Y: 5}, false)
+	})
+}
+
+// The lyric and chord symbol fields draw at their places, in the
+// continuous view and on the pages, and take what is typed.
+func TestScoreWordFieldsDraw(t *testing.T) {
+	scoreDrawTest(t)
+	v, _ := score.ParseVoice("| qD5 qE5 qF#5 qG5 | wA5 |")
+	scEd.Score.Lines[0].Staves[0].Voices[0] = v
+	withImgui(func() {
+		imgui.CurrentIO().SetIniFilename("")
+		away := imgui.Vec2{X: 5, Y: 5}
+		scEd.selectEvent(edit.Loc{Bar: 1}, -1)
+		scEd.startLyrics(1)
+		scoreFrame(away, false)
+		l := scoreLayout()
+		if _, _, ok := scoreWordFieldAt(l, scEd.Words); !ok {
+			t.Fatal("the lyric field has no place")
+		}
+		scoreFrame(away, false)
+		scEd.wordsKey(scoreWordEscape)
+		scEd.startChord()
+		scoreFrame(away, false)
+		if _, _, ok := scoreWordFieldAt(l, scEd.Words); !ok {
+			t.Fatal("the chord field has no place")
+		}
+		prev := scorePageView
+		scorePageView = true
+		scoreFrame(away, false)
+		scoreFrame(away, false)
+		scorePageView = prev
+		// Scrolled away from its place, the field is pinned at the view's
+		// foot and keeps the keyboard.
+		io := imgui.CurrentIO()
+		io.SetDisplaySize(imgui.Vec2{X: 1400, Y: 900})
+		io.SetDeltaTime(1.0 / 60.0)
+		imgui.NewFrame()
+		imgui.Begin("pin")
+		far := scoreViewGeom{origin: imgui.Vec2{X: -50000, Y: 0}, zoom: 10, visMin: imgui.Vec2{X: 0, Y: 0}, visMax: imgui.Vec2{X: 800, Y: 600}}
+		if scoreDrawWordField(l, far) {
+			t.Error("a field whose place is out of sight drawn there")
+		}
+		scoreDrawPinnedWordField(far)
+		imgui.End()
+		imgui.Render()
+		scEd.wordsKey(scoreWordEscape)
+		scoreFrame(away, false)
 	})
 }

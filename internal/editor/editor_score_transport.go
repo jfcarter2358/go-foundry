@@ -72,6 +72,12 @@ const (
 	scoreOpTempo
 	// scoreOpSwap plays Line on the library instrument Name from now on.
 	scoreOpSwap
+	// scoreOpRecord starts a recording at Tick: the loop off, the click at
+	// Level (0: none), Bars of count-in, then the transport
+	// (editor_score_midi.go).
+	scoreOpRecord
+	// scoreOpClick sets the click to Level (0: off).
+	scoreOpClick
 )
 
 // scorePlayerOp is a queued request to the player.
@@ -82,6 +88,8 @@ type scorePlayerOp struct {
 	Scale float64
 	Line  int
 	Name  string
+	Bars  int
+	Level float32
 }
 
 // ---------- written positions, ticks and seconds ----------

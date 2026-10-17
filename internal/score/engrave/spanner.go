@@ -31,8 +31,10 @@ package engrave
 
 import (
 	"math"
+	"strings"
 
 	"foundry/internal/score"
+	"foundry/internal/score/glyph"
 )
 
 // evKey is an event of a voice: a bar and an index into its events.
@@ -566,7 +568,10 @@ func (e *engraver) drawDynamics(sc *staffCtx) {
 			})
 		}
 	}
-	aboveFor := func(vi int) bool { return lowerHas && vi%2 == 0 }
+	// A sung staff has its dynamics over it (Gould): the words are under
+	// it.
+	vocal := e.vocal(sc)
+	aboveFor := func(vi int) bool { return vocal || lowerHas && vi%2 == 0 }
 
 	var items []*dynItem
 	// Dynamics first: hairpins start and stop at them.
@@ -700,6 +705,20 @@ func (e *engraver) drawDynamics(sc *staffCtx) {
 		}
 	}
 	e.placeRows(sc, items)
+}
+
+// vocal reports a sung staff: its line has lyrics, or plays a choir or a
+// voice from the library. A tablature or a drum staff with words under it
+// is not sung and keeps its dynamics below.
+func (e *engraver) vocal(sc *staffCtx) bool {
+	if sc.line < 0 || sc.line >= len(e.s.Lines) || sc.tab != nil || sc.percussion {
+		return false
+	}
+	l := e.s.Lines[sc.line]
+	if strings.HasPrefix(l.Instrument, "choir/") || strings.HasPrefix(l.Instrument, "vocal/") {
+		return true
+	}
+	return l.Verses() > 0
 }
 
 // dynCentre is where an event's first dynamic is centred, from its x.
@@ -910,7 +929,17 @@ func (e *engraver) drawOttavas(sc *staffCtx) {
 			x1 = e.layoutEnd()
 		}
 		b, _ := e.f.Box(og.glyph)
-		x1 = math.Max(x1, x0+b.W()+0.8)
+		// A line carried on from the system before is marked "(8va)" at
+		// the new system's start (Gould: the parenthesised figure).
+		continued := o.From.Bar < e.from
+		var lp, rp glyph.Rect
+		w := b.W()
+		if continued {
+			lp, _ = e.f.Box("octaveParensLeft")
+			rp, _ = e.f.Box("octaveParensRight")
+			w += lp.W() + rp.W() + 0.2
+		}
+		x1 = math.Max(x1, x0+w+0.8)
 		ref := Ref{Line: sc.line, Staff: sc.staff, Voice: o.Voice, Bar: o.From.Bar, Event: -1, Note: -1}
 		th := e.d.OctaveLineThickness
 		var yc float64
@@ -919,10 +948,18 @@ func (e *engraver) drawOttavas(sc *staffCtx) {
 		} else {
 			yc = math.Max(sc.sky.botIn(x0, x1, 4)+0.6, 5.4) + b.H()/2
 		}
-		e.put(sc, nil, e.centred(RoleLine, ref, og.glyph, x0+b.W()/2, yc, 1))
+		gx := x0
+		if continued {
+			e.put(sc, nil, e.centred(RoleLine, ref, "octaveParensLeft", x0+lp.W()/2, yc, 1))
+			gx = x0 + lp.W() + 0.1
+		}
+		e.put(sc, nil, e.centred(RoleLine, ref, og.glyph, gx+b.W()/2, yc, 1))
+		if continued {
+			e.put(sc, nil, e.centred(RoleLine, ref, "octaveParensRight", gx+b.W()+0.1+rp.W()/2, yc, 1))
+		}
 		// The dashes from the glyph's middle height, then the hook toward
 		// the staff.
-		e.dashes(sc, RoleLine, ref, Point{X: x0 + b.W() + 0.3, Y: yc}, Point{X: x1, Y: yc}, th, 0.5, 0.45)
+		e.dashes(sc, RoleLine, ref, Point{X: x0 + w + 0.3, Y: yc}, Point{X: x1, Y: yc}, th, 0.5, 0.45)
 		hook := 1.0
 		if !og.above {
 			hook = -1.0

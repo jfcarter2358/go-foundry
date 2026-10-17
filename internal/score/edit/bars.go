@@ -20,6 +20,9 @@ type Clip struct {
 	Lengths []score.Frac
 	// Lines are the copied lines' music: [line][staff][voice][bar].
 	Lines [][][][]score.Measure
+	// Chords are each copied line's chord symbols in the bars, their bars
+	// counted from the clip's first (1).
+	Chords [][]score.ChordSymbol
 	// Names are the lines' names, for the status line.
 	Names []string
 }
@@ -50,6 +53,15 @@ func CopyBars(s *score.Score, lo, hi, a, z int) (*Clip, error) {
 			staves[si] = voices
 		}
 		c.Lines = append(c.Lines, staves)
+		var chords []score.ChordSymbol
+		for _, ch := range l.Chords {
+			if ch.At.Bar >= a && ch.At.Bar <= z {
+				ch.At.Bar -= a - 1
+				ch.Chord = ch.Chord.Clone()
+				chords = append(chords, ch)
+			}
+		}
+		c.Chords = append(c.Chords, chords)
 	}
 	return c, nil
 }
@@ -76,6 +88,9 @@ func PasteBars(s *score.Score, c *Clip, line, at int) (lines int, cut bool, err 
 			break
 		}
 		lines++
+		if j < len(c.Chords) {
+			pasteChords(s, s.Lines[li], c.Chords[j], at, c.Bars)
+		}
 		for si, voices := range staves {
 			if si >= len(s.Lines[li].Staves) {
 				continue
@@ -113,10 +128,38 @@ func PasteBars(s *score.Score, c *Clip, line, at int) (lines int, cut bool, err 
 	return lines, cut, nil
 }
 
-// ClearBars empties bars a..z of lines lo..hi in every voice: they show as
-// bar rests again.
+// pasteChords puts a clip's chord symbols for a line over the bars from at
+// on (bars bars), in place of the ones there; a symbol past its new bar's
+// end (a shorter meter) is left out.
+func pasteChords(s *score.Score, l *score.Line, chords []score.ChordSymbol, at, bars int) {
+	var keep []score.ChordSymbol
+	for _, ch := range l.Chords {
+		if ch.At.Bar < at || ch.At.Bar >= at+bars {
+			keep = append(keep, ch)
+		}
+	}
+	for _, ch := range chords {
+		ch.At.Bar += at - 1
+		if ch.At.Offset.Less(s.BarLength(ch.At.Bar)) {
+			ch.Chord = ch.Chord.Clone()
+			keep = append(keep, ch)
+		}
+	}
+	l.Chords = keep
+	l.SortChords()
+}
+
+// ClearBars empties bars a..z of lines lo..hi in every voice, and their
+// chord symbols: they show as bar rests again.
 func ClearBars(s *score.Score, lo, hi, a, z int) {
 	for li := max(lo, 0); li <= hi && li < len(s.Lines); li++ {
+		var keep []score.ChordSymbol
+		for _, ch := range s.Lines[li].Chords {
+			if ch.At.Bar < a || ch.At.Bar > z {
+				keep = append(keep, ch)
+			}
+		}
+		s.Lines[li].Chords = keep
 		for _, st := range s.Lines[li].Staves {
 			for _, v := range st.Voices {
 				for b := a; b <= z && b <= len(v.Measures); b++ {

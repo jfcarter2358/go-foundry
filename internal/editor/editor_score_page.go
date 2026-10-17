@@ -80,6 +80,12 @@ func (g scorePageGeom) systemGeom(i int, sys *engrave.System) scoreViewGeom {
 	return scoreViewGeom{origin: imgui.Vec2{X: o.X + float32(sys.At.X)*g.zoom, Y: o.Y + float32(sys.At.Y)*g.zoom}, zoom: g.zoom, visMin: g.visMin, visMax: g.visMax}
 }
 
+// view is the visible desk as a view geometry, for what is drawn over it
+// rather than on a system (the pinned word field).
+func (g scorePageGeom) view() scoreViewGeom {
+	return scoreViewGeom{zoom: g.zoom, visMin: g.visMin, visMax: g.visMax}
+}
+
 // pageAt is the page under a screen point and the point on it, or -1.
 func (g scorePageGeom) pageAt(b *engrave.Book, p imgui.Vec2) (int, engrave.Point) {
 	if g.ph <= 0 {
@@ -207,6 +213,23 @@ func scorePagePane(pos, size imgui.Vec2) {
 		scoreClick(pt.sys.List, pt.at, target, targetOK, io)
 	} else if clicked {
 		e.Sel = scoreSel{}
+	}
+	if e.Words != nil {
+		// The word field on the system its place is in, or at the foot
+		// of the view while that is out of sight.
+		drawn := false
+	field:
+		for i, pg := range b.Pages {
+			for _, sys := range pg.Systems {
+				if scoreDrawWordField(sys.List, g.systemGeom(i, sys)) {
+					drawn = true
+					break field
+				}
+			}
+		}
+		if !drawn {
+			scoreDrawPinnedWordField(g.view())
+		}
 	}
 	if e.Reveal {
 		e.Reveal = false
@@ -473,6 +496,18 @@ func scorePageSetupDialog() {
 			e.endLayoutGesture()
 		}
 		editorMenuTooltip("A note the bar before altered shows its accidental again, in parentheses")
+		brk := !lay.NoBrackets
+		if imgui.Checkbox("Family brackets##scpsbrk", &brk) {
+			e.setLayout("", func(l *score.Layout) { l.NoBrackets = !brk })
+			e.endLayoutGesture()
+		}
+		editorMenuTooltip("A bracket down each family of two lines or more (woodwinds, brass,\npercussion, voices, strings), its barlines run through")
+		hide := lay.HideEmpty
+		if imgui.Checkbox("Hide empty staves##scpshide", &hide) {
+			e.setLayout("", func(l *score.Layout) { l.HideEmpty = hide })
+			e.endLayoutGesture()
+		}
+		editorMenuTooltip("After the first system, a line with no notes in a system's bars is left out of it")
 		imgui.Separator()
 		imgui.Text("Short names")
 		for i, l := range e.Score.Lines {

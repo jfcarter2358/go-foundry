@@ -90,6 +90,11 @@ const (
 	RoleName
 	RoleTitle
 	RolePageNumber
+	// RoleLyric is a syllable under a note (Ref its event); RoleChordSymbol
+	// a chord symbol over a line (Ref.Event its index in Line.Chords,
+	// Voice -1).
+	RoleLyric
+	RoleChordSymbol
 )
 
 // Ref says which part of the score an item draws. Indices are 0-based
@@ -182,6 +187,37 @@ type StaffBox struct {
 	// Changes are the clef changes inside the layout, left to right: from
 	// X on the staff reads in Clef, its bottom line Bottom.
 	Changes []ClefSpan
+	// Lines is how many lines the staff has (five; a single drum's one; a
+	// tablature's strings) and Height how far its bottom line is below
+	// its top (4, or a tablature's).
+	Lines  int
+	Height float64
+	// Tab is a tablature (Clef "tab"): its lines are strings LineGap
+	// apart, string 1 on top, and what a y means is a string (StringAt),
+	// not a pitch. Its events Ref the score staff it shows.
+	Tab     bool
+	LineGap float64
+}
+
+// StringAt is the tablature string nearest a y (1 the top line), clamped
+// to the strings.
+func (b StaffBox) StringAt(y float64) int {
+	if !b.Tab || b.LineGap <= 0 {
+		return 0
+	}
+	n := int(math.Round((y-b.Top)/b.LineGap)) + 1
+	return max(1, min(n, b.Lines))
+}
+
+// StringY is a tablature string's y.
+func (b StaffBox) StringY(str int) float64 { return b.Top + float64(str-1)*b.LineGap }
+
+// BottomY is the bottom line's y: the top line's and the staff's height.
+func (b StaffBox) BottomY() float64 {
+	if b.Height == 0 {
+		return b.Top + 4
+	}
+	return b.Top + b.Height
 }
 
 // ClefSpan is where a staff's clef changes on the layout.
@@ -322,6 +358,27 @@ type List struct {
 	Bars   []BarBox
 	Events []EventBox
 	Lanes  []LaneBox
+	// Chords are the chord symbols drawn, for the pointer.
+	Chords []ChordBox
+}
+
+// ChordBox is a chord symbol on the layout: its line, its index in the
+// line's Chords, its bar, its ink.
+type ChordBox struct {
+	Line, Index, Bar int
+	Box              Rect
+}
+
+// ChordAt is the chord symbol whose ink is under a point (with a little
+// room round it), or nil.
+func (l *List) ChordAt(p Point) *ChordBox {
+	for i := range l.Chords {
+		b := l.Chords[i].Box
+		if p.X >= b.Min.X-0.3 && p.X <= b.Max.X+0.3 && p.Y >= b.Min.Y-0.3 && p.Y <= b.Max.Y+0.3 {
+			return &l.Chords[i]
+		}
+	}
+	return nil
 }
 
 // Bounds is the ink of every item (glyph boxes from the font's metadata).
@@ -367,6 +424,9 @@ func (l *List) Translate(d Point) {
 		l.Events[i].X += d.X
 		l.Events[i].Box = l.Events[i].Box.Offset(d)
 	}
+	for i := range l.Chords {
+		l.Chords[i].Box = l.Chords[i].Box.Offset(d)
+	}
 }
 
 // BarAt is the bar box under an x, or nil.
@@ -399,8 +459,8 @@ func (l *List) StaffAt(y float64) *StaffBox {
 		switch {
 		case y < s.Top:
 			d = s.Top - y
-		case y > s.Top+4:
-			d = y - s.Top - 4
+		case y > s.BottomY():
+			d = y - s.BottomY()
 		}
 		if d < bd {
 			best, bd = s, d

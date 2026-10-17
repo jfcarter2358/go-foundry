@@ -174,6 +174,15 @@ func CloseScoreEditorWindow() {
 }
 
 func onScoreEditorClose() {
+	if scoreRecording() {
+		at := scEd.MIDI.Take.Tick
+		if scorePlayer != nil {
+			at = scorePlayer.Position().Tick
+		}
+		scEd.finishTake(at, scoreSettings().MIDI)
+	}
+	scoreMIDIDisconnect()
+	scoreMIDITried = false
 	scoreStopPlayer()
 	scoreEditorWindow = nil
 	scoreCapture = scoreCaptureState{}
@@ -348,6 +357,12 @@ func scoreApplyOps() {
 			if err := p.SetInstrument(o.Line, o.Name); err != nil {
 				scEd.Status = "Playback: " + err.Error()
 			}
+		case scoreOpRecord:
+			p.ClearLoop()
+			p.SetClick(o.Level > 0, o.Level)
+			p.CountIn(o.Tick, o.Bars, o.Level)
+		case scoreOpClick:
+			p.SetClick(o.Level > 0, o.Level)
 		}
 	}
 }
@@ -526,10 +541,14 @@ func scoreRunCmd(c scoreCmd) {
 	e := scEd
 	switch {
 	case c >= scLetterC && c < scLetterC+7:
-		e.letter(int(c - scLetterC))
+		if !e.drumLetter(int(c-scLetterC), false) {
+			e.letter(int(c - scLetterC))
+		}
 		return
 	case c >= scAddC && c < scAddC+7:
-		e.addLetter(int(c - scAddC))
+		if !e.drumLetter(int(c-scAddC), true) {
+			e.addLetter(int(c - scAddC))
+		}
 		return
 	case c >= scInt2 && c < scInt2+8:
 		e.interval(int(c-scInt2)+2, false)
@@ -561,14 +580,36 @@ func scoreRunCmd(c scoreCmd) {
 		e.accidental(edit.Flat)
 	case scNatural:
 		e.accidental(edit.Natural)
-	case scSemiUp:
-		e.semitone(1)
-	case scSemiDown:
-		e.semitone(-1)
-	case scStepUp:
-		e.step(1)
-	case scStepDown:
-		e.step(-1)
+	case scSemiUp, scSemiDown:
+		dir := 1
+		if c == scSemiDown {
+			dir = -1
+		}
+		switch {
+		case e.tabFocus():
+			e.tabMove(-dir) // up the page: toward string 1
+		case e.drumStep(dir):
+		default:
+			e.semitone(dir)
+		}
+	case scStepUp, scStepDown:
+		dir := 1
+		if c == scStepDown {
+			dir = -1
+		}
+		switch {
+		case e.tabFocus():
+			e.moveToString(-dir)
+		case e.drumStep(dir):
+		default:
+			e.step(dir)
+		}
+	case scLyrics:
+		e.startLyrics(1)
+	case scLyrics2:
+		e.startLyrics(2)
+	case scChordSymbol:
+		e.startChord()
 	case scOctUp:
 		e.octave(1)
 	case scOctDown:
@@ -772,6 +813,28 @@ func scoreRunCmd(c scoreCmd) {
 		scoreOpenEnding()
 	case scClefChange:
 		scoreOpenClefChange()
+	case scRecord:
+		scoreRecordToggle()
+	case scMIDIInput:
+		scoreOpenMIDI()
+	case scTranspose:
+		scoreOpenTranspose()
+	case scRespellSel:
+		e.respellSel()
+	case scSpellInKey:
+		e.spellInKeySel(false)
+	case scFind:
+		scoreOpenFind()
+	case scFindNext:
+		e.findStep(&e.Find, 1)
+	case scFindPrev:
+		e.findStep(&e.Find, -1)
+	case scPalette:
+		scoreOpenPalette()
+	case scCrossUp:
+		e.moveStaff(-1)
+	case scCrossDown:
+		e.moveStaff(1)
 	}
 }
 
@@ -791,6 +854,8 @@ func drawScoreEditorWindow() {
 		scoreRend = scoredraw.New()
 	}
 	scoreDrawFrame(float32(w.W), float32(w.H))
+	scoreMIDIEnsure()
+	scorePollMIDI()
 	// Ops first: an instrument just picked is the one its audition plays.
 	scoreApplyOps()
 	scorePlayAuditions()
@@ -829,6 +894,8 @@ func scoreDrawFrame(W, H float32) {
 		scorePalettePanel(W, H)
 	}
 	scoreDialogs()
+	scoreFindWindow(W)
+	scorePaletteWindow(W)
 }
 
 // ---------- the top bar ----------
@@ -1083,10 +1150,17 @@ func scoreMenus() {
 			e.Sel = scoreSel{}
 		}
 		imgui.Separator()
+		item("Find...", scFind, true)
+		editorMenuTooltip("A pitch (F#4, Bb, C4..G5), a mark (staccato, fermata, mf, tie) or a text\n(a lyric, an expression, a chord symbol, a rehearsal mark).")
+		item("Find Next", scFindNext, e.Find.Query != "")
+		item("Find Previous", scFindPrev, e.Find.Query != "")
+		imgui.Separator()
 		if imgui.MenuItem("Keyboard Shortcuts...") {
 			scoreShowKeys = true
 		}
 		editorMenuTooltip("Choose the Sibelius or MuseScore keymap and rebind any command.")
+		item("MIDI Input...", scMIDIInput, true)
+		editorMenuTooltip("The MIDI keyboard: step entry in note input, recording, MIDI thru.")
 		imgui.EndMenu()
 	}
 	if imgui.BeginMenu("View") {
@@ -1112,6 +1186,8 @@ func scoreMenus() {
 		if imgui.MenuItemV("Keymap Overlay", "F1", uiwin.KeybindHelpVisible, true) {
 			uiwin.KeybindHelpToggle()
 		}
+		item("Command Palette...", scPalette, true)
+		editorMenuTooltip("Every command by name, with its keys: type to narrow, Return runs.")
 		imgui.EndMenu()
 	}
 	if imgui.BeginMenu("Notes") {
@@ -1142,6 +1218,16 @@ func scoreMenus() {
 		item("Make Rest", scRest, e.chord() != nil || e.Input)
 		item("Respell", scRespell, e.chord() != nil)
 		item("Flip Stem", scFlip, e.chord() != nil)
+		item("Cross to Staff Above", scCrossUp, e.chord() != nil || e.Sel.Kind == scoreSelBars)
+		editorMenuTooltip("A grand staff's notes written on the staff above their own (their voice\nand beams stay theirs; a beam across the staves is kneed). Again: back.")
+		item("Cross to Staff Below", scCrossDown, e.chord() != nil || e.Sel.Kind == scoreSelBars)
+		imgui.Separator()
+		item("Transpose...", scTranspose, len(e.Score.Lines) > 0)
+		editorMenuTooltip("The selection or the whole score: by an interval (chromatic or diatonic)\nor to another key, with the key signatures and chord symbols.")
+		item("Respell Selection", scRespellSel, e.Sel.Kind != scoreSelNone)
+		editorMenuTooltip("Every selected note to its other spelling (F# to Gb).")
+		item("Spell in Key", scSpellInKey, true)
+		editorMenuTooltip("Every selected note (the whole score with nothing selected) as the key\nspells it: the key's own note, else a sharp rising and a flat falling.")
 		if imgui.MenuItemV("Second Keypad Layout", km.label(scLayout), e.Layout2, true) {
 			scoreRunCmd(scLayout)
 		}
@@ -1207,6 +1293,10 @@ func scoreMenus() {
 		}
 		item("Play from Selection", scPlayFrom, true)
 		item("To Start", scToStart, true)
+		if imgui.MenuItemV("Record", km.label(scRecord), scoreRecording(), true) {
+			scoreRunCmd(scRecord)
+		}
+		editorMenuTooltip("Play the MIDI keyboard along with the score into the armed (or selected)\nline, from the selected bar, after a count-in; the take replaces those bars.")
 		imgui.Separator()
 		item("Loop Selection", scLoop, e.Sel.Kind == scoreSelBars || e.Transport.Loop.Set)
 		if imgui.MenuItemV("Loop", km.label(scLoopToggle), e.Transport.Loop.On, true) {
@@ -1244,6 +1334,9 @@ var (
 	scoreDlgStaff  int
 	scoreDlgClef   string
 	scoreDlgErr    string
+	// scoreDlgRebar re-bars the music under a new time signature (on by
+	// default, as Sibelius's "rewrite bars" is).
+	scoreDlgRebar = true
 )
 
 // scoreSelBar is the bar a signature change goes at: the selection's first.
@@ -1376,7 +1469,13 @@ func scoreDialogs() {
 		}
 		imgui.SetNextItemWidth(160)
 		imgui.InputText("Meter##sctimetext", &scoreDlgMeter)
-		editorTextMuted("Any meter: 7/8, 3+2+2/8, 12/16, C, C|. The bars up to the next time\nsignature take the new length: music past a new barline is cut.")
+		imgui.Checkbox("Re-bar the music##sctimerebar", &scoreDlgRebar)
+		editorMenuTooltip("On: the notes keep their time and are written again across the new\nbarlines, tied over them, up to the next time signature (the bars after\nmove with them). Off: each bar keeps its notes; what is past the new\nbarline is cut.")
+		if scoreDlgRebar {
+			editorTextMuted("Any meter: 7/8, 3+2+2/8, 12/16, C, C|. The music up to the next time\nsignature is re-barred in the new meter.")
+		} else {
+			editorTextMuted("Any meter: 7/8, 3+2+2/8, 12/16, C, C|. The bars up to the next time\nsignature take the new length: music past a new barline is cut.")
+		}
 		if scoreDlgErr != "" {
 			imgui.PushStyleColor(imgui.StyleColorText, saveChipUnsaved)
 			imgui.Text(scoreDlgErr)
@@ -1387,7 +1486,11 @@ func scoreDialogs() {
 			if err != nil {
 				scoreDlgErr = err.Error()
 			} else {
-				e.setMeter(int(scoreDlgBar), m)
+				if scoreDlgRebar {
+					e.rebarMeter(int(scoreDlgBar), m)
+				} else {
+					e.setMeter(int(scoreDlgBar), m)
+				}
 				imgui.CloseCurrentPopup()
 			}
 		}
@@ -1441,6 +1544,8 @@ func scoreDialogs() {
 	scoreFeelPopup()
 	scoreTimelinePopups()
 	scoreLibraryDialog()
+	scoreMIDIDialog()
+	scoreTransposeDialog()
 }
 
 // scoreStaffName is "Piano (staff 2)", or the line's name for one staff.
@@ -1471,18 +1576,20 @@ func scoreFifthsText(f int) string {
 
 // The view's engraving, rebuilt when the score or concert pitch changes.
 var (
-	scoreList      *engrave.List
-	scoreListRev   uint64
-	scoreListScore *score.Score
-	scoreListLanes uint64
+	scoreList       *engrave.List
+	scoreListRev    uint64
+	scoreListScore  *score.Score
+	scoreListLanes  uint64
+	scoreListLayout uint64
 )
 
-// scoreLayout is the score engraved as one continuous system.
+// scoreLayout is the score engraved as one continuous system. A layout
+// change re-engraves it too (the family brackets are drawn in both views).
 func scoreLayout() *engrave.List {
 	e := scEd
-	if scoreList == nil || scoreListRev != e.Rev || scoreListScore != e.Score || scoreListLanes != e.laneRev {
+	if scoreList == nil || scoreListRev != e.Rev || scoreListScore != e.Score || scoreListLanes != e.laneRev || scoreListLayout != e.LayoutRev {
 		scoreList = engrave.Engrave(e.Score, engrave.Options{BarNumbers: -1, Below: e.laneBelow()})
-		scoreListRev, scoreListScore, scoreListLanes = e.Rev, e.Score, e.laneRev
+		scoreListRev, scoreListScore, scoreListLanes, scoreListLayout = e.Rev, e.Score, e.laneRev, e.LayoutRev
 	}
 	return scoreList
 }

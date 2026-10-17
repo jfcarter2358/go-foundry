@@ -1,6 +1,7 @@
 package midi
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -200,5 +201,82 @@ func TestImportOptions(t *testing.T) {
 	// Every part skipped is an error, not an empty score.
 	if _, _, err := Import(f, Options{Choices: []Choice{{Skip: true}, {Skip: true}, {Skip: true}, {Skip: true}, {Skip: true}}}); err == nil {
 		t.Error("an import of nothing worked")
+	}
+}
+
+// played is a file of one part: notes at ticks (480 a quarter), each with
+// its length, pitch and velocity.
+func played(notes [][4]int64) *File {
+	var evs []Event
+	for _, n := range notes {
+		evs = append(evs, Event{Tick: n[0], Kind: NoteOn, A: uint8(n[2]), B: uint8(n[3])},
+			Event{Tick: n[0] + n[1], Kind: NoteOff, A: uint8(n[2])})
+	}
+	sort.SliceStable(evs, func(i, j int) bool { return evs[i].Tick < evs[j].Tick })
+	return &File{Format: 0, Division: 480, Tracks: []Track{{Events: evs}}}
+}
+
+// bars plays a pattern of (eighth offset, length in eighths, accent) for
+// a number of bars of the given eighths: a loud low note on each accent.
+func barsOf(eighths int, pattern [][3]int, bars int) *File {
+	var ns [][4]int64
+	for b := 0; b < bars; b++ {
+		for _, p := range pattern {
+			at := int64(b*eighths+p[0]) * 240
+			pitch, vel := int64(67), int64(60)
+			if p[2] == 1 {
+				pitch, vel = 43, 112
+			}
+			ns = append(ns, [4]int64{at, int64(p[1]) * 240, pitch, vel})
+		}
+	}
+	return played(ns)
+}
+
+// With no time signature the meter is guessed from where the strong notes
+// fall and how the beats divide: 4/4, 3/4, 6/8, 5/4, 7/8, 9/8 and 12/8.
+func TestImportGuessesMoreMeters(t *testing.T) {
+	quarters := func(n int) [][3]int {
+		var p [][3]int
+		for i := 0; i < n; i++ {
+			acc := 0
+			if i == 0 {
+				acc = 1
+			}
+			p = append(p, [3]int{2 * i, 2, acc})
+		}
+		return p
+	}
+	cases := []struct {
+		name string
+		f    *File
+		want string
+	}{
+		{"4/4", barsOf(8, quarters(4), 12), "4/4"},
+		{"3/4", barsOf(6, quarters(3), 12), "3/4"},
+		{"5/4", barsOf(10, quarters(5), 12), "5/4"},
+		{"6/8", barsOf(6, [][3]int{{0, 1, 1}, {1, 1, 0}, {2, 1, 0}, {3, 1, 0}, {4, 1, 0}, {5, 1, 0}, {3, 1, 0}}, 12), "6/8"},
+		{"7/8", barsOf(7, [][3]int{{0, 2, 1}, {2, 2, 0}, {4, 3, 0}}, 12), "7/8"},
+		{"9/8", barsOf(9, [][3]int{{0, 3, 1}, {3, 3, 0}, {6, 3, 0}}, 12), "9/8"},
+	}
+	for _, c := range cases {
+		a := Analyze(c.f)
+		if !a.MeterGuessed || a.Meter.String() != c.want {
+			t.Errorf("%s: guessed %s", c.name, a.Meter)
+		}
+	}
+	// Triplet eighths through 4/4's beats: 12/8.
+	var ns [][4]int64
+	for b := 0; b < 12; b++ {
+		for k := 0; k < 12; k++ {
+			vel, pitch := int64(60), int64(67)
+			if k == 0 {
+				vel, pitch = 112, 43
+			}
+			ns = append(ns, [4]int64{int64(b*1920 + k*160), 160, pitch, vel})
+		}
+	}
+	if a := Analyze(played(ns)); a.Meter.String() != "12/8" {
+		t.Errorf("triplets: guessed %s", a.Meter)
 	}
 }

@@ -113,8 +113,9 @@ func TestImportSibeliusPiano(t *testing.T) {
 		if got := voice(s, 0, 0, 1); got != "|\n| hD5\n|\n| w_\n|\n" {
 			t.Errorf("%s upper voice 2:\n%s", file, got)
 		}
-		// The cross-staff D4 stays in the lower staff's voice; pedal marks.
-		if got := voice(s, 0, 1, 0); got != "| qr\n| wG2+G3\n| hD3(ped) qG3 qD4(ped_end)\n| R\n| wG2\n|\n" {
+		// The cross-staff D4 stays in the lower staff's voice, written on
+		// the upper staff (cross=up); pedal marks.
+		if got := voice(s, 0, 1, 0); got != "| qr\n| wG2+G3\n| hD3(ped) qG3 qD4(cross=up,ped_end)\n| R\n| wG2\n|\n" {
 			t.Errorf("%s lower:\n%s", file, got)
 		}
 		if len(s.Sections) != 1 || s.Sections[0] != (score.Section{Name: "A", Bar: 3}) {
@@ -251,7 +252,7 @@ func TestPartsForTheDialog(t *testing.T) {
 
 // What a score cannot hold yet is said, not dropped silently; endings,
 // jumps and clef changes, which it can, are kept.
-func TestImportWarnsAboutWhatItCannotKeep(t *testing.T) {
+func TestImportKeepsWhatItOnceWarnedAbout(t *testing.T) {
 	useRepoResources(t)
 	doc := `<?xml version="1.0"?>
 <score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
@@ -273,12 +274,7 @@ func TestImportWarnsAboutWhatItCannotKeep(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := strings.Join(warns, "\n")
-	for _, want := range []string{"lyrics", "chord symbols"} {
-		if !strings.Contains(all, want) {
-			t.Errorf("no warning about %s:\n%s", want, all)
-		}
-	}
-	for _, kept := range []string{"voltas", "D.C.", "clef change"} {
+	for _, kept := range []string{"voltas", "D.C.", "clef change", "lyrics", "chord symbol"} {
 		if strings.Contains(all, kept) {
 			t.Errorf("a warning about %s, which is kept now:\n%s", kept, all)
 		}
@@ -294,6 +290,13 @@ func TestImportWarnsAboutWhatItCannotKeep(t *testing.T) {
 	}
 	if cl := s.Lines[0].Staves[0].Clefs; len(cl) != 1 || cl[0] != (score.ClefChange{At: score.Pos{Bar: 2}, Clef: "bass"}) {
 		t.Errorf("clef changes %+v", cl)
+	}
+	// Lyrics and chord symbols are kept now (phase 6).
+	if l, ok := s.Lines[0].Staves[0].Voices[0].Measures[0].Events[0].Lyric(1); !ok || l.Text != "la" {
+		t.Errorf("lyric %+v", l)
+	}
+	if ch := s.Lines[0].Chords; len(ch) != 1 || ch[0].Chord.String() != "C" {
+		t.Errorf("chord symbols %+v", ch)
 	}
 }
 

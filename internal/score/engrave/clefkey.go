@@ -58,6 +58,8 @@ func clefGlyph(clef string) (string, float64) {
 		return "fClef8va", 1
 	case "percussion":
 		return "unpitchedPercussionClef1", 2
+	case "tab":
+		return "6stringTabClef", 3 // a tablature draws its own (drawTabStaff); this is its room
 	}
 	return "gClef", 3
 }
@@ -91,7 +93,7 @@ type keyAcc struct {
 
 // keyAccs are a key signature's accidentals on a clef.
 func keyAccs(clef string, fifths int) []keyAcc {
-	if clef == "percussion" {
+	if clef == "percussion" || clef == "tab" {
 		return nil
 	}
 	var out []keyAcc
@@ -219,19 +221,20 @@ func (e *engraver) timeWidth(m score.Meter) float64 {
 
 // drawTime draws a time signature with its left edge at x.
 func (e *engraver) drawTime(sc *staffCtx, ref Ref, x float64, m score.Meter) {
+	mid := sc.mid() // the middle line (a tablature's middle)
 	switch m.Symbol {
 	case "common":
-		e.addStaff(sc, e.glyphItem(RoleTime, ref, "timeSigCommon", x, 2, 1))
+		e.addStaff(sc, e.glyphItem(RoleTime, ref, "timeSigCommon", x, mid, 1))
 		return
 	case "cut":
-		e.addStaff(sc, e.glyphItem(RoleTime, ref, "timeSigCutCommon", x, 2, 1))
+		e.addStaff(sc, e.glyphItem(RoleTime, ref, "timeSigCutCommon", x, mid, 1))
 		return
 	}
 	w := e.timeWidth(m)
 	for _, row := range []struct {
 		gs []string
 		y  float64
-	}{{timeRun(m.Groups), 1}, {timeRun([]int{m.Den}), 3}} {
+	}{{timeRun(m.Groups), mid - 1}, {timeRun([]int{m.Den}), mid + 1}} {
 		e.drawRun(sc, nil, RoleTime, ref, row.gs, x+(w-e.runWidth(row.gs))/2, row.y)
 	}
 }
@@ -422,6 +425,15 @@ type clefMark struct {
 // clefChangeGap is the room between a clef change and what follows it.
 const clefChangeGap = 0.35
 
+// clefBarlineGap is the room between a clef change at a bar's start and
+// the barline it stands before, and clefBarlineLead the room in front of
+// it: a clear half space each side, as engravers set it (Gould), rather
+// than tucked against the barline.
+const (
+	clefBarlineGap  = 0.5
+	clefBarlineLead = 0.4
+)
+
 // clefChangeGlyph is a clef change's glyph and size: SMuFL's smaller
 // change clefs, or the full clef scaled down where there is none.
 func clefChangeGlyph(clef string) (string, float64) {
@@ -437,9 +449,13 @@ func clefChangeGlyph(clef string) (string, float64) {
 	return g, 0.75
 }
 
-// clefChangeWidth is the room a clef change takes.
-func (e *engraver) clefChangeWidth(clef string) float64 {
-	g, size := clefChangeGlyph(clef)
+// clefChangeWidth is the room a clef change takes: inside a bar, the clef
+// and its gap; before a barline, the gaps either side as well.
+func (e *engraver) clefChangeWidth(cm *clefMark) float64 {
+	g, size := clefChangeGlyph(cm.clef)
+	if cm.atEnd {
+		return e.f.Width(g)*size + clefBarlineGap + clefBarlineLead
+	}
 	return e.f.Width(g)*size + clefChangeGap
 }
 
@@ -447,7 +463,7 @@ func (e *engraver) clefChangeWidth(clef string) float64 {
 // and gives each its column.
 func (e *engraver) collectClefChanges() {
 	for _, sc := range e.staves {
-		if sc.percussion || len(sc.st.Clefs) == 0 {
+		if sc.percussion || sc.tab != nil || len(sc.st.Clefs) == 0 {
 			continue
 		}
 		cur := sc.clef
@@ -497,7 +513,7 @@ func (e *engraver) drawClefChanges(sc *staffCtx) {
 		w := e.f.Width(g) * size
 		cm.x = cm.col.x - cm.inkLeft - clefChangeGap - w
 		if cm.atEnd {
-			cm.x = cm.col.x - cm.inkLeft - 0.3 - w
+			cm.x = cm.col.x - cm.inkLeft - clefBarlineGap - w
 		}
 		ref := Ref{Line: sc.line, Staff: sc.staff, Voice: -1, Bar: cm.bar, Event: -1, Note: -1}
 		e.addStaff(sc, e.glyphItem(RoleClef, ref, g, cm.x, y, size))

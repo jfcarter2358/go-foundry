@@ -2,7 +2,8 @@ package editor
 
 // editor_score_settings.go — what the Score editor remembers between
 // sessions: the keymap (a preset and the rebindings laid over it), the
-// recently opened scores, and whether the keypad panel is up.
+// recently opened scores, whether the keypad panel is up, and the MIDI
+// keyboard's settings.
 //
 // Kept in score.yaml beside claude.yaml (fileutil.StatePath), on that file's
 // rule: it is the editor's own, it never ships (pack.developmentFiles knows
@@ -33,6 +34,9 @@ type scoreConfig struct {
 	Bindings map[string][]string `yaml:"bindings,omitempty"`
 	Recent   []string            `yaml:"recent,omitempty"`
 	Keypad   *bool               `yaml:"keypad,omitempty"`
+	// MIDI is the MIDI keyboard: the device, thru, the count-in, the
+	// click and how a recording is written (editor_score_midi.go).
+	MIDI scoreMIDIConfig `yaml:"midi,omitempty"`
 }
 
 var (

@@ -270,6 +270,11 @@ playback:
   gliss: slide                  # slide, chromatic or diatonic
   staccato: 0.4                 # fraction of its written length a staccato note sounds
   release: 0                    # seconds a score note rings after its written end (0: the fade_out)
+  tuning: guitar                # a fretted instrument's strings (a Score tuning name), for its tablature
+  staff_lines: 1                # a percussion staff of 1-5 lines (a single drum's one)
+  drums:                        # a kit's drum map: how a Score percussion staff writes each sound
+    - {key: 36, name: Bass Drum, line: 1, shortcut: B}             # key: the MIDI key; line: half spaces up from the bottom line
+    - {key: 46, name: Open Hi-Hat, line: 9, head: x, articulation: open}  # head: normal x circle_x diamond triangle slash
 ```
 
 - **Velocity layers.** A zone can split by velocity. Layers whose ranges
@@ -285,7 +290,12 @@ playback:
   text; the Tracker from the `@` command. `sustain`, `arco` and `ord.` are the
   instrument's own zones.
 - **Playback defaults** say how the instrument is written in notation and how
-  its marks play.
+  its marks play. A kit's `drums` map is its percussion staff in the Score:
+  each sound's key, its line or space, its notehead, an articulation it is
+  written with (two sounds may share a place and a head, told apart by it)
+  and the letter that writes it (A-G); each key once. The starter drum kit and
+  orchestral percussion carry one, and every single-drum instrument a
+  one-line staff with its sound on the line.
 
 The library ships 161 instruments, all built from the synth recipes by
 `foundry tracker gen-instruments`: one for each of the 128 samples, in the

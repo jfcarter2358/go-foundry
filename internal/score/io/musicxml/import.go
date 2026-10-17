@@ -35,11 +35,16 @@ package musicxml
 //     <print new-system/new-page> become the score's layout and breaks,
 //     unless Options.NoLayout.
 //
+//   - Words and strings (words.go). Lyrics, verse by verse, onto their
+//     notes; chord symbols over the part's line at their places; a TAB
+//     staff as tablature with its tuning, and a TAB staff that repeats
+//     the notation staff over it as that staff's linked tablature.
+//
 // A file this package wrote (export.go, Software) is read with what only
-// it writes: stem directions, velocities (a note's dynamics attribute),
+// it writes: stem directions (kept as marks where the engraver would not
+// draw them so, stems.go), velocities (a note's dynamics attribute),
 // grace timing, and the library instrument a part names. What a score
-// cannot hold yet is reported as a warning, never silently dropped:
-// lyrics, chord symbols.
+// cannot hold is reported as a warning, never silently dropped.
 
 import (
 	"fmt"
@@ -101,13 +106,13 @@ type partHead struct {
 func (d *Document) heads() map[string]*partHead {
 	out := map[string]*partHead{}
 	for _, sp := range d.root.child("part-list").children("score-part") {
-		h := &partHead{id: sp.attr("id"), name: cleanText(sp.str("part-name")), abbrev: cleanText(sp.str("part-abbreviation")),
+		h := &partHead{id: sp.attr("id"), name: cleanName(sp.str("part-name")), abbrev: cleanName(sp.str("part-abbreviation")),
 			program: -1, channel: -1, unpitched: map[string]int{}, volume: -1}
 		if dn := sp.child("part-name-display"); dn != nil && h.name == "" {
-			h.name = cleanText(dn.str("display-text"))
+			h.name = cleanName(displayText(dn))
 		}
 		if si := sp.child("score-instrument"); si != nil {
-			h.instName = cleanText(si.str("instrument-name"))
+			h.instName = cleanName(si.str("instrument-name"))
 			h.sound = si.str("instrument-sound")
 		}
 		for _, si := range sp.children("score-instrument") {
@@ -137,11 +142,37 @@ func (d *Document) heads() map[string]*partHead {
 	return out
 }
 
-// cleanText folds a MusicXML display string: line breaks become spaces,
-// runs of spaces one, and the music flat and sharp signs letters.
+// cleanText folds a MusicXML display string: line breaks become spaces
+// and runs of spaces one. The music signs (♭ ♮ ♯) stay in text the score
+// prints — words, titles, rehearsal marks: every backend draws them
+// (engrave/textsign.go).
 func cleanText(s string) string {
-	s = strings.NewReplacer("♭", "b", "♯", "#", "♮", "", "\n", " ", "\r", " ", "\t", " ").Replace(s)
+	s = strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(s)
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// displayText is a <part-name-display>'s name: its display-text runs with
+// the signs its accidental-text elements stand for between them (Sibelius
+// writes "Clarinet in B" and a flat so).
+func displayText(dn *node) string {
+	var b strings.Builder
+	for _, k := range dn.kids {
+		switch k.name {
+		case "display-text":
+			b.WriteString(k.text)
+		case "accidental-text":
+			b.WriteString(map[string]string{"flat": "♭", "sharp": "♯", "natural": "♮",
+				"double-sharp": "𝄪", "sharp-sharp": "𝄪", "flat-flat": "𝄫"}[strings.TrimSpace(k.text)])
+		}
+	}
+	return b.String()
+}
+
+// cleanName is cleanText for a part's name, with the flat and sharp signs
+// as letters ("Clarinet in Bb"): the editor's staff headers and menus set
+// names in ImGui's font, which has no ♭ or ♯.
+func cleanName(s string) string {
+	return cleanText(strings.NewReplacer("♭", "b", "♯", "#", "♮", "").Replace(s))
 }
 
 // Parts lists the document's parts with the guesses Import would make.
@@ -329,6 +360,7 @@ type xnote struct {
 	tupStart   []xtuplet
 	tupStop    []string
 	pitch      score.Pitch // as written
+	str        int         // the tablature string it is played on, 0 none
 	unpitched  int         // MIDI key, -1 for a pitched note
 	inst       string      // <instrument id>: an unpitched note's sound
 	acc        score.AccShow
@@ -394,14 +426,24 @@ type xmeasure struct {
 	repeatTimes            int
 	// endingStart is the passes of an ending starting here ("1, 2"),
 	// endingStop whether one ends here.
-	endingStart     string
-	hasEnding       bool
-	endingStop      bool
-	jumps           []xjump
-	clefMid         []xclef
-	newSystem       bool
-	newPage         bool
-	lyrics, harmony int
+	endingStart string
+	hasEnding   bool
+	endingStop  bool
+	jumps       []xjump
+	clefMid     []xclef
+	newSystem   bool
+	newPage     bool
+	// harmonies are the chord symbols in the measure; tabs the staves'
+	// tablature details (by staff number).
+	harmonies []xharmony
+	tabs      map[int]*xtab
+}
+
+// xharmony is a chord symbol read, at its place in the measure.
+type xharmony struct {
+	at    score.Frac
+	staff int
+	chord score.Chord
 }
 
 type partReader struct {
@@ -523,7 +565,6 @@ func (r *partReader) readMeasure(m *node) xmeasure {
 				reach()
 			}
 			xm.notes = append(xm.notes, n)
-			xm.lyrics += len(k.children("lyric"))
 		case "direction":
 			xm.dirs = append(xm.dirs, r.readDirection(k, cur))
 		case "sound":
@@ -562,7 +603,11 @@ func (r *partReader) readMeasure(m *node) xmeasure {
 				xm.jumps = append(xm.jumps, xjump{kind: "coda"})
 			}
 		case "harmony":
-			xm.harmony++
+			if c, ok := readHarmony(k, r.ours); ok {
+				xm.harmonies = append(xm.harmonies, xharmony{at: cur.Add(r.frac(k.num("offset", 0))), staff: max(1, k.integer("staff", 1)), chord: c})
+			} else {
+				r.warn("a chord symbol (%s) could not be read; it is left out", strings.TrimSpace(k.child("kind").text))
+			}
 		}
 	}
 	return xm
@@ -615,7 +660,23 @@ func (r *partReader) readAttributes(a *node, xm *xmeasure, cur score.Frac) {
 			r.warn("time signature %q not understood; the meter before it carries on", t.str("beats")+"/"+t.str("beat-type"))
 		}
 	}
+	for _, d := range a.children("staff-details") {
+		if xm.tabs == nil {
+			xm.tabs = map[int]*xtab{}
+		}
+		readStaffDetails(d, xm.tabs)
+	}
 	for _, c := range a.children("clef") {
+		if strings.TrimSpace(c.str("sign")) == "TAB" && cur.IsZero() {
+			if xm.tabs == nil {
+				xm.tabs = map[int]*xtab{}
+			}
+			n := atoiDef(c.attr("number"), 1)
+			if xm.tabs[n] == nil {
+				xm.tabs[n] = &xtab{tuning: map[int]score.Pitch{}}
+			}
+			xm.tabs[n].clef = true
+		}
 		if cur.Sign() > 0 {
 			xm.clefMid = append(xm.clefMid, xclef{at: cur, staff: atoiDef(c.attr("number"), 1), clef: clefName(c)})
 			continue
@@ -750,6 +811,13 @@ func (r *partReader) readNote(k *node) xnote {
 	}
 	for _, nt := range k.children("notations") {
 		r.readNotations(nt, &n)
+	}
+	if !n.rest {
+		for i, ly := range k.children("lyric") {
+			if m, ok := readLyric(ly, i); ok {
+				n.marks = append(n.marks, m)
+			}
+		}
 	}
 	if n.stem != "" {
 		n.marks = append(n.marks, score.Mark{Name: n.stem})
@@ -942,8 +1010,15 @@ func (r *partReader) readNotations(nt *node, n *xnote) {
 			}
 		case "technical":
 			for _, t := range k.kids {
-				if t.name == "stopped" {
-					add("tech", "+")
+				switch t.name {
+				case "stopped":
+					add("stopped", "")
+				case "open":
+					add("open", "")
+				case "string":
+					if v := atoiDef(strings.TrimSpace(t.text), 0); v >= 1 && v <= score.MaxStrings {
+						n.str = v
+					}
 				}
 			}
 		}
@@ -1247,7 +1322,7 @@ func Import(d *Document, o Options) (s *score.Score, warnings []string, err erro
 		if h == nil {
 			h = &partHead{id: p.attr("id"), program: -1, channel: -1, unpitched: map[string]int{}}
 		}
-		l, err := buildLine(read[pi], infos[pi], h, ch, s, lay, warn)
+		l, err := buildLine(read[pi], infos[pi], h, ch, s, lay, ours, warn)
 		if err != nil {
 			return nil, warnings, fmt.Errorf("part %s: %w", infos[pi].Name, err)
 		}
@@ -1257,15 +1332,8 @@ func Import(d *Document, o Options) (s *score.Score, warnings []string, err erro
 		return nil, warnings, fmt.Errorf("musicxml: every part was skipped")
 	}
 	uniqueLineNames(s)
-	for _, m := range read {
-		for _, xm := range m {
-			if xm.lyrics > 0 {
-				warn("lyrics are not imported yet (phase 6)")
-			}
-			if xm.harmony > 0 {
-				warn("chord symbols are not imported yet (phase 6)")
-			}
-		}
+	if ours {
+		looseStems(s)
 	}
 	for _, is := range s.Validate(nil) {
 		if is.Severity == score.Error {
@@ -1642,8 +1710,9 @@ type voiceKey struct{ staff, voice int }
 // a voice number lives on the staff most of its notes are on, unless a
 // quarter or more of them are on another, which then has its own voice of
 // that number. Voices on a staff are numbered in order (lowest first);
-// past four are dropped.
-func voiceMap(ms []xmeasure, staves int, warn func(string, ...any)) map[[2]string]voiceKey {
+// past four are dropped. In a file of ours a voice is always its staff's:
+// its notes on another staff are cross-staff notes.
+func voiceMap(ms []xmeasure, staves int, ours bool, warn func(string, ...any)) map[[2]string]voiceKey {
 	counts := map[string]map[int]int{}
 	for _, xm := range ms {
 		for _, n := range xm.notes {
@@ -1663,15 +1732,16 @@ func voiceMap(ms []xmeasure, staves int, warn func(string, ...any)) map[[2]strin
 				best, bestN = st, c
 			}
 		}
+		split := func(c int) bool { return !ours && c*4 >= total }
 		for st, c := range byStaff {
 			target := best
-			if c*4 >= total {
+			if split(c) {
 				target = st
 			}
 			home[[2]string{v, strconv.Itoa(st)}] = target
 		}
 		for st, c := range byStaff {
-			if st == best || c*4 >= total {
+			if st == best || split(c) {
 				perStaff[st] = appendUnique(perStaff[st], v)
 			}
 		}
@@ -1731,7 +1801,7 @@ type openTuplet struct {
 	ratio  score.Frac // Den/Num of this level
 }
 
-func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Score, lay notate.Layout, warn func(string, ...any)) (*score.Line, error) {
+func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Score, lay notate.Layout, ours bool, warn func(string, ...any)) (*score.Line, error) {
 	name := info.Name
 	if ch.Name != "" {
 		name = ch.Name
@@ -1753,7 +1823,7 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 	for i := range l.Staves {
 		l.Staves[i] = &score.Staff{Clef: info.Clefs[i], Transpose: info.Transpose}
 	}
-	vmap := voiceMap(ms, staves, warn)
+	vmap := voiceMap(ms, staves, ours, warn)
 	nv := make([]int, staves)
 	for _, k := range vmap {
 		nv[k.staff-1] = max(nv[k.staff-1], k.voice+1)
@@ -1840,8 +1910,10 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 			if xn.chord && haveLast && len(vb.events) > 0 {
 				ev := &vb.events[len(vb.events)-1].ev
 				if ev.Kind == score.EventChord && !xn.rest && !xn.hidden {
+					strs := ev.TabStrings()
 					ev.Notes = append(ev.Notes, note)
 					ev.Marks = mergeMarks(ev.Marks, xn.marks)
+					ev.SetTabStrings(append(strs, xn.str))
 				}
 				closeTuplets(vb, xn.tupStop)
 				continue
@@ -1862,6 +1934,12 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 			default:
 				ev.Notes = []score.Note{note}
 				ev.Marks = mergeMarks(nil, xn.marks)
+				ev.SetTabStrings([]int{xn.str})
+				// A note of the voice on the staff next to the voice's own:
+				// a cross-staff note.
+				if d := min(xn.staff, staves) - k.staff; d == 1 || d == -1 {
+					ev.SetCrossStaff(d)
+				}
 			}
 			if ev.Grace != score.NotGrace && ev.Kind != score.EventChord {
 				continue // a grace rest is nothing
@@ -1917,6 +1995,7 @@ func buildLine(ms []xmeasure, info PartInfo, h *partHead, ch Choice, s *score.Sc
 		}
 	}
 	dropDanglingTies(l)
+	readWords(l, ms, s, lay, warn)
 	return l, nil
 }
 

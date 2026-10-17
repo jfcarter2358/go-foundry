@@ -21,6 +21,8 @@ type Note struct {
 	// Grace is a played grace note (MarkGraces): it takes no time, and
 	// Quantize puts it at the onset of the note it leads to.
 	Grace bool
+	// Marks go on the chord the note is written in (a glissando from it).
+	Marks []score.Mark
 }
 
 // Grid is what quantising snaps to: a plain value (Unit, a 16th is 1/16)

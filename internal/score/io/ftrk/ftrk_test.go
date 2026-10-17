@@ -492,3 +492,48 @@ func TestEmbeddedInstrumentsTakeLibrarySounds(t *testing.T) {
 		t.Errorf("nothing near: %q", got)
 	}
 }
+
+// A drum that is its own instrument comes in on its one line: every note
+// the song strikes it at is its sound, and the import says so.
+func TestASingleDrumComesInOnItsLine(t *testing.T) {
+	useRepoResources(t)
+	score.ReloadKits()
+	s := tracker.NewSong("Kick")
+	s.BPM, s.LPB, s.BeatsPerBar = 120, 4, 4
+	s.SetChannelCount(1)
+	kick := tracker.NewInstrument("Kick", "")
+	kick.Ref = "drums/kick_808"
+	s.Instruments = []*tracker.Instrument{kick}
+	p := tracker.NewPattern("a", 16, 1)
+	for r, n := range []string{"C-4 01 40", "", "", "", "C-5 01 40", "", "", "", "G-3 01 40"} {
+		if n == "" {
+			continue
+		}
+		c, err := tracker.ParseCell(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Cells[r][0] = c
+	}
+	s.Patterns, s.Order = []*tracker.Pattern{p}, []int{0}
+	sc, warns, err := Import(s, midi.Options{Name: "kick", NoDynamics: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit := score.KitFor("drums/kick_808")
+	if len(kit.Drums) != 1 {
+		t.Fatalf("drums/kick_808's map: %+v", kit.Drums)
+	}
+	for _, m := range sc.Lines[0].Staves[0].Voices[0].Measures {
+		for _, e := range m.Events {
+			for _, n := range e.Notes {
+				if n.Pitch.MIDI() != kit.Drums[0].Key {
+					t.Errorf("a kick stored at %s, not its sound's key %d", n.Pitch, kit.Drums[0].Key)
+				}
+			}
+		}
+	}
+	if !strings.Contains(strings.Join(warns, "\n"), "several notes") {
+		t.Errorf("warnings %v", warns)
+	}
+}

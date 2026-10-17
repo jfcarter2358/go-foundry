@@ -626,3 +626,30 @@ func MoveToVoice(s *score.Score, l Loc, voice int) (Loc, error) {
 	}
 	return to, nil
 }
+
+// MoveStaff moves an event's notes to the line's staff above (dir -1) or
+// below (1) the one they are written on now — a cross-staff note, its
+// voice still its own staff's — or back home when that is where the move
+// lands. It refuses a staff the line does not have (or a drum staff, or a
+// tablature alone).
+func MoveStaff(s *score.Score, l Loc, dir int) error {
+	e := Event(s, l)
+	if e == nil {
+		return ErrNoEvent
+	}
+	if e.Kind != score.EventChord {
+		return fmt.Errorf("only notes go on another staff")
+	}
+	next := e.CrossStaff() + dir
+	if next == 0 {
+		e.SetCrossStaff(0)
+		return nil
+	}
+	staves := s.Lines[l.Line].Staves
+	t := l.Staff + next
+	if next < -1 || next > 1 || t < 0 || t >= len(staves) || staves[t].Percussion() || staves[t].Tab != nil && staves[t].Tab.Only {
+		return fmt.Errorf("%s has no staff %s to put the note on", s.Lines[l.Line].Name, map[bool]string{true: "above", false: "below"}[dir < 0])
+	}
+	e.SetCrossStaff(next)
+	return nil
+}

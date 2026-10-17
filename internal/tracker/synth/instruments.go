@@ -71,9 +71,22 @@ func recipeInstrument(r *Recipe) *tracker.Instrument {
 		switch r.Name {
 		case "timpani", "tom_808", "tom_mid", "tom_floor", "taiko":
 			pb.Clef = "bass"
+		default:
+			// One sound: a one-line staff, the note on the line, at the
+			// key that plays the sample at its own pitch.
+			key := 60
+			if r.base != "" {
+				key = int(note(r.base)) - int(tracker.NoteC4) + 60
+			}
+			pb.StaffLines = 1
+			pb.Drums = []tracker.DrumNote{{Key: key, Name: title(r.Name), Line: 4, Head: singleDrumHead(r.Name)}}
 		}
 	case "bass":
 		pb.Clef, pb.Low, pb.High = "bass", note("C-1"), note("G-4")
+		switch r.Name {
+		case "bass_finger", "bass_pick", "bass_slap", "bass_fretless", "bass_upright":
+			pb.Tuning = "bass"
+		}
 		in.FadeOut = 0.08
 	case "leads":
 		pb.Low, pb.High = note("C-3"), note("C-7")
@@ -113,7 +126,9 @@ func recipeInstrument(r *Recipe) *tracker.Instrument {
 		in.FadeOut, in.Polyphony = 0.25, 4
 		switch r.Name {
 		case "guitar_nylon", "guitar_steel", "guitar_muted", "guitar_power":
-			pb.Clef = "treble_8vb"
+			pb.Clef, pb.Tuning = "treble_8vb", "guitar"
+		case "banjo":
+			pb.Tuning = "banjo"
 		case "harp":
 			pb.Clef, pb.Low, pb.High, pb.Gliss = "grand", note("B-0"), note("G#7"), tracker.GlissDiatonic
 			in.FadeOut = 1.5
@@ -148,6 +163,78 @@ func recipeInstrument(r *Recipe) *tracker.Instrument {
 		in.FadeOut = 0.3
 	}
 	return in
+}
+
+// singleDrumHead is the notehead a one-sound percussion staff writes a
+// drum with: an x for metal and hands, a diamond for a bell, a triangle
+// for a triangle and a cowbell, a plain head for a skin or wood.
+func singleDrumHead(name string) string {
+	switch {
+	case strings.Contains(name, "triangle"), strings.Contains(name, "cowbell"):
+		return "triangle"
+	case strings.Contains(name, "bell"):
+		return "diamond"
+	case strings.Contains(name, "hat"), strings.Contains(name, "crash"), strings.Contains(name, "ride"),
+		strings.Contains(name, "cymbal"), strings.Contains(name, "tambourine"), strings.Contains(name, "shaker"),
+		strings.Contains(name, "clap"), strings.Contains(name, "snap"):
+		return "x"
+	}
+	return "normal"
+}
+
+// kitDrum is one sound of a drum map, by its General MIDI key.
+func kitDrum(key int, name string, line int, head, art, shortcut string) tracker.DrumNote {
+	if head == "" {
+		head = "normal"
+	}
+	return tracker.DrumNote{Key: key, Name: name, Line: line, Head: head, Articulation: art, Shortcut: shortcut}
+}
+
+// drumKitMap is the drum kit's map: the common drum-set notation (bass
+// drum in the bottom space, snare in the third, hi-hat above the staff —
+// "o" over it open —, cymbals over that, toms between).
+var drumKitMap = []tracker.DrumNote{
+	kitDrum(36, "Bass Drum", 1, "", "", "B"),
+	kitDrum(35, "Bass Drum 2", 0, "", "", ""),
+	kitDrum(38, "Snare", 5, "", "", "A"),
+	kitDrum(37, "Side Stick", 5, "circle_x", "", ""),
+	kitDrum(40, "Electric Snare", 5, "diamond", "", ""),
+	kitDrum(39, "Hand Clap", 4, "x", "", ""),
+	kitDrum(42, "Closed Hi-Hat", 9, "x", "", "G"),
+	kitDrum(46, "Open Hi-Hat", 9, "x", "open", ""),
+	kitDrum(44, "Pedal Hi-Hat", -1, "x", "", "F"),
+	kitDrum(49, "Crash Cymbal", 10, "x", "", "C"),
+	kitDrum(57, "Crash Cymbal 2", 12, "x", "", ""),
+	kitDrum(50, "High Tom", 8, "", "", "E"),
+	kitDrum(51, "Ride Cymbal", 8, "x", "", "D"),
+	kitDrum(53, "Ride Bell", 8, "diamond", "", ""),
+	kitDrum(48, "Hi-Mid Tom", 7, "", "", ""),
+	kitDrum(54, "Tambourine", 7, "x", "", ""),
+	kitDrum(56, "Cowbell", 7, "triangle", "", ""),
+	kitDrum(47, "Low-Mid Tom", 6, "", "", ""),
+	kitDrum(45, "Low Tom", 4, "", "", ""),
+	kitDrum(43, "High Floor Tom", 3, "", "", ""),
+	kitDrum(41, "Low Floor Tom", 2, "", "", ""),
+	kitDrum(55, "Splash Cymbal", 11, "circle_x", "", ""),
+}
+
+// orchestralPercussionMap is the orchestral percussion's map on one staff:
+// the drums low, the cymbals and the triangle high, the triangle open or
+// stopped ("+") by its articulation.
+var orchestralPercussionMap = []tracker.DrumNote{
+	kitDrum(36, "Bass Drum", 1, "", "", "B"),
+	kitDrum(35, "Bass Drum 2", 0, "", "", ""),
+	kitDrum(38, "Snare Drum", 5, "", "", "A"),
+	kitDrum(52, "Tam-tam", 2, "", "", "F"),
+	kitDrum(77, "Woodblock Low", 3, "", "", ""),
+	kitDrum(76, "Woodblock High", 4, "", "", "E"),
+	kitDrum(75, "Claves", 6, "x", "", ""),
+	kitDrum(54, "Tambourine", 7, "x", "", "D"),
+	kitDrum(51, "Suspended Cymbal", 8, "x", "", ""),
+	kitDrum(49, "Clash Cymbals", 10, "x", "", "C"),
+	kitDrum(57, "Clash Cymbals 2", 12, "x", "", ""),
+	kitDrum(81, "Triangle", 11, "triangle", "open", "G"),
+	kitDrum(80, "Triangle, stopped", 11, "triangle", "stopped", ""),
 }
 
 // title makes a display name: "lead_supersaw" is "Lead Supersaw".
@@ -453,7 +540,7 @@ func orchestralInstruments() []StarterInstrument {
 	}
 	b.in.FadeOut, b.in.Polyphony = 0.08, 8
 	b.art(tracker.Articulation{Name: "choked", Triggers: []string{"choke", "l.v. off", "secco"}, FadeOut: 0.03})
-	b.in.Playback = tracker.Playback{Clef: "percussion", Release: 4}
+	b.in.Playback = tracker.Playback{Clef: "percussion", Release: 4, Drums: orchestralPercussionMap}
 	add("percussion/orchestral_percussion", b)
 
 	b = newBuilder("Xylophone", "Xylophone: sounds an octave above where it is written")
@@ -510,7 +597,7 @@ func orchestralInstruments() []StarterInstrument {
 		b.hit("A-3", "drums/crash", "A#3"),
 	}
 	b.in.FadeOut, b.in.Polyphony = 0.05, 8
-	b.in.Playback = tracker.Playback{Clef: "percussion", Release: 3}
+	b.in.Playback = tracker.Playback{Clef: "percussion", Release: 3, Drums: drumKitMap}
 	add("percussion/drum_kit", b)
 
 	// ---- synth ----

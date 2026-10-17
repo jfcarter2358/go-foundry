@@ -54,6 +54,8 @@ func (e *engraver) columns() {
 				}
 			}
 		}
+		// A chord symbol where nothing starts stands in a column of its own.
+		offs = append(offs, e.chordOffsets(bc.bar)...)
 		sort.Slice(offs, func(i, j int) bool { return offs[i].Less(offs[j]) })
 		for _, o := range offs {
 			if !o.Less(end) {
@@ -95,20 +97,45 @@ func (e *engraver) measure() {
 				var evs []*ev
 				for _, v := range sb.voices {
 					for _, x := range v {
-						if x.col == c && !x.space && !x.barRest {
+						// A cross-staff event is arranged with the staff it
+						// is written on.
+						if x.col == c && !x.space && !x.barRest && (x.cross == 0 || sc.tab != nil) {
 							evs = append(evs, x)
 						}
 					}
 				}
+				var crossed []*ev
+				if sc.tab == nil {
+					for _, x := range e.crossedInto(sc, bi) {
+						if x.col == c {
+							crossed = append(crossed, x)
+						}
+					}
+				}
+				// Arranged in this staff's own coordinates, then put back.
+				for _, x := range crossed {
+					for _, n := range x.notes {
+						n.y -= x.crossY
+					}
+				}
+				evs = append(evs, crossed...)
 				l, r := 0.0, 0.0
-				if len(evs) > 0 {
+				switch {
+				case len(evs) > 0 && sc.tab != nil:
+					l, r = e.arrangeTab(evs)
+				case len(evs) > 0:
 					l, r = e.arrangeColumn(sb, c, evs)
+				}
+				for _, x := range crossed {
+					for _, n := range x.notes {
+						n.y += x.crossY
+					}
 				}
 				// A clef change stands left of everything else there.
 				for _, cm := range sc.clefMarks {
 					if cm.col == c {
 						cm.inkLeft = l
-						l += e.clefChangeWidth(cm.clef)
+						l += e.clefChangeWidth(cm)
 					}
 				}
 				c.left, c.right = math.Max(c.left, l), math.Max(c.right, r)
@@ -126,6 +153,8 @@ func (e *engraver) measure() {
 			bc.rods[k] = a.right + b.left + gap
 		}
 		e.dynamicRods(bi, bc)
+		e.lyricRods(bi, bc)
+		e.chordRods(bi, bc)
 		if bi > 0 {
 			bc.prefixW = e.barPrefixWidth(bc)
 		}
@@ -200,6 +229,7 @@ func (e *engraver) crossBarRods() {
 		// Only the last gap stretches: it takes up what the rest lacks.
 		last := len(a.rods) - 1
 		a.rods[last] = math.Max(a.rods[last], need-fixed)
+		a.rods[last] = math.Max(a.rods[last], math.Max(e.lyricCrossNeed(a, b, fixed), e.chordCrossNeed(a, b, fixed)))
 	}
 }
 

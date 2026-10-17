@@ -241,6 +241,20 @@ func ToMIDI(song *tracker.Song) (*midi.File, []string, error) {
 		t.Events = append(t.Events,
 			midi.Event{Kind: midi.Controller, Channel: ch, A: midi.CCVolume, B: uint8(math.Round(math.Max(0, math.Min(1.27, float64(mc.Volume))) * 100))},
 			midi.Event{Kind: midi.Controller, Channel: ch, A: midi.CCPan, B: uint8(math.Round(64 + math.Max(-1, math.Min(1, float64(mc.Pan)))*63))})
+		// A drum that is its own instrument (one sound, a one-line staff)
+		// is written as that sound, whatever note the song strikes it at.
+		if ch == gm.DrumChannel && ref != "" {
+			if kit := score.KitFor(ref); !kit.GM && len(kit.Drums) == 1 {
+				moved := false
+				for i := range ns {
+					moved = moved || ns[i].key != kit.Drums[0].Key
+					ns[i].key = kit.Drums[0].Key
+				}
+				if moved {
+					warn("%s is struck at several notes; its one-line staff writes each as its sound", in.Name)
+				}
+			}
+		}
 		// One key at a time on a channel: a key struck again ends itself.
 		sort.SliceStable(ns, func(i, j int) bool { return ns[i].on < ns[j].on })
 		lastOf := map[int]int{}

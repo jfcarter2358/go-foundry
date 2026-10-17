@@ -282,7 +282,9 @@ func fullInstrument() *Instrument {
 	in.Polyphony, in.Interp = 4, InterpLinear
 	in.Zones = append(in.Zones, Zone{Sample: 3, Low: 100, High: NoteMax, BaseNote: 100, RoundRobin: []int{1, 2}})
 	in.Zones[0].High = 99
-	in.Playback = Playback{Low: 44, High: 92, Transposition: -2, Clef: "treble", Gliss: GlissDiatonic, Staccato: 0.4, Release: 0.25}
+	in.Playback = Playback{Low: 44, High: 92, Transposition: -2, Clef: "treble", Gliss: GlissDiatonic, Staccato: 0.4, Release: 0.25,
+		StaffLines: 1, Tuning: "guitar", Drums: []DrumNote{{Key: 36, Name: "Kick", Line: 1, Head: "normal", Shortcut: "B"},
+			{Key: 46, Name: "Hat open", Line: 9, Head: "x", Articulation: "open"}}}
 	return in
 }
 
@@ -305,13 +307,20 @@ func TestInstrumentFileRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(want, back) {
 		t.Fatalf("round trip changed the instrument:\n%+v\n%+v", want, back)
 	}
-	for _, key := range []string{"layers:", "velocity: [60, 127]", "round_robin: [2]", "articulations:", "triggers: [pizz., pizz]", "playback:", "range: [G-3, G-7]", "gliss: diatonic", "transposition: -2"} {
+	for _, key := range []string{"layers:", "velocity: [60, 127]", "round_robin: [2]", "articulations:", "triggers: [pizz., pizz]", "playback:", "range: [G-3, G-7]", "gliss: diatonic", "transposition: -2", "staff_lines: 1", "articulation: open", "shortcut: B"} {
 		if !strings.Contains(string(b), key) {
 			t.Errorf("the file has no %q:\n%s", key, b)
 		}
 	}
 	if _, err := ParseInstrument([]byte("version: 1\nname: x\nsamples: [a]\nplayback: {clef: soprano}\n")); err == nil {
 		t.Error("an unknown clef was accepted")
+	}
+	for _, bad := range []string{"{staff_lines: 7}", "{drums: [{key: 200, name: x, line: 1}]}", "{drums: [{key: 36, name: x, line: 1}, {key: 36, name: y, line: 2}]}",
+		"{drums: [{key: 36, line: 1}]}", "{drums: [{key: 36, name: x, line: 1, head: star}]}", "{drums: [{key: 36, name: x, line: 1, shortcut: Q}]}",
+		"{drums: [{key: 36, name: x, line: 40}]}"} {
+		if _, err := ParseInstrument([]byte("version: 1\nname: x\nsamples: [a]\nplayback: " + bad + "\n")); err == nil {
+			t.Errorf("playback %s was accepted", bad)
+		}
 	}
 	if _, err := ParseInstrument([]byte("version: 1\nname: x\nsamples: [a]\nzones: [{sample: 0, low: C-0, high: B-9, layers: [{sample: 3, velocity: [0, 127]}]}]\n")); err == nil {
 		t.Error("a layer naming a missing sample was accepted")

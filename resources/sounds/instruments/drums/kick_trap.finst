@@ -5,4 +5,9 @@ polyphony: 4
 playback:
   clef: percussion
   release: 3
+  staff_lines: 1
+  drums:
+  - key: 24
+    name: Kick Trap
+    line: 4
 description: Tuned long 808 that plays as a bass line

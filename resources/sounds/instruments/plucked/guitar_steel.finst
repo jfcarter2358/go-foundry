@@ -6,4 +6,5 @@ polyphony: 4
 playback:
   range: [E-2, E-6]
   clef: treble_8vb
+  tuning: guitar
 description: Steel-string acoustic with sympathetic shimmer

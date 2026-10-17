@@ -273,6 +273,11 @@ type Line struct {
 	// points — a segment dragged in the dynamics lane — without changing a
 	// printed mark.
 	Overrides []DynOverride
+
+	// Chords are the chord symbols over the line's top staff, in order
+	// (chords.go); ChordPlay, when set, plays them.
+	Chords    []ChordSymbol
+	ChordPlay *ChordPlay
 }
 
 // DynOverride holds a line's dynamic level flat from From to To (written
@@ -326,6 +331,12 @@ type Staff struct {
 	// Clefs are clef changes inside the staff, in order (staff.go); Clef
 	// is the clef it starts with.
 	Clefs []ClefChange
+	// Lines is a percussion staff's line count, 1..5 (a single drum's one
+	// line); 0 is five.
+	Lines int
+	// Tab, when set, shows the staff as tablature too — or alone — in its
+	// tuning (tab.go).
+	Tab *Tab
 }
 
 // Voice is one independent rhythm on a staff.
@@ -564,6 +575,16 @@ func (l *Line) Clone() *Line {
 	}
 	c.Lanes = cloneLanes(l.Lanes)
 	c.Overrides = append([]DynOverride(nil), l.Overrides...)
+	if l.Chords != nil {
+		c.Chords = make([]ChordSymbol, len(l.Chords))
+		for i, ch := range l.Chords {
+			c.Chords[i] = ChordSymbol{At: ch.At, Chord: ch.Chord.Clone()}
+		}
+	}
+	if l.ChordPlay != nil {
+		cp := *l.ChordPlay
+		c.ChordPlay = &cp
+	}
 	if l.Swing != nil {
 		w := *l.Swing
 		c.Swing = &w
@@ -579,6 +600,7 @@ func (l *Line) Clone() *Line {
 func (st *Staff) Clone() *Staff {
 	c := *st
 	c.Clefs = append([]ClefChange(nil), st.Clefs...)
+	c.Tab = st.Tab.Clone()
 	c.Voices = make([]*Voice, len(st.Voices))
 	for i, v := range st.Voices {
 		c.Voices[i] = v.Clone()

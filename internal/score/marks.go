@@ -36,6 +36,12 @@ const (
 	// MarkPlayback changes only how the note plays and prints nothing: a
 	// velocity set in the piano roll (vel=).
 	MarkPlayback
+	// MarkLyric is a syllable sung on the note, one verse a mark: ly, ly2
+	// … ly8 (lyrics.go).
+	MarkLyric
+	// MarkTab places a note on a tablature staff: str= names the string it
+	// is played on (tab.go).
+	MarkTab
 )
 
 // Dynamic is what a dynamic mark plays as. Level is MIDI velocity / 127;
@@ -106,6 +112,16 @@ const DefaultDynamic = "mf"
 //	vel=96                    the event's notes play at this MIDI velocity
 //	                          (1..127) whatever the dynamics say — the
 //	                          piano roll's velocity lane; nothing prints
+//	open, stopped             "o" and "+" over the note: a horn's open and
+//	                          stopped notes, a hi-hat open and closed (a
+//	                          drum map can name either, drums.go)
+//	str=2, str=E4/1+B3/2      the tablature string a note is played on
+//	                          (tab.go)
+//	cross=up, cross=down      the event's notes written on the line's
+//	                          staff above or below its own (a piano's
+//	                          hands crossing, a run beamed across the
+//	                          grand staff); its voice is still its own
+//	ly=Hal-, ly2=glo_         a verse's syllable (lyrics.go)
 var markKinds = map[string]MarkKind{
 	// articulations
 	"stacc": MarkArticulation, "staccmo": MarkArticulation, "acc": MarkArticulation,
@@ -119,6 +135,13 @@ var markKinds = map[string]MarkKind{
 	"on_beat": MarkNotation, "before_beat": MarkNotation,
 	// playback only
 	"vel": MarkPlayback,
+	// tablature
+	"str": MarkTab,
+	// brass and percussion: open and stopped / closed (the "o" and "+"
+	// over a note: a horn's stopped note, a hi-hat open or closed)
+	"open": MarkNotation, "stopped": MarkNotation,
+	// cross-staff: the notes on the staff above or below
+	"cross": MarkNotation,
 	// text
 	"text": MarkText, "expr": MarkText, "tech": MarkTechnique,
 	// spanners: starts and ends
@@ -137,6 +160,9 @@ var Aliases = map[string]string{
 func KindOf(name string) MarkKind {
 	if _, ok := Dynamics[name]; ok {
 		return MarkDynamic
+	}
+	if LyricVerse(name) > 0 {
+		return MarkLyric
 	}
 	return markKinds[name]
 }
@@ -261,6 +287,41 @@ func (e *Event) SetVelocityMark(v int) {
 	}
 	if v > 0 {
 		out = append(out, Mark{Name: "vel", Value: strconv.Itoa(min(v, 127))})
+	}
+	e.Marks = out
+}
+
+// CrossStaff is where an event's notes are written: -1 on its line's staff
+// above its own, 1 on the staff below (the mark cross=up, cross=down), 0
+// on its own staff.
+func (e *Event) CrossStaff() int {
+	for _, m := range e.Marks {
+		if m.Name == "cross" {
+			switch m.Value {
+			case "up":
+				return -1
+			case "down":
+				return 1
+			}
+		}
+	}
+	return 0
+}
+
+// SetCrossStaff writes an event's notes on the staff above (-1) or below
+// (1) its own, or (0) back on its own.
+func (e *Event) SetCrossStaff(dir int) {
+	var out []Mark
+	for _, m := range e.Marks {
+		if m.Name != "cross" {
+			out = append(out, m)
+		}
+	}
+	switch {
+	case dir < 0:
+		out = append(out, Mark{Name: "cross", Value: "up"})
+	case dir > 0:
+		out = append(out, Mark{Name: "cross", Value: "down"})
 	}
 	e.Marks = out
 }

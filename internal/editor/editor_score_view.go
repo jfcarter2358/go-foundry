@@ -190,6 +190,9 @@ func scoreViewPane(pos, size imgui.Vec2) {
 	if clicked && !inLane {
 		scoreClick(l, g.toLayout(mouse), target, targetOK, io)
 	}
+	if e.Words != nil && !scoreDrawWordField(l, g) {
+		scoreDrawPinnedWordField(g)
+	}
 	if e.Reveal {
 		e.Reveal = false
 		scoreReveal(l, g, wp, size)
@@ -200,18 +203,36 @@ func scoreViewPane(pos, size imgui.Vec2) {
 // scoreClick is a left click on the music.
 func scoreClick(l *engrave.List, p engrave.Point, t scoreTarget, tOK bool, io imgui.IO) {
 	e := scEd
-	// A click on the music lets go of a lane's override.
+	// A click on the music lets go of a lane's override, and finishes the
+	// syllable or chord symbol being typed.
 	e.LaneSel = scoreLaneSel{Index: -1}
+	if e.Words != nil {
+		e.wordsKey(scoreWordEnter)
+		e.Words = nil
+	}
 	switch {
 	case io.KeyAltPressed():
 		if tOK {
 			e.pasteAt(t.Line, t.Staff, t.Bar, t.At)
 		}
 	case e.Input:
-		if tOK {
+		e.TabKeys = tOK && t.Tab
+		switch {
+		case tOK && t.Tab:
+			e.clickTab(t.Line, t.Staff, t.Bar, t.At, t.String)
+		case tOK:
 			e.clickWrite(t.Line, t.Staff, t.Bar, t.At, t.Diatonic)
 		}
 	default:
+		if cb := l.ChordAt(p); cb != nil && cb.Index < len(e.Score.Lines[cb.Line].Chords) {
+			e.editChordAt(cb.Line, e.Score.Lines[cb.Line].Chords[cb.Index].At)
+			return
+		}
+		sb := l.StaffAt(p.Y)
+		e.TabKeys = sb != nil && sb.Tab
+		if e.TabKeys {
+			e.TabString = sb.StringAt(p.Y)
+		}
 		if ref, ok := scoreHitEvent(l, p); ok && edit.Event(e.Score, scoreRefLoc(ref)) != nil {
 			e.selectEvent(scoreRefLoc(ref), ref.Note)
 			// A clicked note is where the play head goes (playing or not),
@@ -317,7 +338,7 @@ func scoreDrawPlayhead(dl imgui.DrawList, l *engrave.List, g scoreViewGeom) {
 func scoreDrawGhost(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, t scoreTarget) {
 	var sb *engrave.StaffBox
 	for i := range l.Staves {
-		if l.Staves[i].Line == t.Line && l.Staves[i].Staff == t.Staff {
+		if l.Staves[i].Line == t.Line && l.Staves[i].Staff == t.Staff && l.Staves[i].Tab == t.Tab {
 			sb = &l.Staves[i]
 		}
 	}
@@ -325,10 +346,17 @@ func scoreDrawGhost(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, t score
 		return
 	}
 	f := glyph.Bravura()
+	if t.Tab {
+		// The fret a click writes: the open string, on its line.
+		it := engrave.Item{Kind: engrave.ItemText, Text: "0", Size: 1.35, Align: engrave.AlignCenter, Font: engrave.TextPlain,
+			P: engrave.Point{X: t.X + 0.59, Y: t.Y + 0.49}, Ref: engrave.NoRef}
+		scoreRend.Draw(dl, &engrave.List{Items: []engrave.Item{it}}, scoredraw.View{Origin: g.origin, Scale: g.zoom, Ink: scoreColGhost})
+		return
+	}
 	head := scoreHeadGlyph(scEd.Dur.Base)
 	drums := scEd.percussion(t.Line, t.Staff)
 	if drums {
-		d, ok := scEd.ghostDrum(t.Diatonic)
+		d, ok := scEd.ghostDrum(t.Line, t.Diatonic)
 		if !ok {
 			return
 		}
@@ -364,9 +392,14 @@ func scoreDrawGhost(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, t score
 func scoreDrawGhostTip(dl imgui.DrawList, g scoreViewGeom, t scoreTarget) {
 	p := scEd.ghost(t.Line, t.Staff, t.Bar, t.Diatonic)
 	what := edit.PitchName(p)
-	if scEd.percussion(t.Line, t.Staff) {
+	if t.Tab {
+		what = fmt.Sprintf("string %d open", t.String)
+		if st := edit.Staff(scEd.Score, t.Line, t.Staff); st != nil && st.Tab != nil {
+			what += " (" + edit.PitchName(score.SpellMIDI(st.Tab.Open(t.String), 0, 1)) + "), then type the fret"
+		}
+	} else if scEd.percussion(t.Line, t.Staff) {
 		what = "no drum here"
-		if d, ok := scEd.ghostDrum(t.Diatonic); ok {
+		if d, ok := scEd.ghostDrum(t.Line, t.Diatonic); ok {
 			what = d.Name
 		}
 	}
@@ -522,6 +555,9 @@ func scoreStatusParts() []string {
 	}
 	if e.Transport.Scale != 1 {
 		parts = append(parts, fmt.Sprintf("Tempo %.0f%%", e.Transport.Scale*100))
+	}
+	if m := scoreMIDIStatus(); m != "" {
+		parts = append(parts, m)
 	}
 	parts = append(parts, "Keymap: "+scoreKeymapActive().Name+" (F1)")
 	return parts

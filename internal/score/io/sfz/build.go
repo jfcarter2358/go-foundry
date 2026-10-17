@@ -276,8 +276,6 @@ func (bd *builder) load(path, where string) *Audio {
 		reason := err.Error()
 		if os.IsNotExist(err) {
 			reason = "no such file"
-		} else if strings.EqualFold(pathExt(path), ".flac") {
-			reason = "FLAC samples are not read (convert them to WAV)"
 		}
 		bd.warn("%s: sample %s: %s", where, filepath.Base(path), reason)
 		return nil

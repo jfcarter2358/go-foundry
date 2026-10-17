@@ -6,7 +6,11 @@ package midi
 // (internal/score/interpret): repeats played out (or not, NoRepeats),
 // ties joined, grace notes where they sound, dynamics as velocities, the
 // shapes the interpreter gives articulations, ornaments, tremolos and
-// glissandi (a slide as a chromatic run: a note in a file cannot bend). It is
+// glissandi — a slide as pitch bend when nothing else on its channel
+// sounds while it bends (the channel's bend range set to the widest slide
+// by RPN 0), else as the chromatic run it passes. A kit's notes are
+// written as the General MIDI keys its drum map's sounds are; the sustain
+// pedal is CC 64, pressed and lifted where the score's pedal marks are. It is
 // format 1 at the score's own 960 ticks a quarter, so every onset is
 // exact: track 0 is the conductor (title, composer, tempo — a ramp in
 // 16th-note steps — time and key signatures, rehearsal marks as markers,
@@ -34,8 +38,7 @@ type ExportOptions struct {
 // Export makes a MIDI file of a score.
 func Export(s *score.Score, o ExportOptions) (f *File, err error) {
 	defer score.RecoverOverflow(&err)
-	// A file's notes cannot bend: a slide is written as the run it passes.
-	perf, err := interpret.Interpret(s, interpret.Options{NoRepeats: o.NoRepeats, NoSlides: true})
+	perf, err := interpret.Interpret(s, interpret.Options{NoRepeats: o.NoRepeats, PedalPresses: true})
 	if err != nil {
 		return nil, err
 	}
@@ -197,12 +200,38 @@ func lineTrack(perf *interpret.Performance, li int, l *score.Line, ch uint8) Tra
 		key, vel  uint8
 	}
 	var ons []on
-	for _, n := range perf.Notes {
-		if n.Line != li || n.MIDI < 0 || n.MIDI > 127 {
+	var kit *score.Kit
+	if ch == gm.DrumChannel {
+		kit = score.KitFor(l.Instrument)
+	}
+	var mine []*interpret.Note
+	for i := range perf.Notes {
+		if n := &perf.Notes[i]; n.Line == li && n.MIDI >= 0 && n.MIDI <= 127 {
+			mine = append(mine, n)
+		}
+	}
+	bends, runs := bendable(mine, ch)
+	for _, n := range mine {
+		vel := uint8(max(1, min(127, int(math.Round(float64(n.Velocity)*127)))))
+		key := n.MIDI
+		if kit != nil {
+			key, _ = kit.ToGM(key)
+		}
+		if runs[n] {
+			// The run a slide passes, a note a semitone.
+			for _, r := range slideRun(n) {
+				ons = append(ons, on{r.tick, r.end, uint8(max(0, min(127, r.key))), vel})
+			}
 			continue
 		}
-		vel := int(math.Round(float64(n.Velocity) * 127))
-		ons = append(ons, on{n.Tick, n.Tick + max(1, n.Ticks), uint8(n.MIDI), uint8(max(1, min(127, vel)))})
+		ons = append(ons, on{n.Tick, n.Tick + max(1, n.Ticks), uint8(key), vel})
+	}
+	t.Events = append(t.Events, bendEvents(bends, ch)...)
+	// The sustain pedal as CC 64, the notes at their written lengths.
+	for _, pd := range perf.Pedals {
+		if pd.Line == li {
+			t.Events = append(t.Events, cc(pd.Tick, CCSustain, 127), cc(pd.End, CCSustain, 0))
+		}
 	}
 	sort.SliceStable(ons, func(i, j int) bool { return ons[i].tick < ons[j].tick })
 	lastOf := map[uint8]int{}
@@ -234,6 +263,106 @@ func lineTrack(perf *interpret.Performance, li int, l *score.Line, ch uint8) Tra
 	t.Events = append(t.Events, notes...)
 	sortTrack(&t)
 	return t
+}
+
+// bendRange is the most semitones a channel's bend range is set to (RPN
+// 0); a slide further than that is written as its run.
+const bendRange = 24
+
+// bendable sorts a line's sliding notes: those nothing else on the
+// channel overlaps while they bend (written as pitch bend), and the rest
+// (written as their runs). A drum channel never bends.
+func bendable(notes []*interpret.Note, ch uint8) (bends []*interpret.Note, runs map[*interpret.Note]bool) {
+	runs = map[*interpret.Note]bool{}
+	for _, n := range notes {
+		if len(n.Bend) == 0 {
+			continue
+		}
+		alone := ch != gm.DrumChannel
+		reach := 0.0
+		for _, p := range n.Bend {
+			reach = math.Max(reach, math.Abs(float64(p.Semis)))
+		}
+		if reach > bendRange {
+			alone = false
+		}
+		for _, o := range notes {
+			if o != n && o.Tick < n.Tick+max(1, n.Ticks) && n.Tick < o.Tick+max(1, o.Ticks) {
+				alone = false
+				break
+			}
+		}
+		if alone {
+			bends = append(bends, n)
+		} else {
+			runs[n] = true
+		}
+	}
+	return bends, runs
+}
+
+// slideStep is how often a written slide's bend is sampled, in ticks (a
+// 64th note).
+const slideStep = score.TicksPerQuarter / 16
+
+type runNote struct {
+	tick, end int64
+	key       int
+}
+
+// slideRun is a slide as a chromatic run: a note each time the bend
+// passes the next semitone.
+func slideRun(n *interpret.Note) []runNote {
+	end := n.Tick + max(1, n.Ticks)
+	var out []runNote
+	cur := runNote{tick: n.Tick, key: n.MIDI + int(math.Round(float64(n.BendAt(float64(n.Tick)))))}
+	for t := n.Tick + slideStep; t < end; t += slideStep {
+		k := n.MIDI + int(math.Round(float64(n.BendAt(float64(t)))))
+		if k != cur.key {
+			cur.end = t
+			out = append(out, cur)
+			cur = runNote{tick: t, key: k}
+		}
+	}
+	cur.end = end
+	return append(out, cur)
+}
+
+// bendEvents are a channel's pitch bend: its range set once (RPN 0, the
+// widest slide in whole semitones, then the null RPN), each slide's curve
+// every slideStep while it moves, and the wheel back to the middle when
+// it ends.
+func bendEvents(bends []*interpret.Note, ch uint8) []Event {
+	if len(bends) == 0 {
+		return nil
+	}
+	reach := 1.0
+	for _, n := range bends {
+		for _, p := range n.Bend {
+			reach = math.Max(reach, math.Abs(float64(p.Semis)))
+		}
+	}
+	rng := min(bendRange, int(math.Ceil(reach)))
+	cc := func(c, v int) Event { return Event{Tick: 0, Kind: Controller, Channel: ch, A: uint8(c), B: uint8(v)} }
+	out := []Event{cc(101, 0), cc(100, 0), cc(6, rng), cc(38, 0), cc(101, 127), cc(100, 127)}
+	wheel := func(tick int64, semis float64) Event {
+		v := int(math.Round(8192 + semis/float64(rng)*8192))
+		v = max(0, min(16383, v))
+		return Event{Tick: tick, Kind: PitchBend, Channel: ch, A: uint8(v & 0x7F), B: uint8(v >> 7)}
+	}
+	for _, n := range bends {
+		end := n.Tick + max(1, n.Ticks)
+		last := -1.0
+		for t := n.Tick; t < end; t += slideStep {
+			v := float64(n.BendAt(float64(t)))
+			if math.Abs(v-last) > 1e-3 {
+				out = append(out, wheel(t, v))
+				last = v
+			}
+		}
+		out = append(out, wheel(end, 0))
+	}
+	return out
 }
 
 // sortTrack orders a track's events by tick, keeping the order at a tick.

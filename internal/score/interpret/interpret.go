@@ -49,9 +49,13 @@ type Options struct {
 	// play: half-length staccato, slides, repeated notes.
 	Instruments []*tracker.Instrument
 	// NoSlides plays a glissando the line would slide as a chromatic run
-	// instead, every note a note: for exports that cannot bend one (a MIDI
-	// file's notes), where a slide would leave only its first note.
+	// instead, every note a note: for exports that cannot bend one (a
+	// Tracker song's rows), where a slide would leave only its first note.
 	NoSlides bool
+	// PedalPresses leaves notes their written length under the sustain
+	// pedal and reports the presses instead (Performance.Pedals): for a
+	// file that has a pedal of its own to press (a MIDI file's CC 64).
+	PedalPresses bool
 }
 
 // Note is one note of the performance.
@@ -87,6 +91,10 @@ type Note struct {
 	// instrument (Instrument.ArticulationIndex), the note's own first.
 	Articulation string
 	Technique    string
+	// FromChord marks a note of the line's chord symbols played
+	// (chords.go): Voice is -1, and the scheduler plays it on the line's
+	// ChordPlay instrument and volume.
+	FromChord bool
 }
 
 // BendPoint is a breakpoint of a note's pitch curve.
@@ -268,6 +276,15 @@ type Performance struct {
 	// instrument (Options.Instruments): another instrument on one of them
 	// needs the score interpreted again; on any other line it does not.
 	InstrumentDependent []bool
+	// Pedals are the sustain pedal's presses, with Options.PedalPresses.
+	Pedals []Pedal
+}
+
+// Pedal is a line's sustain pedal held from Tick to End (performance
+// ticks).
+type Pedal struct {
+	Line      int
+	Tick, End int64
 }
 
 // played is one bar in playing order.
@@ -305,6 +322,8 @@ type rawNote struct {
 	// shaped notes have been cut by an ornament, a tremolo or a run, so
 	// the articulation and slur passes leave them alone.
 	shaped bool
+	// chord is a note of the line's chord symbols played (chords.go).
+	chord bool
 }
 
 type bendAt struct {
@@ -344,6 +363,7 @@ func Interpret(s *score.Score, o Options) (perf *Performance, err error) {
 	in.layout()
 	in.buildTempo()
 	in.walk()
+	in.chordNotes()
 	in.dynamics()
 	in.express()
 	in.swing()
@@ -363,6 +383,9 @@ type interp struct {
 	lines   []lineMarks
 	dyn     []lineCurves
 	instDep []bool
+	// pedalSpans are each line's pedal presses (performance positions),
+	// with Options.PedalPresses.
+	pedalSpans [][][2]score.Frac
 }
 
 // maxPlayedBars caps the unrolled length against a runaway repeat.
@@ -415,7 +438,7 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) voiceEvents {
 		at := end
 		for _, g := range graces {
 			for _, nt := range g.ev.Notes {
-				in.notes = append(in.notes, rawNote{at: at, dur: g.dur, velAt: at, pitch: nt.Pitch, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
+				in.notes = append(in.notes, rawNote{at: at, dur: g.dur, velAt: at, pitch: nt.Pitch, midi: in.sound(li, si, g.ev, nt.Pitch), line: li, staff: si, voice: vi,
 					bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev), vel: g.ev.VelocityMark(),
 					segAt: at, segDur: g.dur, segMarks: g.ev.Marks})
 			}
@@ -458,7 +481,7 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) voiceEvents {
 			next := map[int]int{}
 			sounding = sounding[:0]
 			for _, nt := range e.Notes {
-				midi := nt.Pitch.MIDI()
+				midi := in.sound(li, si, e, nt.Pitch)
 				idx, tied := open[midi]
 				if tied {
 					// The tie carries the first note on to this one's end.
@@ -484,6 +507,18 @@ func (in *interp) walkVoice(li, si, vi int, v *score.Voice) voiceEvents {
 	ve.end = end
 	hp.close(in, li, end)
 	return ve
+}
+
+// sound is the key a note plays: its pitch's, or on a percussion staff the
+// sound its drum map gives it with its event's articulations (a closed
+// hi-hat marked "open" plays the open one; score.Kit.Sound).
+func (in *interp) sound(li, si int, e *score.Event, p score.Pitch) int {
+	midi := p.MIDI()
+	if st := in.s.Lines[li].Staves[si]; !st.Percussion() || len(e.Marks) == 0 {
+		return midi
+	}
+	in.instDep[li] = true // another kit may map the marks to other sounds
+	return score.KitOf(in.instrument(li)).Sound(midi, e.Marks)
 }
 
 // placeGraces adds a group of grace notes before the event at `at` (length
@@ -558,7 +593,7 @@ func (in *interp) placeGraces(gs []graceNote, at, dur score.Frac, li, si, vi int
 	t := start
 	for i, g := range gs {
 		for _, nt := range g.ev.Notes {
-			in.notes = append(in.notes, rawNote{at: t, dur: lens[i], velAt: at, pitch: nt.Pitch, midi: nt.Pitch.MIDI(), line: li, staff: si, voice: vi,
+			in.notes = append(in.notes, rawNote{at: t, dur: lens[i], velAt: at, pitch: nt.Pitch, midi: in.sound(li, si, g.ev, nt.Pitch), line: li, staff: si, voice: vi,
 				bar: g.bar, pass: g.pass, grace: g.ev.Grace, art: articulationWord(g.ev), accent: accentOf(g.ev), vel: g.ev.VelocityMark(),
 				segAt: t, segDur: lens[i], segMarks: g.ev.Marks})
 		}
@@ -700,6 +735,11 @@ func (in *interp) finish() *Performance {
 	s := in.s
 	p := &Performance{Score: s, Tempo: in.tempo, InstrumentDependent: in.instDep}
 	sec := func(f score.Frac) float64 { return in.tempo.Seconds(f.TicksFloat()) }
+	for li, sps := range in.pedalSpans {
+		for _, sp := range sps {
+			p.Pedals = append(p.Pedals, Pedal{Line: li, Tick: sp[0].Ticks(), End: sp[1].Ticks()})
+		}
+	}
 
 	p.Notes = make([]Note, 0, len(in.notes))
 	for i := range in.notes {
@@ -713,7 +753,7 @@ func (in *interp) finish() *Performance {
 			Tick: r.at.Ticks(), Start: sec(r.at), End: sec(end),
 			MIDI: r.midi, Velocity: vel, Accent: acc,
 			Line: r.line, Staff: r.staff, Voice: r.voice, Bar: r.bar, Pass: r.pass, Grace: r.grace,
-			Articulation: r.art, Technique: technique(in.techs[r.line], r.velAt),
+			Articulation: r.art, Technique: technique(in.techs[r.line], r.velAt), FromChord: r.chord,
 		}
 		n.Ticks = end.Ticks() - n.Tick
 		if len(r.bends) > 0 {

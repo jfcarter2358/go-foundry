@@ -5,4 +5,9 @@ polyphony: 4
 playback:
   clef: percussion
   release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Kick Sub
+    line: 4
 description: Pure 55 Hz thump, no click

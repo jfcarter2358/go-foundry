@@ -58,6 +58,7 @@ const (
 	CCVolume     = 7
 	CCPan        = 10
 	CCExpression = 11
+	CCSustain    = 64
 	CCBrightness = 74
 )
 

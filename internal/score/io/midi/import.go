@@ -14,7 +14,8 @@ package midi
 //     pickup), key signatures the keys, tempo changes tempo marks (a run of
 //     small steps is a ramp), markers at bar lines the rehearsal marks.
 //     With no time signature the meter is guessed from where the strong
-//     notes fall; with no key signature the key from the pitches.
+//     notes fall; with no key signature the keys from the pitches, bar by
+//     bar (notate.DetectKeys: a modulation becomes a key change).
 //  3. Notes: quantised to the grid (per beat, plain or triplet), split onto
 //     a grand staff at the split point when the instrument is a piano,
 //     separated into voices, velocity turned into dynamic marks, written
@@ -59,6 +60,12 @@ type Part struct {
 	library string
 	expr    []ccPoint // expression (CC 11), the volume lane
 	hasVol  bool
+	// bend is the pitch wheel (value -8192..8191) and bendRange its reach
+	// in semitones (RPN 0; 2 when the file sets none); ped the damper
+	// pedal (CC 64).
+	bend      []ccPoint
+	bendRange int
+	ped       []ccPoint
 }
 
 type rawNote struct {
@@ -168,12 +175,13 @@ func Analyze(f *File) *Analysis {
 	for ti, t := range f.Tracks {
 		trackName, trackInst := "", ""
 		open := map[[2]int][]rawNote{} // (channel, pitch) → sounding, oldest first
+		rpn := map[int][2]int{}        // each channel's registered parameter (MSB, LSB)
 		var trackEnd int64
 		get := func(ch int) *Part {
 			k := key{ti, ch}
 			p := parts[k]
 			if p == nil {
-				p = &Part{Track: ti, Channel: ch, Program: -1, Percussion: ch == gm.DrumChannel, Low: 128, High: -1, Volume: 1}
+				p = &Part{Track: ti, Channel: ch, Program: -1, Percussion: ch == gm.DrumChannel, Low: 128, High: -1, Volume: 1, bendRange: 2}
 				parts[k] = p
 				order = append(order, k)
 			}
@@ -242,7 +250,20 @@ func Analyze(f *File) *Analysis {
 					}
 				case CCExpression:
 					p.expr = append(p.expr, ccPoint{e.Tick, int(e.B)})
+				case CCSustain:
+					p.ped = append(p.ped, ccPoint{e.Tick, int(e.B)})
+				case 101, 100:
+					r := rpn[int(e.Channel)]
+					r[map[uint8]int{101: 0, 100: 1}[e.A]] = int(e.B)
+					rpn[int(e.Channel)] = r
+				case 6:
+					if r, ok := rpn[int(e.Channel)]; ok && r == [2]int{0, 0} && e.B > 0 {
+						p.bendRange = int(e.B)
+					}
 				}
+			case PitchBend:
+				p := get(int(e.Channel))
+				p.bend = append(p.bend, ccPoint{e.Tick, int(e.A) | int(e.B)<<7 - 8192})
 			}
 		}
 		// Notes still sounding at the end of the track stop there (or a
@@ -416,10 +437,12 @@ func (a *Analysis) pitchedNotes() []notate.Note {
 // frac is a tick in whole notes.
 func (a *Analysis) frac(tick int64) score.Frac { return score.F(tick, 4*int64(a.Division)) }
 
-// guessMeter finds the meter whose bar lines best match where the strong
-// notes fall — loud, long and low ones — taking 4/4 unless three beats a
-// bar is clearly better; three beats are 6/8 when the strong notes come
-// every dotted quarter rather than every quarter.
+// guessMeter is the meter a file with no time signature most likely has:
+// the bar length whose downbeats carry the most weight (strong, long and
+// low notes) against an average beat, of 4/4 (the default unless another
+// is clearly better), 3/4, 5/4, 7/8 and 9/8; then whether its beats divide
+// in two or three — 3/4 or 6/8, 4/4 or 12/8 — by where the notes between
+// the beats fall.
 func (a *Analysis) guessMeter() score.Meter {
 	q := int64(a.Division)
 	tol := max(1, q/8)
@@ -438,51 +461,87 @@ func (a *Analysis) guessMeter() score.Meter {
 			ons = append(ons, onset{n.on, w})
 		}
 	}
-	if len(ons) == 0 || a.lastNote < 8*q {
+	// Too few notes to hear a meter in: 4/4.
+	if len(ons) < 16 || a.lastNote < 8*q {
 		return score.FourFour()
 	}
 	near := func(t, period int64) bool {
 		r := t % period
 		return r <= tol || period-r <= tol
 	}
-	ratio := func(beats int64) float64 {
-		bar := beats * q
+	// salience is how much heavier a bar of that many eighths has its
+	// downbeats than its other eighths, on average a place.
+	salience := func(eighths int64) float64 {
+		bar := eighths * q / 2
 		bars := float64(a.lastNote) / float64(bar)
-		var down, beat float64
-		for _, o := range ons {
-			if near(o.tick, bar) {
-				down += o.w
-			}
-			if near(o.tick, q) {
-				beat += o.w
-			}
-		}
-		if beat == 0 || bars < 1 {
+		if bars < 2 {
 			return 0
 		}
-		return (down / bars) / (beat / (bars * float64(beats)))
+		var down, other float64
+		for _, o := range ons {
+			switch {
+			case near(o.tick, bar):
+				down += o.w
+			case near(o.tick, q/2):
+				other += o.w
+			}
+		}
+		return (down / bars) / (other/(bars*float64(eighths-1)) + 1e-3)
 	}
-	r4, r3 := ratio(4), ratio(3)
-	if r3 <= r4*1.15 {
-		return score.FourFour()
+	type cand struct {
+		eighths int64
+		m       score.Meter
 	}
-	// 3/4 or 6/8: weight on the bar's second dotted quarter against its
-	// second and third quarters.
-	var dotted, quarters float64
-	bar := 3 * q
-	for _, o := range ons {
-		r := o.tick % bar
-		switch {
-		case absI(r-3*q/2) <= tol:
-			dotted += o.w
-		case absI(r-q) <= tol || absI(r-2*q) <= tol:
-			quarters += o.w / 2
+	cands := []cand{
+		{6, score.Meter{Groups: []int{3}, Den: 4}},
+		{10, score.Meter{Groups: []int{5}, Den: 4}},
+		{7, score.Meter{Groups: []int{7}, Den: 8}},
+		{9, score.Meter{Groups: []int{9}, Den: 8}},
+	}
+	best, bestS := score.FourFour(), salience(8)
+	bestE := int64(8)
+	for _, c := range cands {
+		// Another meter must be clearly better than 4/4, and than one of
+		// its own multiples' (4/4's bars hold 2/4's downbeats too).
+		if sc := salience(c.eighths); sc > bestS*1.15 {
+			best, bestS, bestE = c.m, sc, c.eighths
 		}
 	}
-	if dotted > quarters*1.3 {
-		return score.Meter{Groups: []int{6}, Den: 8}
+	// Beats in two or three: weight on the dotted quarter's place against
+	// the quarters' (3/4 against 6/8), or on the triplet eighths against
+	// the plain ones (4/4 against 12/8).
+	switch bestE {
+	case 6:
+		var dotted, quarters float64
+		bar := 3 * q
+		for _, o := range ons {
+			r := o.tick % bar
+			switch {
+			case absI(r-3*q/2) <= tol:
+				dotted += o.w
+			case absI(r-q) <= tol || absI(r-2*q) <= tol:
+				quarters += o.w / 2
+			}
+		}
+		if dotted > quarters*1.3 {
+			return score.Meter{Groups: []int{6}, Den: 8}
+		}
+	case 8:
+		var trip, duple float64
+		for _, o := range ons {
+			r := o.tick % q
+			switch {
+			case absI(r-q/3) <= tol/2 || absI(r-2*q/3) <= tol/2:
+				trip += o.w
+			case absI(r-q/2) <= tol/2:
+				duple += o.w
+			}
+		}
+		if trip > 2*duple && trip > 0 {
+			return score.Meter{Groups: []int{12}, Den: 8}
+		}
 	}
-	return score.Meter{Groups: []int{3}, Den: 4}
+	return best
 }
 
 func absI(v int64) int64 {
@@ -548,7 +607,11 @@ func Import(f *File, o Options) (s *score.Score, warnings []string, err error) {
 	}
 	a.buildKeys(s, o)
 	if a.KeyGuessed && o.Key == nil {
-		warn("no key signature in the file: guessed %s", keyName(a.Fifths, a.Minor))
+		msg := "no key signature in the file: guessed " + keyName(s.Key[0].Fifths, s.Key[0].Mode == "minor")
+		for _, k := range s.Key[1:] {
+			msg += fmt.Sprintf(", %s from bar %d", keyName(k.Fifths, k.Mode == "minor"), k.Bar)
+		}
+		warn("%s", msg)
 	}
 	lay := notate.LayoutOf(s)
 	a.buildTempo(s, lay, o.Grid.Unit)
@@ -694,7 +757,16 @@ func (a *Analysis) buildKeys(s *score.Score, o Options) {
 		s.Key = []score.KeyMark{k}
 		return
 	case len(a.keys) == 0:
-		s.Key = []score.KeyMark{{Bar: 1, Fifths: a.Fifths, Mode: mode(a.Minor)}}
+		// No key signature: heard bar by bar, so a piece that modulates
+		// gets its key changes (one key when it stays put).
+		ks := notate.DetectKeys(a.pitchedNotes(), notate.LayoutOf(s))
+		for _, k := range ks {
+			s.Key = append(s.Key, score.KeyMark{Bar: k.Bar, Fifths: k.Fifths, Mode: mode(k.Minor)})
+		}
+		if len(ks) == 1 {
+			// The whole file's guess, as the dialog shows it.
+			s.Key[0].Fifths, s.Key[0].Mode = a.Fifths, mode(a.Minor)
+		}
 		return
 	}
 	for _, k := range a.keys {
@@ -841,21 +913,6 @@ func (a *Analysis) marker(lay notate.Layout, m textAt) score.Marker {
 	return score.Marker{Name: name, At: score.Pos{Bar: b + 1, Offset: off}}
 }
 
-// dynamicLadder are the dynamics velocity turns into, softest first.
-var dynamicLadder = []string{"ppp", "pp", "p", "mp", "mf", "f", "ff", "fff"}
-
-func ladderVelocity(i int) float64 { return float64(score.Dynamics[dynamicLadder[i]].Level) * 127 }
-
-func nearestDynamic(vel float64) int {
-	best, bestD := 0, math.Inf(1)
-	for i := range dynamicLadder {
-		if d := math.Abs(vel - ladderVelocity(i)); d < bestD {
-			best, bestD = i, d
-		}
-	}
-	return best
-}
-
 // line makes one part a line: quantise, staves, voices, dynamics, bars.
 func (a *Analysis) line(p *Part, ch Choice, lay notate.Layout, o Options) (*score.Line, error) {
 	inst, clef, name := p.Instrument, p.Clef, p.Name
@@ -872,83 +929,36 @@ func (a *Analysis) line(p *Part, ch Choice, lay notate.Layout, o Options) (*scor
 	l.Volume, l.Pan = p.Volume, p.Pan
 	l.Staves = nil
 
-	notes := make([]notate.Note, len(p.notes))
-	for i, n := range p.notes {
-		notes[i] = notate.Note{Start: a.frac(n.on), End: a.frac(n.off), MIDI: n.pitch, Velocity: n.vel}
-	}
-	if !o.NoGraces {
-		notes = notate.MarkGraces(notes, o.Grid)
-	}
-	notes, err := notate.Quantize(notes, lay, o.Grid)
-	if err != nil {
-		return nil, err
-	}
-	var groups [][]notate.Note
-	var clefs []string
+	notes := a.slides(p)
+	clefs := []string{clef}
 	if clef == "grand" {
-		var hi, lo []notate.Note
-		for _, n := range notes {
-			if n.MIDI >= o.Split {
-				hi = append(hi, n)
-			} else {
-				lo = append(lo, n)
-			}
-		}
-		groups, clefs = [][]notate.Note{hi, lo}, []string{"treble", "bass"}
-	} else {
-		groups, clefs = [][]notate.Note{notes}, []string{clef}
+		clefs = []string{"treble", "bass"}
 	}
 	var transpose score.Interval
 	if pb, ok := gm.Playback(inst); ok && pb.Transposition != 0 && !p.Percussion {
 		d, c := gm.Transposition(pb.Transposition)
 		transpose = score.Interval{Diatonic: d, Chromatic: c}
 	}
-	voices := o.Voices
 	if p.Percussion {
-		// A drum part's simultaneous hits are one chord.
-		voices = min(voices, 2)
-	}
-	staffChords := make([][][]notate.Chord, len(groups))
-	for gi, g := range groups {
-		staffChords[gi] = notate.Separate(g, voices, o.Grid.Unit)
-		if !o.NoLegato {
-			for _, v := range staffChords[gi] {
-				notate.Legato(v, lay, score.F(1, 8))
+		// The kit's own keys for its sounds (a drum map other than
+		// General MIDI's names them by its own keys).
+		kit := score.KitFor(inst)
+		for i := range notes {
+			if k, ok := kit.FromGM(notes[i].MIDI); ok {
+				notes[i].MIDI = k
 			}
 		}
 	}
-	// Grace notes go on the note they lead to: in their own staff, else
-	// (the main note split to the other one) there.
-	for gi, g := range groups {
-		var graces []notate.Note
-		for _, n := range g {
-			if n.Grace {
-				graces = append(graces, n)
-			}
-		}
-		left := notate.AttachGraces(staffChords[gi], graces)
-		for gj := range groups {
-			if gj != gi && len(left) > 0 {
-				left = notate.AttachGraces(staffChords[gj], left)
-			}
-		}
+	staves, err := notate.Transcribe(notes, lay, notate.TranscribeOptions{
+		Grid: o.Grid, Voices: o.Voices, Clefs: clefs, Split: o.Split, Percussion: p.Percussion,
+		NoGraces: o.NoGraces, NoLegato: o.NoLegato, NoDynamics: o.NoDynamics,
+		Pedal: a.pedal(p),
+	})
+	if err != nil {
+		return nil, err
 	}
-	if !o.NoDynamics {
-		markDynamics(staffChords, lay)
-	}
-	for gi, vs := range staffChords {
-		st := &score.Staff{Clef: clefs[gi], Transpose: transpose}
-		if len(vs) == 0 {
-			vs = [][]notate.Chord{nil}
-		}
-		for vi, cs := range vs {
-			v, err := notate.Write(cs, lay, notate.WriteOptions{BarRests: vi == 0})
-			if err != nil {
-				return nil, err
-			}
-			st.Voices = append(st.Voices, v)
-		}
-		l.Staves = append(l.Staves, st)
+	for _, ts := range staves {
+		l.Staves = append(l.Staves, &score.Staff{Clef: ts.Clef, Transpose: transpose, Voices: ts.Voices})
 	}
 	if lane := a.expressionLane(p, lay, o.Grid.Unit); lane != nil {
 		l.Lanes = append(l.Lanes, *lane)
@@ -956,47 +966,85 @@ func (a *Analysis) line(p *Part, ch Choice, lay notate.Layout, o Options) (*scor
 	return l, nil
 }
 
-// markDynamics turns velocity into dynamic marks: each bar's average
-// velocity is read as the nearest of ppp..fff, and a mark is written on
-// the bar's first chord (in any staff or voice) whenever the level moves —
-// by more than a level's width and a bit, so a played line that wavers
-// around a boundary does not flicker between two marks.
-func markDynamics(staves [][][]notate.Chord, lay notate.Layout) {
-	type ref struct{ s, v, c int }
-	bars := make([][]ref, lay.Bars())
-	for si, vs := range staves {
-		for vi, cs := range vs {
-			for ci, c := range cs {
-				b := lay.BarAt(c.Start)
-				bars[b] = append(bars[b], ref{si, vi, ci})
-			}
-		}
-	}
-	cur := -1
-	for _, refs := range bars {
-		sum, n := 0.0, 0
-		var first *notate.Chord
-		for _, r := range refs {
-			c := &staves[r.s][r.v][r.c]
-			if c.Velocity > 0 {
-				sum += float64(c.Velocity)
-				n++
-			}
-			if first == nil || c.Start.Less(first.Start) {
-				first = c
-			}
-		}
-		if n == 0 || first == nil {
+// slides are a part's notes, a note the pitch wheel slides to another
+// pitch split in two at the moment the bend arrives — the note it starts
+// from marked for a glissando to the one it reaches — as a slide plays
+// (what this package's export writes for a slide).
+func (a *Analysis) slides(p *Part) []notate.Note {
+	out := make([]notate.Note, 0, len(p.notes))
+	for _, n := range p.notes {
+		note := notate.Note{Start: a.frac(n.on), End: a.frac(n.off), MIDI: n.pitch, Velocity: n.vel}
+		k, at, ok := a.slideOf(p, n)
+		if !ok {
+			out = append(out, note)
 			continue
 		}
-		mean := sum / float64(n)
-		lvl := nearestDynamic(mean)
-		if cur >= 0 && (lvl == cur || math.Abs(mean-ladderVelocity(cur)) < 11) {
-			continue
-		}
-		cur = lvl
-		first.Marks = append(first.Marks, score.Mark{Name: dynamicLadder[lvl]})
+		first := note
+		first.End = a.frac(at)
+		first.Marks = []score.Mark{{Name: "gliss"}}
+		second := note
+		second.Start, second.MIDI = a.frac(at), n.pitch+k
+		out = append(out, first, second)
 	}
+	return out
+}
+
+// slideOf is where a note's pitch wheel takes it: k semitones away from
+// the tick the wheel arrives there (and stays to the note's end). ok is
+// false for a note the wheel does not move, or does not bring to rest on a
+// semitone, or arrives too late to give the target any length.
+func (a *Analysis) slideOf(p *Part, n rawNote) (k int, at int64, ok bool) {
+	if len(p.bend) == 0 {
+		return 0, 0, false
+	}
+	semis := func(v int) float64 { return float64(v) / 8192 * float64(p.bendRange) }
+	before := 0
+	var during []ccPoint
+	for _, b := range p.bend {
+		switch {
+		case b.tick <= n.on:
+			before = b.value
+		case b.tick < n.off:
+			during = append(during, b)
+		}
+	}
+	if math.Abs(semis(before)) > 0.15 || len(during) == 0 {
+		return 0, 0, false
+	}
+	last := semis(during[len(during)-1].value)
+	k = int(math.Round(last))
+	if k == 0 || math.Abs(last-float64(k)) > 0.15 || n.pitch+k < 0 || n.pitch+k > 127 {
+		return 0, 0, false
+	}
+	at = during[len(during)-1].tick
+	for i := len(during) - 1; i >= 0 && math.Abs(semis(during[i].value)-float64(k)) <= 0.15; i-- {
+		at = during[i].tick
+	}
+	if n.off-at < int64(a.Division)/8 || at-n.on < int64(a.Division)/16 {
+		return 0, 0, false
+	}
+	return k, at, true
+}
+
+// pedal is a part's damper pedal presses (down at 64 and over).
+func (a *Analysis) pedal(p *Part) []notate.PedalSpan {
+	var out []notate.PedalSpan
+	down := int64(-1)
+	for _, c := range p.ped {
+		switch {
+		case c.value >= 64 && down < 0:
+			down = c.tick
+		case c.value < 64 && down >= 0:
+			if c.tick > down {
+				out = append(out, notate.PedalSpan{Down: a.frac(down), Up: a.frac(c.tick)})
+			}
+			down = -1
+		}
+	}
+	if down >= 0 {
+		out = append(out, notate.PedalSpan{Down: a.frac(down), Up: a.frac(max(a.lastTick, down+1))})
+	}
+	return out
 }
 
 // expressionLane is the part's expression controller as a volume lane:

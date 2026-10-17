@@ -24,6 +24,7 @@ import (
 
 	"foundry/internal/score"
 	"foundry/internal/score/engrave"
+	"foundry/internal/tracker"
 )
 
 // goldenScale is the snapshot resolution: small enough to keep the
@@ -64,6 +65,19 @@ var goldenCases = []goldenCase{
 	{"form", "form", engrave.Options{}},
 	{"voices4", "voices4", engrave.Options{}},
 	{"demo_bars_9_12", "../../../../resources/sounds/score_demo", engrave.Options{From: 9, To: 12, BarNumbers: 1}},
+	{"lyrics", "lyrics", engrave.Options{}},
+	{"tab", "tab", engrave.Options{}},
+	{"kits", "kits", engrave.Options{Kits: repoKits}},
+}
+
+// repoKits are the shipped library's drum maps, read from the repository
+// whatever the project is.
+func repoKits(name string) *score.Kit {
+	in, err := tracker.LoadInstrumentFile(filepath.Join("..", "..", "..", "..", "resources", "sounds", "instruments", filepath.FromSlash(name)+tracker.InstrumentExt))
+	if err != nil {
+		return nil
+	}
+	return score.KitOf(in)
 }
 
 func TestGolden(t *testing.T) {

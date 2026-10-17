@@ -67,6 +67,7 @@ func Separate(notes []Note, maxVoices int, tol score.Frac) [][]Chord {
 				}
 				used[q] = true
 				c.MIDI = append(c.MIDI, group[q].MIDI)
+				c.Marks = addMarks(c.Marks, group[q].Marks)
 				c.End = score.MaxFrac(c.End, group[q].End)
 				if group[q].Velocity > 0 {
 					sum, cnt = sum+group[q].Velocity, cnt+1
@@ -112,6 +113,7 @@ func Separate(notes []Note, maxVoices int, tol score.Frac) [][]Chord {
 				lc := &v.chords[len(v.chords)-1]
 				if lc.Start.Eq(c.Start) {
 					lc.MIDI = append(lc.MIDI, c.MIDI...)
+					lc.Marks = addMarks(lc.Marks, c.Marks)
 					lc.End = score.MaxFrac(lc.End, c.End)
 					v.end = lc.End
 					joined = true
@@ -153,6 +155,20 @@ func Separate(notes []Note, maxVoices int, tol score.Frac) [][]Chord {
 		out[i] = kept
 	}
 	return out
+}
+
+// addMarks adds marks a chord does not have yet (by name).
+func addMarks(to, ms []score.Mark) []score.Mark {
+	for _, m := range ms {
+		has := false
+		for _, o := range to {
+			has = has || o.Name == m.Name
+		}
+		if !has {
+			to = append(to, m)
+		}
+	}
+	return to
 }
 
 // idlePenalty is how much further, in semitones per whole note, a voice

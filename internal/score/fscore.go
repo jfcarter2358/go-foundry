@@ -48,6 +48,13 @@ package score
 // `humanize:`; a bus's `lanes:` (return, pan, its effects') and the
 // score's `master_lanes:` (volume, the master chain's effects').
 //
+// Phase 6 added, all optional: lyrics as marks on the notes (ly=, ly2=;
+// lyrics.go); a line's `chords: [{at: "1", sym: Cmaj7}]` and `chord_play:
+// {style: pad|comp, instrument: synth/warm_pad, volume: 0.6, octave: 0}`
+// (chords.go); a percussion staff's `lines: 1`; a staff's `tab: {tuning:
+// guitar, capo: 2, only: true}` or `tab: {strings: [D2, A2, D3, G3, B3,
+// E4]}` and the str= mark (tab.go).
+//
 // Positions are "bar" or "bar:beat" (Score.ParsePos). An effect is a map
 // whose "fx" key names it, the rest its settings in order. Instruments are
 // named, never embedded: one .finst plays the same in every score.
@@ -212,6 +219,27 @@ type rawLine struct {
 	Staves     []rawStaff                `yaml:"staves"`
 	Lanes      map[string][]rawLanePoint `yaml:"lanes,omitempty"`
 	Overrides  []rawOverride             `yaml:"dynamic_overrides,flow,omitempty"`
+	Chords     []rawChord                `yaml:"chords,flow,omitempty"`
+	ChordPlay  *rawChordPlay             `yaml:"chord_play,flow,omitempty"`
+}
+
+type rawChord struct {
+	At  string `yaml:"at"`
+	Sym string `yaml:"sym"`
+}
+
+type rawChordPlay struct {
+	Style      string   `yaml:"style"`
+	Instrument string   `yaml:"instrument,omitempty"`
+	Volume     *float32 `yaml:"volume,omitempty"`
+	Octave     int      `yaml:"octave,omitempty"`
+}
+
+type rawTab struct {
+	Tuning  string   `yaml:"tuning,omitempty"`
+	Strings []string `yaml:"strings,flow,omitempty"`
+	Capo    int      `yaml:"capo,omitempty"`
+	Only    bool     `yaml:"only,omitempty"`
 }
 
 type rawSends struct {
@@ -225,6 +253,8 @@ type rawStaff struct {
 	Clef      string    `yaml:"clef"`
 	Transpose string    `yaml:"transpose,omitempty"`
 	Clefs     []rawClef `yaml:"clefs,flow,omitempty"`
+	Lines     int       `yaml:"lines,omitempty"`
+	Tab       *rawTab   `yaml:"tab,flow,omitempty"`
 	Voices    []string  `yaml:"voices"`
 }
 
@@ -669,6 +699,25 @@ func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
 			}
 			st.Transpose = iv
 		}
+		if rs.Lines != 0 {
+			if rs.Clef != "percussion" {
+				return nil, fmt.Errorf("staff %d: lines: %d on a %s staff (only a percussion staff has other than five)", si+1, rs.Lines, rs.Clef)
+			}
+			if rs.Lines < 1 || rs.Lines > 5 {
+				return nil, fmt.Errorf("staff %d: lines: %d (a percussion staff has 1 to 5)", si+1, rs.Lines)
+			}
+			st.Lines = rs.Lines
+		}
+		if rs.Tab != nil {
+			tab, err := tabFromRaw(*rs.Tab)
+			if err != nil {
+				return nil, fmt.Errorf("staff %d: tab: %w", si+1, err)
+			}
+			if rs.Clef == "percussion" {
+				return nil, fmt.Errorf("staff %d: a percussion staff has no tablature", si+1)
+			}
+			st.Tab = tab
+		}
 		if len(rs.Voices) > MaxVoices {
 			return nil, fmt.Errorf("staff %d: %d voices (at most %d)", si+1, len(rs.Voices), MaxVoices)
 		}
@@ -703,7 +752,75 @@ func lineFromRaw(s *Score, rl rawLine) (*Line, error) {
 		}
 		l.Overrides = append(l.Overrides, DynOverride{From: from, To: to, Level: ro.Level})
 	}
+	for _, rc := range rl.Chords {
+		at, err := s.ParsePos(rc.At)
+		if err != nil {
+			return nil, fmt.Errorf("chord symbol: %w", err)
+		}
+		c, err := ParseChord(rc.Sym)
+		if err != nil {
+			return nil, fmt.Errorf("chord symbol at %s: %w", rc.At, err)
+		}
+		l.Chords = append(l.Chords, ChordSymbol{At: at, Chord: c})
+	}
+	l.SortChords()
+	if rp := rl.ChordPlay; rp != nil {
+		cp := &ChordPlay{Instrument: rp.Instrument, Volume: 1, Octave: rp.Octave}
+		k := -1
+		for i, n := range ChordStyles {
+			if n == rp.Style {
+				k = i
+			}
+		}
+		if k < 0 {
+			return nil, fmt.Errorf("chord_play: style %q (want %s)", rp.Style, strings.Join(ChordStyles, ", "))
+		}
+		cp.Style = ChordStyle(k)
+		if rp.Volume != nil {
+			if *rp.Volume < 0 || *rp.Volume > 2 {
+				return nil, fmt.Errorf("chord_play: volume %g (0..2)", *rp.Volume)
+			}
+			cp.Volume = *rp.Volume
+		}
+		if cp.Octave < -3 || cp.Octave > 3 {
+			return nil, fmt.Errorf("chord_play: octave %d (-3..3)", cp.Octave)
+		}
+		l.ChordPlay = cp
+	}
 	return l, nil
+}
+
+// tabFromRaw reads a staff's tablature.
+func tabFromRaw(r rawTab) (*Tab, error) {
+	if r.Tuning == "" && len(r.Strings) == 0 {
+		r.Tuning = TuningPresets[0].Name
+	}
+	if r.Tuning != "" && len(r.Strings) > 0 {
+		return nil, fmt.Errorf("give a tuning's name or its strings, not both")
+	}
+	tuning, err := ParseTuning(r.Tuning, r.Strings)
+	if err != nil {
+		return nil, err
+	}
+	if r.Capo < 0 || r.Capo > 12 {
+		return nil, fmt.Errorf("capo %d (0..12)", r.Capo)
+	}
+	return &Tab{Tuning: tuning, Capo: r.Capo, Only: r.Only}, nil
+}
+
+// tabToRaw writes a staff's tablature: its tuning by name when it is a
+// preset's.
+func tabToRaw(t *Tab) *rawTab {
+	if t == nil {
+		return nil
+	}
+	r := &rawTab{Capo: t.Capo, Only: t.Only}
+	if r.Tuning = t.Preset(); r.Tuning == "" {
+		for _, p := range t.Tuning {
+			r.Strings = append(r.Strings, p.String())
+		}
+	}
+	return r
 }
 
 func validGliss(g string) bool {
@@ -846,12 +963,25 @@ func Marshal(s *Score) ([]byte, error) {
 			for _, c := range st.Clefs {
 				rs.Clefs = append(rs.Clefs, rawClef{At: s.FormatPos(c.At), Clef: c.Clef})
 			}
+			rs.Lines = st.Lines
+			rs.Tab = tabToRaw(st.Tab)
 			for _, v := range st.Voices {
 				rs.Voices = append(rs.Voices, FormatVoice(v))
 			}
 			rl.Staves = append(rl.Staves, rs)
 		}
 		rl.Lanes = lanesToRaw(s, l.Lanes)
+		for _, c := range l.Chords {
+			rl.Chords = append(rl.Chords, rawChord{At: s.FormatPos(c.At), Sym: c.Chord.String()})
+		}
+		if cp := l.ChordPlay; cp != nil {
+			rp := &rawChordPlay{Style: ChordStyles[min(int(cp.Style), len(ChordStyles)-1)], Instrument: cp.Instrument, Octave: cp.Octave}
+			if cp.Volume != 1 {
+				v := cp.Volume
+				rp.Volume = &v
+			}
+			rl.ChordPlay = rp
+		}
 		r.Lines = append(r.Lines, rl)
 	}
 	if r.Lines == nil {

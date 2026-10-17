@@ -59,8 +59,11 @@ var (
 	scorePickLine int
 	scorePickAdd  bool
 	scorePickAt   int
-	scorePickText string
-	scorePickPos  imgui.Vec2
+	// scorePickChords picks what line scorePickLine's chord symbols play
+	// on, instead of its instrument.
+	scorePickChords bool
+	scorePickText   string
+	scorePickPos    imgui.Vec2
 
 	// The duplicate menu and the line's context menu, for scoreMenuLine.
 	scoreDupOpen  bool
@@ -174,7 +177,11 @@ func scoreHeaderColumn(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, wp, 
 				} else if imgui.IsItemClicked() {
 					e.selectLine(li)
 				}
-				editorMenuTooltip(e.lineName(li) + "\nClick: select the line. Double-click: rename. Right-click: line commands.")
+				// Dragged up or down: the line goes where it is dropped.
+				if imgui.IsItemActive() && imgui.IsMouseDragging(0, 6) && scoreHeaderDrag < 0 && len(e.Score.Lines) > 1 {
+					scoreHeaderDrag = li
+				}
+				editorMenuTooltip(e.lineName(li) + "\nClick: select the line. Double-click: rename. Drag: move it up or down.\nRight-click: line commands.")
 			}
 		}
 		// Row 2: the instrument chip.
@@ -233,7 +240,68 @@ func scoreHeaderColumn(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, wp, 
 			scoreLineOpen, scoreMenuLine = true, li
 		}
 	}
+	scoreHeaderDragging(dl, l, g, wp)
 	scoreLaneHeaderLabels(dl, l, g, wp)
+}
+
+// scoreHeaderDrag is the line whose header is being dragged, -1 for none.
+var scoreHeaderDrag = -1
+
+// scoreDropIndex is where a line dragged to a screen y goes: the place of
+// the line whose band holds it, past the last one below them all.
+func scoreDropIndex(l *engrave.List, g scoreViewGeom, from int, y float32) int {
+	n := len(scEd.Score.Lines)
+	to := n - 1
+	for li := 0; li < n; li++ {
+		lo, hi, ok := scoreLineBand(l, li)
+		if !ok {
+			continue
+		}
+		mid := (g.toScreen(engrave.Point{Y: lo}).Y + g.toScreen(engrave.Point{Y: hi}).Y) / 2
+		if y < mid {
+			to = li
+			if li > from {
+				to = li - 1
+			}
+			return max(to, 0)
+		}
+	}
+	return to
+}
+
+// scoreHeaderDragging draws a dragged header's drop line and moves the
+// line when the button comes up.
+func scoreHeaderDragging(dl imgui.DrawList, l *engrave.List, g scoreViewGeom, wp imgui.Vec2) {
+	from := scoreHeaderDrag
+	if from < 0 {
+		return
+	}
+	e := scEd
+	if from >= len(e.Score.Lines) {
+		scoreHeaderDrag = -1
+		return
+	}
+	y := imgui.MousePos().Y
+	to := scoreDropIndex(l, g, from, y)
+	// The drop line: over the line it goes before (under the last one).
+	at := to
+	if to > from {
+		at = to + 1
+	}
+	var ly float32
+	if at < len(e.Score.Lines) {
+		lo, _, _ := scoreLineBand(l, at)
+		ly = g.toScreen(engrave.Point{Y: lo}).Y - 1.5*g.zoom
+	} else {
+		_, hi, _ := scoreLineBand(l, len(e.Score.Lines)-1)
+		ly = g.toScreen(engrave.Point{Y: hi}).Y + 1.5*g.zoom
+	}
+	dl.AddLineV(imgui.Vec2{X: wp.X + 4, Y: ly}, imgui.Vec2{X: wp.X + scoreHeaderW - 4, Y: ly}, scoreColSel, 3)
+	dl.AddText(imgui.Vec2{X: wp.X + 10, Y: ly + 3}, scoreColText, scoreClipText(e.lineName(from), scoreHeaderW-24))
+	if !imgui.IsMouseDown(0) {
+		scoreHeaderDrag = -1
+		e.moveLineTo(from, to)
+	}
 }
 
 // scoreLineSelected reports a line the selection is on.
@@ -392,11 +460,19 @@ func scoreDrawMeterBar(dl imgui.DrawList, a, b imgui.Vec2, v float32) {
 // scoreOpenPicker asks for the instrument picker for line li, under at.
 func scoreOpenPicker(li int, at imgui.Vec2) {
 	scorePickOpen, scorePickLine, scorePickAdd, scorePickPos = true, li, false, at
+	scorePickChords = false
+}
+
+// scoreOpenChordPicker asks for the picker to choose what a line's chord
+// symbols play on.
+func scoreOpenChordPicker(li int, at imgui.Vec2) {
+	scoreOpenPicker(li, at)
+	scorePickChords = true
 }
 
 // scoreOpenAddLine asks for the picker to add a line at index at.
 func scoreOpenAddLine(at int) {
-	scorePickOpen, scorePickAdd, scorePickAt = true, true, at
+	scorePickOpen, scorePickAdd, scorePickAt, scorePickChords = true, true, at, false
 	scorePickPos = imgui.Vec2{X: 120, Y: editorTopBarH + scoreTransportH + 30}
 }
 
@@ -425,6 +501,13 @@ func scoreLinePopups() {
 			title = "Add a line"
 		} else if l := e.line(scorePickLine); l != nil {
 			current = l.Instrument
+			if scorePickChords {
+				title = "Chord symbols of " + e.lineName(scorePickLine) + " play on"
+				current = ""
+				if l.ChordPlay != nil {
+					current = l.ChordPlay.Instrument
+				}
+			}
 		}
 		imgui.Text(title)
 		imgui.SameLineV(240, 0)
@@ -437,7 +520,13 @@ func scoreLinePopups() {
 		}
 		editorMenuTooltip("The instrument library: details, preview, SFZ / SF2 import")
 		if name, ok := scorePickerBody(current); ok {
-			if scorePickAdd {
+			if scorePickChords {
+				style := score.ChordsPad
+				if l := e.line(scorePickLine); l != nil && l.ChordPlay != nil && l.ChordPlay.Style != score.ChordsSilent {
+					style = l.ChordPlay.Style
+				}
+				e.setChordPlay(scorePickLine, style, name)
+			} else if scorePickAdd {
 				e.addLine(scorePickAt, name)
 			} else {
 				e.setInstrument(scorePickLine, name, scorePlaying())
@@ -598,6 +687,8 @@ func scoreLineMenuItems(li int) {
 		imgui.EndMenu()
 	}
 	editorMenuTooltip("A slide bends from note to note; a chromatic or diatonic run plays the notes between.")
+	scoreChordMenu(li, l)
+	scoreTabMenu(li, l)
 	imgui.Separator()
 	if imgui.MenuItemV("Remove Line", "", false, len(e.Score.Lines) > 1) {
 		e.removeLine(li)

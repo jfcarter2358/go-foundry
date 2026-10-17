@@ -5,4 +5,9 @@ polyphony: 4
 playback:
   clef: percussion
   release: 3
+  staff_lines: 1
+  drums:
+  - key: 60
+    name: Clave
+    line: 4
 description: 'Clave: bright, pitched click'

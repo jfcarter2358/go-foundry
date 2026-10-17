@@ -406,6 +406,12 @@ func TestScoreGLWindowDraws(t *testing.T) {
 	frame()
 	frame()
 	shot(t, "library", readFrame(W, H))
+	// The kit's notation settings open: its drum map.
+	scoreLibrary.sel, scoreLibrary.cat, scoreLibrary.openEdit = "percussion/drum_kit", "percussion", true
+	frame()
+	frame()
+	shot(t, "library_edit", readFrame(W, H))
+	scoreLibrary.edit = nil
 	// Its import panel, browsing a folder with an .sfz chosen.
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "samples"), 0o755)
@@ -478,6 +484,92 @@ func TestScoreGLWindowDraws(t *testing.T) {
 		shot(t, f.name, readFrame(W, H))
 	}
 	scoreShowImport = false
+	imgui.CloseCurrentPopup()
+	frame()
+
+	// Words and strings: a sung line with chord symbols over it, a guitar
+	// with tablature linked under the notation, a bass's tablature alone,
+	// a drum kit and a tambourine on its one line; a syllable being typed.
+	var words *score.Score
+	for _, name := range []string{"lyrics", "tab", "kits"} {
+		ws, err := score.LoadFile(filepath.Join(repo, "internal", "score", "engrave", "testdata", name+score.FileExt))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if words == nil {
+			words = ws
+			continue
+		}
+		words.Lines = append(words.Lines, ws.Lines...)
+	}
+	scEd = newScoreState(words)
+	prevView := scorePageView
+	defer func() { scorePageView = prevView }()
+	scoreView, scorePageView = scoreViewScore, false
+	scoreShowKeypad = false
+	scoreZoom = 8
+	scoreList = nil
+	scEd.selectEvent(edit.Loc{Line: 0, Bar: 2, Event: 1}, -1)
+	scEd.startLyrics(1)
+	scEd.wordsInput("swee")
+	frame()
+	frame()
+	img = readFrame(W, H)
+	shot(t, "words", img)
+	field := 0
+	for y := 0; y < H; y++ {
+		for x := 0; x < W; x++ {
+			if c := img.RGBAAt(x, y); c.R > 230 && c.R < 245 && c.G > 235 && c.B > 250 {
+				field++
+			}
+		}
+	}
+	if field < 200 {
+		t.Errorf("no lyric field drawn (%d pixels of its colour)", field)
+	}
+	scEd.wordsKey(scoreWordEscape)
+	frame()
+
+	// The tools: the command palette narrowed to "trans", the Transpose
+	// dialog over the whole score, the Find window with its matches, and
+	// the MIDI Input dialog (with whatever ports this machine has).
+	scEd = newScoreState(s)
+	scoreList = nil
+	scEd.clickBar(0, 1, false, false)
+	scoreOpenPalette()
+	frame()
+	scorePalette.Query = "trans"
+	scorePalette.shown = scorePaletteMatch(scorePalette.items, scorePalette.Query)
+	frame()
+	frame()
+	img = readFrame(W, H)
+	shot(t, "palette", img)
+	if !scorePalette.Open {
+		t.Error("the palette closed itself")
+	}
+	scorePaletteClose()
+	frame()
+	scEd.Sel = scoreSel{}
+	scoreOpenTranspose()
+	frame()
+	frame()
+	shot(t, "transpose", readFrame(W, H))
+	scoreShowTranspose = false
+	imgui.CloseCurrentPopup()
+	frame()
+	scEd.Find = scoreFind{Query: "D5"}
+	scEd.find(&scEd.Find)
+	scoreOpenFind()
+	frame()
+	frame()
+	shot(t, "find", readFrame(W, H))
+	scoreFindOpen = false
+	frame()
+	scoreOpenMIDI()
+	frame()
+	frame()
+	shot(t, "midi", readFrame(W, H))
+	scoreShowMIDI = false
 	imgui.CloseCurrentPopup()
 	frame()
 }

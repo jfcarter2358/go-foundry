@@ -51,6 +51,9 @@ var upward = map[string][]string{
 	// noise3d builds the volumetric passes' noise volumes. Pure arithmetic, and
 	// held below gfx so the tiling it promises is testable with no GL context.
 	"noise3d": {"gfx", "world", "particle", "render", "collision", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	// mididev reads MIDI keyboards for the Score editor: a device layer
+	// (ALSA, WinMM) under the editor and nothing else.
+	"mididev": {"gfx", "world", "render", "score", "tracker", "audio", "editor", "app", "uiwin", "ui"},
 	// audio sits at particle's level: clips, a voice pool and a software
 	// mixer, with no idea what a level is. Its entry is stricter than
 	// particle's by one name — it must not reach gfx either. The listener is
@@ -216,6 +219,9 @@ func TestTheReleaseLinksOnlyScorePlayback(t *testing.T) {
 		}
 		if name == "editor" || strings.HasPrefix(name, "editor/") {
 			t.Errorf("the release build links internal/%s", name)
+		}
+		if name == "mididev" {
+			t.Error("the release build links internal/mididev: MIDI keyboards are the Score editor's alone")
 		}
 		if name == "score" || strings.HasPrefix(name, "score/") {
 			if !allowed[name] {

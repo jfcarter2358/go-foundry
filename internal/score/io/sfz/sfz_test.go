@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/score/io/audioenc"
 	"foundry/internal/tracker"
 )
 
@@ -401,5 +402,45 @@ func TestArticulationNames(t *testing.T) {
 	}
 	if got, _ := ArticulationName("", 24); got != "keyswitch C1" {
 		t.Errorf("no label: %q", got)
+	}
+}
+
+// A FLAC sample is read like a WAV: the instrument plays it at its pitch.
+func TestFLACSamples(t *testing.T) {
+	dir := fixture(t)
+	const rate = 44100
+	data := make([]float32, rate)
+	for i := range data {
+		data[i] = 0.5 * float32(math.Sin(2*math.Pi*440*float64(i)/rate))
+	}
+	b, err := audioenc.EncodeFLAC(data, 1, rate, 16, audioenc.Tags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a4.flac"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "flac.sfz"), "<region> sample=a4.flac pitch_keycenter=69")
+	f, err := ParseFile(filepath.Join(dir, "flac.sfz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := Build(f, Options{Name: "imported/flac"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(built.Warnings) != 0 {
+		t.Errorf("warnings: %v", built.Warnings)
+	}
+	if hz := pitchOf(t, built.Instrument, 69, 0, 1); math.Abs(hz-440) > 9 {
+		t.Errorf("A4 from a FLAC sample at %.1f Hz", hz)
+	}
+	// A damaged one is a warning.
+	os.WriteFile(filepath.Join(dir, "bad.flac"), []byte("fLaC broken"), 0o644)
+	writeFile(t, filepath.Join(dir, "bad.sfz"), "<region> sample=a4.flac\n<region> sample=bad.flac lokey=90")
+	f, _ = ParseFile(filepath.Join(dir, "bad.sfz"))
+	built, err = Build(f, Options{Name: "imported/bad"})
+	if err != nil || !strings.Contains(strings.Join(built.Warnings, "\n"), "bad.flac") {
+		t.Errorf("a damaged FLAC: %v %v", err, built.Warnings)
 	}
 }

@@ -233,7 +233,8 @@ func randomMarks(r *rand.Rand) []Mark {
 		return nil
 	}
 	pool := []Mark{{Name: "p"}, {Name: "sfz"}, {Name: "stacc"}, {Name: "tech", Value: "pizz."}, {Name: "text", Value: "dolce"},
-		{Name: "text", Value: `with "quotes", commas | bars (and) \ back`}, {Name: "future_mark", Value: "3"}, {Name: "x", Value: "a b"}, {Name: "ferm"}}
+		{Name: "text", Value: `with "quotes", commas | bars (and) \ back`}, {Name: "future_mark", Value: "3"}, {Name: "x", Value: "a b"}, {Name: "ferm"},
+		{Name: "ly", Value: "Hal-"}, {Name: "ly2", Value: "don't_"}, {Name: "str", Value: "2"}, {Name: "open"}}
 	var out []Mark
 	for n := 1 + r.Intn(3); n > 0; n-- {
 		out = append(out, pool[r.Intn(len(pool))])

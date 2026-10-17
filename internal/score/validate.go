@@ -208,8 +208,35 @@ func (s *Score) Validate(instrumentExists func(string) bool) (out []Issue) {
 					add(Error, L, si+1, 0, c.At.Bar, "clef change to %s outside the score", c.Clef)
 				}
 			}
+			if st.Lines != 0 && (!st.Percussion() || st.Lines < 1 || st.Lines > 5) {
+				add(Error, L, si+1, 0, 0, "a %s staff of %d lines (only a percussion staff, of 1 to 5)", st.Clef, st.Lines)
+			}
+			if st.Tab != nil {
+				if n := st.Tab.Strings(); n < 1 || n > MaxStrings {
+					add(Error, L, si+1, 0, 0, "tablature of %d strings (1..%d)", n, MaxStrings)
+				}
+				if st.Percussion() {
+					add(Error, L, si+1, 0, 0, "a percussion staff has no tablature")
+				}
+			}
 			for vi, v := range st.Voices {
-				s.validateVoice(v, L, si+1, vi+1, add)
+				s.validateVoice(st, v, L, si+1, vi+1, add)
+			}
+		}
+		for i, c := range l.Chords {
+			if !inRange(c.At.Bar) || !c.At.Offset.Less(s.BarLength(c.At.Bar)) && !c.At.Offset.IsZero() {
+				add(Error, L, 0, 0, c.At.Bar, "chord symbol %s outside the score", c.Chord)
+			}
+			if i > 0 && !PosLess(l.Chords[i-1].At, c.At) {
+				add(Error, L, 0, 0, c.At.Bar, "two chord symbols at %s", s.FormatPos(c.At))
+			}
+		}
+		if cp := l.ChordPlay; cp != nil && cp.Style != ChordsSilent {
+			if len(l.Chords) == 0 {
+				add(Warning, L, 0, 0, 0, "chord_play with no chord symbols to play")
+			}
+			if cp.Instrument != "" && instrumentExists != nil && !instrumentExists(cp.Instrument) {
+				add(Error, L, 0, 0, 0, "chord_play: no instrument %q in the library", cp.Instrument)
 			}
 		}
 	}
@@ -253,7 +280,7 @@ func validateLanes(sc LaneScope, lanes []Lane, chain []FX, noSuch string, inRang
 	}
 }
 
-func (s *Score) validateVoice(v *Voice, L, S, V int, add func(Severity, int, int, int, int, string, ...any)) {
+func (s *Score) validateVoice(st *Staff, v *Voice, L, S, V int, add func(Severity, int, int, int, int, string, ...any)) {
 	type tie struct {
 		bar  int
 		midi int
@@ -297,7 +324,25 @@ func (s *Score) validateVoice(v *Voice, L, S, V int, add func(Severity, int, int
 				if msg := markValueProblem(mk); msg != "" {
 					add(Warning, L, S, V, bar, "%s", msg)
 				}
+				switch mk.Kind() {
+				case MarkLyric:
+					if msg := lyricProblem(&e, mk); msg != "" {
+						add(Warning, L, S, V, bar, "%s", msg)
+					}
+				case MarkTab:
+					if msg := tabProblem(st, &e, mk); msg != "" {
+						add(Warning, L, S, V, bar, "%s", msg)
+					}
+				}
 				switch mk.Name {
+				case "cross":
+					// L and S count from 1.
+					if d := e.CrossStaff(); d != 0 && L >= 1 && L <= len(s.Lines) {
+						t := S - 1 + d
+						if ls := s.Lines[L-1].Staves; t < 0 || t >= len(ls) || ls[t].Percussion() || ls[t].Tab != nil && ls[t].Tab.Only {
+							add(Warning, L, S, V, bar, "cross=%s: the line has no staff %s this one to write the notes on", mk.Value, map[int]string{-1: "above", 1: "below"}[d])
+						}
+					}
 				case "cresc", "dim":
 					open["hairpin"] = true
 				case "hairpin_end":
@@ -326,6 +371,17 @@ func (s *Score) validateVoice(v *Voice, L, S, V int, add func(Severity, int, int
 					add(Error, L, S, V, bar, "%s is outside MIDI 0..127", nt.Pitch)
 				} else if mi < 12 {
 					add(Warning, L, S, V, bar, "%s is below the lowest note the engine plays (C0)", nt.Pitch)
+				}
+			}
+			if st.Tab != nil && e.Kind == EventChord {
+				ps := make([]Pitch, len(e.Notes))
+				for i, nt := range e.Notes {
+					ps[i] = nt.Pitch
+				}
+				for i, at := range st.Tab.Place(ps, e.TabStrings(), 0) {
+					if !at.OK {
+						add(Warning, L, S, V, bar, "%s cannot be played on the tablature's strings", e.Notes[i].Pitch)
+					}
 				}
 			}
 			if e.Grace != NotGrace {
@@ -374,6 +430,10 @@ func markValueProblem(mk Mark) string {
 	case "arp":
 		if mk.Value != "" && mk.Value != "up" && mk.Value != "down" {
 			return fmt.Sprintf("arp=%s: want up or down", mk.Value)
+		}
+	case "cross":
+		if mk.Value != "up" && mk.Value != "down" {
+			return fmt.Sprintf("cross=%s: want up or down", mk.Value)
 		}
 	case "gliss":
 		if mk.Value != "" && mk.Value != "wavy" && mk.Value != "straight" {
