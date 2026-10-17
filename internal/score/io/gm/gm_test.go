@@ -72,6 +72,14 @@ func TestMatchNames(t *testing.T) {
 		"Alto Saxophone": "woodwinds/clarinet", "Soprano": "choir/choir", "Electric Bass": "bass/bass_finger",
 		"Acoustic Guitar": "plucked/guitar_steel", "Strings": "strings/violin_section", "Harp": "keys/harp",
 		"Synth Pad": "pads/pad_warm", "Whatever": "",
+		// MuseScore 4's standard orchestra names its sections in the plural.
+		"Violoncellos": "strings/cello_section", "Contrabasses": "strings/contrabass_section",
+		"Violas": "strings/viola_section", "Violins 1": "strings/violin_section", "Flutes": "woodwinds/flute",
+		"Piccolos": "woodwinds/flute", "Bassoons": "woodwinds/bassoon", "Contrabassoons": "woodwinds/bassoon",
+		"F Horn 1 & 3": "brass/horn", "B♭ Trumpets": "brass/trumpet", "Tenor Trombones": "brass/trombone",
+		"Contrabass Clarinets": "woodwinds/clarinet", "Altos": "choir/choir",
+		// A word only starting like one is not it.
+		"Bassett": "", "Hornet": "",
 	} {
 		if got := Match(name); got != want {
 			t.Errorf("Match(%q) = %q, want %q", name, got, want)

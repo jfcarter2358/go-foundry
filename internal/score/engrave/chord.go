@@ -253,9 +253,21 @@ func (e *engraver) arrangeColumn(sb *staffBar, c *column, evs []*ev) (left, righ
 
 	// Rests, out of the other voices' way (and of each other); a rest's
 	// dot clear of the chords' dots.
+	// This staff's chords at the column written on another staff, which a
+	// rest here keeps clear of too (they are arranged with that staff).
+	var away []*ev
+	if len(rests) > 0 {
+		for _, v := range sb.voices {
+			for _, x := range v {
+				if x.col == c && x.cross != 0 && !x.grace && len(x.notes) > 0 {
+					away = append(away, x)
+				}
+			}
+		}
+	}
 	var placed []*ev
 	for _, x := range rests {
-		e.placeRest(x, chords, placed, sb.forced)
+		e.placeRest(x, chords, away, placed, sb.forced)
 		placed = append(placed, x)
 		w := e.f.Width(restGlyph(x.base))
 		ink(x.restX, x.restX+w)

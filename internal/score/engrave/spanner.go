@@ -211,16 +211,36 @@ func startX(x *ev) float64 {
 }
 
 // endX is where a run ending at event z ends: just before the next note
-// (or z's barline), or with excl just before z itself.
+// in z's bar (or before z's barline, never past it into the next bar's
+// signatures), or with excl just before z itself.
 func (e *engraver) endX(z *ev, excl bool) float64 {
 	if excl {
 		return startX(z) - 0.6
 	}
-	if n := z.nextEv; n != nil && n.col != nil && n.ref.Bar > 0 {
+	if n := z.nextEv; n != nil && n.col != nil && n.ref.Bar > 0 && n.sb.bar == z.sb.bar {
 		return startX(n) - 0.6
 	}
 	_, r := headSpan(z)
 	return math.Max(z.x+r+0.6, z.sb.bar.x1-0.5)
+}
+
+// endAtPos is where a line ending at a time ends: before the note there,
+// or for a bar's start before the barline that opens it (not after the
+// signatures that follow it); past the layout, its end.
+func (e *engraver) endAtPos(p score.Pos, gap float64) float64 {
+	if p.Bar > e.to+1 || (p.Bar == e.to+1 && p.Offset.Sign() > 0) {
+		return e.layoutEnd()
+	}
+	if p.Offset.Sign() == 0 && p.Bar-1 >= e.from && p.Bar-1 <= e.to {
+		bc := e.bars[p.Bar-1-e.from]
+		x := bc.x1 - 0.5
+		// Not short of the bar's last note.
+		if n := len(bc.cols); n >= 2 {
+			x = math.Max(x, bc.cols[n-2].x+e.f.Width("noteheadBlack")+0.3)
+		}
+		return x
+	}
+	return e.xAtPos(p) - gap
 }
 
 // ---------- slurs ----------
@@ -1146,10 +1166,7 @@ func (e *engraver) drawOttavas(sc *staffCtx) {
 		x0 := e.xAtPos(o.From) - 0.2
 		// It closes inside the layout, or exactly at its end.
 		closes := !score.PosLess(score.Pos{Bar: e.to + 1}, o.To)
-		x1 := e.xAtPos(o.To) - 0.7
-		if o.To.Bar > e.to {
-			x1 = e.layoutEnd()
-		}
+		x1 := e.endAtPos(o.To, 0.7)
 		b, _ := e.f.Box(og.glyph)
 		// A line carried on from the system before is marked "(8va)" at
 		// the new system's start (Gould: the parenthesised figure).

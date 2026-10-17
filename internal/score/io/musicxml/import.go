@@ -48,6 +48,7 @@ package musicxml
 
 import (
 	"fmt"
+	"html"
 	"math"
 	"regexp"
 	"sort"
@@ -172,7 +173,23 @@ func displayText(dn *node) string {
 // as letters ("Clarinet in Bb"): the editor's staff headers and menus set
 // names in ImGui's font, which has no ♭ or ♯.
 func cleanName(s string) string {
-	return cleanText(strings.NewReplacer("♭", "b", "♯", "#", "♮", "").Replace(s))
+	return cleanText(strings.NewReplacer("♭", "b", "♯", "#", "♮", "").Replace(unescapeAgain(s)))
+}
+
+// leftoverEntity is an XML character reference still in a name after the
+// document's own were read.
+var leftoverEntity = regexp.MustCompile(`&(amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);`)
+
+// unescapeAgain reads the character references left in a name escaped
+// twice: MuseScore writes its part names' rich text into <part-name>
+// ("F Horn 1 &amp;amp; 3"), which reads as "F Horn 1 &amp; 3".
+func unescapeAgain(s string) string {
+	if !strings.Contains(s, "&") {
+		return s
+	}
+	return leftoverEntity.ReplaceAllStringFunc(s, func(m string) string {
+		return html.UnescapeString(m)
+	})
 }
 
 // Parts lists the document's parts with the guesses Import would make.

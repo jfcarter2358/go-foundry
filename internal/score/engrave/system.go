@@ -306,10 +306,7 @@ func (e *engraver) drawTempoMark(k *sky, put func(Item) Rect, lowest float64, i 
 	}
 	dashEnd := x0 + w + metW
 	if has && score.PosLess(t.At, to) {
-		dashEnd = e.xAtPos(to) - 0.6
-		if to.Bar > e.to {
-			dashEnd = e.layoutEnd()
-		}
+		dashEnd = e.endAtPos(to, 0.6)
 	} else {
 		has = false
 	}

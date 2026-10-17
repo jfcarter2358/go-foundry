@@ -3,6 +3,7 @@ package musicxml
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -378,5 +379,56 @@ func TestImportNamesBeatSoundIDs(t *testing.T) {
 	}
 	if got := s.Lines[1].Instrument; got != "woodwinds/flute" {
 		t.Errorf("a melody with a flute sound: %s", got)
+	}
+}
+
+// MuseScore 4's standard orchestra: section names in the plural, a part
+// name's ampersand escaped twice (its rich text), and a program that
+// alone would make every string section a violin.
+func TestImportMuseScoreOrchestraNames(t *testing.T) {
+	useRepoResources(t)
+	part := func(id, name, abbr, sound string, program int) string {
+		return `<score-part id="` + id + `"><part-name>` + name + `</part-name><part-abbreviation>` + abbr + `</part-abbreviation>` +
+			`<score-instrument id="` + id + `-I1"><instrument-name>` + name + `</instrument-name><instrument-sound>` + sound +
+			`</instrument-sound></score-instrument><midi-instrument id="` + id + `-I1"><midi-program>` + fmt.Sprint(program) +
+			`</midi-program></midi-instrument></score-part>`
+	}
+	bar := `<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>` +
+		`<note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure>`
+	parts := []string{
+		part("P1", "Violoncellos", "Vcs.", "strings.group", 49),
+		part("P2", "Contrabasses", "Cbs.", "strings.group", 49),
+		part("P3", "F Horn 1 &amp;amp; 3", "F Hn. 1 3", "brass.group.french-horn", 61),
+	}
+	doc := `<score-partwise version="4.0"><part-list>` + strings.Join(parts, "") + `</part-list>`
+	for i := range parts {
+		doc += `<part id="P` + fmt.Sprint(i+1) + `">` + bar + `</part>`
+	}
+	doc += `</score-partwise>`
+	d, err := Read([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ name, instrument string }{
+		{"Violoncellos", "strings/cello_section"},
+		{"Contrabasses", "strings/contrabass_section"},
+		{"F Horn 1 & 3", "brass/horn"},
+	}
+	for i, p := range d.Parts() {
+		if p.Name != want[i].name || p.Instrument != want[i].instrument {
+			t.Errorf("part %d listed as %q %s, want %q %s", i+1, p.Name, p.Instrument, want[i].name, want[i].instrument)
+		}
+	}
+	s, _, err := Import(d, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, w := range want {
+		if l := s.Lines[i]; l.Name != w.name || l.Instrument != w.instrument {
+			t.Errorf("line %d: %q %s, want %q %s", i+1, l.Name, l.Instrument, w.name, w.instrument)
+		}
+	}
+	if got := unescapeAgain("Tom &amp; Jerry &#38; &lt;b&gt; & co"); got != "Tom & Jerry & <b> & co" {
+		t.Errorf("unescapeAgain: %q", got)
 	}
 }

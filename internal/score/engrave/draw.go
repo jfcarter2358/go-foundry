@@ -179,6 +179,13 @@ func (e *engraver) drawEvent(sc *staffCtx, x *ev) {
 	case x.rest:
 		g := restGlyph(x.base)
 		rx := x.x + x.restX
+		// Off the staff on its own ledger line, centred where the plain
+		// rest would be.
+		if lg := legerRest(g, x.restY); lg != g {
+			rx += (e.f.Width(g) - e.f.Width(lg)) / 2
+			g = lg
+			e.restLedgers(sc, x, rx, e.f.Width(g), x.restY)
+		}
 		e.add(sc, x, e.glyphItem(RoleRest, x.ref, g, rx, x.restY, 1))
 		dx := rx + x.restDotX
 		for k := 0; k < x.dots; k++ {
@@ -276,7 +283,8 @@ func barRestGlyph(bc *barCtx) (string, float64) {
 	return "restWhole", 1
 }
 
-// drawBarRest centres a bar rest in its bar.
+// drawBarRest centres a bar rest in its bar, in multi-voice music above
+// or below the middle for its voice and clear of the other voices' notes.
 func (e *engraver) drawBarRest(sc *staffCtx, x *ev) {
 	bc := x.sb.bar
 	g, y := barRestGlyph(bc)
@@ -289,8 +297,28 @@ func (e *engraver) drawBarRest(sc *staffCtx, x *ev) {
 	}
 	w := e.f.Width(g)
 	rx := (bc.content+bc.x1)/2 - w/2
+	y = e.barRestY(sc, x, g, rx, rx+w, y)
 	x.x = rx
+	if lg := legerRest(g, y); lg != g {
+		rx += (w - e.f.Width(lg)) / 2
+		g = lg
+		e.restLedgers(sc, x, rx, e.f.Width(g), y)
+	}
+	x.restY = y
 	e.add(sc, x, e.glyphItem(RoleRest, x.ref, g, rx, y, 1))
+}
+
+// restLedgers are the ledger lines between the staff and a whole or half
+// rest further off it than its own (the glyph draws the one it hangs
+// from or sits on).
+func (e *engraver) restLedgers(sc *staffCtx, x *ev, rx, w, y float64) {
+	th := e.d.LegerLineThickness
+	for L := 5.0; L < y-0.01; L++ {
+		e.add(sc, x, Item{Kind: ItemLine, Role: RoleLedger, Ref: x.ref, P: Point{X: rx, Y: L}, Q: Point{X: rx + w, Y: L}, Width: th})
+	}
+	for L := -1.0; L > y+0.01; L-- {
+		e.add(sc, x, Item{Kind: ItemLine, Role: RoleLedger, Ref: x.ref, P: Point{X: rx, Y: L}, Q: Point{X: rx + w, Y: L}, Width: th})
+	}
 }
 
 // drawImpliedRest shows an empty bar as a faint bar rest.

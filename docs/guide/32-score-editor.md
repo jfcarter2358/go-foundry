@@ -196,7 +196,7 @@ voices 2–4 green, orange and magenta.
 | Voice | `Ctrl+Alt+1`–`4`, or keypad `*` for the next. In note input the caret stays where it was, so the new voice starts under the old one's last note; out of it the new voice's note at the same beat is selected |
 | Tuplet | `Ctrl+2`–`9` start one on the selected note: three of its value in the time of two, five in four… Inside a tuplet the new one nests |
 | Flip a stem | `X` or keypad `-` |
-| Cross staff | `Ctrl+Shift+Up` / `Down` (**Notes > Cross to Staff Above / Below**): the selected chord's notes — or every chord of the selected bars — written on the grand staff's other staff, in that staff's clef, while they stay in their own voice; a beam joining notes on both staves is flat in the gap between them, each staff's stems reaching it from its side. The same key back takes them home. Stored as the mark `cross=up` / `cross=down` |
+| Cross staff | `Ctrl+Shift+Up` / `Down` (**Notes > Cross to Staff Above / Below**): the selected chord's notes — or every chord of the selected bars — written on the grand staff's other staff, in that staff's clef, while they stay in their own voice; a beam joining notes on both staves is flat in the gap between them, each staff's stems reaching it from its side. A rest on either staff where crossed notes or their stem would cover it stands beside them, and a bar rest moves off them. The same key back takes them home. Stored as the mark `cross=up` / `cross=down` |
 | Delete | `Delete`: a note becomes a rest, one note of a chord goes, a rest in voices 2–4 is hidden; selected bars are cleared |
 | Previous / next note | `Left` / `Right` |
 | Key, time, clef | `K`, `Ctrl+Shift+T`, `Q` (or the toolbar): a key or time signature from the selected bar; a clef for a whole staff |
@@ -795,7 +795,7 @@ what sounds, then optional marks.
 | Note | A capital letter, accidentals (`#`, `##` or `x`, `b`, `bb`, `n` natural) and an octave: `C4` is middle C, `F#5`, `Bb3`. Octaves run from -1 to 9. |
 | Chord | Notes joined with `+`: `qC4+E4+G4`. |
 | Per note | `~` ties into the same pitch in the next event, `!` always prints the accidental, `?` prints it in brackets. |
-| Rest | `qr` is a rest, and `q_` takes time but prints nothing (a space). `R` alone fills the bar, whatever its meter. |
+| Rest | `qr` is a rest, and `q_` takes time but prints nothing (a space). `R` alone fills the bar, whatever its meter. With more than one voice on a staff a rest moves up (voices 1 and 3) or down (2 and 4) until it clears the other voices' notes, and one that leaves the staff gets its ledger lines. |
 | Grace note | `/eD5` is an acciaccatura (slashed, played just before the beat), `^eD5` an appoggiatura (played on the beat). Grace notes take no time in the bar. |
 | Tuplet | `3{eC4 eD4 eE4}` is three in the time of two. `5:3{…}` gives the ratio. Without one, `n{` plays n in the time of the usual number: 3 in 2, 2 in 3, 5, 6 or 7 in 4, 9 in 8. Tuplets nest, and each stays inside one bar. |
 | Marks | In brackets after the event, separated by commas: `(p)`, `(stacc,acc)`, `(tech=pizz.)`, `("dolce")`. Inside the brackets, `.` `'` `>` `_` `^` stand for staccato, staccatissimo, accent, tenuto and marcato. |
@@ -1248,7 +1248,11 @@ repeats the notation over it, as MuseScore writes linked staves, becomes
 that staff's linked tablature) and one-line percussion staves. Text keeps
 its ♭ ♯ ♮; a part's name spells them as letters ("Clarinet in Bb", as the
 staff headers set names in the editor's own font), and a Sibelius
-part-name display with its accidental is read whole. Anything the score
+part-name display with its accidental is read whole. A part's name picks
+its instrument in the singular or the plural ("Violoncellos",
+"Contrabasses", "Flutes", as MuseScore's orchestra names its sections)
+before its program does, and MuseScore's twice-escaped ampersands ("F Horn
+1 &amp;amp; 3") come in as "&". Anything the score
 can't hold is reported as a warning, never dropped silently.
 
 `export-musicxml` writes MusicXML 4.0 that Sibelius and MuseScore open as

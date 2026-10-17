@@ -280,13 +280,30 @@ func words(s string) []string {
 	})
 }
 
+// sameWord reports a name's word w as a phrase's word p, or its plural
+// ("Violoncellos", "Contrabasses", "Piccolos"): an orchestra's parts are
+// named for their sections.
+func sameWord(w, p string) bool {
+	if w == p {
+		return true
+	}
+	if len(p) < 3 || !strings.HasPrefix(w, p) {
+		return false
+	}
+	switch w[len(p):] {
+	case "s", "es":
+		return true
+	}
+	return false
+}
+
 // containsPhrase reports whether ws holds the words of phrase in a row.
 func containsPhrase(ws []string, phrase string) bool {
 	p := strings.Fields(phrase)
 	for i := 0; i+len(p) <= len(ws); i++ {
 		ok := true
 		for j := range p {
-			if ws[i+j] != p[j] {
+			if !sameWord(ws[i+j], p[j]) {
 				ok = false
 				break
 			}

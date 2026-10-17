@@ -952,3 +952,71 @@ func TestFamilyBrackets(t *testing.T) {
 		t.Error("families")
 	}
 }
+
+func TestSpannersStopAtTheBarline(t *testing.T) {
+	// The auditor's score: a pedal ending on bar 1's last note at a plain
+	// barline, a hairpin and an 8va on bar 2's before a key change, a pedal
+	// and an 8va on bar 3's before a time change.
+	s, err := score.Parse([]byte(`version: 1
+bars: 4
+meter: [{bar: 1, sig: 4/4}, {bar: 4, sig: 3/4}]
+key: [{bar: 1, fifths: 0, mode: major}, {bar: 3, fifths: -4, mode: major}]
+lines:
+- name: Piano
+  instrument: keys/grand_piano
+  staves:
+  - clef: treble
+    voices:
+    - |
+      | qC5(ped) qD5 qE5 qF5(ped_end)
+      | qC6(8va,cresc) qD6 qE6 qF6(ottava_end,hairpin_end)
+      | qC5(ped,8va) qD5 qE5 qF5(ped_end,ottava_end)
+      | qC5 qD5 qE5
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := Engrave(s, Options{})
+	bars := map[int]BarBox{}
+	for _, b := range l.Bars {
+		bars[b.Bar] = b
+	}
+	ends := map[int]int{}
+	for i := range l.Items {
+		it := &l.Items[i]
+		if it.Role != RoleHairpin && it.Role != RoleLine {
+			continue
+		}
+		bar := it.Ref.Bar
+		b, ok := bars[bar]
+		if !ok {
+			continue
+		}
+		r := ItemBounds(it)
+		if r.Max.X > b.X1-0.1 {
+			t.Errorf("bar %d: a %v reaches %.2f, past the barline at %.2f", bar, it.Role, r.Max.X, b.X1)
+		}
+		ends[bar]++
+	}
+	// The pedal (1), the hairpin and the 8va (2), the pedal and the 8va (3).
+	for bar, min := range map[int]int{1: 2, 2: 3, 3: 4} {
+		if ends[bar] < min {
+			t.Errorf("bar %d: %d line items, want at least %d", bar, ends[bar], min)
+		}
+	}
+	// Ending inside a bar it still stops just before the next note.
+	l = Engrave(one(t, "treble", "| qC5(cresc) qD5(hairpin_end) qE5 qF5"), Options{})
+	var hp []Item
+	for _, it := range l.Items {
+		if it.Role == RoleHairpin {
+			hp = append(hp, it)
+		}
+	}
+	e3 := itemsBy(l, RoleNotehead, 1, 0, 2)
+	if len(hp) == 0 || len(e3) != 1 {
+		t.Fatalf("%d hairpin lines, %d heads", len(hp), len(e3))
+	}
+	if x, h := math.Max(hp[0].P.X, hp[0].Q.X), ItemBounds(&e3[0]).Min.X; x > h-0.3 || x < h-1.5 {
+		t.Errorf("the hairpin ends at %.2f, the E5 starts at %.2f", x, h)
+	}
+}

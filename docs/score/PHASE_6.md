@@ -499,3 +499,61 @@ release` over `cmd/foundry`'s dependencies and `internal/pack`) fail only
 `internal/glext`'s `TestEveryReadbackGoesThroughTheWrappers`, on GL test
 files of the other session's render work (no score, editor or tracker
 file), as recorded since phase 3.
+
+## Final audit round 3
+
+The third audit found seven gaps; four are fixed below, three are kept
+with the reason.
+
+| Found | Fixed in |
+| --- | --- |
+| A whole-bar rest (`R`) in multi-voice music sat at a fixed height (voice 1 hanging from the top line, voice 2 from the G line) whatever the other voice played: in the auditor's `rest2.fscore` bars 1 and 3 and `adv.fscore` bar 4 it ran into a G4 notehead. A bar rest is in no column, so `placeRest` never saw it | `engrave/rest.go` `barRestY` (from `drawBarRest`): the rest starts at its voice's place and moves a space at a time, up for voices 1 and 3 and down for 2 and 4, while it touches another voice's head, stem, flag, beam end (`chordInk`, the beam laid out early by `layoutBeam`, which only reads x) or rest within `barRestMargin` (a space) either side; notes another staff writes on this one (`crossedInto`) count too, and a bar rest alone on its staff moves away from them. A whole or half rest off the staff is drawn as `restWholeLegerLine` / `restHalfLegerLine`, with the ledger lines between it and the staff (`legerRest`, `restLedgers`), column rests too. `TestBarRestsClearTheOtherVoice` (the auditor's bars, voice 1's `R` over a high voice 2, a free rest staying at its place), `TestBarRestsClearNotesFromTheOtherStaff`, `TestRestsFarOffTheStaffHaveLedgerLines`. `rest2.fscore`, `adv.fscore` re-rendered and looked at |
+| Hairpins, pedal lines, ottava lines and tempo dashes ending on a bar's last note ran over the barline to the next bar's first note, past its key and time signatures (`ped.fscore` bars 2 and 3, `eng2.fscore`'s 15ma and pedal) | `engrave/spanner.go` `endX`: the next note ends a line only in the same bar; otherwise the line stops half a space before the barline (never short of the last note's head). `endAtPos` does the same for a position at a bar's start, for `drawOttavas` and the tempo dashes (`system.go`). `TestSpannersStopAtTheBarline` (hairpin, pedal and 8va ending on a bar's last note before a key change, a time change and a plain barline). The `lines`, `crowded` and `page_demo_flute` goldens were recaptured after looking at the diffs: only the line ends (and in `crowded` the bar rests above) moved |
+| A rest kept clear only of the notes in its own staff's frame: a voice-2 rest under a voice-1 chord written `cross=down` was drawn over the chord's stem and top notehead (`eng3.fscore` bar 2) | `engrave/rest.go` `placeRest` takes the staff's chords at the column written on the other staff (`away`, from `arrangeColumn`) and the notes another staff writes here (`foreign`: chords whose staff is not the rest's; before, they were compared by voice number across staves). It never moves over or under them (that would put it on the other staff): `besideForeign` stands it right of their heads, stem and flag, and the rest then goes back as near its voice's place as this staff's notes let it. Single-voice staves too. `TestRestsStandBesideCrossStaffNotes` (the auditor's bar; the bass's rest beside a treble note crossed down) |
+| MusicXML import: MuseScore 4's orchestra names its sections "Violoncellos" and "Contrabasses", which matched no rule, so both fell back through GM program 49 to the violin section (and `score inspect` warned of 864 notes below its range) | `io/gm/gm.go` `sameWord`: a word of a name matches a rule's word or its plural (`s`, `es`; words of three letters or more). `io/musicxml/import.go` `unescapeAgain`: a part name's leftover character references (MuseScore's rich text, `F Horn 1 &amp;amp; 3`) are read once more. `TestMatchNames` (plurals, "Bassett"/"Hornet" not matching), `TestImportMuseScoreOrchestraNames`. The real `Big_Score.mscz` export lists `Violoncellos strings/cello_section`, `Contrabasses strings/contrabass_section`, `F Horn 1 & 3`; its only `inspect` warning left is the timpani's, whose part really plays C4/D4 (the stress score gives every part the same pattern). Its short name `F Hn. 1 3` is as MuseScore wrote it (the file has no ampersand there) |
+
+### Decisions
+
+- **A rest never crosses into the other staff** to clear a cross-staff
+  chord: it stands beside it, as a second voice's notes would.
+- **A bar rest clears the other voices for a space either side**, not
+  only straight under it: a rest at a note's height just past it reads as
+  that note's voice.
+- **A line ending on a bar's last note stops at that bar's barline**, the
+  way Sibelius and Dorico end it; one that ends inside a bar still stops
+  just before the next note.
+
+### How to verify (round 3)
+
+```
+go test -run 'Rest' -v ./internal/score/engrave/
+go test -run 'Spanners' -v ./internal/score/engrave/
+go test -run 'Match' -v ./internal/score/io/gm/
+go test -run 'MuseScoreOrchestra' -v ./internal/score/io/musicxml/
+foundry score render rest2.fscore -png /tmp/rest2.png -scale 30   # voice 2's bar rests under voice 1's notes, ledger lines off the staff
+foundry score render eng3.fscore -png /tmp/eng3.png -scale 30     # bar 2: the quarter rest right of the cross-staff chord's stem
+foundry score render ped.fscore -png /tmp/ped.png -scale 30       # hairpin, pedal and 8va ends before the barlines
+foundry score import big.musicxml -list                           # Violoncellos, Contrabasses, F Horn 1 & 3
+task test-release
+```
+
+### Kept (round 3)
+
+- **A real Sibelius export** is still not in `testdata`, for the reasons
+  in *Kept (round 2)*: no Sibelius here, and a further search this round
+  (the MIT-licensed Dolet-for-Sibelius repository ships only the
+  plug-in; music21's MusicXML suite is the LilyPond set) found no
+  permissively licensed file Sibelius wrote. A real third-party export,
+  MuseScore 4.7's `Big_Score`, was imported, engraved and inspected
+  instead (above).
+- **A MIDI keyboard on real hardware** is still untested: no
+  `/dev/snd/seq` and no keyboard here; WinMM builds and vets with mingw
+  only. Everything above the device layer runs through `mididev.Virtual`.
+- **The task's baseline file** still does not exist. `go test ./...`
+  passes 104 packages and fails only `internal/glext`'s
+  `TestEveryReadbackGoesThroughTheWrappers` (GL test files of the other
+  session's render and gfx work, as recorded since phase 3); `raster`'s
+  goldens were recaptured as above. The release suite (`go build -tags
+  release ./...`, `go test -tags release` over score, tracker, mididev,
+  editor and savegame) passes, and `FOUNDRY_GL_TEST=1
+  TestScoreGLWindowDraws` passes.
